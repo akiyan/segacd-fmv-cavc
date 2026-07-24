@@ -23,7 +23,6 @@ emit_decisions = true
 [encoder]
 cold_cap = 480
 raw_prefetch = true
-slot_locality = false
 
 [palette]
 algorithm = "mosaic-gm"

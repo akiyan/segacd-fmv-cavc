@@ -14,8 +14,9 @@ import slot_locality_pipeline as pipeline
 
 
 class SlotLocalityPipelineTests(unittest.TestCase):
-    def test_policy_defaults_on_and_accepts_explicit_off(self) -> None:
-        self.assertTrue(pipeline.policy_from_env({}).enabled)
+    def test_policy_defaults_off_and_accepts_explicit_on(self) -> None:
+        self.assertFalse(pipeline.Policy().enabled)
+        self.assertFalse(pipeline.policy_from_env({}).enabled)
         self.assertTrue(
             pipeline.policy_from_env({"CBRSIM_SLOT_LOCALITY": "true"}).enabled)
         self.assertFalse(

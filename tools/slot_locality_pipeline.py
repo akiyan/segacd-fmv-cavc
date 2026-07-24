@@ -35,7 +35,7 @@ _FALSE = {"", "0", "false", "no", "off"}
 class Policy:
     """Fixed slot-locality policy shared by every pass in one invocation."""
 
-    enabled: bool = True
+    enabled: bool = False
     final_iterations: int = 160
     heavy_run_target: int = 30
     retry_exit: int = 75
@@ -45,7 +45,7 @@ class Policy:
 def policy_from_env(environ: Mapping[str, str] | None = None) -> Policy:
     """Read the internal switch populated by the public TOML profile."""
     env = os.environ if environ is None else environ
-    raw = str(env.get("CBRSIM_SLOT_LOCALITY", "1")).strip().lower()
+    raw = str(env.get("CBRSIM_SLOT_LOCALITY", "0")).strip().lower()
     if raw in _TRUE:
         enabled = True
     elif raw in _FALSE:

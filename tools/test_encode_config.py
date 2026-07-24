@@ -211,6 +211,17 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_SEGPAL"], "1")
         self.assertEqual(env["CBRSIM_NEAR"], "1")
         self.assertEqual(env["CBRSIM_BOOT_VRAM_PREFETCH"], "1")
+        self.assertEqual(env["CBRSIM_SLOT_LOCALITY"], "0")
+
+    def test_profile_can_enable_slot_locality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "slot-locality-on.toml"
+            path.write_text(PROFILE.replace(
+                "[palette]",
+                "[encoder]\nslot_locality = true\n\n[palette]"))
+            env = apply_profile_env(load_profile(path), {
+                "CBRSIM_SLOT_LOCALITY": "0",
+            })
         self.assertEqual(env["CBRSIM_SLOT_LOCALITY"], "1")
 
     def test_profile_slot_locality_must_be_boolean(self) -> None:
