@@ -11,6 +11,35 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e123: Make identity physical VRAM slots the default. Profiles may opt into
+#         the accounted multi-pass slot-locality permutation explicitly.
+#   e122: Keep each CRAM switch's full name-table bytes as a mandatory floor
+#         while balancing unavoidable future-demand shortage. Ordinary risk
+#         may be thinned, but palette-boundary refresh work cannot be diluted.
+#   e121: Reserve every CRAM segment switch as a mandatory full name-table
+#         refresh in both future-demand traces. Earlier optional updates can no
+#         longer spend the quality allowance needed by switch-frame control
+#         entries and exact cold patterns.
+#   e120: Replace the per-frame worst-run control-sector envelope with a
+#         one-pass shared-sector prefix ledger. Exact control bytes through
+#         frame i set frame i+1's Prg deadline limit before its image decisions;
+#         sim and pack independently prove every rounded control/payload prefix.
+#   e119: Jointly derive per-frame cold/run and Prg payload limits before image
+#         decisions. Replace the profile-wide worst-case descriptor reservation
+#         with the self-consistent cold work that the physical route can admit,
+#         returning former BODY pad to payload without a post-encode retry.
+#   e118: Keep the construction-time control-sector envelope as payload
+#         reservation, but route only the final just-in-time control sectors.
+#         Unused reservation becomes pad instead of pulling future control
+#         blocks into the finite APPLY ring.
+#   e117: Construct a conservative physical BODY/PrgBuf envelope before image
+#         decisions. Reserve worst-case identity-slot run control sectors,
+#         project predicted Prg demand into the remaining sector route, and
+#         freeze that route so later stages can only shrink proven work.
+#   e116: Make the movie-wide physical slot-locality permutation a profile
+#         switch and isolate its seed/map/accounting orchestration in one
+#         module. The disabled path uses identity VRAM slots in one sim pass
+#         while retaining cold-run descriptors and exact physical scheduling.
 #   e115: Apply a newly trained CRAM palette on the frame after the selected
 #         dark/uniform transition frame. This lets the transition display once
 #         under the old CRAM and removes Machi OP H40/15 frame 0x03DB's
@@ -797,5 +826,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260724
-e=115
+e=123
 p=90

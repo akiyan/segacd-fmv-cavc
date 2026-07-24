@@ -71,6 +71,34 @@ class DemandPredictionTests(unittest.TestCase):
 
         np.testing.assert_array_equal(demand, [0, 0])
 
+    def test_forced_update_reserves_full_name_table_without_reloading_resident_patterns(
+        self,
+    ) -> None:
+        a = np.array([0, 1, 2, 3], np.uint8)
+        b = np.array([4, 5, 6, 7], np.uint8)
+        patterns = [np.stack([a, b]), np.stack([a, b])]
+        palettes = [np.array([0, 1]), np.array([0, 1])]
+
+        baseline = upgrade_planner.predict_update_demand_details(
+            patterns,
+            palettes,
+            vram_tiles=4,
+            protected_frames=[np.ones(2, bool), np.ones(2, bool)],
+        )
+        forced = upgrade_planner.predict_update_demand_details(
+            patterns,
+            palettes,
+            vram_tiles=4,
+            protected_frames=[np.ones(2, bool), np.ones(2, bool)],
+            forced_update_frames=[False, True],
+        )
+
+        self.assertEqual(int(baseline.exact_bytes[1]), 0)
+        self.assertEqual(int(forced.exact_bytes[1]), 2 * 2)
+        self.assertEqual(int(forced.protected_bytes[1]), 2 * 2)
+        self.assertEqual(int(forced.exact_cold[1]), 0)
+        self.assertEqual(int(forced.protected_cold[1]), 0)
+
     def test_detail_exposes_the_cold_counts_behind_byte_demand(self) -> None:
         zero = np.zeros(4, np.uint8)
         one = np.array([1, 0, 0, 0], np.uint8)
@@ -160,6 +188,32 @@ class ReserveCurveTests(unittest.TestCase):
         np.testing.assert_array_equal(plan.planned_demand, demand)
         np.testing.assert_array_equal(plan.shortfall, np.zeros_like(demand))
         np.testing.assert_array_equal(plan.reserve, [30, 60, 90, 0, 0])
+
+    def test_balanced_plan_never_dilutes_mandatory_demand(self) -> None:
+        plan = upgrade_planner.build_balanced_reserve_plan(
+            demand=[0, 200, 200],
+            supply=100,
+            capacity=100,
+            minimum_demand=[0, 150, 0],
+        )
+
+        self.assertGreaterEqual(int(plan.planned_demand[1]), 150)
+        self.assertLessEqual(
+            upgrade_planner._peak_buffer_draw(
+                plan.planned_demand,
+                np.full(3, 100, np.int64),
+            ),
+            100,
+        )
+
+    def test_balanced_plan_rejects_infeasible_mandatory_demand(self) -> None:
+        with self.assertRaisesRegex(ValueError, "minimum demand is infeasible"):
+            upgrade_planner.build_balanced_reserve_plan(
+                demand=[0, 250, 250],
+                supply=100,
+                capacity=100,
+                minimum_demand=[0, 250, 250],
+            )
 
     def test_balanced_plan_handles_separate_overloaded_bursts(self) -> None:
         plan = upgrade_planner.build_balanced_reserve_plan(

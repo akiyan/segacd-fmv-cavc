@@ -471,12 +471,19 @@ def evaluate_upload_gate(
 ) -> dict:
     """Classify a complete first loop as PASS, WARNING, or FAIL."""
     first_loop = [group for group in groups if group.loop == 0]
+    # Frame 0 is assembled during untimed boot staging.  Keep it in the
+    # sequence-completeness proof, but never let its placeholder/startup HUD
+    # values affect a timed playback metric or gate.
+    timed_loop = first_loop[1:]
     fields = ("S", "D", "R", "C", "M", "J")
     failures: list[str] = []
     warnings: list[str] = []
     missing = [field for field in fields if field not in first_loop[0].values]
     maxima = {
-        field: max(group.values.get(field, 0) for group in first_loop)
+        field: max(
+            (group.values.get(field, 0) for group in timed_loop),
+            default=0,
+        )
         for field in fields
     }
     if missing:
@@ -509,7 +516,7 @@ def evaluate_upload_gate(
     stat = recording.stat()
     status = "FAIL" if failures else "WARNING" if warnings else "PASS"
     result = {
-        "schema_version": 2,
+        "schema_version": 3,
         # WARNING remains upload-capable. Keep the compatibility boolean so
         # older consumers only stop for a real FAIL.
         "pass": status != "FAIL",
@@ -519,6 +526,8 @@ def evaluate_upload_gate(
         "recording_mtime_ns": stat.st_mtime_ns,
         "expected_frames": expected_frames,
         "observed_first_loop_frames": len(first_loop),
+        "evaluation_first_frame": 1,
+        "evaluated_timed_frames": len(timed_loop),
         "content_fps": float(content_fps),
         "cadence": cadence,
         "maxima": maxima,

@@ -497,8 +497,8 @@ before its post-cold refill poll so newly freed space is visible immediately.
 The final `prebuf_sec` sectors of `HEADER.DAT` hold the first `Bpat`
 Prg-sourced patterns (32 bytes each) of frames 1 onward. Frame 0's patterns are
 in the earlier FRAME 0 region. The prebuffer is loaded into PrgBuf before
-playback and is capped by the fps-derived normal PrgBuf ceiling (384 KiB at
-15fps, 399 KiB at 24fps, or 404 KiB at 30fps), so frame 1 starts armed.
+playback and is capped by the fps-derived normal PrgBuf ceiling (382 KiB at
+15fps, 397 KiB at 24fps, or 402 KiB at 30fps), so frame 1 starts armed.
 
 ## Frame (`fsec` sectors, rate-matched; frames 1..nfr-1)
 
@@ -545,16 +545,20 @@ For the legacy representation, the suffix repeats information already encoded
 by the cold entry flag, source, and tile index. For the completed-list
 representation it is the only physical pattern-delivery description.
 The encoder keeps logical cache residency and cold/reuse decisions separate
-from physical VRAM numbering. One movie-wide slot permutation maps the logical
-allocator onto physical slots, then cold patterns are consumed in ascending
-physical-slot order. This transfer order is intentionally independent of the
-cell/name-update order; the final name entries already contain their physical
-tile indices. The permutation is a bijection, so resident reuse and displayed
-pattern identity are unchanged. A seed pass freezes logical decisions, a
-second pass pays the seed map's exact run-control cost, and the delivered map
-is then derived from those completed decisions. The finalizer replays the
-whole quality budget with the delivered source-aware run counts and rejects a
-map that would make any frozen decision unfunded.
+from physical VRAM numbering. By default, one movie-wide slot permutation maps
+the logical allocator onto physical slots, then cold patterns are consumed in
+ascending physical-slot order. This transfer order is intentionally independent
+of the cell/name-update order; the final name entries already contain their
+physical tile indices. The permutation is a bijection, so resident reuse and
+displayed pattern identity are unchanged. A seed pass freezes logical
+decisions, a second pass pays the seed map's exact run-control cost, and the
+delivered map is then derived from those completed decisions. The finalizer
+replays the whole quality budget with the delivered source-aware run counts and
+rejects a map that would make any frozen decision unfunded. A profile may
+disable this optional permutation; logical numbering then remains the identity
+physical numbering and all map-specific passes disappear. The same cold-run
+suffix, byte accounting, capacity checks, and physical delivery proof still
+apply.
 The first word stores the zero-based VRAM slot in bits 0-10 and DicBuf index
 bits 3-7 in bits 11-15. The second word stores count in bits 0-10, DicBuf index
 bits 0-2 in bits 11-13, and source in bits 14-15. Source values are 0=Prg,

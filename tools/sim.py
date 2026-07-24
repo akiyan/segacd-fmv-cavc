@@ -51,10 +51,12 @@ import analysis_style as analysis_style  # noqa: E402
 import ima_adpcm  # noqa: E402
 import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
+import physical_budget  # noqa: E402
 import raw_prefetch  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
 import sim_pass_cache  # noqa: E402
+import slot_locality_pipeline  # noqa: E402
 import ttrc_routing  # noqa: E402
 import sim_artifact_cache  # noqa: E402
 import tmpfs_workspace  # noqa: E402
@@ -253,13 +255,7 @@ L3_TILES = int(os.environ.get("CBRSIM_L3", "0"))
 NO_PANELS = bool(os.environ.get("CBRSIM_NOPANELS"))   # 計測専用: 解析パネルPNGの書き出しを省く
 _SLOT_LOCALITY_STAGE = os.environ.get(
     "CBRSIM_SLOT_LOCALITY_STAGE", "").strip().lower()
-# Final source-aware minimax placement is cheap next to the full encode but
-# needs enough reweighting rounds to bring every near-cap Sonic frame to the
-# 30-run target.  The broad exact-target predictor keeps the faster default.
-SLOT_LOCALITY_FINAL_ITERATIONS = 160
-SLOT_LOCALITY_HEAVY_RUN_TARGET = 30
-SLOT_LOCALITY_RETRY_EXIT = 75
-SLOT_LOCALITY_MAX_ACCOUNTING_PASSES = 4
+SLOT_LOCALITY_POLICY = slot_locality_pipeline.policy_from_env()
 # PRG-RAM先読みバッファ: 再生前にPRGへ載せた静的タイル集合(pickle set of pattern keys)。
 # ここにあるパターンは再生中いつでもCD 0バイト(RAM→VRAM DMAのみ)で出せる=Fill扱い。
 PRG_PRELOAD_PATH = os.environ.get("CBRSIM_PRG_PRELOAD", "")
@@ -644,63 +640,6 @@ EMIT_DEC = (str(OUT / "decisions.pkl")
             else _EMIT_DEC_ENV)
 
 
-def _source_run_groups(
-        replay, sources_by_frame, *, boot_inline_requests=None):
-    """Partition each cold trace by the physical source that splits runs.
-
-    Prg and Word loads can join only loads from the same source.  DicBuf also
-    requires consecutive dictionary indices, so each Dic load is kept as a
-    conservative singleton for placement; the exact final counter may still
-    merge compatible neighbours afterwards.
-    """
-    if len(sources_by_frame) != len(replay.placements):
-        raise ValueError("pattern-source frame count differs")
-    result = []
-    for frame, (placements, prefetch_slots, raw_sources) in enumerate(zip(
-            replay.placements,
-            replay.prefetch_cold_slots,
-            sources_by_frame)):
-        if len(raw_sources) != len(placements):
-            raise ValueError(
-                f"frame {frame} pattern-source/update count differs")
-        prg = []
-        word = []
-        dic = []
-        for update, ((slot, cold), raw_source) in enumerate(zip(
-                placements, raw_sources)):
-            if not cold:
-                continue
-            source = int(raw_source)
-            if source == pattern_supply.SOURCE_PRG:
-                prg.append(int(slot))
-            elif source == pattern_supply.SOURCE_WR:
-                word.append(int(slot))
-            elif source == pattern_supply.SOURCE_DIC:
-                dic.append((int(slot),))
-            else:
-                raise ValueError(
-                    f"frame {frame} update {update} has invalid source {source}")
-        if frame == 0 and boot_inline_requests is not None:
-            # Frame 0 is an untimed boot construction.  Its staging region can
-            # hold the worst possible descriptor fragmentation, so spending
-            # locality iterations on it can only displace timed-frame gains.
-            result.append(())
-            continue
-        groups = []
-        if prg:
-            groups.append(tuple(prg))
-        # Prefetch payload follows all visible cold payload in the stream.
-        # Count it as its own physically sorted Prg group; merging it into the
-        # visible group would assume a transfer order the packer cannot use.
-        if prefetch_slots:
-            groups.append(tuple(int(slot) for slot in prefetch_slots))
-        if word:
-            groups.append(tuple(word))
-        groups.extend(dic)
-        result.append(tuple(groups))
-    return tuple(result)
-
-
 def _inline_boot_prefetch_slots(
         prefetch_slots, inline_count, physical_by_logical=None):
     """Choose the boot requests carried by frame 0's inline payload.
@@ -718,14 +657,6 @@ def _inline_boot_prefetch_slots(
     mapping = np.asarray(physical_by_logical, np.int64)
     return tuple(sorted(
         slots, key=lambda slot: (int(mapping[slot]), slot))[:count])
-
-
-def _run_accounted_cold_slots(replay, boot_inline_requests):
-    """Exclude all untimed frame-0 writes from the run optimizer."""
-    cold = list(replay.cold_slots)
-    if cold and boot_inline_requests is not None:
-        cold[0] = ()
-    return tuple(cold)
 
 
 def border_weight_mask():
@@ -1446,7 +1377,6 @@ def main():
         TileAllocator,
         cold_transfer_order,
         evaluate_slot_locality,
-        optimize_slot_locality,
         replay_logical_slots,
         remap_placements,
         verify_display_equivalence,
@@ -1613,6 +1543,9 @@ def main():
             if int(frame_seg[i]) != int(frame_seg[i - 1]):
                 upgrade_supply[i] = max(
                     0, int(upgrade_supply[i]) - PAL_WRITE_BYTES)
+    cram_switch_frames = np.zeros(n, bool)
+    if n > 1:
+        cram_switch_frames[1:] = frame_seg[1:] != frame_seg[:-1]
     cached_future = (
         pass_cache_payload.get("future")
         if pass_cache_payload is not None else None)
@@ -1644,12 +1577,15 @@ def main():
             target_rgb = render_cells(Q_pidx[i], Q_assign[i], target_pals)
             if i == 0:
                 main_protected[i] = True
+            elif cram_switch_frames[i]:
+                # A CRAM epoch change invalidates every live name-table
+                # palette reference in the real encoder, even where the
+                # quantized pattern and palette-line number compare equal.
+                # Protect that mandatory full refresh before earlier optional
+                # updates can spend its whole-movie allowance.
+                main_protected[i] = True
             else:
-                if int(frame_seg[i]) == int(frame_seg[i - 1]):
-                    previous_display_rgb = previous_target_rgb
-                else:
-                    previous_display_rgb = render_cells(
-                        Q_pidx[i - 1], Q_assign[i - 1], target_pals)
+                previous_display_rgb = previous_target_rgb
                 target_changed = (
                     np.any(Q_pidx[i] != Q_pidx[i - 1], axis=1)
                     | (Q_assign[i] != Q_assign[i - 1])
@@ -1666,6 +1602,7 @@ def main():
             pattern_bytes=PATTERN_BYTES,
             max_cold=MAX_COLD,
             protected_frames=main_protected,
+            forced_update_frames=cram_switch_frames,
         )
         baseline_prefetch_forecast = raw_prefetch.forecast_requests(
             Q_pidx,
@@ -1709,6 +1646,7 @@ def main():
                 pattern_bytes=PATTERN_BYTES,
                 max_cold=MAX_COLD,
                 protected_frames=main_protected,
+                forced_update_frames=cram_switch_frames,
                 boot_prefetch_requests=boot_prefetch_plan,
             )
             if boot_prefetch_plan else baseline_demand_prediction
@@ -1766,32 +1704,82 @@ def main():
                 f"({cache_path.stat().st_size / 1024**2:.1f} MiB)",
                 flush=True,
             )
+    if np.any(cram_switch_frames):
+        full_name_refresh_bytes = C_CELLS * NAME_BYTES
+        protected_all = np.all(
+            np.asarray(main_protected, bool), axis=1)
+        exact_bytes = np.asarray(
+            demand_prediction.exact_bytes, np.int64)
+        protected_bytes = np.asarray(
+            demand_prediction.protected_bytes, np.int64)
+        missing_cram_reserve = np.flatnonzero(
+            cram_switch_frames
+            & (
+                ~protected_all
+                | (exact_bytes < full_name_refresh_bytes)
+                | (protected_bytes < full_name_refresh_bytes)
+            )
+        )
+        if missing_cram_reserve.size:
+            frame = int(missing_cram_reserve[0])
+            raise AssertionError(
+                f"frame {frame}: CRAM switch lacks mandatory full "
+                f"{full_name_refresh_bytes}B name-table reserve")
     boot_inline_requests = min(
         len(boot_prefetch_plan), boot_inline_capacity)
     boot_sidecar_requests = len(boot_prefetch_plan) - boot_inline_requests
 
+    # Construct one online shared-sector ledger before image decisions.  The
+    # exact control bytes finalized by frame i are known before frame i+1
+    # chooses Prg work, so descriptor savings immediately become next-frame
+    # payload capacity.  Every prefix is sector-rounded separately for control
+    # and payload; the packer later repeats this proof but cannot discover a
+    # different split.
+    predicted_prg_demand = np.maximum(
+        np.asarray(demand_prediction.exact_cold, np.int64)
+        - np.asarray(supply_budget.total, np.int64),
+        0,
+    )
+    maximum_control_blocks = stream_schedule.control_block_lengths(
+        np.full(n, C_CELLS, np.int64),
+        np.full(n, MAX_COLD, np.int64),
+        cells=C_CELLS,
+        audio_frame_bytes=AUDIO_CONTROL_BYTES,
+    )
+    maximum_control_blocks[0] = 0
+    physical_budget_state = physical_budget.SharedSectorPlanner(
+        n,
+        max_prg_patterns=MAX_COLD,
+        max_cold_patterns=MAX_COLD,
+        prebuffer_capacity_patterns=(
+            PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+        frame_sectors=ttrc_routing.FRAME_SECTORS,
+        fps=FPS,
+        ring_capacity_patterns=(
+            PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
+        maximum_control_block_bytes=maximum_control_blocks,
+        fill=av_config.PACK_FORWARD_FILL,
+    )
+    print(
+        "physical budget: one-pass shared-sector prefix ledger; "
+        f"Prg desired={int(predicted_prg_demand.sum())} patterns; "
+        f"per-frame Prg/cold cap={MAX_COLD}; "
+        f"timed route={ttrc_routing.FRAME_SECTORS} useful sectors/slot; "
+        "exact control savings fund the following frame before its decisions",
+        flush=True,
+    )
+
     slot_locality_map = os.environ.get("CBRSIM_SLOT_LOCALITY_MAP", "").strip()
-    if slot_locality_map:
-        slot_locality = evaluate_slot_locality(
-            demand_prediction.cold_slots,
-            VRAM_TILES,
-            np.load(slot_locality_map),
-            cold_cap=MAX_COLD,
-        )
-    elif not PACKED_COLD_RUN_EXECUTION:
-        slot_locality = evaluate_slot_locality(
-            demand_prediction.cold_slots,
-            VRAM_TILES,
-            np.arange(VRAM_TILES, dtype=np.int64),
-            cold_cap=MAX_COLD,
-        )
-    else:
-        slot_locality = optimize_slot_locality(
+    slot_locality, slot_locality_map_kind = (
+        slot_locality_pipeline.select_initial_plan(
+            SLOT_LOCALITY_POLICY,
             demand_prediction.cold_slots,
             VRAM_TILES,
             cold_cap=MAX_COLD,
-            target_heavy_runs=SLOT_LOCALITY_HEAVY_RUN_TARGET,
+            packed_execution=PACKED_COLD_RUN_EXECUTION,
+            loaded_map=slot_locality_map,
         )
+    )
     physical_by_logical = np.asarray(
         slot_locality.physical_by_logical, np.int64)
     predicted_risk = np.asarray(slot_locality.risk_frames, bool)
@@ -1801,9 +1789,10 @@ def main():
         slot_locality.optimized_runs, np.int64)
     print(
         "slot locality: fixed logical->physical bijection; "
+        f"enabled={int(SLOT_LOCALITY_POLICY.enabled)}; "
         f"execution="
         f"{'packed-suffix' if PACKED_COLD_RUN_EXECUTION else 'legacy-entry-order'}; "
-        f"map={'loaded' if slot_locality_map else 'identity' if not PACKED_COLD_RUN_EXECUTION else 'predicted'}; "
+        f"map={slot_locality_map_kind}; "
         f"predicted max runs {int(predicted_baseline_runs[1:].max(initial=0))}"
         f"->{int(predicted_local_runs[1:].max(initial=0))}, "
         f"risk frames={int(predicted_risk.sum())} "
@@ -1826,8 +1815,23 @@ def main():
         demand_prediction.exact_bytes - preload_credit_bytes, 0)
     main_demand = np.maximum(
         demand_prediction.protected_bytes - protected_credit_bytes, 0)
+    mandatory_main_demand = np.where(
+        cram_switch_frames,
+        C_CELLS * NAME_BYTES,
+        0,
+    ).astype(np.int64)
     main_reserve_plan = upgrade_planner.build_balanced_reserve_plan(
-        main_demand, upgrade_supply, QUALITY_BUDGET_BYTES)
+        main_demand,
+        upgrade_supply,
+        QUALITY_BUDGET_BYTES,
+        minimum_demand=mandatory_main_demand,
+    )
+    if np.any(
+        main_reserve_plan.planned_demand[cram_switch_frames]
+        < mandatory_main_demand[cram_switch_frames]
+    ):
+        raise AssertionError(
+            "balanced quality plan diluted a mandatory CRAM refresh")
     # Optional exact upgrades are not required to avoid Miss.  Keep their
     # complete-demand reserve strict: balancing this deliberately infeasible
     # all-exact trace spends too much saved allowance before unpredicted live
@@ -2046,6 +2050,12 @@ def main():
         wr_used = 0
         dic_used = 0
         preload_sources = {}
+        physical_frame_limit = physical_budget_state.begin_frame(i)
+        cold_limit_active = i > 0
+        frame_max_cold = int(physical_frame_limit.cold_patterns)
+        frame_max_prg = int(physical_frame_limit.prg_patterns)
+        frame_control_block_limit = int(
+            physical_frame_limit.control_block_bytes)
 
         def reserved_variable_spend(
             decision_spent=0,
@@ -2057,13 +2067,21 @@ def main():
                 decision_spent
                 + cold_tiles * stream_schedule.RUN_DESCRIPTOR_BYTES)
 
-        def decision_fits(cost, *, extra_cold=0, limit=None):
+        def decision_fits(
+                cost, *, extra_cold=0, extra_updates=1, limit=None):
             if limit is None:
                 limit = decision_budget
-            return reserved_variable_spend(
+            funded = reserved_variable_spend(
                 spent_tiles + cost,
                 cold_spent + extra_cold,
             ) <= limit
+            control = (
+                int(body_fixed_control_bytes[i])
+                + (name_recs + int(extra_updates)) * NAME_BYTES
+                + (cold_spent + int(extra_cold))
+                * stream_schedule.RUN_DESCRIPTOR_BYTES
+            )
+            return funded and control <= frame_control_block_limit
 
         def current_reserved_spend():
             return reserved_variable_spend(spent_tiles, cold_spent)
@@ -2179,10 +2197,7 @@ def main():
             committed_plain[c] = key
             updated[c] = True
 
-        # frame0はDAT冒頭ヘッダで別ロード(リング非消費)なので常にcold上限を免除=全面フルロード。
-        cold_limit_active = i > 0
-        frame_max_cold = MAX_COLD if i > 0 else 0
-        frame_max_prg = MAX_COLD if i > 0 else 0
+        # frame0はHEADER内のboot constructionなのでtimed limitsは0。
 
         def commit_plain(c):
             # Legacy non-unified path: exact resident/L3/preload/cold only.
@@ -2606,6 +2621,7 @@ def main():
                     if not decision_fits(
                             cost,
                             extra_cold=int(not in_vram),
+                            extra_updates=int(not updated[c]),
                             limit=lim):
                         return
                     if ((not in_vram)
@@ -2801,12 +2817,22 @@ def main():
                 (prefetch_spend_limit - current_reserved_spend())
                 // (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES),
             )
+            control_room = max(
+                0,
+                (
+                    frame_control_block_limit
+                    - int(body_fixed_control_bytes[i])
+                    - name_recs * NAME_BYTES
+                    - cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES
+                ) // stream_schedule.RUN_DESCRIPTOR_BYTES,
+            )
             capacity = min(
                 RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
                 request_room,
                 cold_room,
                 prg_room,
                 body_room,
+                control_room,
             )
             if capacity >= RAW_PREFETCH_MIN_BATCH:
                 for deadline in range(i + 1, last_deadline):
@@ -2901,6 +2927,10 @@ def main():
             raise AssertionError(
                 f"frame {i}: source-aware runs={dma_runs} exceed "
                 f"cold tiles={cold_spent}")
+        if i > 0 and dma_tiles > frame_max_cold:
+            raise AssertionError(
+                f"frame {i}: physical cold tiles={dma_tiles} exceed "
+                f"construction limit {frame_max_cold}")
         transfer_tiles_log.append(dma_tiles)
         transfer_runs_log.append(dma_runs)
         supply_sources_log.append(np.asarray(frame_sources, np.uint8))
@@ -2946,6 +2976,18 @@ def main():
             raise AssertionError(
                 f"frame {i}: exact BODY variable work {variable_body_spent}B "
                 f"exceeds incremental run reservation {reserved_body_spent}B")
+        exact_control_block_bytes = (
+            0 if i == 0 else
+            int(body_fixed_control_bytes[i])
+            + name_recs * NAME_BYTES
+            + dma_runs * stream_schedule.RUN_DESCRIPTOR_BYTES
+        )
+        physical_budget_state.commit_frame(
+            i,
+            prg_patterns=prg_used,
+            cold_patterns=dma_tiles,
+            control_block_bytes=exact_control_block_bytes,
+        )
         if QUALITY_BUDGET_ON and i > 0:
             decision_spent = name_recs * NAME_BYTES + prg_used * PATTERN_BYTES
             if spent_tiles != decision_spent:
@@ -3190,7 +3232,7 @@ def main():
     # choose the delivered map.  Recompute every run-dependent artifact from
     # these frozen decisions; cold/reuse membership and displayed pixels stay
     # unchanged.
-    if _SLOT_LOCALITY_STAGE == "final":
+    if SLOT_LOCALITY_POLICY.enabled and _SLOT_LOCALITY_STAGE == "final":
         decision_key_frames = [
             [(int(cell), key) for cell, _palette, key in sorted(frame)]
             for frame in dec_frames
@@ -3205,11 +3247,13 @@ def main():
             raise AssertionError(
                 f"final slot-locality logical replay tore {replay.tearing} patterns")
         accounted_mapping = np.asarray(physical_by_logical, np.int64)
-        run_groups = _source_run_groups(
+        run_groups = slot_locality_pipeline.source_run_groups(
             replay, supply_sources_log,
             boot_inline_requests=boot_inline_requests)
+        accounted_cold_slots = slot_locality_pipeline.accounted_cold_slots(
+            replay, boot_inline_requests)
         accounted_locality = evaluate_slot_locality(
-            _run_accounted_cold_slots(replay, boot_inline_requests),
+            accounted_cold_slots,
             VRAM_TILES,
             accounted_mapping,
             cold_cap=MAX_COLD,
@@ -3225,23 +3269,14 @@ def main():
         if accounted_proof["cold"] != int(np.sum(transfer_tiles_log)):
             raise AssertionError(
                 "accounted slot-locality proof changed the frozen cold total")
-        if PACKED_COLD_RUN_EXECUTION:
-            final_locality = optimize_slot_locality(
-                _run_accounted_cold_slots(replay, boot_inline_requests),
-                VRAM_TILES,
-                cold_cap=MAX_COLD,
-                iterations=SLOT_LOCALITY_FINAL_ITERATIONS,
-                target_heavy_runs=SLOT_LOCALITY_HEAVY_RUN_TARGET,
-                run_groups_by_frame=run_groups,
-            )
-        else:
-            final_locality = evaluate_slot_locality(
-                _run_accounted_cold_slots(replay, boot_inline_requests),
-                VRAM_TILES,
-                np.arange(VRAM_TILES, dtype=np.int64),
-                cold_cap=MAX_COLD,
-                run_groups_by_frame=run_groups,
-            )
+        final_locality = slot_locality_pipeline.select_completed_plan(
+            SLOT_LOCALITY_POLICY,
+            accounted_cold_slots,
+            VRAM_TILES,
+            cold_cap=MAX_COLD,
+            packed_execution=PACKED_COLD_RUN_EXECUTION,
+            run_groups_by_frame=run_groups,
+        )
         final_mapping = np.asarray(
             final_locality.physical_by_logical, np.int64)
         proof = verify_display_equivalence(
@@ -3399,7 +3434,7 @@ def main():
                     f"{accounted_risk_max}->{final_risk_max} runs",
                     flush=True,
                 )
-                raise SystemExit(SLOT_LOCALITY_RETRY_EXIT)
+                raise SystemExit(SLOT_LOCALITY_POLICY.retry_exit)
             print(
                 "slot locality final candidate rejected: "
                 f"{candidate_issue}; retaining the already-accounted "
@@ -3449,6 +3484,60 @@ def main():
         transfer_runs_log = final_runs_array.tolist()
         if QUALITY_BUDGET_ON:
             quality_budget_log = final_quality_budget
+
+    final_control_trace = (
+        np.asarray(body_fixed_control_bytes, np.int64)
+        + np.asarray(name_records_log, np.int64) * NAME_BYTES
+        + np.asarray(transfer_runs_log, np.int64)
+        * stream_schedule.RUN_DESCRIPTOR_BYTES
+    )
+    final_control_trace[0] = 0
+    if not np.array_equal(
+            final_control_trace,
+            physical_budget_state.realized_control):
+        # A separately requested slot-locality finalization may change run
+        # counts after the identity-slot decision loop. Rebuild only its cheap
+        # prefix ledger from the frozen, display-equivalent decisions.
+        replay_budget = physical_budget.SharedSectorPlanner(
+            n,
+            max_prg_patterns=MAX_COLD,
+            max_cold_patterns=MAX_COLD,
+            prebuffer_capacity_patterns=(
+                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+            frame_sectors=ttrc_routing.FRAME_SECTORS,
+            fps=FPS,
+            ring_capacity_patterns=(
+                PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
+            maximum_control_block_bytes=maximum_control_blocks,
+            fill=av_config.PACK_FORWARD_FILL,
+        )
+        for frame_index in range(n):
+            replay_budget.begin_frame(frame_index)
+            replay_budget.commit_frame(
+                frame_index,
+                prg_patterns=int(prg_loads_log[frame_index]),
+                cold_patterns=int(transfer_tiles_log[frame_index]),
+                control_block_bytes=int(final_control_trace[frame_index]),
+            )
+        physical_budget_state = replay_budget
+    physical_budget_plan = physical_budget_state.finish(
+        predicted_prg_demand)
+    physical_prefix = physical_budget.verify_shared_sector_prefix(
+        physical_budget_plan.realized_prg_patterns,
+        physical_budget_plan.realized_control_block_bytes,
+        prebuffer_capacity_patterns=(
+            PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+        frame_sectors=ttrc_routing.FRAME_SECTORS,
+    )
+    print(
+        "physical budget final: shared-sector prefix exact; "
+        f"Prg actual={int(physical_budget_plan.realized_prg_patterns.sum())} "
+        f"patterns; control="
+        f"{int(physical_budget_plan.realized_control_block_bytes.sum())}B; "
+        f"minimum cumulative spare="
+        f"{int(physical_prefix['margin_sectors'][1:].min())} sectors",
+        flush=True,
+    )
 
     # coldlife計測の集計: 先読み減点ヒューリスティックの効果上限。
     with open(os.path.join(OUT, "coldlife.json"), "w") as f:
@@ -3500,11 +3589,42 @@ def main():
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
     )
+    prg_limit_over = np.flatnonzero(
+        np.arange(len(prg_loads)) > 0,
+    )
+    prg_limit_over = prg_limit_over[
+        prg_loads[prg_limit_over]
+        > physical_budget_plan.prg_pattern_limits[prg_limit_over]
+    ]
+    if prg_limit_over.size:
+        frame = int(prg_limit_over[0])
+        raise AssertionError(
+            f"frame {frame}: realized Prg loads {int(prg_loads[frame])} "
+            f"exceed construction limit "
+            f"{int(physical_budget_plan.prg_pattern_limits[frame])}")
+    control_limit_over = np.flatnonzero(
+        (np.arange(len(legacy_lengths)) > 0)
+        & (legacy_lengths > physical_budget_plan.control_block_limits))
+    if control_limit_over.size:
+        frame = int(control_limit_over[0])
+        raise AssertionError(
+            f"frame {frame}: realized control block "
+            f"{int(legacy_lengths[frame])}B exceeds construction limit "
+            f"{int(physical_budget_plan.control_block_limits[frame])}B")
+    cold_limit_over = np.flatnonzero(
+        (np.arange(len(transfer_tiles_log)) > 0)
+        & (np.asarray(transfer_tiles_log, np.int64)
+           > physical_budget_plan.cold_pattern_limits))
+    if cold_limit_over.size:
+        frame = int(cold_limit_over[0])
+        raise AssertionError(
+            f"frame {frame}: realized cold tiles "
+            f"{int(transfer_tiles_log[frame])} exceed construction limit "
+            f"{int(physical_budget_plan.cold_pattern_limits[frame])}")
     try:
-        # Shadow-list selection runs the same exact physical schedule as the
-        # final pack.  Keep it inside the delivery-feedback boundary: its
-        # legacy baseline can be the first place a real payload deadline is
-        # discovered, before ``physical_schedule`` below has been assigned.
+        # Shadow-list selection runs the same exact shared-sector route as the
+        # final pack. Shorter blocks automatically become payload capacity;
+        # the prefix ledger has already proved that such shrinking is safe.
         shadow_plan = stream_schedule.select_shadow_update_lists(
             shadow_cells,
             np.asarray(transfer_runs_log, np.int64),
@@ -3518,6 +3638,7 @@ def main():
             frame_sectors=ttrc_routing.FRAME_SECTORS,
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             fill=av_config.PACK_FORWARD_FILL,
+            control_sector_envelope=None,
         ) if PATTERN_SUPPLY_ON else None
         shadow_list_flags = (
             np.asarray(shadow_plan["selected"], np.bool_)
@@ -3541,6 +3662,13 @@ def main():
             raise AssertionError(
                 f"frame {bad}: encoder BODY accounting {int(fb[bad])}B != "
                 f"exact useful demand {int(exact_body_work[bad])}B")
+        physical_budget.verify_shared_sector_prefix(
+            prg_loads,
+            control_lengths,
+            prebuffer_capacity_patterns=(
+                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+            frame_sectors=ttrc_routing.FRAME_SECTORS,
+        )
         physical_schedule = (
             shadow_plan["schedule"] if shadow_plan is not None
             else stream_schedule.schedule_payload_ring(
@@ -3553,14 +3681,13 @@ def main():
                     PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
                 frame_sectors=ttrc_routing.FRAME_SECTORS,
                 fill=av_config.PACK_FORWARD_FILL,
+                control_sector_envelope=None,
             )
         )
-    except stream_schedule.ScheduleError as exc:
-        raise SystemExit(
-            f"sim: physical PrgBuf schedule failed: {exc}") from exc
-    except ValueError as exc:
-        raise SystemExit(
-            f"sim: physical PrgBuf schedule failed: {exc}") from exc
+    except (stream_schedule.ScheduleError, ValueError) as exc:
+        raise AssertionError(
+            "construction-time physical budget invariant failed after image "
+            f"decisions: {exc}") from exc
     if not physical_schedule["feasible"]:
         raise SystemExit(
             "sim: physical PrgBuf schedule is infeasible "
@@ -3601,10 +3728,12 @@ def main():
         f"body_fixed_control_bytes_per_frame={body_fixed_control_bytes[1:].mean():.1f}",
         f"body_variable_supply_bytes_per_frame={body_variable_supply_bytes[1:].mean():.1f} "
         f"(updates + runs + Prg payload)",
-        f"incremental_run_control_reservation="
-        f"{stream_schedule.RUN_DESCRIPTOR_BYTES}B/cold "
-        f"({MAX_RUN_CONTROL_BYTES}B cap); unused bytes refunded after exact run charge",
-        "physical_delivery_feedback=disabled (schedule failure stops sim)",
+        f"identity_run_control_reservation="
+        f"{stream_schedule.RUN_DESCRIPTOR_BYTES}B/cold while selecting; "
+        "exact run bytes are finalized in-frame",
+        "physical_delivery_plan=one-pass shared-sector prefix ledger; "
+        "exact control savings become the following frame's Prg limit before "
+        "that frame makes image decisions; pack repeats the frozen prefix proof",
         f"PrgBuf_geometry=normal {PRG_BUF_CAP_KB}KiB + "
         f"jitter {PRG_JITTER_HEADROOM_KB}KiB = "
         f"delivery {PRG_DELIVERY_CAP_KB}KiB; "
@@ -3844,26 +3973,18 @@ def main():
             "seg_pals": [np.asarray(p, np.uint8) for p in seg_pals],  # list of (4,15,3)
             "frame_seg": np.asarray(frame_seg, np.int32),
             "frames": dec_frames,                                     # [[(cell,pal,key),...], ...]
-            "slot_locality": {
-                "schema_version": 2,
-                "trace": (
-                    "final_decisions"
-                    if _SLOT_LOCALITY_STAGE == "final"
-                    else "predictive_exact_target"
-                ),
-                "physical_by_logical": np.asarray(
-                    physical_by_logical, np.uint16),
-                "baseline_runs": np.asarray(
-                    predicted_baseline_runs, np.uint16),
-                "optimized_runs": np.asarray(
-                    predicted_local_runs, np.uint16),
-                "risk_frames": np.asarray(
-                    predicted_risk, np.bool_),
-                "player_execution": (
+            "slot_locality": slot_locality_pipeline.decision_record(
+                SLOT_LOCALITY_POLICY,
+                stage=_SLOT_LOCALITY_STAGE,
+                player_execution=(
                     "packed_suffix"
                     if PACKED_COLD_RUN_EXECUTION else "legacy_entry_order"
                 ),
-            },
+                physical_by_logical=physical_by_logical,
+                baseline_runs=predicted_baseline_runs,
+                optimized_runs=predicted_local_runs,
+                risk_frames=predicted_risk,
+            ),
             "pattern_supply": {
                 "schema_version": 2,
                 "enabled": bool(PATTERN_SUPPLY_ON),
@@ -3881,6 +4002,38 @@ def main():
                     "wr1": pattern_supply.WORD_BUF_PATTERNS,
                     "dic": pattern_supply.DIC_BUF_PATTERNS,
                 },
+            },
+            "physical_budget": {
+                "schema_version": 3,
+                "policy": "online-shared-sector-prefix",
+                "planning_passes": int(
+                    physical_budget_plan.planning_passes),
+                "desired_prg_patterns": np.asarray(
+                    physical_budget_plan.desired_prg_patterns, np.uint16),
+                "prg_pattern_limits": np.asarray(
+                    physical_budget_plan.prg_pattern_limits, np.uint16),
+                "shortfall_patterns": np.asarray(
+                    physical_budget_plan.shortfall_patterns, np.uint16),
+                "cold_pattern_limits": np.asarray(
+                    physical_budget_plan.cold_pattern_limits, np.uint16),
+                "control_block_limits": np.asarray(
+                    physical_budget_plan.control_block_limits, np.int64),
+                "cumulative_prg_pattern_limits": np.asarray(
+                    physical_budget_plan.cumulative_prg_pattern_limits,
+                    np.int64),
+                "cumulative_control_byte_limits": np.asarray(
+                    physical_budget_plan.cumulative_control_byte_limits,
+                    np.int64),
+                "cumulative_useful_sector_capacity": np.asarray(
+                    physical_budget_plan.cumulative_useful_sector_capacity,
+                    np.int64),
+                "realized_prg_patterns": np.asarray(
+                    physical_budget_plan.realized_prg_patterns, np.int64),
+                "realized_cold_patterns": np.asarray(
+                    physical_budget_plan.realized_cold_patterns, np.int64),
+                "realized_control_block_bytes": np.asarray(
+                    physical_budget_plan.realized_control_block_bytes,
+                    np.int64),
             },
             "raw_prefetch": {
                 "schema_version": 3,
@@ -4002,86 +4155,8 @@ def main():
     print(f"  {'合計':<22s} {total:8.1f}s  ({total / n * 1000:7.1f} ms/frame  {total / n:8.4f} s/frame)")
 
 
-def _derive_completed_slot_map(decision_log, output_path):
-    """Derive and prove the physical map used by the accounting pass."""
-    import pickle
-    from tile_alloc import (
-        evaluate_slot_locality,
-        optimize_slot_locality,
-        replay_logical_slots,
-        verify_display_equivalence,
-    )
-
-    with Path(decision_log).open("rb") as source:
-        log = pickle.load(source)
-    frames = [
-        [(int(cell), key) for cell, _palette, key in sorted(frame)]
-        for frame in log["frames"]
-    ]
-    prefetch_requests = (log.get("raw_prefetch") or {}).get("requests")
-    replay = replay_logical_slots(
-        frames,
-        int(log["geom"][2]),
-        int(log["vram_tiles"]),
-        prefetch_requests=prefetch_requests,
-    )
-    if replay.tearing:
-        raise AssertionError(
-            f"seed slot-locality replay tore {replay.tearing} patterns")
-    cold_trace = _run_accounted_cold_slots(
-        replay,
-        int((log.get("raw_prefetch") or {}).get(
-            "boot_inline_requests", 0)))
-    run_groups = _source_run_groups(
-        replay, (log.get("pattern_supply") or {}).get("sources", ()),
-        boot_inline_requests=int(
-            (log.get("raw_prefetch") or {}).get(
-                "boot_inline_requests", 0)))
-    if PACKED_COLD_RUN_EXECUTION:
-        plan = optimize_slot_locality(
-            cold_trace,
-            int(log["vram_tiles"]),
-            cold_cap=int(log.get("max_cold", 0)),
-            iterations=SLOT_LOCALITY_FINAL_ITERATIONS,
-            target_heavy_runs=SLOT_LOCALITY_HEAVY_RUN_TARGET,
-            run_groups_by_frame=run_groups,
-        )
-    else:
-        plan = evaluate_slot_locality(
-            cold_trace,
-            int(log["vram_tiles"]),
-            np.arange(int(log["vram_tiles"]), dtype=np.int64),
-            cold_cap=int(log.get("max_cold", 0)),
-            run_groups_by_frame=run_groups,
-        )
-    proof = verify_display_equivalence(
-        frames,
-        int(log["geom"][2]),
-        int(log["vram_tiles"]),
-        plan.physical_by_logical,
-        prefetch_requests=prefetch_requests,
-    )
-    output_path = Path(output_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    np.save(output_path, np.asarray(plan.physical_by_logical, np.uint16))
-    risk = np.asarray(plan.risk_frames, bool)
-    print(
-        "slot locality seed proof: "
-        f"execution="
-        f"{'packed-suffix' if PACKED_COLD_RUN_EXECUTION else 'legacy-entry-order'}; "
-        f"display={proof['frames']}/{len(frames)} exact "
-        f"cold={proof['cold']} tearing={proof['tearing']}; "
-        f"deadline-heavy source-aware runs "
-        f"{int(plan.baseline_runs[risk].max(initial=0))}"
-        f"->{int(plan.optimized_runs[risk].max(initial=0))}",
-        flush=True,
-    )
-
-
 def _run_slot_locality_pipeline():
     """Use one logical seed and bounded slot-map accounting passes."""
-    import subprocess
-
     command = [sys.executable, *_ORIGINAL_ARGV]
     stem = str(os.getpid())
     map_path = Path("tmp") / f"slot_locality_seed_{stem}.npy"
@@ -4105,57 +4180,15 @@ def _run_slot_locality_pipeline():
         common_env["CBRSIM_TMPFS_PREPARED"] = "1"
         common_env["CBRSIM_PASS_CACHE"] = str(cache_path)
         common_env["CBRSIM_PASS_CACHE_INVOCATION"] = cache_lease.entry.name
-
-        seed_env = common_env.copy()
-        seed_env["CBRSIM_SLOT_LOCALITY_STAGE"] = "seed"
-        seed_env["CBRSIM_NOPANELS"] = "1"
-        seed_env.pop("CBRSIM_SLOT_LOCALITY_MAP", None)
-        seed_env.pop("CBRSIM_SLOT_LOCALITY_REUSE", None)
-        print("slot locality seed pass: logical decisions", flush=True)
-        result = subprocess.run(command, env=seed_env, check=False)
-        result.check_returncode()
-
-        # Physical delivery is a proof, not an automatic cold-cap tuning loop.
-        # If it fails, stop this run and report that layer unchanged.
-        _derive_completed_slot_map(EMIT_DEC, map_path)
-        accounting_pass = 1
-        while accounting_pass <= SLOT_LOCALITY_MAX_ACCOUNTING_PASSES:
-            retry_path.unlink(missing_ok=True)
-            final_env = common_env.copy()
-            final_env["CBRSIM_SLOT_LOCALITY_STAGE"] = "final"
-            final_env["CBRSIM_SLOT_LOCALITY_MAP"] = str(map_path.resolve())
-            final_env["CBRSIM_SLOT_LOCALITY_RETRY_MAP"] = str(
-                retry_path.resolve())
-            final_env["CBRSIM_SLOT_LOCALITY_RETRY_ALLOWED"] = (
-                "1" if accounting_pass < SLOT_LOCALITY_MAX_ACCOUNTING_PASSES
-                else "0")
-            final_env["CBRSIM_SLOT_LOCALITY_REUSE"] = "1"
-            print(
-                "slot locality accounting pass "
-                f"{accounting_pass}/{SLOT_LOCALITY_MAX_ACCOUNTING_PASSES}: "
-                "pay frozen map, then validate completed decisions",
-                flush=True,
-            )
-            result = subprocess.run(command, env=final_env, check=False)
-            if result.returncode == 0:
-                break
-            if result.returncode != SLOT_LOCALITY_RETRY_EXIT:
-                result.check_returncode()
-            if not retry_path.is_file():
-                raise SystemExit(
-                    "slot-locality accounting requested a retry without a map")
-            current = np.load(map_path)
-            retry = np.load(retry_path)
-            if np.array_equal(current, retry):
-                raise SystemExit(
-                    "slot-locality accounting cannot progress: retry map "
-                    "equals the current map")
-            retry_path.replace(map_path)
-            accounting_pass += 1
-        else:
-            raise SystemExit(
-                "slot-locality accounting did not converge within "
-                f"{SLOT_LOCALITY_MAX_ACCOUNTING_PASSES} passes")
+        slot_locality_pipeline.run_accounting_passes(
+            command,
+            common_env,
+            policy=SLOT_LOCALITY_POLICY,
+            decision_log=EMIT_DEC,
+            map_path=map_path,
+            retry_path=retry_path,
+            packed_execution=PACKED_COLD_RUN_EXECUTION,
+        )
         completed = True
     finally:
         map_path.unlink(missing_ok=True)
@@ -4325,12 +4358,13 @@ def _mark_sim_tmpfs_complete(lease):
 
 
 if __name__ == "__main__":
-    locality_disabled = os.environ.get(
-        "CBRSIM_SLOT_LOCALITY_PASSES", "1").strip().lower() in {
-            "", "0", "false", "no", "off",
-        }
-    if (_SLOT_LOCALITY_STAGE or locality_disabled or not EMIT_DEC
-            or os.environ.get("CBRSIM_SLOT_LOCALITY_MAP", "").strip()):
+    _loaded_slot_map = os.environ.get(
+        "CBRSIM_SLOT_LOCALITY_MAP", "").strip()
+    if not slot_locality_pipeline.requires_multi_pass(
+            SLOT_LOCALITY_POLICY,
+            stage=_SLOT_LOCALITY_STAGE,
+            emit_decisions=EMIT_DEC,
+            loaded_map=_loaded_slot_map):
         _standalone_lease = _activate_sim_tmpfs()
         _standalone_completed = False
         try:

@@ -38,6 +38,7 @@ import av_config
 import ima_adpcm
 import player_constants
 import pattern_supply
+import physical_budget
 import shadow_updates
 import stream_schedule
 import ttrc_routing
@@ -255,8 +256,12 @@ def resolve(log, POOL, mode="lru"):
     if locality_schema not in (0, 1, 2):
         raise SystemExit(
             f"pack: unsupported slot-locality schema {locality_schema}")
+    locality_enabled = bool(locality.get("enabled", True))
     physical_by_logical = validate_physical_slots(
-        locality.get("physical_by_logical", np.arange(POOL)), POOL)
+        locality.get("physical_by_logical", np.arange(POOL))
+        if locality_enabled else np.arange(POOL),
+        POOL,
+    )
     per = []
     transfer_orders = []
     n_load = np.zeros(nfr, np.int64)
@@ -345,7 +350,9 @@ def resolve(log, POOL, mode="lru"):
         if frozen_cold.shape != actual_cold.shape or not np.array_equal(
                 frozen_cold, actual_cold):
             raise SystemExit("pack: raw-prefetch cold trace differs from simulation")
-    print(f"  slot-locality display照合: {nfr}/{nfr} frames exact")
+    print(
+        f"  physical-slot display照合: {nfr}/{nfr} frames exact "
+        f"(slot-locality={'on' if locality_enabled else 'off/identity'})")
     return (
         per, prefetch_per, tuple(transfer_orders), n_load, n_upd, pal_w,
         Plist, alloc.tearing)
@@ -871,8 +878,8 @@ def rate_match_fsec(n_pay_sec, n_ctrl_sec):
         raise SystemExit(f"pack: {exc}") from exc
 
 
-def schedule(per, n_load, blocks):
-    """Schedule control JIT and rate-shaped payload prefetch sectors."""
+def schedule(per, n_load, blocks, *, control_sector_envelope=None):
+    """Materialize the already-funded control and payload sector route."""
     blk_len = np.array([len(b) for b in blocks], np.int64)
     if len(per) != len(n_load) or len(per) != len(blocks):
         raise SystemExit("pack: schedule inputs have different frame counts")
@@ -885,6 +892,7 @@ def schedule(per, n_load, blocks):
             prebuffer_capacity_patterns=RING_CAP_PAT,
             frame_sectors=FRAME_SECTORS,
             fill=PACK_FILL,
+            control_sector_envelope=control_sector_envelope,
         )
     except (ValueError, stream_schedule.ScheduleError) as exc:
         raise SystemExit(f"pack: {exc}") from exc
@@ -1560,7 +1568,113 @@ def main():
         f"  shadow updates: list={int(update_lists.sum())}/{len(update_lists)} "
         f"Main saved={int(((recomputed_legacy - recomputed_list) * update_lists).sum())} cycles "
         f"control delta={sum(len(block) for block in blocks) - int(stream_schedule.control_block_lengths(n_upd, packed_runs, cells=C_CELLS, audio_frame_bytes=AUDIO_CONTROL).sum())}B")
-    sc = schedule(per, supply_plan.prg_loads, blocks)
+    frozen_physical_budget = log.get("physical_budget") or {}
+    frozen_control_envelope = None
+    if frozen_physical_budget:
+        physical_budget_schema = int(
+            frozen_physical_budget.get("schema_version", 0))
+        if physical_budget_schema not in (1, 2, 3):
+            raise SystemExit(
+                "pack: unsupported physical-budget schema "
+                f"{frozen_physical_budget.get('schema_version')!r}")
+        if physical_budget_schema < 3:
+            frozen_control_envelope = np.asarray(
+                frozen_physical_budget.get("control_sectors", ()), np.int64)
+            if frozen_control_envelope.shape != (len(per),):
+                raise SystemExit(
+                    "pack: physical control-sector envelope length differs")
+        frozen_prg_limits = np.asarray(
+            frozen_physical_budget.get("prg_pattern_limits", ()), np.int64)
+        if frozen_prg_limits.shape != (len(per),):
+            raise SystemExit(
+                "pack: physical Prg limit length differs")
+        packed_prg = np.asarray(supply_plan.prg_loads, np.int64)
+        prg_over = np.flatnonzero(
+            (np.arange(len(packed_prg)) > 0)
+            & (packed_prg > frozen_prg_limits))
+        if prg_over.size:
+            frame = int(prg_over[0])
+            raise AssertionError(
+                f"pack: frame {frame} Prg loads exceed the construction "
+                "limit frozen by sim")
+        if physical_budget_schema >= 2:
+            frozen_cold_limits = np.asarray(
+                frozen_physical_budget.get("cold_pattern_limits", ()),
+                np.int64,
+            )
+            if frozen_cold_limits.shape != packed_tiles.shape:
+                raise SystemExit(
+                    "pack: physical cold-limit length differs")
+            cold_over = np.flatnonzero(
+                (np.arange(len(packed_tiles)) > 0)
+                & (packed_tiles > frozen_cold_limits))
+            if cold_over.size:
+                frame = int(cold_over[0])
+                raise AssertionError(
+                    f"pack: frame {frame} cold tiles exceed the "
+                    "construction limit frozen by sim")
+        frozen_block_limits = np.asarray(
+            frozen_physical_budget.get("control_block_limits", ()), np.int64)
+        actual_block_lengths = np.asarray(
+            [len(block) for block in blocks], np.int64)
+        if frozen_block_limits.shape != actual_block_lengths.shape:
+            raise SystemExit(
+                "pack: physical control-block limit length differs")
+        control_over = np.flatnonzero(
+            (np.arange(len(actual_block_lengths)) > 0)
+            & (actual_block_lengths > frozen_block_limits))
+        if control_over.size:
+            frame = int(control_over[0])
+            raise AssertionError(
+                f"pack: frame {frame} control block exceeds the construction "
+                "limit frozen by sim")
+        if physical_budget_schema >= 3:
+            physical_budget.verify_shared_sector_prefix(
+                packed_prg,
+                actual_block_lengths,
+                prebuffer_capacity_patterns=RING_CAP_PAT,
+                frame_sectors=FRAME_SECTORS,
+            )
+            frozen_prg = np.asarray(
+                frozen_physical_budget.get("realized_prg_patterns", ()),
+                np.int64,
+            )
+            frozen_cold = np.asarray(
+                frozen_physical_budget.get("realized_cold_patterns", ()),
+                np.int64,
+            )
+            timed_packed_prg = physical_budget.timed_body_trace(
+                packed_prg, name="packed Prg trace")
+            timed_packed_cold = physical_budget.timed_body_trace(
+                packed_tiles, name="packed cold trace")
+            if (
+                frozen_prg.shape != timed_packed_prg.shape
+                or not np.array_equal(
+                    physical_budget.timed_body_trace(
+                        frozen_prg, name="frozen Prg trace"),
+                    timed_packed_prg,
+                )
+            ):
+                raise SystemExit(
+                    "pack: shared-sector realized Prg trace differs from sim")
+            if (
+                frozen_cold.shape != timed_packed_cold.shape
+                or not np.array_equal(
+                    physical_budget.timed_body_trace(
+                        frozen_cold, name="frozen cold trace"),
+                    timed_packed_cold,
+                )
+            ):
+                raise SystemExit(
+                    "pack: shared-sector realized cold trace differs from sim")
+            print(
+                "  shared-sector prefix照合: control/payload deadlines exact")
+    sc = schedule(
+        per,
+        supply_plan.prg_loads,
+        blocks,
+        control_sector_envelope=frozen_control_envelope,
+    )
     if supply_plan.enabled and log.get("pattern_supply") is None:
         frozen_lengths = np.asarray(
             (log.get("stream_schedule") or {}).get("block_lengths", ()), np.int64)

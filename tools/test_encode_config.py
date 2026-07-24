@@ -175,6 +175,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         # raises the encoder ceiling to the cap-480 result.
         self.assertEqual(av_config.baseline_cold_cap_for_fps(15), 360)
         self.assertEqual(env["CBRSIM_COLD_CAP"], "480")
+        self.assertEqual(env["CBRSIM_SLOT_LOCALITY"], "0")
 
     def test_machi_ed_uses_full_h40_grid_and_profile_cap_380(self) -> None:
         root = Path(__file__).resolve().parents[1]
@@ -210,6 +211,28 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_SEGPAL"], "1")
         self.assertEqual(env["CBRSIM_NEAR"], "1")
         self.assertEqual(env["CBRSIM_BOOT_VRAM_PREFETCH"], "1")
+        self.assertEqual(env["CBRSIM_SLOT_LOCALITY"], "0")
+
+    def test_profile_can_enable_slot_locality(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "slot-locality-on.toml"
+            path.write_text(PROFILE.replace(
+                "[palette]",
+                "[encoder]\nslot_locality = true\n\n[palette]"))
+            env = apply_profile_env(load_profile(path), {
+                "CBRSIM_SLOT_LOCALITY": "0",
+            })
+        self.assertEqual(env["CBRSIM_SLOT_LOCALITY"], "1")
+
+    def test_profile_slot_locality_must_be_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "invalid-slot-locality.toml"
+            path.write_text(PROFILE.replace(
+                "[palette]",
+                "[encoder]\nslot_locality = \"off\"\n\n[palette]"))
+            with self.assertRaisesRegex(
+                    ValueError, "slot_locality must be a boolean"):
+                load_profile(path)
 
     def test_profile_cold_cap_may_raise_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

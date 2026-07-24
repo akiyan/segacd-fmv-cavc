@@ -80,7 +80,8 @@ Keep these parts in every image:
   cold-run count versus the fixed effective cold cap; and useful BODY delivery split into Raw payload, Prg
   charge, and control versus physical slot bytes. Raw is the bottom Band
   segment, matching its leftmost position in the status bar. State above the
-  timeline that automatic local Prg/cold cap feedback is disabled.
+  timeline that Prg limits are constructed from the physical sector envelope
+  before image decisions and that no reactive local-cap feedback is used.
   Keep the Req row at the fixed 347 px height; this is also the upper panel
   height used by `/mixline`.
   Keep Supply at 60 px and RUN and Band at 32 px so these secondary rows do

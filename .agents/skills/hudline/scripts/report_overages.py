@@ -119,28 +119,48 @@ def load_gate(path: Path) -> dict:
     for key in GATE_COLUMNS:
         if key not in gate["limits"] or key not in gate["maxima"]:
             raise SystemExit(f"gate JSON lacks {key} limit or maximum")
+    status = gate.get("status", "PASS" if gate.get("pass", False) else "FAIL")
+    if status not in {"PASS", "WARNING", "FAIL"}:
+        raise SystemExit(f"invalid gate status: {status!r}")
+    gate["status"] = status
     return gate
 
 
 def validate(rows: list[dict[str, str]], gate: dict) -> None:
     frames = len(rows)
-    if int(gate["expected_frames"]) != frames:
-        raise SystemExit("gate expected_frames does not match HUD TSV")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit("gate observed_first_loop_frames does not match HUD TSV")
+    expected = int(gate["expected_frames"])
+    if expected != frames:
+        incomplete_failure = (
+            gate["status"] == "FAIL"
+            and frames < expected
+            and any(
+                "first loop is incomplete" in str(message)
+                for message in gate.get("failures", ())
+            )
+        )
+        if not incomplete_failure:
+            raise SystemExit(
+                f"gate expected {expected} frames, TSV has {frames}")
     for field, column in GATE_COLUMNS.items():
-        actual = max(as_int(row, column) for row in rows)
+        actual = max(
+            (as_int(row, column) for row in rows[1:]),
+            default=0,
+        )
         if actual != int(gate["maxima"][field]):
             raise SystemExit(
                 f"gate {field} maximum {gate['maxima'][field]} "
                 f"does not match TSV maximum {actual}"
             )
+    if int(gate.get("evaluation_first_frame", 1)) != 1:
+        raise SystemExit("HUD gate must exclude untimed frame 0")
 
 
 def displayed_vblanks(rows: list[dict[str, str]]) -> list[int | None]:
     starts = [as_int(row, "capture_first") for row in rows]
     values: list[int | None] = [None] * len(rows)
-    for index in range(len(rows) - 1):
+    for index in range(1, len(rows) - 1):
         span = starts[index + 1] - starts[index]
         if span <= 0:
             raise SystemExit("capture_first must increase between content frames")
@@ -168,7 +188,8 @@ def gate_overage_events(
         if int(gate["maxima"][field]) <= limit:
             continue
         previous: int | None = None
-        for index, row in enumerate(rows):
+        previous = as_int(rows[0], column)
+        for index, row in enumerate(rows[1:], start=1):
             value = as_int(row, column)
             over = value > limit
             changed = previous is None or value != previous
@@ -213,6 +234,16 @@ def render_markdown(
         if column in fields
     ]
     summary = []
+    summary.append(
+        "Frame 0 is untimed boot staging and is excluded from every metric, "
+        "gate, scale, and VBLANK statistic."
+    )
+    expected_frames = int(gate["expected_frames"])
+    if expected_frames != len(rows):
+        summary.append(
+            f"Incomplete failed first loop: observed {len(rows)} / "
+            f"expected {expected_frames} frames."
+        )
     if normal_vblanks is None:
         summary.append(
             f"VBLANK warning rule: deferred for "
@@ -280,7 +311,7 @@ def render_markdown(
     lines.append("")
     lines.append(
         "VBLANK is derived from the next frame's capture start; "
-        "the terminal hold is not reported."
+        "frame 0 and the terminal hold are not reported."
     )
     return "\n".join(lines) + "\n"
 

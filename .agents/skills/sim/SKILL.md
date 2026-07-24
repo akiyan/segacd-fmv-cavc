@@ -55,13 +55,18 @@ Other fixed defaults:
 - PrgBuf and offline quality-budget ceilings come from `tools/av_config.py`.
   WordBuf0, WordBuf1, and DicBuf capacities come from
   `tools/pattern_supply.py`; none are normal per-source overrides.
-- BODY supply follows SEGA-CD 1x's exact integer sector cadence. Fixed control
-  data is reserved first; update entries, run descriptors, and Prg pattern
-  payload share the remainder. Because run fragmentation is known only after
-  allocation, the decision pass protects one worst-case four-byte descriptor
-  as each cold tile is selected. It refunds the difference immediately after
-  the exact run count is known. It is not a per-source bitrate setting or a
-  permanent rate reduction.
+- BODY supply follows SEGA-CD 1x's exact integer sector cadence. Before each
+  frame makes image decisions, the shared-sector planner rounds the exact
+  control bytes finalized through the preceding frame and returns every unused
+  cumulative sector to the current Prg deadline. The current frame also gets a
+  strict control-byte ceiling. Its exact run bytes are committed in-frame and
+  affect the next frame before that frame starts. Sim and pack independently
+  verify every cumulative control/payload deadline; there is no post-encode
+  sector reclaim or retry. This is not a per-source bitrate setting.
+- Every CRAM segment switch reserves a full name-table refresh in both future
+  demand traces before earlier optional image updates may spend that quality
+  allowance. Its name-table bytes are a hard floor that balanced shortage may
+  not dilute. Palette bytes themselves remain boot-preloaded.
 - GPU encoding is on by default. CPU is the fallback.
 - Start sim/render with the locked GPU environment. Do not fall back to a
   system Python or an older venv:
@@ -180,10 +185,12 @@ After completion:
   jitter / scheduled delivery is 382/40/422 KiB at 15fps,
   397/25/422 KiB at 24fps, or 402/20/422 KiB at 30fps. The physical ring
   remains 428 KiB and player pump back-pressure remains 424 KiB.
-- Physical delivery failure is terminal for that sim. Do not lower the cold
-  cap, synthesize local per-frame caps, or repeat allocation in response.
-  Report the exact failing frame/resource so the user can choose the next
-  non-cap investigation.
+- Confirm that the construction log identifies the one-pass shared-sector
+  prefix ledger, and that the final line reports exact Prg/control totals plus
+  a non-negative minimum cumulative spare-sector count. Final sim and pack
+  scheduling are invariant checks on that frozen prefix proof. A failure there
+  is a pipeline bug; do not lower the cold cap or repeat the encode with a
+  session-local adjustment.
 - Check the completion line: `starved_frames=N (X%)`.
 - Check `body_useful_bps`, the mean useful BODY delivery rate shown by Band.
   It is weighted by total physical BODY read time, and each slot must remain at
