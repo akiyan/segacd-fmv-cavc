@@ -20,8 +20,9 @@ recordings.
   that stream.
 - `verify_slot_locality.py` — replays the shared logical allocator, applies
   the frozen logical-to-physical VRAM slot permutation, and models every cold
-  transfer and displayed cell. It proves that the permutation changes neither
-  cold/reuse decisions nor displayed patterns. The source-aware optimizer
+  transfer and displayed cell. A disabled decision log uses identity physical
+  numbering. It proves that a permutation changes neither cold/reuse decisions
+  nor displayed patterns. The source-aware optimizer
   protects every frame at 85% or more of the measured cold cap and includes
   Prg/Wr/Dic boundaries in its minimax run target. The report deliberately
   treats total run count as informational: the optimizer may add runs to light

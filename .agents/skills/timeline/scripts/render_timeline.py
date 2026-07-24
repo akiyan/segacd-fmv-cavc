@@ -216,7 +216,7 @@ def code_settings(
         stored_run_bytes = int(np.asarray(
             buffer.get("run_descriptor_bytes", run_bytes)).item())
         run_accounting = (
-            f"selection {stored_run_bytes}B/cold then refund"
+            f"fixed envelope {stored_run_bytes}B/cold; unused stays pad"
             if run_worst_case else
             f"exact late {stored_run_bytes}B/source-aware-run, "
             f"solvency/cold={run_solvency}"
@@ -238,7 +238,7 @@ def code_settings(
         run_solvency = literal_value(
             sim_text, "RUN_SOLVENCY_WORST_CASE", "False")
         run_accounting = (
-            f"selection {run_bytes}B/cold then refund"
+            f"fixed envelope {run_bytes}B/cold; unused stays pad"
             if run_worst_case == "True" else
             f"exact late {run_bytes}B/source-aware-run, "
             f"solvency/cold={run_solvency}"
@@ -312,10 +312,10 @@ def fmt_frame(frame_index: int, frames: int) -> str:
 
 
 def prg_cap_summary(measured_cap: int) -> str:
-    """Describe the fixed cap now that delivery feedback is not applied."""
+    """Describe the fixed cold cap and construction-time physical planning."""
     return (
-        f"Cold cap fixed at {measured_cap}; automatic local Prg/cold cap "
-        "feedback is disabled")
+        f"Cold cap fixed at {measured_cap}; Prg limits are constructed from "
+        "the sector envelope before image decisions; no reactive feedback")
 
 
 def true_run_lengths(mask: np.ndarray) -> np.ndarray:
@@ -388,7 +388,7 @@ def summarize(
     useful = take("body_useful_bytes").sum()
     pad = take("body_pad_bytes").sum()
     body_bps = useful * 153600.0 / physical if physical else 0.0
-    refund = np.maximum(cold - runs, 0) * 4
+    unused_run_envelope = np.maximum(cold - runs, 0) * 4
     prefix = (
         f"{label} f{int(selection[0])}-{int(selection[-1])} ({frames} frames)"
     )
@@ -407,10 +407,11 @@ def summarize(
         "Cold total/avg/max %s / %.1f / %.0f; Run total/avg/max %s / %.1f / %.0f" % (
             fmt_int(cold.sum()), cold.mean(), cold.max(), fmt_int(runs.sum()),
             runs.mean(), runs.max()),
-        "Prg exact total/avg %s / %.1f tiles (%s MiB); run consolidation vs 1/cold avg/p95 %.0f/%.0f B" % (
+        "Prg exact total/avg %s / %.1f tiles (%s MiB); unused 1/cold control envelope avg/p95 %.0f/%.0f B" % (
             fmt_int(prg_load.sum()), prg_load.mean(),
-            f"{prg_load.sum() * 32 / 1048576:.2f}", refund.mean(),
-            np.percentile(refund, 95)),
+            f"{prg_load.sum() * 32 / 1048576:.2f}",
+            unused_run_envelope.mean(),
+            np.percentile(unused_run_envelope, 95)),
         "BODY useful %.1f KiB/s; useful/pad %s/%s bytes (pad %.1f%%)" % (
             body_bps / 1024.0, fmt_int(useful), fmt_int(pad),
             100.0 * pad / physical if physical else 0.0),
@@ -460,7 +461,8 @@ def metadata_lines(
     run_max = fmt_int(run_trace[1:].max(initial=0)) if run_trace.size else "?"
     delivery_summary = (
         "Physical Prg delivery: normal=%s KiB + jitter=%s KiB; "
-        "limit=%s KiB; ring=%s KiB; local-cap feedback=disabled" % (
+        "limit=%s KiB; ring=%s KiB; construction-time limits, "
+        "no reactive feedback" % (
             hardware.get("prg_buf_kb", "?"),
             hardware.get("prg_jitter_headroom_kb", "?"),
             hardware.get("prg_delivery_cap_kb", "?"),

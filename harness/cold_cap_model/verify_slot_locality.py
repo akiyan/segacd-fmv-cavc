@@ -54,7 +54,11 @@ def main() -> None:
             f"logical replay tore {replay.tearing} displayed patterns")
     trace = replay.cold_slots
     locality = log.get("slot_locality") or {}
-    if int(locality.get("schema_version", 0)) in (1, 2):
+    locality_enabled = bool(locality.get("enabled", True))
+    if not locality_enabled:
+        physical_by_logical = np.arange(pool, dtype=np.int64)
+        stored = True
+    elif int(locality.get("schema_version", 0)) in (1, 2):
         physical_by_logical = validate_physical_slots(
             locality["physical_by_logical"], pool)
         stored = True
@@ -90,7 +94,7 @@ def main() -> None:
     cap = args.cold_cap or int(log.get("max_cold", 0)) or int(cold[1:].max())
     risk = cold >= int(np.ceil(cap * 0.85))
     risk[0] = False
-    if int(locality.get("schema_version", 0)) >= 2:
+    if locality_enabled and int(locality.get("schema_version", 0)) >= 2:
         source_baseline = np.asarray(
             locality.get("baseline_runs", ()), np.int64)
         source_optimized = np.asarray(
@@ -101,7 +105,11 @@ def main() -> None:
     else:
         source_baseline = baseline_runs
         source_optimized = optimized_runs
-    print(f"map={'stored' if stored else 'derived'} pool={pool}")
+    map_kind = (
+        "identity-disabled" if not locality_enabled
+        else "stored" if stored else "derived"
+    )
+    print(f"map={map_kind} pool={pool}")
     print(
         f"display={proof['frames']}/{len(frames)} exact "
         f"cold={proof['cold']} tearing={proof['tearing']}")

@@ -152,12 +152,22 @@ def validate(
     gate: dict,
 ) -> None:
     frames = len(rows)
-    if int(gate["expected_frames"]) != frames:
-        raise SystemExit(
-            f"gate expected {gate['expected_frames']} frames, TSV has {frames}")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit(
             "gate observed_first_loop_frames does not match the HUD TSV")
+    expected = int(gate["expected_frames"])
+    if expected != frames:
+        incomplete_failure = (
+            gate["status"] == "FAIL"
+            and frames < expected
+            and any(
+                "first loop is incomplete" in str(message)
+                for message in gate.get("failures", ())
+            )
+        )
+        if not incomplete_failure:
+            raise SystemExit(
+                f"gate expected {expected} frames, TSV has {frames}")
     for gate_key, column in GATE_COLUMN.items():
         actual = int(round(float(data[column].max(initial=0))))
         recorded = int(gate["maxima"][gate_key])

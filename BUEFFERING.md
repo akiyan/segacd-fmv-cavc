@@ -11,7 +11,7 @@ Use these names for physical pattern storage:
 
 | Public name | Analysis label | Memory | Capacity | Lifetime |
 |---|---|---|---:|---|
-| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 12,416 patterns / 388 KiB usable | Streamed circular buffer; refilled from `BODY.DAT`. |
+| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | cadence-specific: 12,224 / 12,704 / 12,864 patterns at 15 / 24 / 30fps (382 / 397 / 402 KiB) | Streamed circular buffer; refilled from `BODY.DAT`. |
 | `WordBuf0` | `Wr0` | physical 1M Word-RAM bank 0 | 880 patterns / 27.5 KiB | Loaded once from `HEADER.DAT`, then drained by eligible even frames. |
 | `WordBuf1` | `Wr1` | physical 1M Word-RAM bank 1 | 880 patterns / 27.5 KiB | Loaded once from `HEADER.DAT`, then drained by eligible odd frames. |
 | `DicBuf` | `Dic` | Main RAM | 256 patterns / 8 KiB | Staged through Word RAM at boot, copied once to Main RAM, then reused by 8-bit index. |
@@ -38,10 +38,10 @@ The design has one offline planning layer and four physical supplies:
 | `PrgBuf` / `WordBuf0` / `WordBuf1` / `DicBuf` | player memory | Hold the exact pattern bytes that the chosen updates use. |
 
 The quality budget is accounting, not a fifth player buffer. Its trace is kept
-for diagnostics but is not shown as a physical-supply meter. Its 388 KiB
-ceiling matches the usable `PrgBuf` scheduling ceiling so the encoder cannot
-assume more time-shifting freedom than the stream can provide. Equal ceilings
-do not make the two traces interchangeable.
+for diagnostics but is not shown as a physical-supply meter. Its
+cadence-specific ceiling matches the usable `PrgBuf` scheduling ceiling so the
+encoder cannot assume more time-shifting freedom than the stream can provide.
+Equal ceilings do not make the two traces interchangeable.
 
 ## Objective
 
@@ -71,12 +71,18 @@ per-frame decisions:
    remaining risky bursts.
 6. Subtract only the saved 32-byte pattern payload from the future demand. A
    preloaded exact tile still needs its 2-byte name-table entry.
-7. Walk the adjusted demand backwards to build the complete-exact and
+7. Reserve a conservative physical control route: the maximum bitmap update
+   list plus one four-byte run descriptor per permitted cold pattern.
+8. Project predicted residual Prg demand onto the payload sectors left by that
+   route, using the real cadence-specific prebuffer capacity. This freezes the
+   per-frame Prg limits before image decisions.
+9. Walk the adjusted quality demand backwards to build the complete-exact and
    Miss-risk reserve curves.
-8. Run the normal encoder pass. It consumes boot-preload credits only for cold
-   patterns that are actually selected.
-9. Freeze one physical source for every update in the decision log.
-10. Pack and independently replay that frozen assignment. No later stage is
+10. Run the normal encoder pass. It consumes boot-preload credits only for cold
+    patterns that are actually selected and may not exceed the pre-proven Prg
+    limits or control envelope.
+11. Freeze one physical source for every update in the decision log.
+12. Pack and independently replay that frozen assignment. No later stage is
     allowed to invent a different source choice.
 
 The previous occupancy-percentage lanes, recovery holdback, and terminal drain
@@ -237,21 +243,25 @@ does not need that correction. One- and two-tile runs retain the direct-CPU
 fast path; longer runs use bounded VBlank DMA. Source changes split runs even
 when VRAM slots are consecutive.
 
-## Physical PrgBuf scheduling remains independent
+## Physical PrgBuf scheduling is a construction constraint
 
-Only `Prg` loads consume the timed payload stream. After final decisions are
-known:
+Only `Prg` loads consume the timed payload stream. Before final image
+decisions:
 
-1. `stream_schedule.py` schedules control and Prg payload in whole CD sectors.
-2. It applies the boot prebuffer, routing table, CD cadence, usable `PrgBuf`
-   capacity, and rate padding.
-3. `pack_stream.py --verify` replays every delivery and consumption event.
-4. The packed stream is accepted only when decoded cells match the sim and
-   `PrgBuf` neither under-runs nor exceeds its scheduling ceiling.
+1. `physical_budget.py` fixes a worst-run control-sector envelope.
+2. It projects predicted Prg demand into the remaining payload sectors with
+   the boot prebuffer, CD cadence, and one-frame readiness margin.
+3. The final encoder may only reduce the planned Prg and control demand.
+4. `stream_schedule.py` materializes the frozen sector route. Shorter control
+   data leaves zero pad rather than moving sector boundaries.
+5. `pack_stream.py --verify` replays every delivery and consumption event and
+   requires exact equality with the sim.
 
-The underlying PRG-RAM allocation is a 428 KiB circular buffer. Only 388 KiB
-is scheduled; the remaining 40 KiB is delivery-jitter and frame-0 staging
-headroom, not a fifth supply and not free feature memory.
+The underlying PRG-RAM allocation is a 428 KiB circular buffer. Normal
+prebuffer capacity is 382/397/402 KiB at 15/24/30 fps, and timed delivery may
+use the cadence-scaled jitter interval up to 422 KiB. The remaining guard stays
+below player back-pressure; none of it is a fifth supply or free feature
+memory.
 
 ## Analysis display
 
@@ -325,6 +335,8 @@ routine runs; it no longer applies waveform thresholds.
 
 - `tools/upgrade_planner.py`: exact/protected prediction, backwards reserve,
   and spending limit.
+- `tools/physical_budget.py`: construction-time control-sector envelope and
+  physically feasible per-frame Prg limits.
 - `tools/pattern_supply.py`: capacities, water-fill allocation, frozen source
   validation, and physical stream materialization.
 - `tools/sim.py`: demand construction, final source assignment, diagnostics,

@@ -11,6 +11,18 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e118: Keep the construction-time control-sector envelope as payload
+#         reservation, but route only the final just-in-time control sectors.
+#         Unused reservation becomes pad instead of pulling future control
+#         blocks into the finite APPLY ring.
+#   e117: Construct a conservative physical BODY/PrgBuf envelope before image
+#         decisions. Reserve worst-case identity-slot run control sectors,
+#         project predicted Prg demand into the remaining sector route, and
+#         freeze that route so later stages can only shrink proven work.
+#   e116: Make the movie-wide physical slot-locality permutation a profile
+#         switch and isolate its seed/map/accounting orchestration in one
+#         module. The disabled path uses identity VRAM slots in one sim pass
+#         while retaining cold-run descriptors and exact physical scheduling.
 #   e115: Apply a newly trained CRAM palette on the frame after the selected
 #         dark/uniform transition frame. This lets the transition display once
 #         under the old CRAM and removes Machi OP H40/15 frame 0x03DB's
@@ -797,5 +809,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260724
-e=115
+e=118
 p=90

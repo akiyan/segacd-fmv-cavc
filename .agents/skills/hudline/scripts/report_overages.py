@@ -119,15 +119,30 @@ def load_gate(path: Path) -> dict:
     for key in GATE_COLUMNS:
         if key not in gate["limits"] or key not in gate["maxima"]:
             raise SystemExit(f"gate JSON lacks {key} limit or maximum")
+    status = gate.get("status", "PASS" if gate.get("pass", False) else "FAIL")
+    if status not in {"PASS", "WARNING", "FAIL"}:
+        raise SystemExit(f"invalid gate status: {status!r}")
+    gate["status"] = status
     return gate
 
 
 def validate(rows: list[dict[str, str]], gate: dict) -> None:
     frames = len(rows)
-    if int(gate["expected_frames"]) != frames:
-        raise SystemExit("gate expected_frames does not match HUD TSV")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit("gate observed_first_loop_frames does not match HUD TSV")
+    expected = int(gate["expected_frames"])
+    if expected != frames:
+        incomplete_failure = (
+            gate["status"] == "FAIL"
+            and frames < expected
+            and any(
+                "first loop is incomplete" in str(message)
+                for message in gate.get("failures", ())
+            )
+        )
+        if not incomplete_failure:
+            raise SystemExit(
+                f"gate expected {expected} frames, TSV has {frames}")
     for field, column in GATE_COLUMNS.items():
         actual = max(as_int(row, column) for row in rows)
         if actual != int(gate["maxima"][field]):
@@ -213,6 +228,12 @@ def render_markdown(
         if column in fields
     ]
     summary = []
+    expected_frames = int(gate["expected_frames"])
+    if expected_frames != len(rows):
+        summary.append(
+            f"Incomplete failed first loop: observed {len(rows)} / "
+            f"expected {expected_frames} frames."
+        )
     if normal_vblanks is None:
         summary.append(
             f"VBLANK warning rule: deferred for "

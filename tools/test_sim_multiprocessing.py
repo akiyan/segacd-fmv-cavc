@@ -20,6 +20,7 @@ _sim_env = {
 _old_env = {name: os.environ.get(name) for name in _sim_env}
 os.environ.update(_sim_env)
 import sim
+import slot_locality_pipeline
 for _name, _value in _old_env.items():
     if _value is None:
         os.environ.pop(_name, None)
@@ -109,7 +110,7 @@ class SimMultiprocessingTests(unittest.TestCase):
     def test_untimed_frame_zero_is_absent_from_run_optimization(self) -> None:
         replay = SimpleNamespace(cold_slots=((0, 1, 2), (3, 4)))
         self.assertEqual(
-            sim._run_accounted_cold_slots(replay, 2),
+            slot_locality_pipeline.accounted_cold_slots(replay, 2),
             ((), (3, 4)),
         )
 

@@ -14,7 +14,9 @@ can combine both without resampling.
 1. Require the HUD TSV and gate JSON generated from the same lossless recording.
    The renderer checks the first loop, contiguous frame numbers, expected frame
    count, profile SHA, gate maxima, and recording size/mtime when available.
-   Render failed gates too; the image is evidence and must not hide a failure.
+   Render failed gates too; when playback did not complete one loop, render
+   the contiguous observed prefix only if the matching gate explicitly records
+   that incomplete-loop failure. The image is evidence and must not hide it.
 2. Run:
 
 ```sh
@@ -71,7 +73,9 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 
 ## Image contract
 
-- Use the complete first movie loop. Frame 0 remains visible.
+- Use the complete first movie loop. For an explicitly failed incomplete-loop
+  gate, use the complete observed prefix and state the expected/observed counts
+  in the heading. Frame 0 remains visible.
 - Keep `/timeline`'s horizontal contract: left edge 220 px, the same automatic
   pixels-per-frame rule, and `x = 220 + frame * pixels_per_frame`.
 - Put `VBLANK` first. Derive it from the difference between consecutive

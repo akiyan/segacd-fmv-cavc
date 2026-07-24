@@ -56,12 +56,13 @@ Other fixed defaults:
   WordBuf0, WordBuf1, and DicBuf capacities come from
   `tools/pattern_supply.py`; none are normal per-source overrides.
 - BODY supply follows SEGA-CD 1x's exact integer sector cadence. Fixed control
-  data is reserved first; update entries, run descriptors, and Prg pattern
-  payload share the remainder. Because run fragmentation is known only after
-  allocation, the decision pass protects one worst-case four-byte descriptor
-  as each cold tile is selected. It refunds the difference immediately after
-  the exact run count is known. It is not a per-source bitrate setting or a
-  permanent rate reduction.
+  data is reserved first. Before image decisions, the physical planner freezes
+  a conservative route containing the maximum bitmap update list and one
+  worst-case four-byte descriptor per permitted cold tile. Predicted Prg
+  demand is projected onto the remaining payload sectors with the real PrgBuf
+  capacity. Later stages may only shrink that proven work; unused control
+  bytes remain pad and cannot move a sector boundary into payload capacity.
+  This is not a per-source bitrate setting.
 - GPU encoding is on by default. CPU is the fallback.
 - Start sim/render with the locked GPU environment. Do not fall back to a
   system Python or an older venv:
@@ -180,10 +181,11 @@ After completion:
   jitter / scheduled delivery is 382/40/422 KiB at 15fps,
   397/25/422 KiB at 24fps, or 402/20/422 KiB at 30fps. The physical ring
   remains 428 KiB and player pump back-pressure remains 424 KiB.
-- Physical delivery failure is terminal for that sim. Do not lower the cold
-  cap, synthesize local per-frame caps, or repeat allocation in response.
-  Report the exact failing frame/resource so the user can choose the next
-  non-cap investigation.
+- Confirm that the construction-time physical plan prints its accepted Prg
+  total and control/payload sector sets before the image loop. Final sim and
+  pack scheduling are invariant checks on that frozen route. A failure there
+  is a pipeline bug; do not lower the cold cap or repeat the encode with a
+  session-local adjustment.
 - Check the completion line: `starved_frames=N (X%)`.
 - Check `body_useful_bps`, the mean useful BODY delivery rate shown by Band.
   It is weighted by total physical BODY read time, and each slot must remain at

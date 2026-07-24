@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Pure PrgBuf delivery scheduling shared by sim and pack.
+"""Pure physical BODY/PrgBuf scheduling shared by sim and pack.
 
 The encoder has an offline whole-movie quality budget.  The player has a
 different, physical object: the PRG-RAM PrgBuf circular buffer filled by whole
-CD sectors.  This module models the latter from the frozen per-frame Prg loads
-and control-block lengths so analysis and disc packing cannot drift.
+CD sectors.  A conservative sector envelope can be constructed before image
+decisions; final control and Prg work is then checked as a shrink-only
+realization of that envelope so analysis and disc packing cannot drift.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ CD_BYTES_PER_SECOND = av_config.CD_BYTES_PER_SECOND
 PATTERN_BYTES = 32
 PATTERNS_PER_SECTOR = SECTOR_BYTES // PATTERN_BYTES
 RUN_DESCRIPTOR_BYTES = 4
-STREAM_SCHEDULE_SCHEMA_VERSION = 4
+STREAM_SCHEDULE_SCHEMA_VERSION = 5
 
 
 class ScheduleError(ValueError):
@@ -133,18 +134,88 @@ def body_fresh_byte_supply(
 
 
 def max_run_control_reservation(max_cold, active_tiles):
-    """Return the temporary worst-case run-descriptor reservation.
+    """Return the fixed worst-case run-descriptor envelope.
 
     A source-aware run always contains at least one cold tile, so its count
     cannot exceed the per-frame cold cap.  A zero cap means uncapped and falls
-    back to the active cell count.  The encoder refunds the difference between
-    this reservation and the exact run count as soon as allocation finishes.
+    back to the active cell count.  When used as a construction envelope, the
+    encoder does not reassign the difference to payload after allocation;
+    unused descriptor bytes remain physical pad.
     """
     cold = int(max_cold)
     active = int(active_tiles)
     if cold < 0 or active < 0:
         raise ValueError("max_cold and active_tiles must be non-negative")
     return (cold if cold else active) * RUN_DESCRIPTOR_BYTES
+
+
+def control_sector_schedule(block_lengths, *, sector_capacity=None):
+    """Return the just-in-time sector route for one control-byte envelope.
+
+    The input may be the exact final block lengths or a conservative envelope
+    fixed before image decisions. ``sector_capacity`` optionally constrains the
+    exact final route to that pre-proven envelope. The scheduler uses capacity
+    as late as possible, so unused reservation becomes pad instead of pulling
+    future control blocks into the APPLY ring.
+    """
+    lengths = np.asarray(block_lengths, np.int64)
+    if lengths.ndim != 1:
+        raise ValueError("control block lengths must be one-dimensional")
+    if np.any(lengths < 0):
+        raise ValueError("control block lengths must be non-negative")
+    if sector_capacity is not None:
+        capacity = np.asarray(sector_capacity, np.int64)
+        if capacity.shape != lengths.shape:
+            raise ValueError(
+                "control-sector capacity must match the frame count")
+        if np.any(capacity < 0):
+            raise ValueError(
+                "control-sector capacity must be non-negative")
+        if len(capacity) and int(capacity[0]) != 0:
+            raise ValueError(
+                "frame zero cannot carry timed control sectors")
+        timed_lengths = lengths.copy()
+        if len(timed_lengths):
+            timed_lengths[0] = 0
+        required = (
+            np.cumsum(timed_lengths, dtype=np.int64)
+            + SECTOR_BYTES - 1
+        ) // SECTOR_BYTES
+        sectors = np.zeros(len(lengths), np.int64)
+        remaining = int(required[-1]) if len(required) else 0
+        for frame in range(len(lengths) - 1, 0, -1):
+            earlier_required = int(required[frame - 1])
+            available_here = max(0, remaining - earlier_required)
+            sectors[frame] = min(
+                int(capacity[frame]), available_here)
+            remaining -= int(sectors[frame])
+        delivered = np.cumsum(sectors, dtype=np.int64)
+        bad = np.flatnonzero(delivered < required)
+        if remaining or bad.size:
+            frame = int(bad[0]) if bad.size else 1
+            raise ScheduleError(
+                f"control envelope cannot meet frame {frame}: "
+                f"capacity delivered {int(delivered[frame])} sectors, "
+                f"requires {int(required[frame])}",
+                kind="control_envelope",
+                details={
+                    "failure_frame": frame,
+                    "delivered_sectors": int(delivered[frame]),
+                    "required_sectors": int(required[frame]),
+                },
+            )
+        return sectors
+
+    sectors = np.zeros(len(lengths), np.int64)
+    delivered = 0
+    required = 0
+    for frame in range(1, len(lengths)):
+        deficit = required + int(lengths[frame]) - delivered
+        count = max(0, -(-deficit // SECTOR_BYTES)) if deficit > 0 else 0
+        sectors[frame] = count
+        delivered += count * SECTOR_BYTES
+        required += int(lengths[frame])
+    return sectors
 
 
 def body_funded_work_bytes(
@@ -180,7 +251,8 @@ def select_shadow_update_lists(
         cell_lists, runs, pattern_loads, *, cells, fps, ring_capacity_patterns,
         frame_sectors, audio_frame_bytes, fill=True,
         prebuffer_capacity_patterns=None,
-        max_control_bytes=0x2000, allow_control_growth=False):
+        max_control_bytes=0x2000, allow_control_growth=False,
+        control_sector_envelope=None):
     """Select faster lists without reducing physical delivery margins.
 
     Positive control growth is disabled in the qualified path. Full Bad Apple
@@ -214,7 +286,8 @@ def select_shadow_update_lists(
             loads, lengths, fps=fps,
             ring_capacity_patterns=ring_capacity_patterns,
             frame_sectors=frame_sectors, fill=fill,
-            prebuffer_capacity_patterns=prebuffer_capacity_patterns)
+            prebuffer_capacity_patterns=prebuffer_capacity_patterns,
+            control_sector_envelope=control_sector_envelope)
         return lengths, scheduled
 
     baseline_lengths, baseline = run_schedule(np.zeros(n_upd.shape, np.bool_))
@@ -404,7 +477,8 @@ def split_body_payload_classes(
 
 def schedule_payload_ring(
         pattern_loads, block_lengths, *, fps, ring_capacity_patterns,
-        frame_sectors, fill=True, prebuffer_capacity_patterns=None):
+        frame_sectors, fill=True, prebuffer_capacity_patterns=None,
+        control_sector_envelope=None):
     """Schedule control JIT and payload prefetch, including physical RING use.
 
     ``ring_occupancy[i]`` is the number of 32-byte pattern slots physically in
@@ -443,17 +517,35 @@ def schedule_payload_ring(
             "physical ring capacity")
 
     nfr = len(n_load)
-    nc = np.zeros(nfr, np.int64)
-    ctrl_deliv = 0
-    ctrl_cur = 0
-    for i in range(1, nfr):
-        deficit = (ctrl_cur + int(blk_len[i])) - ctrl_deliv
-        k = max(0, -(-deficit // SECTOR_BYTES)) if deficit > 0 else 0
-        nc[i] = k
-        ctrl_deliv += k * SECTOR_BYTES
-        ctrl_cur += int(blk_len[i])
+    if control_sector_envelope is None:
+        reserved_nc = control_sector_schedule(blk_len)
+        nc = reserved_nc
+    else:
+        reserved_nc = np.asarray(control_sector_envelope, np.int64)
+        if reserved_nc.shape != blk_len.shape:
+            raise ValueError(
+                "control-sector envelope must match the frame count")
+        if np.any(reserved_nc < 0):
+            raise ValueError(
+                "control-sector envelope must be non-negative")
+        if len(reserved_nc) and int(reserved_nc[0]) != 0:
+            raise ValueError(
+                "frame zero cannot carry timed control sectors")
+        if np.any(reserved_nc > int(frame_sectors)):
+            frame = int(np.flatnonzero(
+                reserved_nc > int(frame_sectors))[0])
+            raise ScheduleError(
+                f"control-sector envelope exceeds the physical slot at "
+                f"frame {frame}: control="
+                f"{int(reserved_nc[frame])} sectors "
+                f"slot={int(frame_sectors)}")
+        nc = control_sector_schedule(
+            blk_len, sector_capacity=reserved_nc)
 
-    cap_sec = np.maximum(int(frame_sectors) - nc, 0)
+    # Payload is limited by the conservative reservation even when the final
+    # control route is shorter. The difference is physical pad, never
+    # post-decision payload capacity.
+    cap_sec = np.maximum(int(frame_sectors) - reserved_nc, 0)
     n_load_body = n_load.copy()
     n_load_body[0] = 0
     consumed = np.cumsum(n_load_body)
@@ -495,7 +587,7 @@ def schedule_payload_ring(
         delivered[0] = prebuffer_sec
         for i in range(1, nfr):
             due = int(ratedelta[i]) - rate_lead
-            soft_pay = max(0, due - int(nc[i]))
+            soft_pay = max(0, due - int(reserved_nc[i]))
             # BODY may be pumped while Main still displays the previous frame.
             # Bound cumulative delivery against what has been consumed through
             # frame i-1, not against frame i's not-yet-guaranteed pop.
@@ -630,6 +722,8 @@ def schedule_payload_ring(
     result = {
         "n_pay_sec": n_pay_sec,
         "n_ctrl_sec": nc,
+        "control_reserved_sectors": reserved_nc,
+        "control_envelope": bool(control_sector_envelope is not None),
         "feasible": bool(feasible),
         "over": over,
         "under": under,
