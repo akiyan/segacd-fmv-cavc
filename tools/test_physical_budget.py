@@ -12,6 +12,14 @@ import stream_schedule
 
 
 class PhysicalBudgetPlanTests(unittest.TestCase):
+    def test_timed_body_trace_ignores_boot_only_frame_zero(self) -> None:
+        source = np.array([1195, 7, 8], np.int64)
+
+        timed = physical_budget.timed_body_trace(source)
+
+        np.testing.assert_array_equal(timed, [0, 7, 8])
+        np.testing.assert_array_equal(source, [1195, 7, 8])
+
     def build(self, desired):
         return physical_budget.build_plan(
             desired,
@@ -137,6 +145,150 @@ class PhysicalBudgetPlanTests(unittest.TestCase):
                 fill=True,
                 control_sector_envelope=plan.control_sectors,
             )
+
+    def test_joint_plan_reassigns_worst_case_descriptor_pad_to_payload(self) -> None:
+        desired = np.asarray([0] + [480] * 200, np.int64)
+        preloaded = np.asarray([0] + [24] * 200, np.int64)
+        baseline = self.build(desired)
+        joint = physical_budget.build_joint_plan(
+            desired,
+            max_preloaded_patterns=preloaded,
+            fps=15,
+            cells=760,
+            audio_frame_bytes=736,
+            max_updates=760,
+            max_cold=480,
+            ring_capacity_patterns=422 * 1024 // 32,
+            prebuffer_capacity_patterns=382 * 1024 // 32,
+            frame_sectors=5,
+        )
+
+        self.assertTrue(joint.schedule["feasible"])
+        self.assertGreater(
+            int(joint.prg_pattern_limits.sum()),
+            int(baseline.prg_pattern_limits.sum()),
+        )
+        self.assertLess(
+            int(joint.control_sectors.sum()),
+            int(baseline.control_sectors.sum()),
+        )
+        self.assertTrue(np.all(
+            joint.prg_pattern_limits + preloaded
+            <= joint.cold_pattern_limits))
+        self.assertTrue(np.all(joint.cold_pattern_limits <= 480))
+
+    def test_joint_plan_cold_limit_proves_identity_run_envelope(self) -> None:
+        desired = np.asarray([0] + [480] * 80, np.int64)
+        preloaded = np.asarray([0] + [16] * 80, np.int64)
+        joint = physical_budget.build_joint_plan(
+            desired,
+            max_preloaded_patterns=preloaded,
+            fps=15,
+            cells=760,
+            audio_frame_bytes=736,
+            max_updates=760,
+            max_cold=480,
+            ring_capacity_patterns=422 * 1024 // 32,
+            prebuffer_capacity_patterns=382 * 1024 // 32,
+            frame_sectors=5,
+        )
+        actual_control = stream_schedule.control_block_lengths(
+            np.full(len(desired), 760, np.int64),
+            joint.cold_pattern_limits,
+            cells=760,
+            audio_frame_bytes=736,
+        )
+        actual_control[0] = 0
+        self.assertTrue(np.all(
+            actual_control <= joint.control_block_limits))
+
+    def test_shared_sector_savings_fund_the_next_frame_before_decisions(
+            self) -> None:
+        def second_limit(first_control_bytes):
+            planner = physical_budget.SharedSectorPlanner(
+                3,
+                max_prg_patterns=480,
+                max_cold_patterns=480,
+                prebuffer_capacity_patterns=640,
+                frame_sectors=5,
+            )
+            first = planner.begin_frame(0)
+            self.assertEqual(first.prg_patterns, 0)
+            planner.commit_frame(
+                0, prg_patterns=0, cold_patterns=0,
+                control_block_bytes=0)
+            frame1 = planner.begin_frame(1)
+            self.assertEqual(frame1.prg_patterns, 480)
+            planner.commit_frame(
+                1, prg_patterns=480, cold_patterns=480,
+                control_block_bytes=first_control_bytes)
+            return planner.begin_frame(2).prg_patterns
+
+        self.assertEqual(second_limit(1000), 416)
+        self.assertEqual(second_limit(4096), 352)
+
+    def test_shared_sector_prefix_rounds_control_and_payload_separately(
+            self) -> None:
+        with self.assertRaisesRegex(
+                stream_schedule.ScheduleError, "shared BODY prefix"):
+            physical_budget.verify_shared_sector_prefix(
+                [0, 64, 640],
+                [0, 5 * 2048, 0],
+                prebuffer_capacity_patterns=64,
+                frame_sectors=5,
+            )
+
+    def test_shared_sector_plan_freezes_realized_one_pass_trace(self) -> None:
+        planner = physical_budget.SharedSectorPlanner(
+            4,
+            max_prg_patterns=480,
+            max_cold_patterns=480,
+            prebuffer_capacity_patterns=640,
+            frame_sectors=5,
+        )
+        realized_prg = [0, 320, 320, 320]
+        realized_control = [0, 1500, 1600, 1700]
+        for frame in range(4):
+            limit = planner.begin_frame(frame)
+            self.assertLessEqual(realized_prg[frame], limit.prg_patterns)
+            planner.commit_frame(
+                frame,
+                prg_patterns=realized_prg[frame],
+                cold_patterns=realized_prg[frame],
+                control_block_bytes=realized_control[frame],
+            )
+        plan = planner.finish([0, 480, 480, 480])
+        np.testing.assert_array_equal(
+            plan.realized_prg_patterns, realized_prg)
+        np.testing.assert_array_equal(
+            plan.realized_control_block_bytes, realized_control)
+        self.assertEqual(plan.planning_passes, 1)
+
+    def test_shared_sector_forward_ring_check_limits_a_late_burst(
+            self) -> None:
+        planner = physical_budget.SharedSectorPlanner(
+            5,
+            max_prg_patterns=128,
+            max_cold_patterns=128,
+            prebuffer_capacity_patterns=64,
+            frame_sectors=1,
+            fps=15,
+            ring_capacity_patterns=128,
+            maximum_control_block_bytes=[0, 0, 0, 0, 0],
+        )
+        loads = [0, 0, 128]
+        for frame, load in enumerate(loads):
+            limit = planner.begin_frame(frame)
+            self.assertLessEqual(load, limit.prg_patterns)
+            planner.commit_frame(
+                frame,
+                prg_patterns=load,
+                cold_patterns=load,
+                control_block_bytes=0,
+            )
+        # The prefix-only ledger would permit 64 patterns here. The finite
+        # ring proof sees that they would need an impossible earlier delivery.
+        self.assertEqual(planner.begin_frame(3).prg_patterns, 0)
 
 
 if __name__ == "__main__":

@@ -56,6 +56,7 @@ def predict_update_demands(
     pattern_bytes: int = 32,
     max_cold: int = 0,
     protected_frames: Sequence[np.ndarray] | None = None,
+    forced_update_frames: Sequence[bool] | None = None,
     boot_prefetch_requests: Sequence[tuple[bytes, int]] = (),
 ) -> tuple[np.ndarray, np.ndarray]:
     """Estimate exact and protected byte demand in one VRAM dry run.
@@ -67,9 +68,12 @@ def predict_update_demands(
     that the hardware could not apply in one frame anyway.
 
     ``protected_frames`` optionally selects the changes that count toward the
-    second, narrower demand trace. The dry run still advances through the
-    complete exact target. Frame zero is loaded from HEADER.DAT and therefore
-    has zero streaming demand, while still seeding the predictive VRAM state.
+    second, narrower demand trace. ``forced_update_frames`` marks frames whose
+    complete name table must be rewritten even when a cell's exact indices and
+    palette-line number did not change, such as a CRAM segment switch. The dry
+    run still advances through the complete exact target. Frame zero is loaded
+    from HEADER.DAT and therefore has zero streaming demand, while still
+    seeding the predictive VRAM state.
     """
 
     prediction = predict_update_demand_details(
@@ -80,6 +84,7 @@ def predict_update_demands(
         pattern_bytes=pattern_bytes,
         max_cold=max_cold,
         protected_frames=protected_frames,
+        forced_update_frames=forced_update_frames,
         boot_prefetch_requests=boot_prefetch_requests,
     )
     return prediction.exact_bytes, prediction.protected_bytes
@@ -94,6 +99,7 @@ def predict_update_demand_details(
     pattern_bytes: int = 32,
     max_cold: int = 0,
     protected_frames: Sequence[np.ndarray] | None = None,
+    forced_update_frames: Sequence[bool] | None = None,
     boot_prefetch_requests: Sequence[tuple[bytes, int]] = (),
 ) -> DemandPrediction:
     """Return the byte-demand traces and the cold counts behind them."""
@@ -103,6 +109,8 @@ def predict_update_demand_details(
         raise ValueError("pattern and palette frame counts differ")
     if protected_frames is not None and len(protected_frames) != n:
         raise ValueError("protected frame count differs")
+    if forced_update_frames is not None and len(forced_update_frames) != n:
+        raise ValueError("forced-update frame count differs")
     if n == 0:
         empty = np.zeros(0, np.int64)
         return DemandPrediction(
@@ -140,11 +148,17 @@ def predict_update_demand_details(
             raise ValueError("palette frame shapes differ")
 
         keys = [patterns[cell].tobytes() for cell in range(cells)]
-        changed_cells = [
-            cell for cell in range(cells)
-            if keys[cell] != previous_keys[cell]
-            or int(palettes[cell]) != int(previous_palettes[cell])
-        ]
+        if (
+            forced_update_frames is not None
+            and bool(forced_update_frames[frame_idx])
+        ):
+            changed_cells = list(range(cells))
+        else:
+            changed_cells = [
+                cell for cell in range(cells)
+                if keys[cell] != previous_keys[cell]
+                or int(palettes[cell]) != int(previous_palettes[cell])
+            ]
         if protected_frames is None:
             protected = np.ones(cells, bool)
         else:
@@ -315,6 +329,8 @@ def build_balanced_reserve_plan(
     demand: Sequence[int] | np.ndarray,
     supply: int | Sequence[int] | np.ndarray,
     capacity: int,
+    *,
+    minimum_demand: Sequence[int] | np.ndarray | None = None,
 ) -> ReservePlan:
     """Balance unavoidable shortage across each over-capacity burst.
 
@@ -322,9 +338,10 @@ def build_balanced_reserve_plan(
     frames when a burst needs more than the buffer can ever hold.  That makes
     the first frame of the burst absorb all unavoidable quality loss.  This
     planner instead applies one common served fraction to the predicted demand
-    from the burst's start through its peak.  The resulting demand is feasible
-    with ``capacity`` and therefore produces a reserve curve without clipped
-    overflow.
+    from the burst's start through its peak. ``minimum_demand`` protects work
+    that must not be diluted by that fraction, such as a CRAM switch's full
+    name-table refresh. The resulting demand is feasible with ``capacity`` and
+    therefore produces a reserve curve without clipped overflow.
     """
 
     demand_arr = np.asarray(demand, dtype=np.int64)
@@ -334,6 +351,16 @@ def build_balanced_reserve_plan(
         raise ValueError("capacity must be non-negative")
     if np.any(demand_arr < 0):
         raise ValueError("demand must be non-negative")
+    if minimum_demand is None:
+        minimum_arr = np.zeros(demand_arr.shape, np.int64)
+    else:
+        minimum_arr = np.asarray(minimum_demand, dtype=np.int64)
+        if minimum_arr.shape != demand_arr.shape:
+            raise ValueError("minimum demand must match demand")
+        if np.any(minimum_arr < 0):
+            raise ValueError("minimum demand must be non-negative")
+        if np.any(minimum_arr > demand_arr):
+            raise ValueError("minimum demand cannot exceed demand")
 
     if np.isscalar(supply):
         supply_arr = np.full(len(demand_arr), int(supply), np.int64)
@@ -343,6 +370,9 @@ def build_balanced_reserve_plan(
             raise ValueError("supply must be scalar or match demand")
     if np.any(supply_arr < 0):
         raise ValueError("supply must be non-negative")
+    if _peak_buffer_draw(minimum_arr, supply_arr) > capacity:
+        raise ValueError(
+            "minimum demand is infeasible within the quality-budget capacity")
 
     planned = demand_arr.copy()
     max_passes = max(1, len(planned) * 2)
@@ -353,31 +383,47 @@ def build_balanced_reserve_plan(
             break
         start, peak = overloaded
         window_demand = planned[start:peak + 1]
+        window_minimum = minimum_arr[start:peak + 1]
         window_supply = supply_arr[start:peak + 1]
 
         low = 0.0
         high = 1.0
         for _ in range(60):
             fraction = (low + high) * 0.5
-            candidate = np.floor(
-                window_demand.astype(np.float64) * fraction).astype(np.int64)
+            candidate = (
+                window_minimum
+                + np.floor(
+                    (window_demand - window_minimum).astype(np.float64)
+                    * fraction
+                ).astype(np.int64)
+            )
             if _peak_buffer_draw(candidate, window_supply) <= capacity:
                 low = fraction
             else:
                 high = fraction
-        candidate = np.floor(
-            window_demand.astype(np.float64) * low).astype(np.int64)
+        candidate = (
+            window_minimum
+            + np.floor(
+                (window_demand - window_minimum).astype(np.float64) * low
+            ).astype(np.int64)
+        )
         if np.array_equal(candidate, window_demand):
             # Integer rounding should already make progress.  Keep a strict
             # fallback so malformed inputs cannot turn this into an endless
             # planner loop.
-            candidate[-1] = max(0, int(candidate[-1]) - 1)
+            reducible = np.flatnonzero(candidate > window_minimum)
+            if not reducible.size:
+                raise AssertionError(
+                    "balanced demand is overloaded with no reducible work")
+            candidate[int(reducible[-1])] -= 1
         planned[start:peak + 1] = candidate
     else:
         raise RuntimeError("balanced reserve planning did not converge")
 
     if _peak_buffer_draw(planned, supply_arr) > capacity:
         raise AssertionError("balanced demand still exceeds buffer capacity")
+    if np.any(planned < minimum_arr):
+        raise AssertionError("balanced demand fell below its mandatory floor")
     reserve = build_reserve_curve(planned, supply_arr, capacity)
     shortfall = demand_arr - planned
     return ReservePlan(reserve, planned, shortfall)

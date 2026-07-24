@@ -1543,6 +1543,9 @@ def main():
             if int(frame_seg[i]) != int(frame_seg[i - 1]):
                 upgrade_supply[i] = max(
                     0, int(upgrade_supply[i]) - PAL_WRITE_BYTES)
+    cram_switch_frames = np.zeros(n, bool)
+    if n > 1:
+        cram_switch_frames[1:] = frame_seg[1:] != frame_seg[:-1]
     cached_future = (
         pass_cache_payload.get("future")
         if pass_cache_payload is not None else None)
@@ -1574,12 +1577,15 @@ def main():
             target_rgb = render_cells(Q_pidx[i], Q_assign[i], target_pals)
             if i == 0:
                 main_protected[i] = True
+            elif cram_switch_frames[i]:
+                # A CRAM epoch change invalidates every live name-table
+                # palette reference in the real encoder, even where the
+                # quantized pattern and palette-line number compare equal.
+                # Protect that mandatory full refresh before earlier optional
+                # updates can spend its whole-movie allowance.
+                main_protected[i] = True
             else:
-                if int(frame_seg[i]) == int(frame_seg[i - 1]):
-                    previous_display_rgb = previous_target_rgb
-                else:
-                    previous_display_rgb = render_cells(
-                        Q_pidx[i - 1], Q_assign[i - 1], target_pals)
+                previous_display_rgb = previous_target_rgb
                 target_changed = (
                     np.any(Q_pidx[i] != Q_pidx[i - 1], axis=1)
                     | (Q_assign[i] != Q_assign[i - 1])
@@ -1596,6 +1602,7 @@ def main():
             pattern_bytes=PATTERN_BYTES,
             max_cold=MAX_COLD,
             protected_frames=main_protected,
+            forced_update_frames=cram_switch_frames,
         )
         baseline_prefetch_forecast = raw_prefetch.forecast_requests(
             Q_pidx,
@@ -1639,6 +1646,7 @@ def main():
                 pattern_bytes=PATTERN_BYTES,
                 max_cold=MAX_COLD,
                 protected_frames=main_protected,
+                forced_update_frames=cram_switch_frames,
                 boot_prefetch_requests=boot_prefetch_plan,
             )
             if boot_prefetch_plan else baseline_demand_prediction
@@ -1696,42 +1704,68 @@ def main():
                 f"({cache_path.stat().st_size / 1024**2:.1f} MiB)",
                 flush=True,
             )
+    if np.any(cram_switch_frames):
+        full_name_refresh_bytes = C_CELLS * NAME_BYTES
+        protected_all = np.all(
+            np.asarray(main_protected, bool), axis=1)
+        exact_bytes = np.asarray(
+            demand_prediction.exact_bytes, np.int64)
+        protected_bytes = np.asarray(
+            demand_prediction.protected_bytes, np.int64)
+        missing_cram_reserve = np.flatnonzero(
+            cram_switch_frames
+            & (
+                ~protected_all
+                | (exact_bytes < full_name_refresh_bytes)
+                | (protected_bytes < full_name_refresh_bytes)
+            )
+        )
+        if missing_cram_reserve.size:
+            frame = int(missing_cram_reserve[0])
+            raise AssertionError(
+                f"frame {frame}: CRAM switch lacks mandatory full "
+                f"{full_name_refresh_bytes}B name-table reserve")
     boot_inline_requests = min(
         len(boot_prefetch_plan), boot_inline_capacity)
     boot_sidecar_requests = len(boot_prefetch_plan) - boot_inline_requests
 
-    # Construct the physical BODY route before image decisions.  Identity-slot
-    # encoding reserves one descriptor for every possible cold pattern; later
-    # decisions may shrink this envelope but may never create more Prg demand
-    # or control data than the already-proven route.
+    # Construct one online shared-sector ledger before image decisions.  The
+    # exact control bytes finalized by frame i are known before frame i+1
+    # chooses Prg work, so descriptor savings immediately become next-frame
+    # payload capacity.  Every prefix is sector-rounded separately for control
+    # and payload; the packer later repeats this proof but cannot discover a
+    # different split.
     predicted_prg_demand = np.maximum(
         np.asarray(demand_prediction.exact_cold, np.int64)
         - np.asarray(supply_budget.total, np.int64),
         0,
     )
-    physical_budget_plan = physical_budget.build_plan(
-        predicted_prg_demand,
-        fps=FPS,
+    maximum_control_blocks = stream_schedule.control_block_lengths(
+        np.full(n, C_CELLS, np.int64),
+        np.full(n, MAX_COLD, np.int64),
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
-        max_updates=C_CELLS,
-        max_runs=MAX_COLD,
-        ring_capacity_patterns=(
-            PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
+    )
+    maximum_control_blocks[0] = 0
+    physical_budget_state = physical_budget.SharedSectorPlanner(
+        n,
+        max_prg_patterns=MAX_COLD,
+        max_cold_patterns=MAX_COLD,
         prebuffer_capacity_patterns=(
             PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
         frame_sectors=ttrc_routing.FRAME_SECTORS,
+        fps=FPS,
+        ring_capacity_patterns=(
+            PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
+        maximum_control_block_bytes=maximum_control_blocks,
         fill=av_config.PACK_FORWARD_FILL,
     )
     print(
-        "physical budget: construction-time sector envelope; "
-        f"Prg desired={int(predicted_prg_demand.sum())} "
-        f"accepted={int(physical_budget_plan.prg_pattern_limits.sum())} "
-        f"shortfall={int(physical_budget_plan.shortfall_patterns.sum())} "
-        f"patterns; control sectors="
-        f"{sorted(set(int(value) for value in physical_budget_plan.control_sectors[1:]))} "
-        f"payload sectors="
-        f"{sorted(set(int(value) for value in physical_budget_plan.payload_sector_capacity[1:]))}",
+        "physical budget: one-pass shared-sector prefix ledger; "
+        f"Prg desired={int(predicted_prg_demand.sum())} patterns; "
+        f"per-frame Prg/cold cap={MAX_COLD}; "
+        f"timed route={ttrc_routing.FRAME_SECTORS} useful sectors/slot; "
+        "exact control savings fund the following frame before its decisions",
         flush=True,
     )
 
@@ -1781,8 +1815,23 @@ def main():
         demand_prediction.exact_bytes - preload_credit_bytes, 0)
     main_demand = np.maximum(
         demand_prediction.protected_bytes - protected_credit_bytes, 0)
+    mandatory_main_demand = np.where(
+        cram_switch_frames,
+        C_CELLS * NAME_BYTES,
+        0,
+    ).astype(np.int64)
     main_reserve_plan = upgrade_planner.build_balanced_reserve_plan(
-        main_demand, upgrade_supply, QUALITY_BUDGET_BYTES)
+        main_demand,
+        upgrade_supply,
+        QUALITY_BUDGET_BYTES,
+        minimum_demand=mandatory_main_demand,
+    )
+    if np.any(
+        main_reserve_plan.planned_demand[cram_switch_frames]
+        < mandatory_main_demand[cram_switch_frames]
+    ):
+        raise AssertionError(
+            "balanced quality plan diluted a mandatory CRAM refresh")
     # Optional exact upgrades are not required to avoid Miss.  Keep their
     # complete-demand reserve strict: balancing this deliberately infeasible
     # all-exact trace spends too much saved allowance before unpredicted live
@@ -2001,6 +2050,12 @@ def main():
         wr_used = 0
         dic_used = 0
         preload_sources = {}
+        physical_frame_limit = physical_budget_state.begin_frame(i)
+        cold_limit_active = i > 0
+        frame_max_cold = int(physical_frame_limit.cold_patterns)
+        frame_max_prg = int(physical_frame_limit.prg_patterns)
+        frame_control_block_limit = int(
+            physical_frame_limit.control_block_bytes)
 
         def reserved_variable_spend(
             decision_spent=0,
@@ -2012,13 +2067,21 @@ def main():
                 decision_spent
                 + cold_tiles * stream_schedule.RUN_DESCRIPTOR_BYTES)
 
-        def decision_fits(cost, *, extra_cold=0, limit=None):
+        def decision_fits(
+                cost, *, extra_cold=0, extra_updates=1, limit=None):
             if limit is None:
                 limit = decision_budget
-            return reserved_variable_spend(
+            funded = reserved_variable_spend(
                 spent_tiles + cost,
                 cold_spent + extra_cold,
             ) <= limit
+            control = (
+                int(body_fixed_control_bytes[i])
+                + (name_recs + int(extra_updates)) * NAME_BYTES
+                + (cold_spent + int(extra_cold))
+                * stream_schedule.RUN_DESCRIPTOR_BYTES
+            )
+            return funded and control <= frame_control_block_limit
 
         def current_reserved_spend():
             return reserved_variable_spend(spent_tiles, cold_spent)
@@ -2134,12 +2197,7 @@ def main():
             committed_plain[c] = key
             updated[c] = True
 
-        # frame0はDAT冒頭ヘッダで別ロード(リング非消費)なので常にcold上限を免除=全面フルロード。
-        cold_limit_active = i > 0
-        frame_max_cold = MAX_COLD if i > 0 else 0
-        frame_max_prg = (
-            int(physical_budget_plan.prg_pattern_limits[i])
-            if i > 0 else 0)
+        # frame0はHEADER内のboot constructionなのでtimed limitsは0。
 
         def commit_plain(c):
             # Legacy non-unified path: exact resident/L3/preload/cold only.
@@ -2563,6 +2621,7 @@ def main():
                     if not decision_fits(
                             cost,
                             extra_cold=int(not in_vram),
+                            extra_updates=int(not updated[c]),
                             limit=lim):
                         return
                     if ((not in_vram)
@@ -2758,12 +2817,22 @@ def main():
                 (prefetch_spend_limit - current_reserved_spend())
                 // (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES),
             )
+            control_room = max(
+                0,
+                (
+                    frame_control_block_limit
+                    - int(body_fixed_control_bytes[i])
+                    - name_recs * NAME_BYTES
+                    - cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES
+                ) // stream_schedule.RUN_DESCRIPTOR_BYTES,
+            )
             capacity = min(
                 RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
                 request_room,
                 cold_room,
                 prg_room,
                 body_room,
+                control_room,
             )
             if capacity >= RAW_PREFETCH_MIN_BATCH:
                 for deadline in range(i + 1, last_deadline):
@@ -2858,6 +2927,10 @@ def main():
             raise AssertionError(
                 f"frame {i}: source-aware runs={dma_runs} exceed "
                 f"cold tiles={cold_spent}")
+        if i > 0 and dma_tiles > frame_max_cold:
+            raise AssertionError(
+                f"frame {i}: physical cold tiles={dma_tiles} exceed "
+                f"construction limit {frame_max_cold}")
         transfer_tiles_log.append(dma_tiles)
         transfer_runs_log.append(dma_runs)
         supply_sources_log.append(np.asarray(frame_sources, np.uint8))
@@ -2903,6 +2976,18 @@ def main():
             raise AssertionError(
                 f"frame {i}: exact BODY variable work {variable_body_spent}B "
                 f"exceeds incremental run reservation {reserved_body_spent}B")
+        exact_control_block_bytes = (
+            0 if i == 0 else
+            int(body_fixed_control_bytes[i])
+            + name_recs * NAME_BYTES
+            + dma_runs * stream_schedule.RUN_DESCRIPTOR_BYTES
+        )
+        physical_budget_state.commit_frame(
+            i,
+            prg_patterns=prg_used,
+            cold_patterns=dma_tiles,
+            control_block_bytes=exact_control_block_bytes,
+        )
         if QUALITY_BUDGET_ON and i > 0:
             decision_spent = name_recs * NAME_BYTES + prg_used * PATTERN_BYTES
             if spent_tiles != decision_spent:
@@ -3400,6 +3485,60 @@ def main():
         if QUALITY_BUDGET_ON:
             quality_budget_log = final_quality_budget
 
+    final_control_trace = (
+        np.asarray(body_fixed_control_bytes, np.int64)
+        + np.asarray(name_records_log, np.int64) * NAME_BYTES
+        + np.asarray(transfer_runs_log, np.int64)
+        * stream_schedule.RUN_DESCRIPTOR_BYTES
+    )
+    final_control_trace[0] = 0
+    if not np.array_equal(
+            final_control_trace,
+            physical_budget_state.realized_control):
+        # A separately requested slot-locality finalization may change run
+        # counts after the identity-slot decision loop. Rebuild only its cheap
+        # prefix ledger from the frozen, display-equivalent decisions.
+        replay_budget = physical_budget.SharedSectorPlanner(
+            n,
+            max_prg_patterns=MAX_COLD,
+            max_cold_patterns=MAX_COLD,
+            prebuffer_capacity_patterns=(
+                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+            frame_sectors=ttrc_routing.FRAME_SECTORS,
+            fps=FPS,
+            ring_capacity_patterns=(
+                PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
+            maximum_control_block_bytes=maximum_control_blocks,
+            fill=av_config.PACK_FORWARD_FILL,
+        )
+        for frame_index in range(n):
+            replay_budget.begin_frame(frame_index)
+            replay_budget.commit_frame(
+                frame_index,
+                prg_patterns=int(prg_loads_log[frame_index]),
+                cold_patterns=int(transfer_tiles_log[frame_index]),
+                control_block_bytes=int(final_control_trace[frame_index]),
+            )
+        physical_budget_state = replay_budget
+    physical_budget_plan = physical_budget_state.finish(
+        predicted_prg_demand)
+    physical_prefix = physical_budget.verify_shared_sector_prefix(
+        physical_budget_plan.realized_prg_patterns,
+        physical_budget_plan.realized_control_block_bytes,
+        prebuffer_capacity_patterns=(
+            PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+        frame_sectors=ttrc_routing.FRAME_SECTORS,
+    )
+    print(
+        "physical budget final: shared-sector prefix exact; "
+        f"Prg actual={int(physical_budget_plan.realized_prg_patterns.sum())} "
+        f"patterns; control="
+        f"{int(physical_budget_plan.realized_control_block_bytes.sum())}B; "
+        f"minimum cumulative spare="
+        f"{int(physical_prefix['margin_sectors'][1:].min())} sectors",
+        flush=True,
+    )
+
     # coldlife計測の集計: 先読み減点ヒューリスティックの効果上限。
     with open(os.path.join(OUT, "coldlife.json"), "w") as f:
         json.dump(coldlife, f, indent=1)
@@ -3472,10 +3611,20 @@ def main():
             f"frame {frame}: realized control block "
             f"{int(legacy_lengths[frame])}B exceeds construction limit "
             f"{int(physical_budget_plan.control_block_limits[frame])}B")
+    cold_limit_over = np.flatnonzero(
+        (np.arange(len(transfer_tiles_log)) > 0)
+        & (np.asarray(transfer_tiles_log, np.int64)
+           > physical_budget_plan.cold_pattern_limits))
+    if cold_limit_over.size:
+        frame = int(cold_limit_over[0])
+        raise AssertionError(
+            f"frame {frame}: realized cold tiles "
+            f"{int(transfer_tiles_log[frame])} exceed construction limit "
+            f"{int(physical_budget_plan.cold_pattern_limits[frame])}")
     try:
-        # Shadow-list selection runs the same physical route as the final
-        # pack.  The route was fixed before image decisions; this pass may
-        # shorten control blocks but cannot reclaim their sectors for payload.
+        # Shadow-list selection runs the same exact shared-sector route as the
+        # final pack. Shorter blocks automatically become payload capacity;
+        # the prefix ledger has already proved that such shrinking is safe.
         shadow_plan = stream_schedule.select_shadow_update_lists(
             shadow_cells,
             np.asarray(transfer_runs_log, np.int64),
@@ -3489,8 +3638,7 @@ def main():
             frame_sectors=ttrc_routing.FRAME_SECTORS,
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             fill=av_config.PACK_FORWARD_FILL,
-            control_sector_envelope=(
-                physical_budget_plan.control_sectors),
+            control_sector_envelope=None,
         ) if PATTERN_SUPPLY_ON else None
         shadow_list_flags = (
             np.asarray(shadow_plan["selected"], np.bool_)
@@ -3514,6 +3662,13 @@ def main():
             raise AssertionError(
                 f"frame {bad}: encoder BODY accounting {int(fb[bad])}B != "
                 f"exact useful demand {int(exact_body_work[bad])}B")
+        physical_budget.verify_shared_sector_prefix(
+            prg_loads,
+            control_lengths,
+            prebuffer_capacity_patterns=(
+                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+            frame_sectors=ttrc_routing.FRAME_SECTORS,
+        )
         physical_schedule = (
             shadow_plan["schedule"] if shadow_plan is not None
             else stream_schedule.schedule_payload_ring(
@@ -3526,8 +3681,7 @@ def main():
                     PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
                 frame_sectors=ttrc_routing.FRAME_SECTORS,
                 fill=av_config.PACK_FORWARD_FILL,
-                control_sector_envelope=(
-                    physical_budget_plan.control_sectors),
+                control_sector_envelope=None,
             )
         )
     except (stream_schedule.ScheduleError, ValueError) as exc:
@@ -3574,11 +3728,12 @@ def main():
         f"body_fixed_control_bytes_per_frame={body_fixed_control_bytes[1:].mean():.1f}",
         f"body_variable_supply_bytes_per_frame={body_variable_supply_bytes[1:].mean():.1f} "
         f"(updates + runs + Prg payload)",
-        f"identity_run_control_envelope="
-        f"{stream_schedule.RUN_DESCRIPTOR_BYTES}B/cold "
-        f"({MAX_RUN_CONTROL_BYTES}B cap); unused bytes remain physical pad",
-        "physical_delivery_plan=construction-time sector envelope; "
-        "later stages may only shrink proven control and Prg work",
+        f"identity_run_control_reservation="
+        f"{stream_schedule.RUN_DESCRIPTOR_BYTES}B/cold while selecting; "
+        "exact run bytes are finalized in-frame",
+        "physical_delivery_plan=one-pass shared-sector prefix ledger; "
+        "exact control savings become the following frame's Prg limit before "
+        "that frame makes image decisions; pack repeats the frozen prefix proof",
         f"PrgBuf_geometry=normal {PRG_BUF_CAP_KB}KiB + "
         f"jitter {PRG_JITTER_HEADROOM_KB}KiB = "
         f"delivery {PRG_DELIVERY_CAP_KB}KiB; "
@@ -3849,22 +4004,36 @@ def main():
                 },
             },
             "physical_budget": {
-                "schema_version": 1,
-                "policy": "identity-worst-run-envelope",
+                "schema_version": 3,
+                "policy": "online-shared-sector-prefix",
+                "planning_passes": int(
+                    physical_budget_plan.planning_passes),
                 "desired_prg_patterns": np.asarray(
                     physical_budget_plan.desired_prg_patterns, np.uint16),
                 "prg_pattern_limits": np.asarray(
                     physical_budget_plan.prg_pattern_limits, np.uint16),
                 "shortfall_patterns": np.asarray(
                     physical_budget_plan.shortfall_patterns, np.uint16),
-                "reserve_patterns": np.asarray(
-                    physical_budget_plan.reserve_patterns, np.uint16),
+                "cold_pattern_limits": np.asarray(
+                    physical_budget_plan.cold_pattern_limits, np.uint16),
                 "control_block_limits": np.asarray(
                     physical_budget_plan.control_block_limits, np.int64),
-                "control_sectors": np.asarray(
-                    physical_budget_plan.control_sectors, np.int64),
-                "payload_sector_capacity": np.asarray(
-                    physical_budget_plan.payload_sector_capacity, np.int64),
+                "cumulative_prg_pattern_limits": np.asarray(
+                    physical_budget_plan.cumulative_prg_pattern_limits,
+                    np.int64),
+                "cumulative_control_byte_limits": np.asarray(
+                    physical_budget_plan.cumulative_control_byte_limits,
+                    np.int64),
+                "cumulative_useful_sector_capacity": np.asarray(
+                    physical_budget_plan.cumulative_useful_sector_capacity,
+                    np.int64),
+                "realized_prg_patterns": np.asarray(
+                    physical_budget_plan.realized_prg_patterns, np.int64),
+                "realized_cold_patterns": np.asarray(
+                    physical_budget_plan.realized_cold_patterns, np.int64),
+                "realized_control_block_bytes": np.asarray(
+                    physical_budget_plan.realized_control_block_bytes,
+                    np.int64),
             },
             "raw_prefetch": {
                 "schema_version": 3,

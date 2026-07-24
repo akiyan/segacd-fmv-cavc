@@ -314,8 +314,8 @@ def fmt_frame(frame_index: int, frames: int) -> str:
 def prg_cap_summary(measured_cap: int) -> str:
     """Describe the fixed cold cap and construction-time physical planning."""
     return (
-        f"Cold cap fixed at {measured_cap}; Prg limits are constructed from "
-        "the sector envelope before image decisions; no reactive feedback")
+        f"Cold cap fixed at {measured_cap}; Prg limits come from the one-pass "
+        "shared-sector prefix ledger before each frame; no reactive feedback")
 
 
 def true_run_lengths(mask: np.ndarray) -> np.ndarray:
@@ -461,7 +461,7 @@ def metadata_lines(
     run_max = fmt_int(run_trace[1:].max(initial=0)) if run_trace.size else "?"
     delivery_summary = (
         "Physical Prg delivery: normal=%s KiB + jitter=%s KiB; "
-        "limit=%s KiB; ring=%s KiB; construction-time limits, "
+        "limit=%s KiB; ring=%s KiB; one-pass shared-sector limits, "
         "no reactive feedback" % (
             hardware.get("prg_buf_kb", "?"),
             hardware.get("prg_jitter_headroom_kb", "?"),

@@ -40,8 +40,13 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
   --output videos/STEM_emu_hud_warnings.md
 ```
 
-   For exact integer-VBlank rates, treat every derived `VBLANK` value different
-   from the normal cadence as a warning: 15 fps expects 4 and 30 fps expects 2.
+   Frame 0 is untimed boot staging. Exclude it from every metric, gate,
+   severity decision, scale maximum, OCR aggregate, and VBLANK statistic; leave
+   its complete horizontal extent blank in every HUD row. Keep it only for
+   first-loop sequence completeness and x-axis alignment.
+
+   For exact integer-VBlank rates, treat every timed derived `VBLANK` value
+   different from the normal cadence as a warning: 15 fps expects 4 and 30 fps expects 2.
    Report VBLANK only as `warning rate / warning count / evaluated total`; do
    not add individual VBLANK-warning frames to the event table. This warning
    does not turn an otherwise passing upload gate into a failure; report the
@@ -75,7 +80,8 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 
 - Use the complete first movie loop. For an explicitly failed incomplete-loop
   gate, use the complete observed prefix and state the expected/observed counts
-  in the heading. Frame 0 remains visible.
+  in the heading. Frame 0 keeps its horizontal position for alignment, but all
+  metric rows are blank there and it affects no gate, aggregate, or scale.
 - Keep `/timeline`'s horizontal contract: left edge 220 px, the same automatic
   pixels-per-frame rule, and `x = 220 + frame * pixels_per_frame`.
 - Put `VBLANK` first. Derive it from the difference between consecutive
@@ -84,8 +90,9 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   actually visible. Draw the expected cadence
   (`vsync_n_for_fps(content_fps)`, so 15 fps is 4) as a green guide line. Use
   neutral gray for healthy samples and yellow for nonzero deviations.
-  Leave the final frame unknown and exclude it from the statistics because its span is
-  the recorder's terminal hold, not playback cadence. For 24 fps, retain the
+  Leave frame 0 and the final frame unknown and exclude both from the
+  statistics: frame 0 is untimed boot staging and the final span is the
+  recorder's terminal hold, not playback cadence. For 24 fps, retain the
   measured row but defer its normal-line and warning rule until its 2/3 cadence
   is specified.
 - Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J` and `V/O/E` when
@@ -125,6 +132,8 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 ## Interpretation safeguards
 
 - `S`, `D`, and `R` are cumulative counters; their transition is the event.
+- Frame 0 is not a playback measurement. Its HUD values must never be plotted,
+  reported as events, or included in maxima, minima, rates, or scales.
 - `VBLANK` is derived after recording from consecutive displayed `F`
   transitions; it is not another player HUD field. A 15 fps frame at 4 is
   normal, while every other value is a warning. This rule is deliberately not

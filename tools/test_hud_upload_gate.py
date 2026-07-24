@@ -47,6 +47,25 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["warnings"], [])
         self.assertFalse(result["requires_explicit_upload_approval"])
+        self.assertEqual(result["evaluation_first_frame"], 1)
+        self.assertEqual(result["evaluated_timed_frames"], 3)
+
+    def test_frame_zero_is_excluded_from_every_gate_metric(self):
+        rows = groups(4)
+        rows[0].values.update({
+            "S": 255,
+            "D": 255,
+            "R": 255,
+            "C": 255,
+            "M": 255,
+            "J": 255,
+        })
+        result = self.evaluate(rows, 4, 15)
+        self.assertEqual(result["status"], "PASS")
+        self.assertEqual(
+            result["maxima"],
+            {field: 0 for field in "SDRCMJ"},
+        )
 
     def test_each_unsafe_metric_blocks_upload(self):
         for field, value in {"S": 1, "D": 1, "R": 1,

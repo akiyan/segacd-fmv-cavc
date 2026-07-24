@@ -48,6 +48,22 @@ Before recording, run the shared-machine exclusion check from `AGENTS.md`. Wait 
 sim/render or emulator capture is active. Never kill another session's process and never run
 two captures together.
 
+Resolve the native recording raster from the profile before constructing the
+command. This is mandatory because RetroArch may otherwise lock its recorder
+to the Mega-CD BIOS startup geometry before the H32/H40 movie changes mode:
+
+```sh
+RECORD_MODE="$(
+  tools/python.sh tools/encode_config.py configs/PROFILE.toml --print-env |
+  tools/python.sh -c 'import json,sys; print(json.load(sys.stdin)["CBRSIM_MODE"])'
+)"
+case "$RECORD_MODE" in
+  H32) NATIVE_RECORD_SIZE=256x224 ;;
+  H40) NATIVE_RECORD_SIZE=320x224 ;;
+  *) echo "record: unsupported native mode $RECORD_MODE" >&2; exit 1 ;;
+esac
+```
+
 ## Standard capture
 
 Use `tools/record_movie.sh`, which owns the high-level recording workflow:
@@ -77,7 +93,8 @@ Defaults and rules:
 - Use `--no-build` only after confirming in the current work that the disc represents the
   requested code/data and build mode. Unless release was explicitly requested, it must be a
   `DEBUG=1` disc; do not trust an unknown pre-existing image.
-- Use `--record-size 256x224` for H32 and `--record-size 320x224` for H40.
+- Always pass `--record-size "$NATIVE_RECORD_SIZE"`. Never omit it or rely on
+  RetroArch's first reported geometry. H32 is 256x224 and H40 is 320x224.
 - Use an unused display such as `--display :269`.
 - Keep the preview MP4 under `videos/`. `OUTDIR` selects the raw MKV and sidecar directory;
   the high-level harness defaults it to `videos/`.
@@ -101,7 +118,8 @@ Canonical full capture for later upload:
 ```sh
 OUTDIR="$PWD/videos" tools/record_movie.sh \
   --config configs/PROFILE.toml --seconds 180 \
-  --tag STEM_emu --preset ffv1-flac --record-size 256x224 \
+  --tag STEM_emu --preset ffv1-flac \
+  --record-size "$NATIVE_RECORD_SIZE" \
   --display :269 --out videos/STEM_emu_preview.mp4
 ```
 
@@ -191,7 +209,10 @@ Matroska trailer.
 Check the raw MKV and reports before trusting a capture:
 
 1. Use `ffprobe` to confirm video, audio, expected native raster, about 60000/1001 fps, and a
-   valid duration.
+   valid duration. Compare width and height to `NATIVE_RECORD_SIZE`
+   immediately. A mismatch is a failed recording: do not start HUD OCR,
+   compilation, or upload, even if the movie is otherwise visible. Re-record
+   with the explicit native size.
 2. For the default offline run, confirm the exact requested packet/frame count and report
    media-to-wall speed; faster-than-realtime is expected. For `--realtime-lossless`, confirm
    the harness timing is near the requested emulated duration.

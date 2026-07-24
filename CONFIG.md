@@ -257,6 +257,13 @@ encoder without analysis PNG time.
 
 After quantization, the encoder dry-runs the exact target through the shared
 VRAM allocator and predicts each frame's name-table and cold-pattern demand.
+Every CRAM segment switch is treated as a mandatory full name-table refresh:
+all cells enter both the complete and Miss-risk future-demand traces even when
+their numeric pattern and palette-line assignment did not change. That
+bandwidth is reserved before earlier optional updates may spend the
+whole-movie quality allowance. The full name-table byte count is a hard floor:
+the balanced-shortfall pass may proportionally reduce other protected demand
+but cannot dilute a CRAM refresh.
 It first selects the persistent DicBuf from whole-movie reuse, removes those
 hits from provisional Prg demand, and water-fills the finite WordBuf0/WordBuf1
 credits across the remaining risky bursts. For the narrower Main Miss-risk
@@ -284,21 +291,28 @@ physical PrgBuf sector plan is constructed by `physical_budget.py` and
 materialized by `stream_schedule.py`. See
 [`BUEFFERING.md`](BUEFFERING.md) for the complete planning flow and validation.
 
-Before image decisions, the planner reserves the maximum bitmap update list
-and one four-byte run descriptor for every permitted cold pattern. It freezes
-that conservative control-sector route and projects predicted Prg demand onto
-the remaining payload sectors with the cadence-derived normal PrgBuf capacity
+Before each frame makes image decisions, the shared-sector planner knows the
+exact cumulative control bytes finalized by the preceding frame. It rounds
+that control stream to sectors, then gives every remaining cumulative sector
+to the current frame's Prg deadline. The current frame also receives a strict
+control-byte ceiling computed from its Prg ceiling. Cold choices reserve one
+four-byte descriptor while the frame is being selected; after physical slots
+make the actual run count known, only those exact bytes are committed. Their
+savings therefore become payload capacity for the next frame before that
+frame starts, without a movie retry or a pack-time reclaim.
+
+The prefix ledger uses the cadence-derived normal PrgBuf capacity
 (382/397/402 KiB at 15/24/30fps). Subsequent scheduled delivery may occupy up
 to 422 KiB; the difference is the automatic jitter interval, and no TOML value
 controls it. The schedule remains one physical sector below the player's
 424 KiB pump back-pressure boundary.
 
-Image decisions then consume only the pre-proven Prg limits. Final updates,
-run descriptors, and Prg loads must be no larger than the frozen envelope.
-Shorter control data leaves zero padding in its reserved sectors instead of
-moving a boundary into payload capacity. The final sim and pack schedules are
-therefore equality checks on a constructed route; a failure is an invariant
-bug, not a request to lower a local cap or repeat the encode.
+For every BODY prefix, control through frame `i` and Prg payload needed by
+frame `i+1` are independently rounded to sectors and must fit the five useful
+route sectors accumulated through slot `i`. The sim freezes this proof beside
+the decisions; the packer repeats it and then requires exact schedule equality.
+A failure is an invariant bug, not a request to lower a local cap or repeat
+the encode.
 
 The exact schedule and decoder verification always cover every frame. Summary
 comparisons use a separate automatic evaluation boundary: the first frame

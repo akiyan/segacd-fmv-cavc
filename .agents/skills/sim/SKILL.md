@@ -55,14 +55,18 @@ Other fixed defaults:
 - PrgBuf and offline quality-budget ceilings come from `tools/av_config.py`.
   WordBuf0, WordBuf1, and DicBuf capacities come from
   `tools/pattern_supply.py`; none are normal per-source overrides.
-- BODY supply follows SEGA-CD 1x's exact integer sector cadence. Fixed control
-  data is reserved first. Before image decisions, the physical planner freezes
-  a conservative route containing the maximum bitmap update list and one
-  worst-case four-byte descriptor per permitted cold tile. Predicted Prg
-  demand is projected onto the remaining payload sectors with the real PrgBuf
-  capacity. Later stages may only shrink that proven work; unused control
-  bytes remain pad and cannot move a sector boundary into payload capacity.
-  This is not a per-source bitrate setting.
+- BODY supply follows SEGA-CD 1x's exact integer sector cadence. Before each
+  frame makes image decisions, the shared-sector planner rounds the exact
+  control bytes finalized through the preceding frame and returns every unused
+  cumulative sector to the current Prg deadline. The current frame also gets a
+  strict control-byte ceiling. Its exact run bytes are committed in-frame and
+  affect the next frame before that frame starts. Sim and pack independently
+  verify every cumulative control/payload deadline; there is no post-encode
+  sector reclaim or retry. This is not a per-source bitrate setting.
+- Every CRAM segment switch reserves a full name-table refresh in both future
+  demand traces before earlier optional image updates may spend that quality
+  allowance. Its name-table bytes are a hard floor that balanced shortage may
+  not dilute. Palette bytes themselves remain boot-preloaded.
 - GPU encoding is on by default. CPU is the fallback.
 - Start sim/render with the locked GPU environment. Do not fall back to a
   system Python or an older venv:
@@ -181,9 +185,10 @@ After completion:
   jitter / scheduled delivery is 382/40/422 KiB at 15fps,
   397/25/422 KiB at 24fps, or 402/20/422 KiB at 30fps. The physical ring
   remains 428 KiB and player pump back-pressure remains 424 KiB.
-- Confirm that the construction-time physical plan prints its accepted Prg
-  total and control/payload sector sets before the image loop. Final sim and
-  pack scheduling are invariant checks on that frozen route. A failure there
+- Confirm that the construction log identifies the one-pass shared-sector
+  prefix ledger, and that the final line reports exact Prg/control totals plus
+  a non-negative minimum cumulative spare-sector count. Final sim and pack
+  scheduling are invariant checks on that frozen prefix proof. A failure there
   is a pipeline bug; do not lower the cold cap or repeat the encode with a
   session-local adjustment.
 - Check the completion line: `starved_frames=N (X%)`.

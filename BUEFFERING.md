@@ -61,7 +61,8 @@ per-frame decisions:
 
 1. Render the exact quantized target for every frame.
 2. Mark changed cells whose visual change exceeds the Near bound. These are the
-   narrower Miss-risk set.
+   narrower Miss-risk set. Mark every cell at a CRAM segment switch because
+   that switch invalidates every live name-table palette reference.
 3. Dry-run the complete exact target through the same `TileAllocator` used by
    the final encode.
 4. Record, per frame, complete exact bytes/cold patterns and protected
@@ -71,16 +72,20 @@ per-frame decisions:
    remaining risky bursts.
 6. Subtract only the saved 32-byte pattern payload from the future demand. A
    preloaded exact tile still needs its 2-byte name-table entry.
-7. Reserve a conservative physical control route: the maximum bitmap update
-   list plus one four-byte run descriptor per permitted cold pattern.
-8. Project predicted residual Prg demand onto the payload sectors left by that
-   route, using the real cadence-specific prebuffer capacity. This freezes the
-   per-frame Prg limits before image decisions.
+7. Start one shared-sector prefix ledger. Before frame `i` makes image
+   decisions, round the exact control bytes finalized through frame `i-1` and
+   turn every other cumulative sector into frame `i`'s Prg deadline limit.
+8. Give frame `i` a matching control-byte ceiling. Reserve one four-byte
+   descriptor per tentative cold choice inside that frame, then commit only
+   its exact physical run bytes. The difference is available when frame
+   `i+1` begins; no movie retry is involved.
 9. Walk the adjusted quality demand backwards to build the complete-exact and
-   Miss-risk reserve curves.
+   Miss-risk reserve curves. Unavoidable shortage may reduce ordinary risk
+   demand proportionally, but never the full name-table bytes at a CRAM
+   switch.
 10. Run the normal encoder pass. It consumes boot-preload credits only for cold
-    patterns that are actually selected and may not exceed the pre-proven Prg
-    limits or control envelope.
+    patterns that are actually selected and may not exceed the Prg, cold, or
+    control limit known at the start of that frame.
 11. Freeze one physical source for every update in the decision log.
 12. Pack and independently replay that frozen assignment. No later stage is
     allowed to invent a different source choice.
@@ -96,6 +101,8 @@ allocator through the exact target. For each frame after frame 0, exact demand
 contains:
 
 - 2 bytes for every cell whose exact pattern or palette assignment changed;
+- 2 bytes for every cell at a CRAM segment switch, including cells whose
+  numeric palette-line assignment stayed the same;
 - 32 bytes once for every distinct changed pattern that is not resident;
 - a cold-pattern count clipped to the measured mode/fps/active-area limit.
 
@@ -104,9 +111,12 @@ exact pattern already in VRAM costs only the 2-byte name entry. Frame 0 has zero
 timed-stream demand because `HEADER.DAT` loads it during boot, but it still
 seeds predicted VRAM residency for frame 1.
 
-At a palette boundary, the previous exact indices are rendered through the new
-palette before visual distance is measured. Retained tiles therefore reflect
-the colour change caused by the real CRAM switch.
+At a palette boundary, the complete name table is mandatory and protected
+demand. The previous exact indices are also rendered through the new palette
+before visual distance is measured. The reserve therefore covers both the
+physical full refresh and the colour change caused by the real CRAM switch.
+The balanced-shortfall pass may thin ordinary protected work, but the complete
+name-table byte count is a hard floor and cannot be thinned.
 
 The prediction exposes two traces:
 
@@ -245,17 +255,22 @@ when VRAM slots are consecutive.
 
 ## Physical PrgBuf scheduling is a construction constraint
 
-Only `Prg` loads consume the timed payload stream. Before final image
-decisions:
+Only `Prg` loads consume the timed payload stream. The physical constraint is
+resolved during the one stateful encoder pass:
 
-1. `physical_budget.py` fixes a worst-run control-sector envelope.
-2. It projects predicted Prg demand into the remaining payload sectors with
-   the boot prebuffer, CD cadence, and one-frame readiness margin.
-3. The final encoder may only reduce the planned Prg and control demand.
-4. `stream_schedule.py` materializes the frozen sector route. Shorter control
-   data leaves zero pad rather than moving sector boundaries.
-5. `pack_stream.py --verify` replays every delivery and consumption event and
-   requires exact equality with the sim.
+1. `physical_budget.py` tracks cumulative useful route sectors.
+2. At the start of frame `i`, control bytes through frame `i-1` are already
+   exact. Their independently rounded sectors are subtracted before frame
+   `i` receives a Prg limit.
+3. The frame's Prg ceiling determines its independently rounded payload
+   prefix, which in turn gives that frame a strict control-byte ceiling.
+4. Once physical slots make the real run count known, exact control bytes are
+   committed. Run savings change frame `i+1`'s limit before its decisions.
+5. Every prefix proves that control through frame `i` plus payload needed by
+   frame `i+1`, each rounded separately, fits the accumulated five-sector
+   route.
+6. `stream_schedule.py` materializes that proven split, and
+   `pack_stream.py --verify` repeats the prefix proof and exact trace equality.
 
 The underlying PRG-RAM allocation is a 428 KiB circular buffer. Normal
 prebuffer capacity is 382/397/402 KiB at 15/24/30 fps, and timed delivery may
@@ -335,8 +350,8 @@ routine runs; it no longer applies waveform thresholds.
 
 - `tools/upgrade_planner.py`: exact/protected prediction, backwards reserve,
   and spending limit.
-- `tools/physical_budget.py`: construction-time control-sector envelope and
-  physically feasible per-frame Prg limits.
+- `tools/physical_budget.py`: one-pass shared-sector prefix ledger and
+  physically feasible per-frame Prg/control limits.
 - `tools/pattern_supply.py`: capacities, water-fill allocation, frozen source
   validation, and physical stream materialization.
 - `tools/sim.py`: demand construction, final source assignment, diagnostics,

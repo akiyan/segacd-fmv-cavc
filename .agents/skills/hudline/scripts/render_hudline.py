@@ -169,11 +169,13 @@ def validate(
             raise SystemExit(
                 f"gate expected {expected} frames, TSV has {frames}")
     for gate_key, column in GATE_COLUMN.items():
-        actual = int(round(float(data[column].max(initial=0))))
+        actual = int(round(float(data[column][1:].max(initial=0))))
         recorded = int(gate["maxima"][gate_key])
         if actual != recorded:
             raise SystemExit(
                 f"gate {gate_key} maximum {recorded} != TSV maximum {actual}")
+    if int(gate.get("evaluation_first_frame", 1)) != 1:
+        raise SystemExit("HUD gate must exclude untimed frame 0")
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -211,6 +213,9 @@ def derive_display_vblanks(
         if np.any(spans <= 0):
             raise SystemExit("capture_first must increase between content frames")
         displayed[:-1] = spans
+        # Frame 0 is boot staging, not a timed playback frame.  Its long first
+        # span must be absent both visually and statistically.
+        displayed[0] = np.nan
     expected = av_config.vsync_n_for_fps(content_fps)
     integer_rate = av_config.NTSC_VSYNC / expected
     playback_rate = av_config.playback_fps_for_content(content_fps)
@@ -228,9 +233,17 @@ def row_specs(
     display_vblank_expected: int | None,
 ) -> list[RowSpec]:
     limits = {key: float(value) for key, value in gate["limits"].items()}
+
+    def timed_max(key: str, default: float = 0.0) -> float:
+        values = data.get(key)
+        if values is None or len(values) <= 1:
+            return float(default)
+        finite = values[1:][np.isfinite(values[1:])]
+        return float(finite.max(initial=default))
+
     lead_max = max(
         0x68,
-        int(math.ceil(float(data.get("lead_256b", np.zeros(1)).max(initial=0)))))
+        int(math.ceil(timed_max("lead_256b"))))
     display_vblanks = data["display_vblanks"]
     finite_vblanks = display_vblanks[np.isfinite(display_vblanks)]
     capacity_floor = (
@@ -266,16 +279,16 @@ def row_specs(
             PASS_GUIDE, "R", height=23, show_unit=False,
         ),
         RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
-                max(1, limits["C"], float(data["cd_wait"].max(initial=0))),
+                max(1, limits["C"], timed_max("cd_wait")),
                 WARN, "C"),
         RowSpec("main_vblank_wait", "M  MAIN WAIT", "VBlanks/frame",
-                max(1, limits["M"], float(data["main_vblank_wait"].max(initial=0))),
+                max(1, limits["M"], timed_max("main_vblank_wait")),
                 (238, 135, 73), "M"),
         RowSpec("prgbuf_jitter_peak_kib", "J  PRG JITTER", "sticky peak KiB",
                 max(
                     1,
                     limits["J"],
-                    float(data["prgbuf_jitter_peak_kib"].max(initial=0)),
+                    timed_max("prgbuf_jitter_peak_kib"),
                     float(gate.get("jitter_headroom_kib", 0))),
                 style.COL_PRG, "J"),
         RowSpec("lead_256b", "L  AUDIO LEAD", "256-byte units", lead_max,
@@ -382,6 +395,8 @@ def draw_rows(
         draw.rectangle((left, y0, right, y1), fill=PANEL, outline=GRID)
         values = data.get(spec.key, np.zeros(frames))
         for frame_index, raw in enumerate(values):
+            if frame_index == 0:
+                continue
             value = float(raw)
             if not math.isfinite(value):
                 continue
@@ -559,8 +574,8 @@ def main() -> None:
         f"{key} {int(maxima[key])}/{int(limits[key])}"
         for key in ("S", "D", "R", "C", "M", "J")
     )
-    confidence = data.get("confidence", np.ones(frames))
-    sample_count = data.get("sample_count", np.ones(frames))
+    confidence = data.get("confidence", np.ones(frames))[1:]
+    sample_count = data.get("sample_count", np.ones(frames))[1:]
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -591,8 +606,8 @@ def main() -> None:
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
             f"{int(finite_display_vblanks.max())}; "
-            f"OCR confidence min {confidence.min():.3f}; "
-            f"samples {int(sample_count.sum())}; "
+            f"OCR confidence min {confidence.min(initial=1.0):.3f}; "
+            f"samples {int(sample_count.sum(initial=0))}; "
             f"profile {str(gate['profile_sha256'])[:10]}"
         ),
         fill=DIM,
@@ -611,7 +626,8 @@ def main() -> None:
     draw.text(
         (left, bottom + 64),
         (
-            "VBLANK is derived from consecutive F capture starts; the terminal hold is excluded. "
+            "Frame 0 is untimed boot staging: every metric, scale and gate excludes it. "
+            "VBLANK is derived from consecutive F capture starts; the terminal hold is also excluded. "
             "F is the x-axis. V/O on frame F describe the flip for F-1; "
             "E belongs to F. Orange lines are gate limits; J also shows the yellow normal jitter interval."
         ),
@@ -657,6 +673,8 @@ def main() -> None:
         "recording_mtime_ns": gate["recording_mtime_ns"],
         "profile_sha256": gate["profile_sha256"],
         "frames": frames,
+        "evaluation_first_frame": 1,
+        "evaluated_timed_frames": max(0, frames - 1),
         "fps": float(gate["content_fps"]),
         "pixels_per_frame": ppf,
         "plot_left": left,
@@ -682,6 +700,7 @@ def main() -> None:
         "display_vblank_max": int(finite_display_vblanks.max()),
         "display_vblank_average": float(finite_display_vblanks.mean()),
         "display_vblank_terminal_hold_excluded": True,
+        "frame_zero_excluded_from_all_metrics": True,
         "ocr_confidence_min": float(confidence.min()),
         "ocr_sample_count": int(sample_count.sum()),
         "rows": [
