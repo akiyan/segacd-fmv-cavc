@@ -202,8 +202,8 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "1")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "0")
         self.assertEqual(
-            env["CBRSIM_CRAM_QUALITY_PRIORITY_FRAMES"],
-            str(av_config.CRAM_QUALITY_PRIORITY_FRAMES))
+            env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"],
+            str(av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES))
         self.assertEqual(env["CBRSIM_COLD_CAP"], "180")
         self.assertEqual(
             env["CBRSIM_VRAM_TILES"],
@@ -241,16 +241,20 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                     ValueError, "cold_cap must be an integer"):
                 load_profile(path)
 
-    def test_profile_may_override_cram_quality_priority_frames(self) -> None:
+    def test_profile_may_override_cram_quality_priority_search_frames(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cram-priority.toml"
             path.write_text(PROFILE.replace(
                 "[palette]",
-                "[encoder]\ncram_quality_priority_frames = 0\n\n[palette]"))
+                "[encoder]\n"
+                "cram_quality_priority_search_frames = 0\n\n[palette]"))
             env = apply_profile_env(load_profile(path), {})
-        self.assertEqual(env["CBRSIM_CRAM_QUALITY_PRIORITY_FRAMES"], "0")
+        self.assertEqual(
+            env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"], "0")
 
-    def test_cram_quality_priority_frames_must_be_non_negative_integer(
+    def test_cram_quality_priority_search_frames_must_be_non_negative_integer(
         self,
     ) -> None:
         for value in ("-1", "true", "1.5"):
@@ -259,9 +263,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 path.write_text(PROFILE.replace(
                     "[palette]",
                     "[encoder]\n"
-                    f"cram_quality_priority_frames = {value}\n\n[palette]"))
+                    "cram_quality_priority_search_frames = "
+                    f"{value}\n\n[palette]"))
                 with self.assertRaisesRegex(
-                        ValueError, "cram_quality_priority_frames"):
+                        ValueError, "cram_quality_priority_search_frames"):
                     load_profile(path)
 
     def test_endpoint_snap_limits_must_be_ordered(self) -> None:

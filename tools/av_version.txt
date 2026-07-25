@@ -11,11 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
-#   e125: Let each CRAM switch and its following three frames spend the
-#         available whole-movie quality allowance without retaining a future
-#         reserve target. The original reserve curve resumes immediately
-#         afterwards; physical sector, cold, PrgBuf, and jitter limits remain
-#         unchanged.
+#   e126: Inspect the existing Miss-risk forecast at each CRAM switch and its
+#         next three frames, then let only the highest-risk frame spend without
+#         retaining a later quality reserve. Zero-risk regions select none;
+#         physical sector, cold, PrgBuf, and jitter limits remain unchanged.
+#   e125: Trial a four-frame CRAM quality-priority window.
 #   e124: Keep mandatory sim output to encoded decisions and numeric traces.
 #         Store compact per-cell display categories in the decision log and
 #         generate preview/category PNGs only during analysis rendering.
@@ -792,5 +792,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260725
-e=125
+e=126
 p=90

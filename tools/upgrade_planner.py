@@ -47,29 +47,49 @@ class ReservePlan:
     shortfall: np.ndarray
 
 
-def build_priority_window_mask(
+def select_peak_priority_frames(
     trigger_frames: Sequence[bool] | np.ndarray,
-    window_frames: int,
+    risk_scores: Sequence[int] | np.ndarray,
+    search_frames: int,
 ) -> np.ndarray:
-    """Mark each trigger frame and its following priority-window frames.
+    """Select at most one highest-risk frame following each trigger.
 
-    ``window_frames`` is the total window length including the trigger. Zero
-    disables the window. Overlapping and end-clipped windows merge naturally.
+    ``search_frames`` includes the trigger frame. Zero disables selection.
+    A search stops before the next trigger, and a region whose maximum score
+    is zero selects no frame.
     """
 
     triggers = np.asarray(trigger_frames, dtype=bool)
+    scores = np.asarray(risk_scores, dtype=np.int64)
     if triggers.ndim != 1:
         raise ValueError("trigger frames must be one-dimensional")
-    if isinstance(window_frames, bool) or not isinstance(
-            window_frames, (int, np.integer)):
-        raise ValueError("window frames must be an integer")
-    if window_frames < 0:
-        raise ValueError("window frames must be non-negative")
+    if scores.shape != triggers.shape:
+        raise ValueError("risk scores must match trigger frames")
+    if np.any(scores < 0):
+        raise ValueError("risk scores must be non-negative")
+    if isinstance(search_frames, bool) or not isinstance(
+            search_frames, (int, np.integer)):
+        raise ValueError("search frames must be an integer")
+    if search_frames < 0:
+        raise ValueError("search frames must be non-negative")
     priority = np.zeros(triggers.shape, bool)
-    for offset in range(int(window_frames)):
-        if offset >= len(priority):
-            break
-        priority[offset:] |= triggers[:len(priority) - offset]
+    trigger_indices = np.flatnonzero(triggers)
+    for position, trigger in enumerate(trigger_indices):
+        next_trigger = (
+            int(trigger_indices[position + 1])
+            if position + 1 < len(trigger_indices) else len(priority)
+        )
+        end = min(
+            int(trigger) + int(search_frames),
+            next_trigger,
+            len(priority),
+        )
+        if end <= trigger:
+            continue
+        relative = int(np.argmax(scores[int(trigger):end]))
+        selected = int(trigger) + relative
+        if int(scores[selected]) > 0:
+            priority[selected] = True
     return priority
 
 

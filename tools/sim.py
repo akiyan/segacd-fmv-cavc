@@ -252,13 +252,13 @@ PRG_DELIVERY_CAP_KB = av_config.physical_delivery_cap_kb(FPS)
 PRG_JITTER_HEADROOM_KB = av_config.ring_jitter_headroom_kb(FPS)
 QUALITY_BUDGET_KB = av_config.quality_budget_kb(FPS)
 QUALITY_BUDGET_BYTES = QUALITY_BUDGET_KB * 1024
-CRAM_QUALITY_PRIORITY_FRAMES = int(os.environ.get(
-    "CBRSIM_CRAM_QUALITY_PRIORITY_FRAMES",
-    str(av_config.CRAM_QUALITY_PRIORITY_FRAMES),
+CRAM_QUALITY_PRIORITY_SEARCH_FRAMES = int(os.environ.get(
+    "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES",
+    str(av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
 ))
-if CRAM_QUALITY_PRIORITY_FRAMES < 0:
+if CRAM_QUALITY_PRIORITY_SEARCH_FRAMES < 0:
     raise SystemExit(
-        "CBRSIM_CRAM_QUALITY_PRIORITY_FRAMES must be non-negative")
+        "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES must be non-negative")
 # 格上げパス(既定ON): 当該フレームの余り + 画質予算で、近似(Near/Flbk)や持ち越しをRaw/Bufに格上げ。
 # 0で無効(=従来の帯域余し挙動に戻せる, 比較用)。
 UPGRADE_ON = os.environ.get("CBRSIM_UPGRADE", "1") != "0"
@@ -1435,12 +1435,6 @@ def main():
     cram_switch_frames = np.zeros(n, bool)
     if n > 1:
         cram_switch_frames[1:] = frame_seg[1:] != frame_seg[:-1]
-    cram_quality_priority_frames = (
-        upgrade_planner.build_priority_window_mask(
-            cram_switch_frames,
-            CRAM_QUALITY_PRIORITY_FRAMES,
-        )
-    )
     def build_forecast():
         """Build the Forecast stage's demand and boot-prefetch plan."""
         # Only changes that fit Near may degrade gracefully. Anything beyond
@@ -1653,6 +1647,15 @@ def main():
         demand_prediction.exact_bytes - preload_credit_bytes, 0)
     main_demand = np.maximum(
         demand_prediction.protected_bytes - protected_credit_bytes, 0)
+    cram_quality_risk_bytes = np.maximum(
+        main_demand - upgrade_supply, 0)
+    cram_quality_priority_frames = (
+        upgrade_planner.select_peak_priority_frames(
+            cram_switch_frames,
+            cram_quality_risk_bytes,
+            CRAM_QUALITY_PRIORITY_SEARCH_FRAMES,
+        )
+    )
     mandatory_main_demand = np.where(
         cram_switch_frames,
         C_CELLS * NAME_BYTES,
@@ -1694,8 +1697,8 @@ def main():
         f"end={main_reserve[-1] // 1024 if n else 0}KB "
         f"balanced_shortfall={main_reserve_plan.shortfall.sum() // 1024}KB; "
         "CRAM priority "
-        f"window={CRAM_QUALITY_PRIORITY_FRAMES}frames "
-        f"active={int(np.count_nonzero(cram_quality_priority_frames))}frames",
+        f"search={CRAM_QUALITY_PRIORITY_SEARCH_FRAMES}frames "
+        f"selected={int(np.count_nonzero(cram_quality_priority_frames))}frames",
         flush=True,
     )
     print(
@@ -3307,8 +3310,8 @@ def main():
          f"{upgrade_reserve[0]//1024}/{upgrade_reserve.max()//1024}/"
          f"{upgrade_reserve[-1]//1024}KB; main risk="
          f"{main_reserve[0]//1024}/{main_reserve.max()//1024}/"
-         f"{main_reserve[-1]//1024}KB; CRAM priority="
-         f"{CRAM_QUALITY_PRIORITY_FRAMES}frames"
+         f"{main_reserve[-1]//1024}KB; CRAM priority selected="
+         f"{int(np.count_nonzero(cram_quality_priority_frames))}frames"
          if upgrade_log else "upgrade: (off)"),
     ])
     (OUT / "report.txt").write_text(report)
@@ -3385,9 +3388,10 @@ def main():
                 main_reserve_plan.shortfall),
             main_risk_reserve_bytes=main_reserve,
             main_risk_base_reserve_bytes=main_base_reserve,
-            cram_quality_priority_frames=np.int64(
-                CRAM_QUALITY_PRIORITY_FRAMES),
+            cram_quality_priority_search_frames=np.int64(
+                CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
             cram_quality_priority_mask=cram_quality_priority_frames,
+            cram_quality_risk_bytes=cram_quality_risk_bytes,
             block_lengths=control_lengths,
             shadow_update_lists=shadow_list_flags,
             payload_sectors=np.asarray(
@@ -3476,8 +3480,8 @@ def main():
                 "raw_prefetch_min_batch": int(RAW_PREFETCH_MIN_BATCH),
                 "raw_prefetch_budget_floor_patterns": int(
                     RAW_PREFETCH_BUDGET_FLOOR_PATTERNS),
-                "cram_quality_priority_frames": int(
-                    CRAM_QUALITY_PRIORITY_FRAMES),
+                "cram_quality_priority_search_frames": int(
+                    CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
             },
             "palette": {
                 "algorithm": PAL_ALGO, "seam_weight": float(PAL_SEAM_WEIGHT),
@@ -3655,8 +3659,8 @@ def main():
             "prg_jitter_headroom_kb": int(PRG_JITTER_HEADROOM_KB),
             "prg_physical_ring_kb": int(av_config.RING_SIZE_KB),
             "quality_budget_kb": int(QUALITY_BUDGET_KB),
-            "cram_quality_priority_frames": int(
-                CRAM_QUALITY_PRIORITY_FRAMES),
+            "cram_quality_priority_search_frames": int(
+                CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
         }, open(EMIT_DEC, "wb"), protocol=4)
         print(f"  実機決定ログ: {EMIT_DEC} ({len(dec_frames)} frames)")
 

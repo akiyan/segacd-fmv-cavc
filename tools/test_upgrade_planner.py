@@ -118,22 +118,42 @@ class DemandPredictionTests(unittest.TestCase):
 
 
 class ReserveCurveTests(unittest.TestCase):
-    def test_priority_window_includes_trigger_and_following_frames(self) -> None:
-        mask = upgrade_planner.build_priority_window_mask(
-            [False, True, False, False, True, False],
+    def test_priority_search_selects_one_peak_after_each_trigger(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [False, True, False, False, True, False, False],
+            [0, 2, 9, 4, 3, 8, 5],
             3,
         )
 
         np.testing.assert_array_equal(
-            mask, [False, True, True, True, True, True])
+            mask, [False, False, True, False, False, True, False])
 
-    def test_zero_length_priority_window_disables_exception(self) -> None:
-        mask = upgrade_planner.build_priority_window_mask(
+    def test_zero_length_priority_search_disables_exception(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
             [False, True, False],
+            [0, 10, 20],
             0,
         )
 
         np.testing.assert_array_equal(mask, [False, False, False])
+
+    def test_zero_risk_region_selects_no_priority_frame(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [False, True, False],
+            [0, 0, 0],
+            3,
+        )
+
+        np.testing.assert_array_equal(mask, [False, False, False])
+
+    def test_priority_search_stops_before_the_next_trigger(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [True, False, True, False],
+            [1, 9, 8, 2],
+            4,
+        )
+
+        np.testing.assert_array_equal(mask, [False, True, True, False])
 
     def test_priority_window_lowers_only_its_reserve_targets(self) -> None:
         effective = upgrade_planner.relax_reserve_in_priority_windows(
@@ -143,9 +163,12 @@ class ReserveCurveTests(unittest.TestCase):
 
         np.testing.assert_array_equal(effective, [40, 0, 0, 70, 80])
 
-    def test_priority_window_rejects_invalid_lengths_and_shapes(self) -> None:
+    def test_priority_search_rejects_invalid_lengths_and_shapes(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-negative"):
-            upgrade_planner.build_priority_window_mask([True], -1)
+            upgrade_planner.select_peak_priority_frames([True], [1], -1)
+        with self.assertRaisesRegex(ValueError, "must match"):
+            upgrade_planner.select_peak_priority_frames(
+                [True, False], [1], 2)
         with self.assertRaisesRegex(ValueError, "must match"):
             upgrade_planner.relax_reserve_in_priority_windows(
                 [10, 20], [True])
