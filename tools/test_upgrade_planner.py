@@ -118,6 +118,38 @@ class DemandPredictionTests(unittest.TestCase):
 
 
 class ReserveCurveTests(unittest.TestCase):
+    def test_priority_window_includes_trigger_and_following_frames(self) -> None:
+        mask = upgrade_planner.build_priority_window_mask(
+            [False, True, False, False, True, False],
+            3,
+        )
+
+        np.testing.assert_array_equal(
+            mask, [False, True, True, True, True, True])
+
+    def test_zero_length_priority_window_disables_exception(self) -> None:
+        mask = upgrade_planner.build_priority_window_mask(
+            [False, True, False],
+            0,
+        )
+
+        np.testing.assert_array_equal(mask, [False, False, False])
+
+    def test_priority_window_lowers_only_its_reserve_targets(self) -> None:
+        effective = upgrade_planner.relax_reserve_in_priority_windows(
+            [40, 50, 60, 70, 80],
+            [False, True, True, False, False],
+        )
+
+        np.testing.assert_array_equal(effective, [40, 0, 0, 70, 80])
+
+    def test_priority_window_rejects_invalid_lengths_and_shapes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            upgrade_planner.build_priority_window_mask([True], -1)
+        with self.assertRaisesRegex(ValueError, "must match"):
+            upgrade_planner.relax_reserve_in_priority_windows(
+                [10, 20], [True])
+
     def test_future_burst_builds_only_the_needed_reserve(self) -> None:
         reserve = upgrade_planner.build_reserve_curve(
             demand=[0, 20, 20, 140, 20],

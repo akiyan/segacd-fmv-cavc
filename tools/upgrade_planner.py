@@ -47,6 +47,51 @@ class ReservePlan:
     shortfall: np.ndarray
 
 
+def build_priority_window_mask(
+    trigger_frames: Sequence[bool] | np.ndarray,
+    window_frames: int,
+) -> np.ndarray:
+    """Mark each trigger frame and its following priority-window frames.
+
+    ``window_frames`` is the total window length including the trigger. Zero
+    disables the window. Overlapping and end-clipped windows merge naturally.
+    """
+
+    triggers = np.asarray(trigger_frames, dtype=bool)
+    if triggers.ndim != 1:
+        raise ValueError("trigger frames must be one-dimensional")
+    if isinstance(window_frames, bool) or not isinstance(
+            window_frames, (int, np.integer)):
+        raise ValueError("window frames must be an integer")
+    if window_frames < 0:
+        raise ValueError("window frames must be non-negative")
+    priority = np.zeros(triggers.shape, bool)
+    for offset in range(int(window_frames)):
+        if offset >= len(priority):
+            break
+        priority[offset:] |= triggers[:len(priority) - offset]
+    return priority
+
+
+def relax_reserve_in_priority_windows(
+    reserve: Sequence[int] | np.ndarray,
+    priority_frames: Sequence[bool] | np.ndarray,
+) -> np.ndarray:
+    """Return a reserve curve with priority-window targets lowered to zero."""
+
+    reserve_arr = np.asarray(reserve, dtype=np.int64)
+    priority_arr = np.asarray(priority_frames, dtype=bool)
+    if reserve_arr.ndim != 1:
+        raise ValueError("reserve must be one-dimensional")
+    if priority_arr.shape != reserve_arr.shape:
+        raise ValueError("priority frames must match reserve")
+    if np.any(reserve_arr < 0):
+        raise ValueError("reserve must be non-negative")
+    effective = reserve_arr.copy()
+    effective[priority_arr] = 0
+    return effective
+
+
 def predict_update_demands(
     pattern_frames: Sequence[np.ndarray],
     palette_frames: Sequence[np.ndarray],

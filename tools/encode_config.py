@@ -57,6 +57,8 @@ ENV_MAP = {
     ("output", "emit_decisions"): "CBRSIM_EMIT_DEC",
     ("encoder", "raw_prefetch"): "CBRSIM_RAW_PREFETCH",
     ("encoder", "cold_cap"): "CBRSIM_COLD_CAP",
+    ("encoder", "cram_quality_priority_frames"):
+        "CBRSIM_CRAM_QUALITY_PRIORITY_FRAMES",
     ("palette", "algorithm"): "CBRSIM_PAL_ALGO",
 }
 PROFILE_ENV_DEFAULTS = {
@@ -71,6 +73,8 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_NEAR": "1",
     "CBRSIM_BOOT_VRAM_PREFETCH": "1",
     "CBRSIM_RAW_PREFETCH": "0",
+    "CBRSIM_CRAM_QUALITY_PRIORITY_FRAMES": str(
+        av_config.CRAM_QUALITY_PRIORITY_FRAMES),
     "CBRSIM_PAL_MAP_WEIGHT": str(av_config.PALETTE_MAP_WEIGHT),
     "CBRSIM_PAL_SEAM_WEIGHT": str(av_config.PALETTE_SEAM_WEIGHT),
     "CBRSIM_PAL_SEAM_ITERATIONS": str(av_config.PALETTE_SEAM_ITERATIONS),
@@ -215,6 +219,18 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             raise ValueError(
                 f"{profile_path}: encoder.cold_cap {requested_cold_cap} is "
                 f"below baseline {baseline_cold_cap} for fps={source_fps:g}")
+    cram_priority_frames = data.get(
+        "encoder", {}).get("cram_quality_priority_frames")
+    if cram_priority_frames is not None:
+        if isinstance(cram_priority_frames, bool) or not isinstance(
+                cram_priority_frames, int):
+            raise ValueError(
+                f"{profile_path}: encoder.cram_quality_priority_frames "
+                "must be an integer")
+        if cram_priority_frames < 0:
+            raise ValueError(
+                f"{profile_path}: encoder.cram_quality_priority_frames "
+                "must be non-negative")
     if str(data["video"]["fit"]).lower() not in {"pad", "crop"}:
         raise ValueError(f"{profile_path}: video.fit must be 'pad' or 'crop'")
     resize_filter = str(data["video"].get("resize_filter", "lanczos")).lower()
