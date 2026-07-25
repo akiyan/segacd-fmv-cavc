@@ -201,7 +201,9 @@ Before accepting the recording, verify:
   the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
   and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's
   normal jitter interval (`28`, `19`, or `14` respectively).
-  Preserve the TSV and upload-capable gate JSON next to the recording.
+  Preserve the encoder/player-versioned HUD TSV body under `logs/`, its
+  run-specific compatibility symlink, and the upload-capable gate JSON next to
+  the recording.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
 timestamps and a `videos/<stem>/record_check` base; inspect only the new directory and its

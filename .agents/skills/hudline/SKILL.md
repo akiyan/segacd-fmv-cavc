@@ -12,6 +12,9 @@ can combine both without resampling.
 ## Workflow
 
 1. Require the HUD TSV and gate JSON generated from the same lossless recording.
+   The HUD TSV body must be the persistent
+   `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; a run-specific
+   `videos/STEM_emu_hud.tsv` symlink to it is accepted as the input path.
    The renderer checks the first loop, contiguous frame numbers, expected frame
    count, profile SHA, gate maxima, and recording size/mtime when available.
    Render failed gates too; when playback did not complete one loop, render

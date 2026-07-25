@@ -235,8 +235,10 @@ are symlinks into the project-managed tmpfs workspace under
 `/dev/shm/segacd-fmv-ttrc`; inactive oldest entries are evicted when the next
 run needs room, while active leases are never removed. Native lossless emulator
 captures remain ordinary disk files because compilation reuses them. Do not
-accumulate video output in `tmp/`. Analysis TSVs are the other exception: keep
-every run persistently under git-ignored `logs/`. Use one stem per encode:
+accumulate video output in `tmp/`. Per-frame codec timeline and playback HUD
+TSVs are the other exception: keep every run persistently under git-ignored
+`logs/`. Their filenames include both encoder and player versions. Use one stem
+per encode:
 
 Completed sim directories are reused automatically only when source bytes,
 effective encoder/TOML settings, and the output-affecting encoder-code
@@ -254,7 +256,8 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 | Artifact | Path |
 |---|---|
 | Analysis-frame video (from `sim`) | `videos/<stem>_analysis.mp4` |
-| Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_<encoder>.tsv` (`videos/<stem>_analysis.tsv` is a latest-run symlink) |
+| Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv` (`videos/<stem>_analysis.tsv` is a latest-run symlink) |
+| Per-frame playback HUD data | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` (`videos/<stem>_emu_hud.tsv` is a run-specific symlink) |
 | Straight sim output, video+audio, no overlay (`export_sim_video.py`) | `videos/<stem>_sim.mp4` |
 | Sim inputs, stats, and decision data | `videos/<stem>/tmp/` (tmpfs-backed sim working-dir symlink; analysis creates `preview/` and `catmap/` here on demand) |
 | Lossless emulator capture (`record`) | `videos/<stem>_emu_lossless.mkv` |

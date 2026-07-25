@@ -142,8 +142,9 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
 Completed sim artifacts are reusable only when source bytes, effective
 settings, and the output-affecting encoder fingerprint match. Sim work and
 derived videos use the managed tmpfs workspace behind `videos/`; native
-lossless emulator captures remain ordinary files. Per-frame TSVs remain under
-`logs/`.
+lossless emulator captures remain ordinary files. Per-frame codec timeline and
+playback HUD TSVs remain under `logs/`, with encoder and player versions in
+every filename.
 
 ## Build targets
 
@@ -433,7 +434,8 @@ timed-work valueとgraph maximumから除外します。
 completed sim artifactはsource byte、effective setting、outputに影響するencoder fingerprintが
 一致するときだけ再利用します。sim workとderived videoは `videos/` の背後にあるmanaged
 tmpfs workspaceを使い、native lossless emulator captureは通常fileとして保持します。
-frame別TSVは `logs/` に保持します。
+Frame別codec timeline TSVとplayback HUD TSVは、encoder/player versionをfilenameへ
+入れて`logs/`に保持します。
 
 ## Build target
 

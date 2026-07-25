@@ -10,7 +10,7 @@ sar = "32:35"
 mode = "H40"
 width = 320
 height = 224
-fit = "crop"
+fit = "pad"
 master_denoise = false
 
 [output]

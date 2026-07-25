@@ -244,11 +244,11 @@ PRG_PRELOAD_PATH = os.environ.get("CBRSIM_PRG_PRELOAD", "")
 # Whole-movie quality budget: easy frames retain virtual bytes and demanding
 # frames spend them.  This is encoder accounting, not a fifth physical buffer.
 # Its ceiling matches the normal fps-specific PrgBuf capacity. The exact
-# physical delivery proof separately owns the larger back-pressure ceiling and
-# may use only the cadence-scaled jitter interval above this normal capacity.
+# physical delivery proof separately owns the larger scheduled ceiling and may
+# use only its cadence-specific headroom above this normal capacity.
 QUALITY_BUDGET_ON = True
 PRG_BUF_CAP_KB = av_config.prg_buf_cap_kb(FPS)
-PRG_DELIVERY_CAP_KB = av_config.physical_delivery_cap_kb(FPS)
+PRG_DELIVERY_CAP_KB = av_config.scheduled_delivery_cap_kb(FPS)
 PRG_JITTER_HEADROOM_KB = av_config.ring_jitter_headroom_kb(FPS)
 QUALITY_BUDGET_KB = av_config.quality_budget_kb(FPS)
 QUALITY_BUDGET_BYTES = QUALITY_BUDGET_KB * 1024
@@ -3344,6 +3344,7 @@ def main():
         f"(useful BODY / physical CD read time; HEADER/frame0/pad excluded; "
         f"CD1x={CD_RATE})",
         (f"shadow_update_lists={int(shadow_list_flags.sum())}/{len(shadow_list_flags)} "
+         f"safety_rejected={len(shadow_plan['safety_rejected_frames'])} "
          f"main_saved_avg="
          f"{sum(cost.saved_cycles for cost, chosen in zip(shadow_plan['costs'], shadow_list_flags) if chosen) / max(1, len(shadow_list_flags)):.1f}cycles/frame "
          f"control_delta={int((control_lengths - legacy_lengths).sum())}B "

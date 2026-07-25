@@ -182,7 +182,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
-        self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "crop")
+        self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "pad")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(env["CBRSIM_COLD_CAP"], "380")
 

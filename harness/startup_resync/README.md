@@ -36,6 +36,7 @@ Run it against the lossless output from `/record`:
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
   videos/SonicJamOp_startup_audio2_ab_debug_lossless.mkv \
+  configs/sonic-jam-op-h40.toml \
   --tsv videos/SonicJamOp_startup_audio2_ab_debug_hud.tsv
 ```
 
@@ -43,7 +44,9 @@ The console report shows every `R` transition, its movie-frame number in hex and
 decimal, and the surrounding `L/C/W/M/A` values. The TSV contains one row per
 aggregated movie frame. Transition rows additionally carry the previous and next
 lead, which makes preload-to-live boundary failures easy to compare between A/B
-recordings.
+recordings. With the profile argument, the TSV body is stored permanently as
+`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the requested `--tsv`
+path is a compatibility symlink to that log.
 
 The default crop begins at native x=0.  A legacy 320-pixel recording whose H32
 image is centered with 32 pixels on the left can be read with `--crop-x 32`.

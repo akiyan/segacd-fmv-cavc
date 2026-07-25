@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent, uniquely named analysis TSV paths and compatibility aliases."""
+"""Persistent, uniquely named codec/HUD TSV paths and compatibility aliases."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AV_VERSION_PATH = Path(__file__).resolve().parent / "av_version.txt"
 
 
-def encoder_version(path: Path = AV_VERSION_PATH) -> str:
+def av_versions(path: Path = AV_VERSION_PATH) -> tuple[str, str]:
     values = {}
     for raw in path.read_text(encoding="utf-8").splitlines():
         line = raw.strip()
@@ -21,9 +21,20 @@ def encoder_version(path: Path = AV_VERSION_PATH) -> str:
             continue
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip()
-    if not values.get("e", "").isdigit():
-        raise ValueError(f"encoder version is missing from {path}")
-    return f"e{values['e']}"
+    missing = [name for name in ("e", "p") if not values.get(name, "").isdigit()]
+    if missing:
+        raise ValueError(
+            f"{'/'.join(missing)} version is missing from {path}"
+        )
+    return f"e{values['e']}", f"p{values['p']}"
+
+
+def encoder_version(path: Path = AV_VERSION_PATH) -> str:
+    return av_versions(path)[0]
+
+
+def player_version(path: Path = AV_VERSION_PATH) -> str:
+    return av_versions(path)[1]
 
 
 def _slug(value: str) -> str:
@@ -37,8 +48,13 @@ def log_root() -> Path:
             else PROJECT_ROOT / "logs").resolve()
 
 
-def unique_tsv_path(profile, *, now: datetime | None = None) -> Path:
-    """Allocate a persistent filename with time, profile, hash, and encoder."""
+def unique_tsv_path(
+    profile,
+    *,
+    kind: str,
+    now: datetime | None = None,
+) -> Path:
+    """Allocate a persistent filename with profile, e/p versions, and kind."""
 
     root = log_root()
     root.mkdir(parents=True, exist_ok=True)
@@ -46,8 +62,11 @@ def unique_tsv_path(profile, *, now: datetime | None = None) -> Path:
     stamp = moment.strftime("%Y%m%d-%H%M%S-%f")
     profile_name = _slug(Path(profile.path).stem)
     checksum = str(profile.sha256)[:10]
-    version = encoder_version()
-    base = f"{stamp}_{profile_name}_{checksum}_{version}"
+    encoder, player = av_versions()
+    log_kind = _slug(kind)
+    base = (
+        f"{stamp}_{profile_name}_{checksum}_{encoder}_{player}_{log_kind}"
+    )
     candidate = root / f"{base}.tsv"
     sequence = 1
     while candidate.exists() or candidate.is_symlink():

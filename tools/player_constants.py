@@ -275,7 +275,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         prg_buf_cap_patterns=(
             av_config.prg_buf_cap_kb(fps_int) * 1024 // 32),
         prg_delivery_cap_patterns=(
-            av_config.physical_delivery_cap_kb(fps_int) * 1024 // 32),
+            av_config.scheduled_delivery_cap_kb(fps_int) * 1024 // 32),
         jitter_headroom_kb=av_config.ring_jitter_headroom_kb(fps_int),
         wr0_patterns=wr0_patterns,
         wr1_patterns=wr1_patterns,

@@ -15,12 +15,12 @@ attribution on a cell that also has a Near or Flbk quality result.
 
 Every render also writes a machine-readable, one-row-per-frame TSV under
 `logs/`. Its unique filename contains local date/time, profile name, a
-10-character profile checksum, and the encoder version. It is generated from
-the same `frame_data()` values used by the overlay, before PNG rendering
-begins, so numeric comparisons do not require OCR. A frame-range render still
-writes the complete TSV. `videos/<stem>_analysis.tsv` is a compatibility
-symlink to the newest matching log; `ANALYSIS_TSV` changes that symlink path,
-not the persistent log location.
+10-character profile checksum, encoder version, player version, and the
+`timeline` kind. It is generated from the same `frame_data()` values used by
+the overlay, before PNG rendering begins, so numeric comparisons do not require
+OCR. A frame-range render still writes the complete TSV.
+`videos/<stem>_analysis.tsv` is a compatibility symlink to the newest matching
+log; `ANALYSIS_TSV` changes that symlink path, not the persistent log location.
 
 Keep this file in sync whenever the layout changes (the `/analysis` skill
 automates: update layout -> update this file -> notify).
@@ -444,9 +444,10 @@ category maskを保存しますが、これらのPNGは生成しません。Allo
 maskは重複できます。
 
 各renderは、1 frame 1 rowのmachine-readable TSVも`logs/`へ書きます。Filenameには
-local date/time、profile名、10文字のprofile checksum、encoder versionが入ります。
-TSVはPNG rendering開始前に、overlayと同じ`frame_data()`値から生成するため、数値比較に
-OCRは不要です。Frame rangeを指定したrenderでも完全なTSVを書きます。
+local date/time、profile名、10文字のprofile checksum、encoder version、player version、
+`timeline` kindが入ります。TSVはPNG rendering開始前に、overlayと同じ
+`frame_data()`値から生成するため、数値比較にOCRは不要です。
+Frame rangeを指定したrenderでも完全なTSVを書きます。
 `videos/<stem>_analysis.tsv`は最新の一致logへのcompatibility symlinkです。
 `ANALYSIS_TSV`はこのsymlink pathを変えますが、persistent logの場所は変えません。
 

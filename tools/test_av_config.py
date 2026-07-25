@@ -14,6 +14,7 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.RING_SIZE_KB, 428)
         self.assertEqual(av_config.RING_PHYSICAL_GUARD_KB, 4)
         self.assertEqual(av_config.RING_DELIVERY_GUARD_KB, 2)
+        self.assertEqual(av_config.RING_15FPS_SCHEDULE_GUARD_KB, 4)
         self.assertEqual(av_config.RING_JITTER_HEADROOM_KB, 20)
         self.assertEqual(av_config.FRAME0_PATTERN_STAGING_KB, 36)
         self.assertEqual(av_config.RING_CAP_KB, 402)
@@ -25,25 +26,37 @@ class RingGeometryTests(unittest.TestCase):
             av_config.DELIVERY_CAP_KB - av_config.RING_CAP_KB, 20)
 
     def test_jitter_reserve_scales_with_frame_interval(self) -> None:
-        self.assertEqual(av_config.ring_jitter_headroom_kb(30), 20)
-        self.assertEqual(av_config.ring_jitter_headroom_kb(24), 25)
-        self.assertEqual(av_config.ring_jitter_headroom_kb(15), 40)
+        self.assertEqual(av_config.cadence_jitter_reserve_kb(30), 20)
+        self.assertEqual(av_config.cadence_jitter_reserve_kb(24), 25)
+        self.assertEqual(av_config.cadence_jitter_reserve_kb(15), 40)
         self.assertEqual(av_config.prg_buf_cap_kb(30), 402)
         self.assertEqual(av_config.prg_buf_cap_kb(24), 397)
         self.assertEqual(av_config.prg_buf_cap_kb(15), 382)
-        for fps in (15, 24, 30):
-            self.assertEqual(av_config.physical_delivery_cap_kb(fps), 422)
+        expected = {
+            15: (4, 418, 36),
+            24: (0, 422, 25),
+            30: (0, 422, 20),
+        }
+        for fps, (guard_kb, delivery_kb, headroom_kb) in expected.items():
+            self.assertEqual(
+                av_config.scheduled_delivery_guard_kb(fps), guard_kb)
+            self.assertEqual(
+                av_config.scheduled_delivery_cap_kb(fps), delivery_kb)
+            self.assertEqual(
+                av_config.ring_jitter_headroom_kb(fps), headroom_kb)
             self.assertEqual(
                 av_config.prg_buf_cap_kb(fps)
                 + av_config.ring_jitter_headroom_kb(fps),
-                av_config.DELIVERY_CAP_KB,
+                delivery_kb,
             )
 
     def test_ntsc_like_rates_use_named_content_cadence(self) -> None:
         self.assertEqual(
-            av_config.ring_jitter_headroom_kb(30_000 / 1001), 20)
+            av_config.cadence_jitter_reserve_kb(30_000 / 1001), 20)
         self.assertEqual(
-            av_config.ring_jitter_headroom_kb(24_000 / 1001), 25)
+            av_config.cadence_jitter_reserve_kb(24_000 / 1001), 25)
+        self.assertEqual(
+            av_config.scheduled_delivery_cap_kb(15_000 / 1001), 418)
 
     def test_fixed_encoder_and_pack_resources(self) -> None:
         self.assertEqual(av_config.VRAM_PATTERN_BASE_TILE, 1)

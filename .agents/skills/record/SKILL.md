@@ -244,6 +244,13 @@ Check the raw MKV and reports before trusting a capture:
      --gate-json videos/STEM_emu_hud_gate.json --expected-frames FRAME_COUNT
    ```
 
+   With the required profile argument, the analyzer writes the HUD TSV body
+   permanently to
+   `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` and turns the requested
+   `videos/STEM_emu_hud.tsv` path into a run-specific compatibility symlink.
+   Use the persistent `logs/` path for comparisons and keep the symlink beside
+   the recording for downstream tools.
+
    Add `--flip-fields` for a specialized H40 DEBUG build so its appended
    `V/O/E` phase fields are preserved in the TSV. They are diagnostic and do
    not change the six-field upload gate.

@@ -11,6 +11,20 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e134: Keep the H40/15 Machi ED profile at cold cap 380 and lower only the
+#         15fps scheduled Prg delivery ceiling from 422 to 418 KiB. The normal
+#         382 KiB PrgBuf cap, 428 KiB physical ring, 424 KiB back-pressure,
+#         player code, and other cadences remain unchanged.
+#   e133: Set the full-raster H40/15 Machi ED profile's timed cold cap to the
+#         15fps baseline of 360 for playback qualification. Physical CD,
+#         PrgBuf, jitter, and memory limits remain unchanged.
+#   e132: Set the full-raster H40/15 Machi ED profile's timed cold cap to 380
+#         for playback qualification. Physical CD, PrgBuf, jitter, and memory
+#         limits remain unchanged.
+#   e131: Validate every optional shadow-update list selection against the
+#         exact rate-shaped payload schedule. Roll back the least valuable
+#         lists when shorter control data moves a required Prg sector into a
+#         slot without enough ring space.
 #   e130: Water-fill each parity WordBuf only inside the predicted PrgBuf
 #         pressure suffix, preserving the delayed start without stranding
 #         credits on one overpredicted frame.
@@ -803,5 +817,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260725
-e=130
+e=134
 p=90

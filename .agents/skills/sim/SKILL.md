@@ -188,7 +188,7 @@ that intentionally have no profile.
 After completion:
 
 - Confirm the fps-derived Prg geometry printed by sim: normal prebuffer /
-  jitter / scheduled delivery is 382/40/422 KiB at 15fps,
+  scheduled headroom / scheduled delivery is 382/36/418 KiB at 15fps,
   397/25/422 KiB at 24fps, or 402/20/422 KiB at 30fps. The physical ring
   remains 428 KiB and player pump back-pressure remains 424 KiB.
 - Confirm that the construction log identifies the one-pass shared-sector
@@ -198,6 +198,13 @@ After completion:
   is a pipeline bug; do not lower the cold cap or repeat the encode with a
   session-local adjustment.
 - Check the completion line: `starved_frames=N (X%)`.
+- Report both the configured cold cap and the realized timed maximum cold.
+  Read the authoritative physical transfer trace from
+  `decisions.pkl["pattern_transfers"]["tiles"]`, exclude frame 0 because it is
+  boot-loaded and exempt from the timed cap, then report the maximum, how many
+  frames reach it, and the first/last matching frame numbers. When a complete
+  analysis TSV already exists, `status_cold` must give the same timed maximum;
+  treat a mismatch as a pipeline bug.
 - Check `body_useful_bps`, the mean useful BODY delivery rate shown by Band.
   It is weighted by total physical BODY read time, and each slot must remain at
   or below CD 1x (150 KiB/s). `codec_work_bps` is a separate
@@ -239,7 +246,9 @@ tools/python.sh --gpu tools/render_analysis.py configs/<source>-<mode>.toml
 
 Every invocation first writes the complete per-frame numeric sidecar to a
 unique persistent file below `logs/`. Its filename includes local date/time,
-the profile name, the first 10 profile-SHA characters, and the encoder version.
+the profile name, the first 10 profile-SHA characters, encoder version, player
+version, and the `timeline` kind:
+`<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv`.
 `videos/<stem>_analysis.tsv` (or `ANALYSIS_TSV` when explicitly set) is only a
 compatibility symlink to that permanent log. Use the `logs/` file for maxima,
 totals, and frame-to-frame comparisons instead of OCR. The full render then

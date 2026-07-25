@@ -36,6 +36,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 import read_frameno  # noqa: E402
 import av_config  # noqa: E402
 import encode_config  # noqa: E402
+import analysis_logs  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -359,6 +360,7 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
 def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> None:
     transition_set = set(transitions)
     path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
     columns = [
         "loop", "capture_first", "capture_last", "time_first_s", "time_last_s",
         "sample_count", "confidence", "frame", "frame_hex", "palette", "slip",
@@ -369,7 +371,7 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "r_transition", "prev_frame",
         "prev_lead_256b", "next_frame", "next_lead_256b",
     ]
-    with path.open("w", newline="", encoding="utf-8") as handle:
+    with temporary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
             handle,
             fieldnames=columns,
@@ -421,6 +423,7 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "next_frame": following.values["F"] if following else "",
                 "next_lead_256b": following.values["L"] if following else "",
             })
+    temporary.replace(path)
     print(f"TSV: {path}")
 
 
@@ -536,7 +539,7 @@ def evaluate_upload_gate(
         "jitter_headroom_kib": (
             av_config.ring_jitter_headroom_kb(content_fps)),
         "delivery_limit_kib": (
-            av_config.physical_delivery_cap_kb(content_fps)),
+            av_config.scheduled_delivery_cap_kb(content_fps)),
         "backpressure_kib": av_config.BACKPRESSURE_KB,
         "physical_ring_kib": av_config.RING_SIZE_KB,
         "requires_explicit_upload_approval": False,
@@ -644,6 +647,10 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
+    profile = (
+        encode_config.load_profile(args.profile)
+        if args.profile is not None else None
+    )
     probe = probe_video(args.recording)
     print(
         f"input: {args.recording} ({probe.width}x{probe.height}, "
@@ -657,9 +664,16 @@ def main() -> int:
     groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)
     transitions = print_report(groups, args.context)
     if args.tsv:
-        write_tsv(args.tsv, groups, transitions)
+        if profile is None:
+            write_tsv(args.tsv, groups, transitions)
+        else:
+            persistent_tsv = analysis_logs.unique_tsv_path(
+                profile, kind="hud"
+            )
+            write_tsv(persistent_tsv, groups, transitions)
+            analysis_logs.publish_alias(args.tsv, persistent_tsv)
+            print(f"HUD TSV alias: {args.tsv} -> {persistent_tsv}")
     if args.gate_json:
-        profile = encode_config.load_profile(args.profile)
         content_fps = float(Fraction(str(profile.data["source"]["fps"])))
         result = evaluate_upload_gate(
             groups, args.expected_frames, args.recording, content_fps, profile)

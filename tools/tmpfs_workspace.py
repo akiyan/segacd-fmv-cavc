@@ -10,10 +10,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import argparse
+import ctypes
 import hashlib
 import json
 import os
 from pathlib import Path
+import platform
 import re
 import shutil
 import subprocess
@@ -24,6 +26,21 @@ import uuid
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-ttrc")
 DEFAULT_MIN_FREE_BYTES = 4 * 1024 ** 3
+
+# Linux assigns the same quotactl_fd syscall number on the architectures used
+# by this project. Keep the table explicit so an unknown architecture falls
+# back to filesystem-wide free-space checks instead of calling the wrong ABI.
+_QUOTACTL_FD_SYSCALLS = {
+    "aarch64": 443,
+    "riscv64": 443,
+    "x86_64": 443,
+}
+_Q_GETQUOTA = 0x800007
+_SUBCMD_SHIFT = 8
+_USRQUOTA = 0
+_QIF_BLIMITS = 1 << 0
+_QIF_SPACE = 1 << 1
+_QIF_DQBLKSIZE = 1024
 
 
 class TmpfsWorkspaceError(RuntimeError):
@@ -157,6 +174,62 @@ def _minimum_free_bytes() -> int:
     return max(0, int(float(raw) * 1024 ** 3))
 
 
+class _QuotaBlock(ctypes.Structure):
+    _fields_ = [
+        ("dqb_bhardlimit", ctypes.c_uint64),
+        ("dqb_bsoftlimit", ctypes.c_uint64),
+        ("dqb_curspace", ctypes.c_uint64),
+        ("dqb_ihardlimit", ctypes.c_uint64),
+        ("dqb_isoftlimit", ctypes.c_uint64),
+        ("dqb_curinodes", ctypes.c_uint64),
+        ("dqb_btime", ctypes.c_uint64),
+        ("dqb_itime", ctypes.c_uint64),
+        ("dqb_valid", ctypes.c_uint32),
+    ]
+
+
+def _user_quota_available_bytes(root: Path) -> int | None:
+    """Return this user's remaining hard-quota bytes, when Linux exposes it."""
+
+    syscall_number = _QUOTACTL_FD_SYSCALLS.get(platform.machine())
+    if syscall_number is None:
+        return None
+    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        quota = _QuotaBlock()
+        command = (_Q_GETQUOTA << _SUBCMD_SHIFT) | _USRQUOTA
+        libc = ctypes.CDLL(None, use_errno=True)
+        result = libc.syscall(
+            syscall_number,
+            descriptor,
+            command,
+            os.getuid(),
+            ctypes.byref(quota),
+        )
+    finally:
+        os.close(descriptor)
+    if result != 0:
+        return None
+    valid = quota.dqb_valid
+    if not (valid & _QIF_BLIMITS and valid & _QIF_SPACE):
+        return None
+    limit_blocks = quota.dqb_bhardlimit or quota.dqb_bsoftlimit
+    if limit_blocks == 0:
+        return None
+    limit_bytes = limit_blocks * _QIF_DQBLKSIZE
+    return max(0, limit_bytes - quota.dqb_curspace)
+
+
+def _available_bytes(root: Path) -> int:
+    """Return usable bytes, honoring both filesystem space and user quota."""
+
+    filesystem_free = shutil.disk_usage(root).free
+    quota_free = _user_quota_available_bytes(root)
+    if quota_free is None:
+        return filesystem_free
+    return min(filesystem_free, quota_free)
+
+
 def evict_old_entries(
     required_bytes: int = 0,
     *,
@@ -169,11 +242,15 @@ def evict_old_entries(
     required = max(0, int(required_bytes))
     target_free = required + _minimum_free_bytes()
     usage = shutil.disk_usage(root)
+    quota_free = _user_quota_available_bytes(root)
+    available = (
+        usage.free if quota_free is None else min(usage.free, quota_free)
+    )
     if target_free > usage.total:
         raise TmpfsWorkspaceError(
             f"tmpfs request exceeds capacity: need {target_free / 1024**3:.1f} GiB, "
             f"total {usage.total / 1024**3:.1f} GiB")
-    if usage.free >= target_free:
+    if available >= target_free:
         return []
 
     active = _active_entries(root)
@@ -196,12 +273,12 @@ def evict_old_entries(
         _remove_entry(entry)
         removed.append(entry)
         print(f"tmpfs eviction: removed {entry}", flush=True)
-        if shutil.disk_usage(root).free >= target_free:
+        if _available_bytes(root) >= target_free:
             break
-    if shutil.disk_usage(root).free < target_free:
+    if _available_bytes(root) < target_free:
         raise TmpfsWorkspaceError(
-            "tmpfs is still short after deleting every inactive project artifact; "
-            "active runs were preserved")
+            "tmpfs filesystem/quota space is still short after deleting every "
+            "inactive project artifact; active runs were preserved")
     return removed
 
 

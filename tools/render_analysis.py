@@ -888,7 +888,7 @@ def analysis_tsv_row(i):
 
 def write_analysis_tsv():
     """Write one permanent, uniquely named TSV and update the old alias."""
-    path = analysis_logs.unique_tsv_path(CONFIG_PROFILE)
+    path = analysis_logs.unique_tsv_path(CONFIG_PROFILE, kind="timeline")
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with tmp.open("w", encoding="utf-8", newline="") as fh:

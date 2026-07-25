@@ -91,7 +91,8 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["limits"]["M"], 3)
         self.assertEqual(result["limits"]["J"], 45)
         self.assertEqual(result["prg_buf_cap_kib"], 382)
-        self.assertEqual(result["jitter_headroom_kib"], 40)
+        self.assertEqual(result["jitter_headroom_kib"], 36)
+        self.assertEqual(result["delivery_limit_kib"], 418)
         for field, value in (("C", 1), ("M", 4)):
             result = self.evaluate(groups(4, **{field: value}), 4, 15)
             if field == "C":

@@ -124,6 +124,32 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             self.assertFalse(old.exists())
             self.assertTrue(new.exists())
 
+    def test_user_quota_triggers_proactive_eviction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
+            root = workspace.ensure_root()
+            old = root / "artifacts" / "old"
+            new = root / "artifacts" / "new"
+            old.mkdir()
+            new.mkdir()
+            os.utime(old, ns=(1, 1))
+            os.utime(new, ns=(2, 2))
+            usage = shutil._ntuple_diskusage
+            with (
+                patch.object(
+                    workspace.shutil, "disk_usage",
+                    return_value=usage(100, 10, 90),
+                ),
+                patch.object(
+                    workspace,
+                    "_user_quota_available_bytes",
+                    side_effect=[10, 30, 30],
+                ),
+            ):
+                removed = workspace.evict_old_entries(20, root=root)
+            self.assertEqual(removed, [old])
+            self.assertFalse(old.exists())
+            self.assertTrue(new.exists())
+
 
 if __name__ == "__main__":
     unittest.main()
