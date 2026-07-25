@@ -11,8 +11,6 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
-#   e123: Make identity physical VRAM slots the default. Profiles may opt into
-#         the accounted multi-pass slot-locality permutation explicitly.
 #   e122: Keep each CRAM switch's full name-table bytes as a mandatory floor
 #         while balancing unavoidable future-demand shortage. Ordinary risk
 #         may be thinned, but palette-boundary refresh work cannot be diluted.
@@ -36,10 +34,6 @@
 #         decisions. Reserve worst-case identity-slot run control sectors,
 #         project predicted Prg demand into the remaining sector route, and
 #         freeze that route so later stages can only shrink proven work.
-#   e116: Make the movie-wide physical slot-locality permutation a profile
-#         switch and isolate its seed/map/accounting orchestration in one
-#         module. The disabled path uses identity VRAM slots in one sim pass
-#         while retaining cold-run descriptors and exact physical scheduling.
 #   e115: Apply a newly trained CRAM palette on the frame after the selected
 #         dark/uniform transition frame. This lets the transition display once
 #         under the old CRAM and removes Machi OP H40/15 frame 0x03DB's
@@ -162,18 +156,8 @@
 #        plain-Prg streams below 24fps, matching the legacy Sub-CPU walker's
 #        cell/update-order run construction. Require its real execution-run
 #        count to equal the packed suffix and expose the selected player path
-#        in the frozen decisions. This prevents suffix-order locality from
+#        in the frozen decisions. This prevents suffix payload ordering from
 #        turning a compact low-rate stream into hundreds of runtime runs.
-#   e93/p81 : Feed an impossible physical Prg sector deadline back from the
-#        completed logical seed into the existing slot-accounting pass, limiting
-#        only the causal frame without lowering the measured cold cap or
-#        repeating the seed. Preserve the per-frame delivery envelope in sim
-#        artifacts and timelines, including an enforceable zero-pattern
-#        envelope while frame 0 remains the explicit boot-time exception. Keep
-#        source rows 34..185 in the Machi OP
-#        profile. Omit the unreachable dense cold-run parser from specialized
-#        low-rate Sub-CPU builds so the full DEBUG HUD fits the 4 KiB boot area;
-#        the qualified legacy low-rate parser and runtime behavior are unchanged.
 #   e92/p80 : Move the control-block palette reference from an 8-bit field
 #        paired with an unused debug flag to one 16-bit field, and remove the
 #        optional 22-byte diagnostic block from TTRC v14. The DEBUG HUD remains
@@ -192,9 +176,8 @@
 #   e89 : Experimental comparison (not retained on main): stop reserving one
 #        worst-case four-byte run descriptor for every cold tile during
 #        selection. Charge only exact source-aware runs after placement and use
-#        a per-cold upper bound solely as a current-frame solvency check. Cold
-#        cap, Main/upgrade reserve curves, and physical slot locality remain
-#        unchanged. Preserve this result on its WIP branch.
+#        a per-cold upper bound solely as a current-frame solvency check.
+#        Preserve this result on its WIP branch.
 #   e88 : Experimental comparison (not retained): derive one future reserve
 #        from the completed encoder's actual update, Prg-pattern, and
 #        source-aware run work, shared by Main decisions and optional exact
@@ -218,31 +201,6 @@
 #        pool with deterministic future patterns, split between the existing
 #        inline frame-0 path and a v13 boot sidecar for backside VRAM. Timed
 #        visible work can reclaim speculative slots.
-#   e85 : Repeat slot-locality accounting when a newly optimized final map
-#        improves the worst 85%-cap-or-heavier frame but moves run-control
-#        bytes into an unfunded frame. Finalization accepts only a
-#        display-equivalent map whose full frozen decision trace is funded;
-#        the 30-run value remains the optimizer's minimax target rather than a
-#        universal per-source gate. Sort the appended raw-prefetch payload by
-#        physical slot and model it as a separate Prg run group, eliminating
-#        request-order fragmentation that the former locality estimate omitted.
-#        These changes close the full Bad Apple H40/cap185 finalization failure
-#        without changing cold/reuse or prefetch-target decisions.
-#   e84 : Raise the qualified H40/30fps/1,120-active-tile cold cap from 175
-#        to 185 after e83 reduced every 85%-cap-or-heavier frame to at most 30
-#        source-aware runs. The full Sonic pack reconstructs all 2,714 frames
-#        exactly with no Prg underrun. Two same-Replay DEBUG recordings are
-#        byte-exact in video, PCM and packet timing; all 2,713 timed intervals
-#        remain two fields with S/D/R/C=0, M=1 and J=12 KiB. Diagnostic caps
-#        180 and 190 each retained one non-monotonic freeze-type hold away from
-#        the repaired plateau, so 190 remains unqualified.
-#   e83 : Keep the shared logical VRAM allocator and its cold/reuse decisions
-#        unchanged, then apply one movie-wide logical-to-physical slot
-#        permutation trained from the exact-target dry run. Emit cold payloads
-#        in physical-slot order so deadline-heavy frames trade fragmented
-#        1-2-tile runs for longer transfers. The optimizer targets worst-frame
-#        cold plus run-boundary cost rather than total runs, and the packer
-#        proves every displayed cell against the frozen decisions.
 #   p77 : Add the v13 fixed 24 KiB Word-RAM boot stage and have Main copy its
 #        optional sidecar patterns directly to final backside-VRAM slots before
 #        frame 0 and on movie restart. Preserved holes coexist with palettes,

@@ -337,12 +337,11 @@ reserved for frame diagnostics, the duplicated 64-byte `O_HDR`, and the
 the Sub CPU hands the frame-0 bank to Main. Main writes the records directly to
 their resident VRAM slots and acknowledges the boot-only handoff; only then
 does Sub arm BODY.DAT. It repeats the same sequence on movie restart. The
-packer sorts the complete boot-prefetch suffix by final physical VRAM slot:
+packer sorts the complete boot-prefetch suffix by physical VRAM slot:
 the lowest slots that fit frame 0 staging remain in `O_LOADS`, and the rest
 become sidecar records. The simulator uses the same partition when counting
-runs, but excludes frame 0 from slot-locality optimization because its boot
-work has no display deadline and its staging area already covers worst-case
-run fragmentation. Sidecar patterns do not appear in frame 0's run suffix or
+runs. Frame 0 has no display deadline, so its work is outside timed run
+accounting. Sidecar patterns do not appear in frame 0's run suffix or
 `O_LOADS`, but they do count in frame 0's internal boot-load totals. Analysis
 deliberately displays frame-0 Cold, Pre, DMA, Run, and Band as zero because
 they are timed-work meters. Sidecar patterns are not PrgBuf occupancy or a

@@ -362,15 +362,10 @@ display truncation). Reuse entries do not break a run; a slot discontinuity
 does, including a wrap from the end of the slot pool to slot zero.
 Frame 0 is outside the timed run calculation and is shown as `Run:0000`, even
 though its internal boot-transfer trace remains available for packer checks.
-Cold payload order follows the optional movie-wide physical slot permutation
-(or identity physical numbering when that option is disabled) and is
-independent of cell/name-update order. The optimizer targets the worst
-source-aware run count among frames at 85% or more of the measured cold cap;
-Prg/Wr/Dic boundaries are part of that count. Total runs over the whole movie
-are not constrained, so a light frame can gain runs when a heavy frame loses
-more expensive fragmentation. This optimizer and its two-pass map derivation
-run only when slot locality is enabled. The disabled identity path still
-reports the exact resulting Run trace but does not try to reduce it.
+Cold payload order follows the allocator's physical slot numbers and is
+independent of cell/name-update order. Prg/Wr/Dic source boundaries split
+runs. The encoder reports the exact resulting Run trace and does not perform
+a movie-wide slot-number optimization.
 
 This is deliberately **not the number of VDP DMA commands**. With the p45
 player, a one- or two-tile run is copied directly by the CPU, while a longer
