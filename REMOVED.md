@@ -19,6 +19,11 @@ release history or narrate transitions between versions.
 
 ## Movie-wide slot locality
 
+### Repository reference
+
+The removal diff is fixed at commit
+[`85fa2c838bae480931a30c806613ce1841219b4f`](https://github.com/akiyan/segacd-fmv-ttrc/commit/85fa2c838bae480931a30c806613ce1841219b4f).
+
 ### Boundary and purpose
 
 Movie-wide slot locality defines one bijection from logical allocator slots to
@@ -132,6 +137,12 @@ limit, and physical CD/PrgBuf scheduling remain valid without it.
 移行経緯は記述しません。
 
 ## 全編slot locality
+
+### Repository上の参照先
+
+削除diffはcommit
+[`85fa2c838bae480931a30c806613ce1841219b4f`](https://github.com/akiyan/segacd-fmv-ttrc/commit/85fa2c838bae480931a30c806613ce1841219b4f)
+で固定されています。
 
 ### 境界と目的
 
