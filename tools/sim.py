@@ -1523,8 +1523,29 @@ def main():
             )
             if boot_prefetch_plan else baseline_demand_prediction
         )
+        predicted_name_bytes = np.maximum(
+            np.asarray(demand_prediction.exact_bytes, np.int64)
+            - np.asarray(demand_prediction.exact_cold, np.int64)
+            * PATTERN_BYTES,
+            0,
+        )
+        predicted_run_bytes = (
+            np.asarray(demand_prediction.exact_cold, np.int64)
+            * stream_schedule.RUN_DESCRIPTOR_BYTES
+        )
+        predicted_prg_supply_patterns = np.maximum(
+            np.asarray(upgrade_supply, np.int64)
+            - predicted_name_bytes
+            - predicted_run_bytes,
+            0,
+        ) // PATTERN_BYTES
         supply_budget = pattern_supply.plan_frame_budgets(
-            demand_prediction, enabled=PATTERN_SUPPLY_ON)
+            demand_prediction,
+            enabled=PATTERN_SUPPLY_ON,
+            prg_supply_patterns=predicted_prg_supply_patterns,
+            prg_capacity_patterns=(
+                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+        )
         if RAW_PREFETCH_ON:
             prefetch_forecast = raw_prefetch.forecast_requests(
                 Q_pidx,
@@ -1551,6 +1572,7 @@ def main():
             boot_prefetch_capacity,
             boot_prefetch_plan,
             demand_prediction,
+            predicted_prg_supply_patterns,
             supply_budget,
             prefetch_forecast,
         )
@@ -1566,6 +1588,7 @@ def main():
         boot_prefetch_capacity,
         boot_prefetch_plan,
         demand_prediction,
+        predicted_prg_supply_patterns,
         supply_budget,
         prefetch_forecast,
     ) = build_forecast()
@@ -1725,6 +1748,7 @@ def main():
     print(
         "pattern supply plan: "
         f"enabled={int(PATTERN_SUPPLY_ON)} "
+        f"PrgPressure=f{supply_budget.prg_pressure_start} "
         f"Wr0={supply_budget.wr0_patterns}/{pattern_supply.WORD_BUF_PATTERNS} "
         f"Wr1={supply_budget.wr1_patterns}/{pattern_supply.WORD_BUF_PATTERNS} "
         f"Dic={supply_budget.dic_patterns}/{pattern_supply.DIC_BUF_PATTERNS} "
@@ -3400,6 +3424,10 @@ def main():
             wr0_preloaded=np.int64(wr0_loads.sum()),
             wr1_preloaded=np.int64(wr1_loads.sum()),
             dic_preloaded=np.int64(supply_budget.dic_patterns),
+            wordbuf_prg_pressure_start_frame=np.int64(
+                supply_budget.prg_pressure_start),
+            wordbuf_predicted_prg_supply_patterns=(
+                predicted_prg_supply_patterns),
             quality_budget_remaining=quality_budget_remaining,
             quality_budget_balance_bytes=quality_budget_balance,
             quality_budget_debt_bytes=quality_budget_debt,
@@ -3541,6 +3569,11 @@ def main():
             "pattern_supply": {
                 "schema_version": 2,
                 "enabled": bool(PATTERN_SUPPLY_ON),
+                "policy": "prg-pressure-waterfill",
+                "prg_pressure_start_frame": int(
+                    supply_budget.prg_pressure_start),
+                "predicted_prg_supply_patterns": np.asarray(
+                    predicted_prg_supply_patterns, np.uint16),
                 "sources": supply_sources_log,
                 "planned_wr": np.asarray(supply_budget.wr, np.uint16),
                 "planned_dic": np.asarray(supply_budget.dic, np.uint16),

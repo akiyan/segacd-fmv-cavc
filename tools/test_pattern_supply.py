@@ -88,6 +88,52 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             budget.total, prediction.exact_cold + 1)
         self.assertEqual(int(budget.total[0]), 0)
 
+    def test_prg_pressure_starts_at_the_first_predicted_empty_frame(self):
+        self.assertEqual(
+            supply.estimate_prg_pressure_start(
+                demand_patterns=[0, 4, 4, 4],
+                supply_patterns=[0, 2, 2, 2],
+                capacity_patterns=4,
+            ),
+            2,
+        )
+
+    def test_pressure_plan_water_fills_only_frames_after_start(self):
+        prediction = DemandPrediction(
+            exact_bytes=np.array([0, 136, 136, 136, 136, 136]),
+            protected_bytes=np.array([0, 136, 136, 136, 136, 136]),
+            exact_cold=np.array([0, 4, 4, 4, 4, 4]),
+            protected_cold=np.array([0, 4, 4, 4, 4, 4]),
+        )
+        budget = supply.plan_frame_budgets(
+            prediction,
+            wr_patterns=3,
+            dic_patterns=0,
+            prg_supply_patterns=[0, 2, 2, 2, 2, 2],
+            prg_capacity_patterns=4,
+        )
+
+        self.assertEqual(budget.prg_pressure_start, 2)
+        np.testing.assert_array_equal(budget.wr, [0, 0, 2, 2, 1, 1])
+
+    def test_pressure_plan_leaves_wordbuf_unused_when_prgbuf_stays_full(self):
+        prediction = DemandPrediction(
+            exact_bytes=np.array([0, 34, 34]),
+            protected_bytes=np.array([0, 34, 34]),
+            exact_cold=np.array([0, 1, 1]),
+            protected_cold=np.array([0, 1, 1]),
+        )
+        budget = supply.plan_frame_budgets(
+            prediction,
+            wr_patterns=3,
+            dic_patterns=0,
+            prg_supply_patterns=[0, 2, 2],
+            prg_capacity_patterns=4,
+        )
+
+        self.assertEqual(budget.prg_pressure_start, 3)
+        np.testing.assert_array_equal(budget.wr, [0, 0, 0])
+
     def test_whole_runs_are_assigned_and_pattern_order_is_preserved(self):
         # Frame 1 has one two-pattern run; frame 2 has two one-pattern runs.
         per = [

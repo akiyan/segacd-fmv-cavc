@@ -270,9 +270,13 @@ shared allocator. It builds two future-demand traces:
 
 A CRAM segment switch reserves a full name-table refresh in both traces before
 optional earlier updates may spend quality allowance. The planner selects
-reusable DicBuf entries, assigns finite WordBuf credits under frame-parity
-constraints, and computes backwards reserve curves. Optional Raw/Buf upgrades
-use complete-exact demand; normal exact work protects Miss-risk demand.
+reusable DicBuf entries, predicts the first PrgBuf pressure frame from
+cumulative exact cold demand and provisional payload supply, assigns finite
+WordBuf credits by water-filling only the suffix from that frame under parity
+constraints, and computes backwards reserve curves. This pressure forecast is
+lightweight; the one-pass physical sector planner remains the final proof.
+Optional Raw/Buf upgrades use complete-exact demand; normal exact work
+protects Miss-risk demand.
 
 For each CRAM switch, the encoder inspects the configured number of frames
 starting at the switch and selects at most one frame with the largest positive
@@ -629,9 +633,11 @@ demand traceを作ります。
 
 CRAM segment switchは、先行するoptional updateがquality allowanceを使う前に、両trace
 へfull name-table refreshを予約します。plannerは再利用可能なDicBuf entryを選び、
-frame parity制約の下で有限WordBuf creditを割り当て、後ろ向きreserve curveを計算します。
-optional Raw/Buf upgradeはcomplete-exact demand、通常exact workはMiss-risk demandを
-保護します。
+exact cold demandと暫定payload供給の累積から最初のPrgBuf pressure frameを予測し、その
+frame以降のsuffix内だけをparity制約付きでwater-fillして有限WordBuf creditを割り当て、
+後ろ向きreserve curveを計算します。このpressure予測は軽量で、one-pass physical sector
+plannerが最終proofのままです。Optional Raw/Buf upgradeはcomplete-exact demand、通常
+exact workはMiss-risk demandを保護します。
 
 各CRAM switchについて、encoderはswitch frameから設定frame数を調べ、positiveな
 protected-demand不足が最大の1 frameだけを選びます。選択frameのreserve targetから
