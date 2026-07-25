@@ -65,11 +65,14 @@ BODY.DAT
 
 Sub first stages BOOT_STAGE and DicBuf, hands that bank to Main, and takes it
 back after Main copies the persistent palette, dictionary, and optional VRAM
-sidecar. Sub then installs the ADPCM and WordBuf preloads, writes STARTUP_AUDIO
-while PCM is stopped, expands frame 0, and hands the completed bank to Main
-while `BODY.DAT` remains stopped. Main builds and displays frame 0, then
-acknowledges BODY start. Sub starts `BODY.DAT`, pre-drains frame 1, and only
-then begins timed handoffs. PCM starts with the first timed handoff.
+sidecar. This handoff is an intentional `HEADER.DAT` read boundary: Sub stops
+the current read before giving the bank away and restarts the remaining
+sectors at the exact next LBA after taking it back. Sub then installs the ADPCM
+and WordBuf preloads, writes STARTUP_AUDIO while PCM is stopped, expands frame
+0, and hands the completed bank to Main while `BODY.DAT` remains stopped. Main
+builds and displays frame 0, then acknowledges BODY start. Sub starts
+`BODY.DAT`, pre-drains frame 1, and only then begins timed handoffs. PCM starts
+with the first timed handoff.
 
 Frame 0 has no timed delivery budget. Its visible name table uses exact target
 patterns only. Remaining resident VRAM slots may receive future patterns
@@ -200,7 +203,9 @@ one 32-byte pattern. Records occupy these preserved holes:
 
 DicBuf is staged at `+0x6000..+0x7FFF`. Main copies the palette, DicBuf, and
 sidecar records before returning the bank to Sub. Frame 0 and WordBuf may then
-reuse these temporary ranges. The same sequence runs on movie restart.
+reuse these temporary ranges. `HEADER.DAT` is stopped at this handoff and
+resumed from the exact first unread sector after the bank returns. The same
+sequence runs on movie restart.
 
 ## ADPCM table
 
@@ -455,11 +460,13 @@ BODY.DAT
 ```
 
 Subは最初にBOOT_STAGEとDicBufをstageし、そのbankをMainへ渡します。Mainがpersistent
-palette、dictionary、任意のVRAM sidecarをcopyすると、Subはbankを取り戻します。続いて
-ADPCMとWordBuf preloadを配置し、PCM停止中にSTARTUP_AUDIOをwave RAMへ書き、frame 0を
-展開します。完成したbankをMainへ渡す間も `BODY.DAT` は停止したままです。Mainがframe 0を
-構築・表示してBODY開始を返答すると、Subは `BODY.DAT` を開始してframe 1を先に読み切り、
-その後に時間制約のあるhandoffへ入ります。PCMは最初のtimed handoffで始まります。
+palette、dictionary、任意のVRAM sidecarをcopyすると、Subはbankを取り戻します。この
+handoffは意図した `HEADER.DAT` read境界です。Subはbankを渡す前にreadを停止し、bankを
+取り戻した後に正確な次LBAから残りのsectorを再開します。続いてADPCMとWordBuf preloadを
+配置し、PCM停止中にSTARTUP_AUDIOをwave RAMへ書き、frame 0を展開します。完成したbankを
+Mainへ渡す間も `BODY.DAT` は停止したままです。Mainがframe 0を構築・表示してBODY開始を
+返答すると、Subは `BODY.DAT` を開始してframe 1を先に読み切り、その後に時間制約のある
+handoffへ入ります。PCMは最初のtimed handoffで始まります。
 
 frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
 patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
@@ -588,7 +595,8 @@ feature bit 7がsetなら、`+0x0FC0` のdirectoryに `"BVRM"` と3個のbig-end
 
 DicBufは `+0x6000..+0x7FFF` にstageします。Mainはpalette、DicBuf、sidecar recordを
 copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemporary rangeを
-再利用できます。movie restartでも同じ手順を実行します。
+再利用できます。このhandoffで `HEADER.DAT` を停止し、bank返却後に最初の未読sector
+から正確に再開します。movie restartでも同じ手順を実行します。
 
 ## ADPCM table
 

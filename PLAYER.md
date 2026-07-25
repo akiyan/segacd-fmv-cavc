@@ -125,8 +125,11 @@ parity-selected streams.
 During boot, BOOT_STAGE uses `+0x0000..+0x5FFF` with PALTAB at `+0x1000`;
 DicBuf staging uses `+0x6000..+0x7FFF`. Sub gives that bank to Main, Main copies
 the palette, dictionary, and optional VRAM sidecar to their persistent homes,
-and Main returns the bank. Frame 0 and WordBuf may then overwrite the staging
-range safely. Dump diagnostics write list-form updates into control scratch.
+and Main returns the bank. Sub stops `HEADER.DAT` before this handoff and
+restarts at the exact first unread sector after the return, so the copy
+interval cannot create a sector slip. Frame 0 and WordBuf may then overwrite
+the staging range safely. Dump diagnostics write list-form updates into
+control scratch.
 
 ## Main RAM Map
 
@@ -350,9 +353,10 @@ patternsです。2つのregionにはparity別の異なるstreamが入ります�
 
 Boot中はBOOT_STAGEが `+0x0000..+0x5FFF`、その中のPALTABが `+0x1000`、DicBuf stageが
 `+0x6000..+0x7FFF` を使います。SubがそのbankをMainへ渡し、Mainはpalette、dictionary、
-任意のVRAM sidecarをpersistentな保存先へcopyしてbankを返します。その後はframe 0と
-WordBufがstage rangeを安全に上書きできます。Dump diagnosticはlist形式のupdateを
-control scratchへ書きます。
+任意のVRAM sidecarをpersistentな保存先へcopyしてbankを返します。Subはhandoff前に
+`HEADER.DAT` を停止し、返却後に正確な最初の未読sectorから再開するため、copy intervalが
+sector slipを発生させません。その後はframe 0とWordBufがstage rangeを安全に上書き
+できます。Dump diagnosticはlist形式のupdateをcontrol scratchへ書きます。
 
 ## Main RAM map
 
