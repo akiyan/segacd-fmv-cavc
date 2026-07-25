@@ -325,7 +325,7 @@ stream_start:
 	move.l	header_total, d1
 	bsr	issue_file_readn		/* complete startup file */
 	/* ヘッダ1secをSTAGEへ取り込み、マジック "TTRC" を検証(MOVIE.md) */
-	move.w	#HEADER_SECTORS, d0
+	moveq	#HEADER_SECTORS, d0
 	lea	PAD_SCR, a0
 	bsr	drain_lin
 	cmpi.l	#0x54545243, (PAD_SCR).l	/* "TTRC" */
@@ -458,20 +458,26 @@ pm_set:
 	/* The boot stage and DicBuf are handed to Main before frame 0 exists. Main
 	   copies them to their persistent Main-RAM/VRAM homes and returns this bank,
 	   allowing the same front-of-bank bytes to become O_LOADS and WordBuf. */
-	PC_MOVE_W h_paltab_sec, PC_PALTAB_SEC, d0
-.ifndef PLAYER_SPECIALIZED
+	.ifdef PLAYER_SPECIALIZED
+	moveq	#PC_PALTAB_SEC, d0
+	.else
+	move.w	h_paltab_sec, d0
 	beq	1f
-.endif
+	.endif
 	lea	(O_PALTAB_STAGE).l, a0
 	bsr	drain_lin_staged		/* CDC_TRN直行を避けSTAGE経由(スリップ防止) */
 1:
 .ifdef INCLUDE_PATTERN_SUPPLY
 .if PC_DIC_SECTORS > 0
-	move.w	#PC_DIC_SECTORS, d0
+	moveq	#PC_DIC_SECTORS, d0
 	lea	DIC_STAGE, a0
 	bsr	drain_lin_staged
 .endif
 .endif
+	/* This handoff is an intentional HEADER read boundary. Stop the finite
+	   boot read before Main owns the bank; no arriving sector is allowed to
+	   turn the copy interval into an unexpected slip. */
+	BIOSCALL BIOS_CDC_STOP
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	move.w	#STAT_BOOT_STAGE, (COMSTAT0).l
@@ -481,11 +487,22 @@ pm_set:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	clr.w	(COMSTAT0).l
+	/* Restart at the first unread HEADER sector. reseek_readn deliberately
+	   preserves the original file anchor used by exact MSF recovery. */
+	.ifdef PLAYER_SPECIALIZED
+	moveq	#HEADER_SECTORS+PC_PALTAB_SEC+PC_DIC_SECTORS, d0
+	.else
+	moveq	#HEADER_SECTORS, d0
+	add.w	h_paltab_sec, d0
+	.endif
+	add.l	header_lba, d0
+	move.l	stream_remaining, d1
+	bsr	reseek_readn
 
 	/* ADPCM full lookup tables follow the boot stage. Stage one immutable 8,800B
 	   image in boot-only PRG RAM, then duplicate it into the same offset of both
 	   physical 1M banks.  Two toggles return to the frame-0/PALTAB bank. */
-	move.w	#ADPCM_TABLE_SECTORS, d0
+	moveq	#ADPCM_TABLE_SECTORS, d0
 	lea	ROUTING_TMP, a0
 	bsr	drain_lin_staged
 	moveq	#ADPCM_BANK_COPIES-1, d1
@@ -505,14 +522,14 @@ adpcm_table_done:
 	   restore the frame-0 bank phase. */
 .ifdef INCLUDE_PATTERN_SUPPLY
 .if PC_WR0_SECTORS > 0
-	move.w	#PC_WR0_SECTORS, d0
+	moveq	#PC_WR0_SECTORS, d0
 	lea	WORD_BUF0, a0
 	bsr	drain_lin_staged
 .endif
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 .if PC_WR1_SECTORS > 0
-	move.w	#PC_WR1_SECTORS, d0
+	moveq	#PC_WR1_SECTORS, d0
 	lea	WORD_BUF1, a0
 	bsr	drain_lin_staged
 .endif

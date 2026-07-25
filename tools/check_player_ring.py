@@ -155,12 +155,12 @@ require(
 )
 require(
     sp_text,
-    r"^\s*move\.w\s+#PC_WR0_SECTORS,\s*d0\s*$",
+    r"^\s*moveq\s+#PC_WR0_SECTORS,\s*d0\s*$",
     "Wr0 sector-rounded preload length",
 )
 require(
     sp_text,
-    r"^\s*move\.w\s+#PC_WR1_SECTORS,\s*d0\s*$",
+    r"^\s*moveq\s+#PC_WR1_SECTORS,\s*d0\s*$",
     "Wr1 sector-rounded preload length",
 )
 require(
@@ -209,6 +209,20 @@ require(
     r"^\s*bsr\s+consume_boot_stage\s*$",
     "Main boot-stage copy call",
 )
+stage_start = sp_text.index(
+    "/* This handoff is an intentional HEADER read boundary.")
+stage_end = sp_text.index("/* ADPCM full lookup tables", stage_start)
+stage_handoff = sp_text[stage_start:stage_end]
+for token, description in (
+        ("BIOSCALL BIOS_CDC_STOP", "planned HEADER pause"),
+        ("moveq\t#HEADER_SECTORS+PC_PALTAB_SEC+PC_DIC_SECTORS, d0",
+         "exact HEADER restart sector"),
+        ("add.l\theader_lba, d0", "absolute HEADER restart LBA"),
+        ("move.l\tstream_remaining, d1", "remaining HEADER sector count"),
+        ("bsr\treseek_readn", "planned HEADER restart"),
+):
+    if token not in stage_handoff:
+        sys.exit(f"check_player_ring: boot handoff is missing {description}")
 if any(symbol in sp_text for symbol in (".equ O_CRAM,", ".equ O_NUPD,", ".equ O_UPDS,")):
     sys.exit("check_player_ring: removed O_CRAM/O_NUPD/O_UPDS allocation returned")
 require(
@@ -217,7 +231,7 @@ require(
     "diagnostic update-list output in CTRL_SCR",
 )
 print(
-    "check_player_ring: OK  boot stage copied before frame 0; "
+    "check_player_ring: OK  boot stage uses a planned HEADER read boundary; "
     "diagnostics use CTRL_SCR")
 
 
