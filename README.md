@@ -1,57 +1,58 @@
 EN / [JP](#jp)
 
-# Tile Texture Reuse Codec — a SEGA-CD / Genesis FMV codec
+# Sega CD Constraint-Aware Video Codec — a SEGA-CD / Genesis FMV codec
 
-Tile Texture Reuse Codec is a full-motion-video codec designed for Sega CD
-hardware. It targets the Genesis VDP tile and CRAM model, continuous CD 1x
-delivery, Sub-CPU PRG RAM, 1M/1M Word RAM, and the RF5C164 PCM chip. The same
-stream runs on physical hardware and Genesis Plus GX.
+Sega CD Constraint-Aware Video Codec is a full-motion-video codec designed for
+Sega CD hardware. It targets the Genesis VDP tile and CRAM model, continuous CD
+1x delivery, Sub-CPU PRG RAM, 1M/1M Word RAM, and the RF5C164 PCM chip. The
+same stream runs on physical hardware and Genesis Plus GX.
 
 The on-disc stream contains an explicit version. Generic repository filenames
 keep the implementation independent from the displayed codec name.
 
 ## Core idea
 
-The Genesis screen is built from 8x8 patterns in VRAM and a name table that
-chooses one pattern for each cell. Reusing a resident pattern costs a two-byte
-name-table entry; loading a fresh pattern costs 32 bytes plus its name entry.
+The core of this project is to **maximize FMV quality within the constraints of
+the retro architecture split between the SEGA-CD and Genesis**. CD 1x delivery,
+separated memory, multiple CPUs, VBlank, and CRAM palettes are treated as one
+whole-movie resource-allocation problem rather than as unrelated limits.
 
-The encoder therefore asks, for every changed cell:
-
-> Is a suitable pattern already resident, so this cell can point to it?
-
-Exact resident reuse, visually close reuse, and improving fallback reuse save
-CD bandwidth and VBlank transfer time. New patterns are loaded only when the
-available resident choices are not good enough.
+The encoder decides which frames receive quality allowance, which memory domain
+holds each pattern, and when the Main or Sub CPU moves it. These decisions are
+made inside physical limits before downstream stages begin. Reusing resident
+8x8 patterns is one effective technique within this design. Exact, Near, and
+Flbk reuse save CD delivery and VBlank transfer work, leaving more capacity for
+frames that need new patterns.
 
 ## Hardware-shaped design
 
-- **CRAM palettes.** The VDP exposes four palette lines with 15 usable colours
-  each. The encoder trains 60 colours, creates local segments at safe
-  transitions, and preloads every segment palette into Main RAM. A timed
-  switch carries only a palette reference. The darkest and brightest existing
-  colours are moved to fixed DEBUG HUD positions without changing the colour
-  set.
-- **Resident VRAM pool.** Tiles 1–1,535 form one persistent pattern pool shared
-  by H32 and H40. Each name-table update points into this pool.
-- **Near and Flbk reuse.** Near accepts a visually close resident. Flbk accepts
-  a resident only when it improves the displayed cell. Exact work reserves the
-  name bytes needed by fallback work before spending the physical allowance.
-- **Four pattern supplies.** PrgBuf is streamed through Sub-CPU PRG RAM.
-  WordBuf0 and WordBuf1 are different boot-preloaded sequences selected by
-  frame parity. DicBuf is a persistent 256-entry Main-RAM dictionary.
-- **Whole-movie quality planning.** A dry run predicts future exact and
-  Miss-risk demand. The encoder reserves enough offline allowance for hard
-  bursts, assigns boot-preload credits, and keeps quality funding separate from
-  the physical pattern source.
-- **Sector-aware scheduling.** Control bytes, run descriptors, CRAM switches,
-  audio, Prg payload, and pad share one physical-sector plan before per-frame
-  decisions are frozen. The packer replays the same proof.
-- **VBlank-limited transfer.** Screen geometry and cold work must fit the
-  mode-specific Main-CPU transfer budget.
-- **Checkpointed audio.** The only TTRC v16 audio format is 22.05 kHz mono IMA
-  ADPCM. Sub decodes it to RF5C164 samples while continuously servicing CD
-  delivery.
+- **Use every separated memory domain.** PrgBuf in PRG-RAM continuously streams
+  future patterns. WordBuf0 and WordBuf1 are boot-preloaded into the two
+  physical Word-RAM banks for their respective frame parities. DicBuf in Main
+  RAM keeps 256 frequently reused exact patterns available throughout the
+  movie.
+- **Coordinate multiple CPUs.** The Sub CPU routes CD sectors, manages PrgBuf,
+  decodes ADPCM, and expands the next frame into Word RAM. The Main CPU builds
+  runs for the current frame, transfers patterns to VRAM, updates CRAM, and
+  DMAs the name table. The 1M/1M Word-RAM handoff connects them once per frame,
+  and a pending handoff takes priority over future-data prefetch.
+- **Reuse VRAM residents.** Tiles 1–1,535 form one persistent pool shared by
+  H32 and H40. An exact resident needs only a name-table entry. Near uses a
+  visually close resident, and Flbk uses a resident that improves the current
+  display. A new 32-byte pattern is cold-loaded only when needed.
+- **Time-slice the CRAM constraint.** The encoder trains 60 colours within the
+  VDP's four palette lines of 15 usable colours each. The movie is segmented at
+  safe transitions, every segment palette is preloaded into Main RAM, and
+  timed playback switches palettes using only a small reference.
+- **Allocate quality backwards from the movie end.** A dry run predicts future
+  exact and Miss-risk demand, then works backwards to reserve quality allowance
+  and boot-preload credits for difficult frames. Control, run descriptors,
+  CRAM switches, audio, Prg payload, and pad share one physical-sector plan,
+  while quality funding remains separate from the physical pattern source.
+- **Keep VBlank and audio on dedicated paths.** Screen geometry and cold work
+  stay inside the mode-specific Main-CPU transfer budget. A custom IMA ADPCM
+  decoder on the Sub CPU converts 22.05 kHz mono audio into RF5C164 samples,
+  preserving CD bandwidth for video.
 
 ## Configurable within Sega CD limits
 
@@ -71,25 +72,17 @@ See [`CONFIG.md`](CONFIG.md) for the complete schema and limits.
 
 ## Simulation pipeline
 
-`tools/sim.py` uses six named stages:
+`tools/sim.py` uses six stages to cover source decoding, palette training,
+future-demand prediction, decisions inside physical limits, and complete
+schedule verification.
 
 ```text
 Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 ```
 
-1. **Extract** decodes encoder frames, comparison frames, and mono audio.
-2. **Palette** finds segment boundaries and trains Genesis CRAM palettes.
-3. **Quantize** produces palette assignments and indexed 8x8 patterns.
-4. **Forecast** calculates future demand, physical limits, quality reserves,
-   and boot-preload use.
-5. **Decide** chooses exact or reused patterns, allocates physical VRAM slots,
-   assigns Prg/WordBuf/DicBuf sources, and commits the physical budget.
-6. **Finalize** verifies the complete schedule and writes numeric traces and
-   the decision log.
-
-Disc packing follows simulation. Analysis rendering is optional and separate;
-preview and category PNGs are generated only by `tools/render_analysis.py`.
-See [`ENCODE.md`](ENCODE.md) for current measured stage times.
+[`ENCODE.md`](ENCODE.md) defines each stage's responsibility, inputs, outputs,
+and current measured time. Disc packing follows simulation; optional analysis
+rendering is a separate step.
 
 ## Analysis
 
@@ -103,21 +96,32 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
 
 ## Documentation
 
-- [`ENCODE.md`](ENCODE.md): simulation stages and measured processing time.
-- [`CONFIG.md`](CONFIG.md): profile schema, shared settings, throttles, and
-  capacities.
-- [`MOVIE.md`](MOVIE.md): exact TTRC v16 `HEADER.DAT` / `BODY.DAT` format.
-- [`BUEFFERING.md`](BUEFFERING.md): physical pattern supplies and whole-movie
-  quality planning.
-- [`PLAYER.md`](PLAYER.md): live Main/Sub player memory maps and headroom.
-- [`ANALYSIS.md`](ANALYSIS.md): analysis video and TSV reference.
-- [`HUD.md`](HUD.md): DEBUG HUD layout, units, gate, and OCR workflow.
-- [`ADPCM.md`](ADPCM.md): supported audio format and Sub-CPU decoder.
-- [`BUDGETS.md`](BUDGETS.md): tile, DMA, and CD first-order budgets.
-- [`REMOVED.md`](REMOVED.md): implementation notes for removed features that
-  may inform a clean reimplementation.
-- [`AGENTS.md`](AGENTS.md): maintenance, recording, and agent guidance.
-- [`CLAUDE.md`](CLAUDE.md): compatibility entry point for the shared guidance.
+- [`README.md`](README.md): project overview, design principles, setup, build,
+  recording, and repository entry point.
+- [`ENCODE.md`](ENCODE.md): the six simulation stages, their inputs and
+  outputs, and a versioned full-encode timing example.
+- [`CONFIG.md`](CONFIG.md): profile schema, encoder settings, throttles,
+  capacities, physical limits, and DEBUG gate thresholds.
+- [`MOVIE.md`](MOVIE.md): the exact TTRC v16 `HEADER.DAT` and `BODY.DAT`
+  on-disc binary format.
+- [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
+  assignment plus whole-movie quality planning.
+- [`PLAYER.md`](PLAYER.md): Main/Sub player memory maps, frame handoff, safe
+  allocation areas, CPU headroom, and qualification rules.
+- [`ANALYSIS.md`](ANALYSIS.md): every analysis-video panel, category, meter,
+  timeline, and TSV field.
+- [`HUD.md`](HUD.md): the on-screen DEBUG HUD fields, units, limits, rendering,
+  OCR, and upload gate.
+- [`ADPCM.md`](ADPCM.md): the 22.05 kHz mono IMA ADPCM format, Sub-CPU decoder,
+  buffering, and audio qualification.
+- [`BUDGETS.md`](BUDGETS.md): first-order tile, DMA, CD, control, and audio
+  budgets for planning a profile.
+- [`REMOVED.md`](REMOVED.md): implementation notes for absent features that
+  may support a clean reimplementation.
+- [`AGENTS.md`](AGENTS.md): repository maintenance, terminology,
+  documentation, validation, recording, and attribution rules.
+- [`CLAUDE.md`](CLAUDE.md): compatibility entry point that delegates
+  repository guidance to `AGENTS.md`.
 
 ## Implementation
 
@@ -304,54 +308,51 @@ repository.
 
 <a id="jp"></a>
 
-# Tile Texture Reuse Codec — SEGA-CD / Genesis FMV codec
+# Sega CD Constraint-Aware Video Codec — SEGA-CD / Genesis FMV codec
 
-Tile Texture Reuse CodecはSega CD hardware専用に設計したfull-motion-video
-codecです。Genesis VDPのtile/CRAM model、連続CD 1x delivery、Sub-CPU PRG RAM、
-1M/1M Word RAM、RF5C164 PCM chipを直接対象にします。同じstreamを実機と
-Genesis Plus GXで再生します。
+Sega CD Constraint-Aware Video CodecはSega CD hardware専用に設計した
+full-motion-video codecです。Genesis VDPのtile/CRAM model、連続CD 1x delivery、
+Sub-CPU PRG RAM、1M/1M Word RAM、RF5C164 PCM chipを直接対象にします。同じstreamを
+実機とGenesis Plus GXで再生します。
 
 ディスク上のstreamは明示的なversionを持ちます。repository内のgeneric filenameに
 より、実装pathは表示上のcodec名から独立しています。
 
 ## 中心となる考え方
 
-Genesisの画面は、VRAM内の8x8 patternと、各cellで使うpatternを選ぶname tableから
-できています。resident patternの再利用は2-byte name-table entryだけで済みます。
-fresh patternのloadには32 byteとname entryが必要です。
+このprojectの中心は、**SEGA-CDとGenesisに分割されたretro architectureの制約内で、
+FMVの画質を最大化すること**です。CD 1x、分離したmemory、複数CPU、VBlank、CRAM
+paletteを別々の問題にせず、movie全体で1つのresource allocationとして扱います。
 
-そのためencoderは変更cellごとに次を判断します。
-
-> 適切なpatternがすでにresidentで、そのpatternを参照するだけで済むか？
-
-正確なresident再利用、見た目が近い再利用、表示を改善するfallback再利用は、CD帯域と
-VBlank transfer時間を節約します。利用可能なresident候補が十分でないときだけ新しい
-patternをloadします。
+Encoderは、どのframeへqualityを使うか、patternをどのmemory domainに置くか、Main/Subの
+どちらがいつ運ぶかを、後工程で物理上限を破れない形で先に決めます。8x8 resident pattern
+の再利用はそのための有効な手段の1つです。Exact、Near、Flbk再利用によってCD deliveryと
+VBlank transferを節約し、その余裕を新しいpatternが必要なframeへ回します。
 
 ## Hardwareに合わせた設計
 
-- **CRAM palette。** VDPは使用可能な15色を持つpalette lineを4本表示します。encoderは
-  60色を学習し、安全なtransitionでlocal segmentを作り、全segment paletteをMain RAM
-  へpreloadします。timed switchはpalette参照だけを持ちます。色集合を変えず、既存の
-  最暗色と最明色をDEBUG HUDの固定位置へ移します。
-- **Resident VRAM pool。** tile 1〜1,535をH32/H40共通のpersistent pattern poolとして
-  使います。各name-table updateがこのpoolを参照します。
-- **NearとFlbk再利用。** Nearは見た目が近いresidentを採用します。Flbkは表示cellを
-  改善するときだけresidentを採用します。exact workは物理allowanceを使う前に
-  fallback workに必要なname byteを予約します。
-- **4つのpattern供給。** PrgBufはSub-CPU PRG RAMへstreamします。WordBuf0とWordBuf1は
-  frame parityで選ぶ異なるboot-preload sequenceです。DicBufはpersistent 256-entry
-  Main-RAM dictionaryです。
-- **Movie全体quality planning。** dry runが将来のexact demandとMiss-risk demandを
-  予測します。encoderは難しいburstに必要なoffline allowanceを予約し、boot-preload
-  creditを割り当て、quality fundingと物理pattern sourceを分離します。
-- **Sector-aware scheduling。** per-frame decision確定前に、control byte、run descriptor、
-  CRAM switch、audio、Prg payload、padを1つの物理sector planへ入れます。packerが同じ
-  proofを再生します。
-- **VBlank-limited transfer。** screen geometryとcold workはmode別Main-CPU transfer
-  budgetへ収めます。
-- **Checkpointed audio。** TTRC v16のaudioは22.05 kHz mono IMA ADPCMだけです。Subは
-  連続CD deliveryを処理しながらRF5C164 sampleへdecodeします。
+- **分割memoryを使い切る。** PRG-RAMのPrgBufは将来patternを連続streamingします。
+  2つのphysical Word-RAM bankには、frame parity別のWordBuf0 / WordBuf1を起動時に
+  preloadします。Main RAMのDicBufは、頻出exact patternを256-entry dictionaryとして
+  全編で再利用します。
+- **複数CPUを協調させる。** Sub CPUはCD sectorのroute、PrgBuf、ADPCM decode、次frameの
+  Word RAM展開を担当します。Main CPUはcurrent frameのrun構築、VRAM transfer、CRAM
+  update、name-table DMAを担当します。1M/1M Word RAM handoffで両者をframe単位に接続し、
+  pending handoffを将来dataの先読みより優先します。
+- **VRAM residentを再利用する。** tile 1〜1,535をH32/H40共通のpersistent poolとして
+  使います。Exact residentはname-table entryだけ、Nearは見た目が近いresident、Flbkは
+  現在表示を改善するresidentを参照します。新しい32-byte patternは必要なときだけ
+  cold loadします。
+- **CRAM制約を時分割する。** VDPの4 palette lines、各15 usable coloursの範囲で60色を
+  学習します。安全なtransitionでmovieをsegment化し、全segment paletteをMain RAMへ
+  preloadして、再生中は小さな参照だけで時限切替します。
+- **Movie後方からqualityを配分する。** dry runで将来のexact demandとMiss-risk demandを
+  予測し、重いframeのためのquality allowanceとboot-preload creditを逆算します。
+  control、run descriptor、CRAM switch、audio、Prg payload、padを同じphysical-sector
+  planへ入れ、quality fundingと物理pattern sourceを分離します。
+- **VBlankとaudioを専用pathへ収める。** Screen geometryとcold workをmode別Main-CPU
+  transfer budget内に制限します。Sub CPU上の自前IMA ADPCM decoderが22.05 kHz mono
+  audioをRF5C164 sampleへ変換し、映像用のCD帯域を確保します。
 
 ## Sega CD limit内で設定できるもの
 
@@ -368,23 +369,15 @@ schemaとlimitの全体は [`CONFIG.md`](CONFIG.md) を参照してください�
 
 ## Simulation pipeline
 
-`tools/sim.py` は6つの名前付きstageを使います。
+`tools/sim.py` は6つのstageで、source decodeからpalette学習、将来予測、物理制約内の
+decision確定、全schedule検証までを実行します。
 
 ```text
 Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 ```
 
-1. **Extract** はencoder frame、comparison frame、mono audioをdecodeします。
-2. **Palette** はsegment boundaryを見つけ、Genesis CRAM paletteを学習します。
-3. **Quantize** はpalette assignmentとindexed 8x8 patternを生成します。
-4. **Forecast** は将来demand、物理limit、quality reserve、boot-preload利用を計算します。
-5. **Decide** はexact/reused patternを選び、物理VRAM slotを割り当て、
-   Prg/WordBuf/DicBuf sourceを決め、物理budgetを確定します。
-6. **Finalize** は全scheduleを検証し、数値traceとdecision logを書きます。
-
-disc packはsimulationの後に行います。analysis renderはoptionalかつ別工程です。
-preview/category PNGは `tools/render_analysis.py` だけが生成します。現在のstage別実測時間は
-[`ENCODE.md`](ENCODE.md) を参照してください。
+各stageの責務、入出力、現在の実測時間は [`ENCODE.md`](ENCODE.md) にまとめています。
+Disc packはsimulation後、optional analysis renderは別工程です。
 
 ## Analysis
 
@@ -397,18 +390,32 @@ timed-work valueとgraph maximumから除外します。
 
 ## Documentation
 
-- [`ENCODE.md`](ENCODE.md): simulation stageと実測処理時間。
-- [`CONFIG.md`](CONFIG.md): profile schema、共通設定、throttle、容量。
-- [`MOVIE.md`](MOVIE.md): 正確なTTRC v16 `HEADER.DAT` / `BODY.DAT` format。
-- [`BUEFFERING.md`](BUEFFERING.md): 物理pattern供給とmovie全体quality planning。
-- [`PLAYER.md`](PLAYER.md): live Main/Sub player memory mapとheadroom。
-- [`ANALYSIS.md`](ANALYSIS.md): analysis videoとTSVのreference。
-- [`HUD.md`](HUD.md): DEBUG HUD layout、unit、gate、OCR workflow。
-- [`ADPCM.md`](ADPCM.md): 対応audio formatとSub-CPU decoder。
-- [`BUDGETS.md`](BUDGETS.md): tile、DMA、CDの一次budget。
-- [`REMOVED.md`](REMOVED.md): cleanな再実装の参考になるremoved featureの実装記録。
-- [`AGENTS.md`](AGENTS.md): maintenance、recording、agent guidance。
-- [`CLAUDE.md`](CLAUDE.md): shared guidanceへのcompatibility entry point。
+- [`README.md`](README.md): project概要、設計方針、setup、build、recording、
+  repositoryの入口。
+- [`ENCODE.md`](ENCODE.md): simulationの6 stage、各stageの入出力、
+  version付き全編encode実測例。
+- [`CONFIG.md`](CONFIG.md): profile schema、encoder設定、throttle、容量、
+  物理limit、DEBUG gate threshold。
+- [`MOVIE.md`](MOVIE.md): TTRC v16の正確なon-disc `HEADER.DAT` / `BODY.DAT`
+  binary format。
+- [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
+  割り当てとmovie全体quality planning。
+- [`PLAYER.md`](PLAYER.md): Main/Sub playerのmemory map、frame handoff、
+  安全なallocation領域、CPU余裕、qualification rule。
+- [`ANALYSIS.md`](ANALYSIS.md): analysis videoの全panel、category、meter、
+  timeline、TSV field。
+- [`HUD.md`](HUD.md): 画面上のDEBUG HUD field、unit、limit、rendering、OCR、
+  upload gate。
+- [`ADPCM.md`](ADPCM.md): 22.05 kHz mono IMA ADPCM format、Sub-CPU decoder、
+  buffering、audio qualification。
+- [`BUDGETS.md`](BUDGETS.md): profile計画に使うtile、DMA、CD、control、audioの
+  一次budget。
+- [`REMOVED.md`](REMOVED.md): cleanな再実装の参考になる、現在存在しないfeatureの
+  実装情報。
+- [`AGENTS.md`](AGENTS.md): repository maintenance、用語、documentation、
+  validation、recording、attribution rule。
+- [`CLAUDE.md`](CLAUDE.md): repository guidanceを `AGENTS.md` へ委譲する
+  compatibility entry point。
 
 ## Implementation
 
