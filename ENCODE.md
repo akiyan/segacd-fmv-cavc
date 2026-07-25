@@ -6,7 +6,7 @@ This document describes the processing flow and measured time of
 ## Flow
 
 ```text
-Extract -> Palette -> Quantize -> Forecast -> Encode -> Finalize
+Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 ```
 
 | Stage | Processing |
@@ -15,7 +15,7 @@ Extract -> Palette -> Quantize -> Forecast -> Encode -> Finalize
 | **Palette** | Divide the movie into palette segments and train each segment's CRAM palettes. |
 | **Quantize** | Convert every frame into palette assignments and indexed 8x8 patterns. |
 | **Forecast** | Calculate one-pass future demand, physical delivery limits, quality reserves, and boot-preload use. |
-| **Encode** | Select each frame's exact or reused patterns, allocate VRAM slots, assign pattern sources, and commit the physical budget. |
+| **Decide** | Select each frame's exact or reused patterns, allocate VRAM slots, assign pattern sources, and commit the physical budget. |
 | **Finalize** | Verify the complete physical schedule and write the numeric traces and decision log. |
 
 ## Measured Time
@@ -31,7 +31,7 @@ cached simulation artifact.
 | Palette | 12.9 s | 4.7 ms |
 | Quantize | 8.6 s | 3.2 ms |
 | Forecast | 72.7 s | 26.8 ms |
-| Encode | 114.3 s | 42.1 ms |
+| Decide | 114.3 s | 42.1 ms |
 | Finalize | 0.9 s | 0.3 ms |
 | **Total** | **216.9 s** | **79.9 ms** |
 
@@ -45,7 +45,7 @@ cached simulation artifact.
 ## 処理フロー
 
 ```text
-Extract -> Palette -> Quantize -> Forecast -> Encode -> Finalize
+Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 ```
 
 | 工程 | 処理 |
@@ -54,7 +54,7 @@ Extract -> Palette -> Quantize -> Forecast -> Encode -> Finalize
 | **Palette** | 映像をパレット区間に分け、区間ごとのCRAMパレットを学習します。 |
 | **Quantize** | 全フレームをパレット割り当てとインデックス形式の8x8パターンへ変換します。 |
 | **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用を1パスで計算します。 |
-| **Encode** | 各フレームの正確パターンまたは再利用パターンを選び、VRAMスロットを割り当て、パターン供給元を決め、物理予算を確定します。 |
+| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、VRAMスロットを割り当て、パターン供給元を決め、物理予算を確定します。 |
 | **Finalize** | 全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
 
 ## 実測時間
@@ -69,6 +69,6 @@ Extract -> Palette -> Quantize -> Forecast -> Encode -> Finalize
 | Palette | 12.9秒 | 4.7 ms |
 | Quantize | 8.6秒 | 3.2 ms |
 | Forecast | 72.7秒 | 26.8 ms |
-| Encode | 114.3秒 | 42.1 ms |
+| Decide | 114.3秒 | 42.1 ms |
 | Finalize | 0.9秒 | 0.3 ms |
 | **合計** | **216.9秒** | **79.9 ms** |

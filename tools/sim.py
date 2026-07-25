@@ -1704,7 +1704,7 @@ def main():
     )
     _t = _mark("Forecast", _t)
 
-    # Encode: make and commit the frame decisions in playback order.
+    # Decide: make and commit the frame decisions in playback order.
     # Optional, low-frequency timing for the sequential decision loop.  Keep
     # this disabled for normal encodes: the nested resident-search timers are
     # deliberately detailed enough to add measurable profiling overhead.
@@ -2946,7 +2946,7 @@ def main():
 
     if _gc_was_enabled:
         _gc.enable()
-    _t = _mark("Encode", _t)
+    _t = _mark("Decide", _t)
     _loop_total = _phases[-1][1]
     if _loop_profile:
         _profiled_total = sum(_lp_totals.values())
