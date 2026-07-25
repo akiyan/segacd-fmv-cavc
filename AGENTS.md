@@ -133,6 +133,16 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
 
 - Keep public documentation in [`README.md`](README.md).
 - Keep agent and maintenance instructions in `AGENTS.md`.
+- Write every public Markdown document located at the repository root in
+  English first, followed by a complete Japanese version below it. Keep the
+  two language sections structurally equivalent and update both together.
+- Describe only the current system in public root documentation. Do not use
+  chronology-dependent narratives such as "previously", "formerly", "the old
+  implementation", or "this was changed to". State the active behavior
+  directly. [`REMOVED.md`](REMOVED.md) is the only exception: it preserves
+  timeless implementation and reimplementation notes for features that are
+  absent from the active system, without release chronology or historical
+  storytelling.
 - Keep Markdown self-contained. Do not link to or name GitHub issues from
   Markdown files; describe the current behavior or plan directly instead.
 - Do not add new scattered Markdown documents for project notes at the repo root.
@@ -155,6 +165,9 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     its field order, widths, timing units, rendering path, and OCR workflow in
     sync with `boot/movieplay_ip.s`, `tools/read_frameno.py`, and the HUD
     harnesses.
+  - [`REMOVED.md`](REMOVED.md) - the archive for removed feature designs,
+    dependencies, and implementation notes needed for a possible clean
+    reimplementation. It is not a description of the active pipeline.
 - Claude skill files under `.claude/skills/**/SKILL.md` are allowed and should
   remain in place.
 - Do not reintroduce game-specific extraction notes or copyrighted sample
