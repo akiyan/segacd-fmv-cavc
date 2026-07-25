@@ -16,10 +16,11 @@ borrow more virtual budget than the hardware can schedule, causing live
 underruns even when the encode looked feasible.
 
 Here we define the physical ring **once** and derive every capacity from it.
-The exact schedule stays one physical CD sector below the player's pump
-back-pressure boundary, so the pump never has to reject a sector at equality.
-Delivery jitter scales with the time represented by one content frame: 20 KiB
-at 30 fps, 40 KiB at 15 fps, and 25 KiB at 24 fps. The
+The exact schedule stays below the player's pump back-pressure boundary. At
+15 fps it keeps an additional 4 KiB free so the measured sector-arrival
+variation does not enter pump back-pressure. The normal PrgBuf ceiling still
+uses a cadence reserve that scales with the time represented by one content
+frame: 20 KiB at 30 fps, 40 KiB at 15 fps, and 25 KiB at 24 fps. The
 player's ``RING_SIZE`` is asserted equal to
 ``RING_SIZE_KB`` at build time (``tools/check_player_ring.py``, run by the
 Makefile). This module also owns the fps-derived cold-cap baseline used by the
@@ -39,13 +40,13 @@ from dataclasses import dataclass
 RING_SIZE_KB = 428
 
 # Keep the physical overflow guard distinct from delivery-jitter headroom. The
-# player throttles its CD pump at RING_SIZE-4KB (back-pressure). Exact schedules
-# stop one 2KiB physical CD sector before that equality boundary; otherwise a
-# schedule that reaches 424KiB can make pump_poll reject the next arrived
-# sector and enter slip/re-seek recovery. The normal PrgBuf/prebuffer ceiling
-# stays an fps-derived jitter interval below the scheduled delivery ceiling.
+# player throttles its CD pump at RING_SIZE-4KB (back-pressure). Every exact
+# schedule stops at least one 2KiB physical CD sector before that equality
+# boundary; 15 fps keeps another 4KiB free for measured arrival variation.
+# The normal PrgBuf/prebuffer ceiling stays below both scheduled limits.
 RING_PHYSICAL_GUARD_KB = 4
 RING_DELIVERY_GUARD_KB = 2
+RING_15FPS_SCHEDULE_GUARD_KB = 4
 RING_JITTER_REFERENCE_FPS = 30.0
 RING_JITTER_REFERENCE_KB = 20
 
@@ -70,8 +71,8 @@ def _nominal_content_fps(fps):
     return value
 
 
-def ring_jitter_headroom_kb(fps):
-    """Return fps-scaled jitter reserve rounded up to a whole KiB."""
+def cadence_jitter_reserve_kb(fps):
+    """Return the fps-scaled normal-cap reserve rounded up to a whole KiB."""
     nominal_fps = _nominal_content_fps(fps)
     nominal_kb = (
         RING_JITTER_REFERENCE_KB
@@ -83,7 +84,7 @@ def ring_jitter_headroom_kb(fps):
 
 def prg_buf_cap_kb(fps):
     """Return the normal PrgBuf/prebuffer ceiling below physical jitter."""
-    cap = DELIVERY_CAP_KB - ring_jitter_headroom_kb(fps)
+    cap = DELIVERY_CAP_KB - cadence_jitter_reserve_kb(fps)
     if cap <= 0:
         raise ValueError(
             f"fps {fps!r} requires all {DELIVERY_CAP_KB} KiB of PrgBuf "
@@ -96,9 +97,22 @@ def quality_budget_kb(fps):
     return prg_buf_cap_kb(fps)
 
 
-def physical_delivery_cap_kb(_fps):
-    """Return the hard scheduled occupancy limit before pump back-pressure."""
-    return DELIVERY_CAP_KB
+def scheduled_delivery_guard_kb(fps):
+    """Return the cadence-specific guard below the base delivery ceiling."""
+    nominal_fps = _nominal_content_fps(fps)
+    if math.isclose(nominal_fps, 15.0, rel_tol=0.0, abs_tol=1e-9):
+        return RING_15FPS_SCHEDULE_GUARD_KB
+    return 0
+
+
+def scheduled_delivery_cap_kb(fps):
+    """Return the hard scheduled occupancy ceiling for this cadence."""
+    return DELIVERY_CAP_KB - scheduled_delivery_guard_kb(fps)
+
+
+def ring_jitter_headroom_kb(fps):
+    """Return scheduled delivery headroom above the normal PrgBuf ceiling."""
+    return scheduled_delivery_cap_kb(fps) - prg_buf_cap_kb(fps)
 
 
 # Compatibility aliases are the 30 fps reference values. Runtime encode, pack,

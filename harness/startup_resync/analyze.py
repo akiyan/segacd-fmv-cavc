@@ -539,7 +539,7 @@ def evaluate_upload_gate(
         "jitter_headroom_kib": (
             av_config.ring_jitter_headroom_kb(content_fps)),
         "delivery_limit_kib": (
-            av_config.physical_delivery_cap_kb(content_fps)),
+            av_config.scheduled_delivery_cap_kb(content_fps)),
         "backpressure_kib": av_config.BACKPRESSURE_KB,
         "physical_ring_kib": av_config.RING_SIZE_KB,
         "requires_explicit_upload_approval": False,

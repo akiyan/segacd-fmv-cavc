@@ -38,17 +38,19 @@ lifetime and a full validation of every overlapping phase.
 PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 
 The address split below uses 30 fps as the primary example. The physical ring,
-delivery guard, and overflow guard stay fixed, while the boundary between
-normal PrgBuf capacity and delivery-jitter headroom follows the content
-cadence:
+back-pressure, and overflow guard stay fixed, while the normal PrgBuf capacity
+and scheduled delivery ceiling follow the content cadence:
 
 ```text
-normal PrgBuf KiB = 422 - jitter headroom KiB = 422 - ceil(20 * 30 / fps)
+normal PrgBuf KiB = 422 - cadence reserve KiB
+cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
-These values come from `ring_jitter_headroom_kb()` and `prg_buf_cap_kb()` in
-`tools/av_config.py`; this document does not define an independent capacity.
-Lower fps increases jitter headroom and reduces the normal PrgBuf ceiling.
+These values come from `cadence_jitter_reserve_kb()`, `prg_buf_cap_kb()`, and
+`scheduled_delivery_cap_kb()` in `tools/av_config.py`; this document does not
+define an independent capacity. At 15 fps, scheduling stops at 418 KiB rather
+than the 422 KiB base ceiling, keeping 4 KiB for measured sector-arrival
+variation. The resulting scheduled headroom is 36 KiB.
 
 | Address | Size | Owner | New feature use |
 |---|---:|---|---|
@@ -66,10 +68,11 @@ Lower fps increases jitter headroom and reduces the normal PrgBuf ceiling.
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | No |
 | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top | No |
 
-The physical PrgBuf ring is 428 KiB. Its normal scheduling cap is below the
-422 KiB delivery ceiling by a cadence-scaled jitter reserve. Pump
-back-pressure begins below the physical end, and the remaining 4 KiB is a
-separate overflow guard. None of these differences is feature memory.
+The physical PrgBuf ring is 428 KiB. At 30 fps its normal scheduling cap is
+below the 422 KiB delivery ceiling by a 20 KiB cadence reserve. At 15 fps the
+normal cap is 382 KiB and the scheduled delivery ceiling is 418 KiB. Pump
+back-pressure begins at 424 KiB, and the remaining 4 KiB is a separate
+overflow guard. None of these differences is feature memory.
 
 During boot only, frame-0 pattern staging uses
 `0x71000..0x79FFF`. It may overlap the timed ring tail and APPLY because those
@@ -265,17 +268,19 @@ before revising any elapsed-time or memory-headroom claim.
 
 PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 
-次のaddress分割は30 fpsを主例にしています。Physical ring、delivery guard、
-overflow guardは固定ですが、normal PrgBuf容量とdelivery-jitter headroomの境界は
+次のaddress分割は30 fpsを主例にしています。Physical ring、back-pressure、
+overflow guardは固定ですが、normal PrgBuf容量とscheduled delivery上限は
 content cadenceに応じて動きます。
 
 ```text
-normal PrgBuf KiB = 422 - jitter headroom KiB = 422 - ceil(20 * 30 / fps)
+normal PrgBuf KiB = 422 - cadence reserve KiB
+cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
-数値は `tools/av_config.py` の `ring_jitter_headroom_kb()` と
-`prg_buf_cap_kb()` から得ます。この文書では独立した容量を定義しません。fpsが下がるほど
-jitter headroomは増え、normal PrgBuf上限は減ります。
+数値は `tools/av_config.py` の `cadence_jitter_reserve_kb()`、
+`prg_buf_cap_kb()`、`scheduled_delivery_cap_kb()` から得ます。この文書では独立した
+容量を定義しません。15 fpsでは実測したsector到着変動のため、scheduleをbase ceilingの
+422 KiBではなく418 KiBで止めます。結果としてscheduleが使えるheadroomは36 KiBです。
 
 | Address | Size | Owner | New featureでの利用 |
 |---|---:|---|---|
@@ -293,10 +298,10 @@ jitter headroomは増え、normal PrgBuf上限は減ります。
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | 不可 |
 | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 | 不可 |
 
-Physical PrgBuf ringは428 KiBです。Normal scheduling capは、cadenceに応じたjitter
-reserve分だけ422 KiB delivery ceilingより小さくなります。Pump back-pressureはphysical
-endより前に始まり、残る4 KiBは別のoverflow guardです。これらの差分はfeature
-memoryではありません。
+Physical PrgBuf ringは428 KiBです。30 fpsではnormal scheduling capが20 KiBのcadence
+reserve分だけ422 KiB delivery ceilingより小さくなります。15 fpsのnormal capは
+382 KiB、scheduled delivery上限は418 KiBです。Pump back-pressureは424 KiBで始まり、
+残る4 KiBは別のoverflow guardです。これらの差分はfeature memoryではありません。
 
 boot中だけ、frame-0 pattern stagingは `0x71000..0x79FFF` を使います。そのphaseでは
 timed ring tailとAPPLYのownerがinactiveなので重複できます。timed 30 fps mapは

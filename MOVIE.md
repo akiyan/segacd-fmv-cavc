@@ -293,9 +293,9 @@ before the current frame consumes its patterns.
 ## Prebuffer
 
 PREBUFFER contains the first `prebuf_pat` Prg patterns for frames 1 onward.
-It is loaded before playback and is capped below the physical delivery limit by
-the frame-rate-specific jitter reserve: 382 KiB at 15 fps, 397 KiB at 24 fps,
-and 402 KiB at 30 fps.
+It is loaded before playback and uses the normal PrgBuf ceiling: 382 KiB at
+15 fps, 397 KiB at 24 fps, and 402 KiB at 30 fps. The corresponding scheduled
+delivery ceilings are 418, 422, and 422 KiB.
 
 ## BODY frame slot
 
@@ -666,8 +666,8 @@ patternを消費する前に届き得るため、schedulerは消費前のPrgBuf 
 ## Prebuffer
 
 PREBUFFERはframe 1以降で最初に使う `prebuf_pat` 個のPrg patternを持ちます。playback
-前に読み込み、物理delivery上限からframe rate別jitter reserveを引いた値に制限します。
-15 fpsで382 KiB、24 fpsで397 KiB、30 fpsで402 KiBです。
+前に読み込み、通常PrgBuf上限に制限します。15 fpsで382 KiB、24 fpsで397 KiB、
+30 fpsで402 KiBです。対応するscheduled delivery上限は418、422、422 KiBです。
 
 ## BODY frame slot
 

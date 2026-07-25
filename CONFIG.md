@@ -38,9 +38,11 @@ memory.
 | `RING_PHYSICAL_GUARD_KB` | 4 KiB | cfg | Gap between pump back-pressure and the physical ring end. |
 | `BACKPRESSURE_KB` | 424 KiB | cfg / sp | Payload draining stops at this occupancy. |
 | `RING_DELIVERY_GUARD_KB` | 2 KiB | cfg | One sector kept below back-pressure. |
-| `physical_delivery_cap_kb(fps)` | 422 KiB | cfg / sim / pack | Hard scheduled occupancy ceiling. |
-| `ring_jitter_headroom_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | `ceil(20 * 30 / fps)` delivery-jitter reserve. |
-| `prg_buf_cap_kb(fps)` | 382 / 397 / 402 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf and PREBUFFER ceiling: 422 KiB minus jitter reserve. |
+| `RING_15FPS_SCHEDULE_GUARD_KB` | 4 KiB | cfg | Extra scheduled gap at 15 fps for measured sector-arrival variation. |
+| `scheduled_delivery_cap_kb(fps)` | 418 / 422 / 422 KiB at 15 / 24 / 30 fps | cfg / sim / pack | Hard scheduled occupancy ceiling. |
+| `cadence_jitter_reserve_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | `ceil(20 * 30 / fps)` reserve used to derive the normal ceiling. |
+| `ring_jitter_headroom_kb(fps)` | 36 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | Scheduled delivery headroom above the normal ceiling. |
+| `prg_buf_cap_kb(fps)` | 382 / 397 / 402 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf and PREBUFFER ceiling: 422 KiB minus the cadence reserve. |
 | `quality_budget_kb(fps)` | same as `prg_buf_cap_kb` | cfg / sim | Offline whole-movie quality-accounting capacity. It has no physical meter. |
 | `WordBuf0` | 880 patterns, 27.5 KiB | sp / ip / sim / pack | Boot-preloaded sequence in physical bank 0; serves even timed frames. |
 | `WordBuf1` | 880 patterns, 27.5 KiB | sp / ip / sim / pack | Different boot-preloaded sequence in physical bank 1; serves odd timed frames. |
@@ -195,10 +197,11 @@ switch and run descriptor, and computes both a Prg ceiling and a control-byte
 ceiling for the current frame.
 
 The prefix ledger uses the normal 382/397/402 KiB PrgBuf capacity. Scheduled
-delivery may use up to 422 KiB, with the difference serving as the automatic
-jitter interval. Every BODY prefix must fit the five-useful-sector route
-accumulated to that point. Sim freezes this proof and packer requires exact
-schedule equality.
+delivery may use 418/422/422 KiB at 15/24/30 fps, leaving 36/25/20 KiB of
+scheduled headroom. The 15 fps ceiling keeps a further 4 KiB below the common
+422 KiB base ceiling for measured sector-arrival variation. Every BODY prefix
+must fit the five-useful-sector route accumulated to that point. Sim freezes
+this proof and packer requires exact schedule equality.
 
 `buffer_remaining.npz` schema 6 stores:
 
@@ -412,9 +415,11 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 | `RING_PHYSICAL_GUARD_KB` | 4 KiB | cfg | pump back-pressureと物理ring末尾の間隔。 |
 | `BACKPRESSURE_KB` | 424 KiB | cfg / sp | このoccupancyでpayload drainを止める。 |
 | `RING_DELIVERY_GUARD_KB` | 2 KiB | cfg | back-pressureより1 sector手前を空ける。 |
-| `physical_delivery_cap_kb(fps)` | 422 KiB | cfg / sim / pack | schedule上のhard occupancy上限。 |
-| `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | `ceil(20 * 30 / fps)` のdelivery-jitter reserve。 |
-| `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで382 / 397 / 402 KiB | cfg / sim / pack / sp | 通常PrgBufとPREBUFFER上限。422 KiBからjitter reserveを引く。 |
+| `RING_15FPS_SCHEDULE_GUARD_KB` | 4 KiB | cfg | 実測したsector到着変動のため15 fpsで追加するschedule上の間隔。 |
+| `scheduled_delivery_cap_kb(fps)` | 15 / 24 / 30 fpsで418 / 422 / 422 KiB | cfg / sim / pack | schedule上のhard occupancy上限。 |
+| `cadence_jitter_reserve_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | 通常上限の導出に使う `ceil(20 * 30 / fps)` reserve。 |
+| `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで36 / 25 / 20 KiB | cfg | 通常上限より上でscheduleが使えるdelivery headroom。 |
+| `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで382 / 397 / 402 KiB | cfg / sim / pack / sp | 通常PrgBufとPREBUFFER上限。422 KiBからcadence reserveを引く。 |
 | `quality_budget_kb(fps)` | `prg_buf_cap_kb` と同じ | cfg / sim | offlineのmovie全体quality accounting容量。物理meterはない。 |
 | `WordBuf0` | 880 patterns、27.5 KiB | sp / ip / sim / pack | 物理bank 0のboot preload sequence。偶数timed frame用。 |
 | `WordBuf1` | 880 patterns、27.5 KiB | sp / ip / sim / pack | 物理bank 1の異なるboot preload sequence。奇数timed frame用。 |
@@ -560,10 +565,11 @@ runを分けます。488-record上限はfragmentation上限であり、cold tile
 switchとrun descriptorを予約し、current frameのPrg ceilingとcontrol-byte ceilingを
 計算します。
 
-prefix ledgerは通常PrgBuf容量382/397/402 KiBを使います。scheduled deliveryは最大
-422 KiBまで使え、その差が自動jitter intervalです。各BODY prefixはその時点までに
-累積した有効5-sector routeへ収まらなければなりません。simがproofを固定し、packerが
-scheduleの完全一致を要求します。
+prefix ledgerは通常PrgBuf容量382/397/402 KiBを使います。scheduled delivery上限は
+15/24/30 fpsで418/422/422 KiBで、scheduleが使えるheadroomは36/25/20 KiBです。
+15 fpsでは実測したsector到着変動のため、共通base ceilingの422 KiBからさらに4 KiB
+空けます。各BODY prefixはその時点までに累積した有効5-sector routeへ収まらなければ
+なりません。simがproofを固定し、packerがscheduleの完全一致を要求します。
 
 `buffer_remaining.npz` schema 6は次を保存します。
 

@@ -80,12 +80,12 @@ PCM_WAVE_RING_END = 0x8000
 PCM_STARTUP_MARGIN = 0x0200
 # リング諸元は tools/av_config.py の単一真実源から取る(sim/pack/playerで二重管理しない)。
 # RING_SIZE はプレイヤの実 .equ RING_SIZE と一致(ビルド時 check_player_ring.py が検証)。
-# Runtime profile fps selects the normal prebuffer ceiling. The exact physical
-# schedule may use the larger back-pressure ceiling as cadence jitter.
+# Runtime profile fps selects the normal prebuffer ceiling and the scheduled
+# delivery ceiling. The player physical ring and back-pressure stay fixed.
 RING_SIZE_KB = av_config.RING_SIZE_KB
 RING_CAP_KB = av_config.RING_CAP_KB
 RING_CAP_PAT = RING_CAP_KB * 1024 // PAT
-RING_DELIVERY_CAP_KB = av_config.physical_delivery_cap_kb(30)
+RING_DELIVERY_CAP_KB = av_config.scheduled_delivery_cap_kb(30)
 RING_DELIVERY_CAP_PAT = RING_DELIVERY_CAP_KB * 1024 // PAT
 RING_JITTER_HEADROOM_KB = av_config.RING_JITTER_HEADROOM_KB
 
@@ -160,7 +160,7 @@ def configure_from_log(log):
 
     RING_CAP_KB = av_config.prg_buf_cap_kb(FPS)
     RING_CAP_PAT = RING_CAP_KB * 1024 // PAT
-    RING_DELIVERY_CAP_KB = av_config.physical_delivery_cap_kb(FPS)
+    RING_DELIVERY_CAP_KB = av_config.scheduled_delivery_cap_kb(FPS)
     RING_DELIVERY_CAP_PAT = RING_DELIVERY_CAP_KB * 1024 // PAT
     RING_JITTER_HEADROOM_KB = av_config.ring_jitter_headroom_kb(FPS)
 

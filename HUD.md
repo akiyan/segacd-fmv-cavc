@@ -89,9 +89,10 @@ display fields in one content frame; 24 fps warns when `C>03` and fails when
 `M>03`. The largest passing `J` is
 normal-ceiling-to-physical-end minus one
 KiB: `2D` at 15fps, `1E` at 24fps, and `19` at 30fps. Values above the normal
-jitter interval (`28`, `19`, or `14` respectively) show that
-sector-granular occupancy crossed the 422 KiB scheduled-delivery ceiling and
-entered its 2 KiB back-pressure guard or the separate 4 KiB physical guard.
+jitter interval (`24`, `19`, or `14` respectively) show that
+sector-granular occupancy crossed the cadence's scheduled-delivery ceiling
+(418 KiB at 15 fps; 422 KiB at 24/30 fps) and entered the reserve left outside
+the schedule.
 Report the value, but a `J` within the cadence-specific passing limit does not
 by itself require another confirmation or fail the recording. Report all gate
 maxima on PASS or WARNING, and report every C warning frame. When the enclosing
@@ -524,10 +525,10 @@ Fixed-Nは`C>00`でwarningになり、介在する`N-1`個のpattern-work field�
 Fixed N2は`M>01`でfail、fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは
 `C>03`でwarning、`M>03`でfailです。Passing `J`の最大値はnormal ceilingから
 physical endまでの差より1 KiB小さい値で、15 fpsは`2D`、24 fpsは`1E`、30 fpsは
-`19`です。Normal jitter interval（それぞれ`28`、`19`、`14`）を超える値は、
-422 KiB scheduled-delivery ceilingを越えて2 KiB back-pressure guardまたは4 KiB
-physical guardへ入ったことを示します。値は報告しますが、cadence固有passing limit内の
-`J`だけで再確認やfailにはしません。
+`19`です。Normal jitter interval（それぞれ`24`、`19`、`14`）を超える値は、
+cadence別scheduled-delivery ceiling（15 fpsは418 KiB、24/30 fpsは422 KiB）を越え、
+schedule外に残したreserveへ入ったことを示します。値は報告しますが、cadence固有
+passing limit内の`J`だけで再確認やfailにはしません。
 
 PASS/WARNINGでは全gate maximumと全C warning frameを報告します。Taskがpublicationを
 許可済みなら、gate実行だけを理由に追加approvalは求めません。
