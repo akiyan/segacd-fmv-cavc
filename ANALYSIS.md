@@ -42,7 +42,7 @@ corresponding encoder values remain available in the `stat_*` columns.
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Per-frame category counts. `legend_wr` is the displayed Wr0+Wr1 total; the two source banks are also kept separately. |
 | `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_dma`, `status_run` | Numeric values printed in the bottom status bar, including the frame-0 untimed display rule. |
 | `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Exact physical BODY delivery-slot accounting behind the Band display. Slot 0 is zero because frame 0 comes from `HEADER.DAT`. |
-| `quality_budget_remaining_bytes` | Encoder-only whole-movie quality allowance remaining after the frame. This is diagnostic state, not a physical meter. |
+| `quality_budget_remaining_bytes` | Non-borrowed encoder-only whole-movie quality allowance remaining after the frame. A terminal-drain loan displays as zero until future suffix allowance repays it. This is diagnostic state, not a physical meter. |
 | `stat_frame` through the remaining `stat_*` columns | Every column from `stats.npz`, preserved with a `stat_` prefix and in its original order. These raw columns may grow when the simulator gains a new statistic. |
 
 The compatibility alias follows `ANALYSIS_OUT`: changing
@@ -468,7 +468,7 @@ overlayと同じ値です。Frame 0は`legend_raw`と`legend_same`を保持し�
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Frameごとのcategory count。表示`legend_wr`はWr0+Wr1で、source bank別の値も保持 |
 | `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_dma`, `status_run` | Frame-0のuntimed ruleを含むbottom status barの数値 |
 | `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Band表示の元になる正確なphysical BODY delivery-slot会計。Frame 0は`HEADER.DAT`由来なのでslot 0は0 |
-| `quality_budget_remaining_bytes` | Frame後に残るencoder-only全編画質allowance。Diagnostic stateであり物理meterではない |
+| `quality_budget_remaining_bytes` | Frame後に残る、借入ではないencoder-only全編画質allowance。Terminal-drain loan中はzeroを表示し、将来suffix allowanceの返済後に増える。Diagnostic stateであり物理meterではない |
 | `stat_frame`以降の`stat_*` | `stats.npz`の全columnを元の順序で保存。Simulatorへstatisticが増えると追加される |
 
 Compatibility aliasは`ANALYSIS_OUT`に従います。例えば

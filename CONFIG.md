@@ -281,10 +281,13 @@ frame's reserve target. The remaining future reserve and all physical sector,
 cold, PrgBuf, and jitter limits stay unchanged.
 
 The final reserve is zero, so a light suffix releases saved allowance
-naturally. Demand beyond the complete capacity is handled by the normal
-priority, approximation, carry, and Miss rules. The physical Prg schedule is
-constructed in `tools/physical_budget.py` and materialized by
-`tools/stream_schedule.py`.
+naturally. The first suffix whose strict reserve stays zero also exposes its
+surplus fresh allowance as a terminal-drain credit. Earlier Raw/Buf upgrades
+may borrow that credit; it tapers to zero and the signed quality balance must
+be non-negative again at the final frame. Demand beyond the complete capacity
+is handled by the normal priority, approximation, carry, and Miss rules. The
+physical Prg schedule is constructed in `tools/physical_budget.py` and
+materialized by `tools/stream_schedule.py`.
 
 ## Per-source TOML profiles
 
@@ -635,10 +638,12 @@ protected-demand不足が最大の1 frameだけを選びます。選択frameのr
 その不足分だけを引きます。残りの将来reserveと、物理sector、cold、PrgBuf、jitterの
 全limitは変えません。
 
-最終reserveはzeroなので、軽い末尾では保存済みallowanceが自然に解放されます。全容量を
+最終reserveはzeroなので、軽い末尾では保存済みallowanceが自然に解放されます。Strict
+reserveが継続してzeroになる最初のsuffixは、余るfresh allowanceをterminal-drain
+creditとして公開します。前のRaw/Buf格上げはこのcreditを借りられますが、creditは最終
+frameでzeroになり、signed quality balanceもnon-negativeへ戻る必要があります。全容量を
 超えるdemandは通常のpriority、approximation、carry、Miss ruleで処理します。物理Prg
-scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py` が
-具体化します。
+scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py` が具体化します。
 
 ## SourceごとのTOML profile
 

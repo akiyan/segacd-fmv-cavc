@@ -148,23 +148,35 @@ tail releases it. Demand larger than the full reserve plus fresh supply is
 intentionally clipped and resolved by normal priority, approximation, carry,
 and Miss behavior.
 
+The encoder also finds the first frame from which the strict reserve stays
+zero. Fresh allowance left after every predicted demand in that self-funded
+suffix is a terminal-drain credit. The credit is available to earlier
+Raw/Buf upgrades and shrinks to zero at the final frame. This moves otherwise
+stranded tail allowance earlier without changing any physical delivery limit.
+
 The per-frame limit is:
 
 ```text
 spendable = quality budget before frame
           + fresh frame supply
-          - reserve required after frame
+          - (reserve required after frame - terminal-drain credit)
 ```
 
 After the frame:
 
 ```text
-quality budget after frame =
-    clamp(quality budget before frame
-          + fresh frame supply
-          - actual spending,
-          0, quality-budget capacity)
+quality balance after frame =
+    min(quality-budget capacity,
+        quality balance before frame
+        + fresh frame supply
+        - actual spending)
 ```
+
+The internal balance may be negative while future suffix allowance is on loan.
+The loan must be fully repaid by the final frame or simulation fails.
+`quality_budget_remaining` reports only the non-borrowed positive balance;
+`quality_budget_balance_bytes` and `quality_budget_debt_bytes` preserve the
+signed balance and debt for diagnostics.
 
 Frame 1 starts with the complete quality budget because frame 0 is installed
 outside `BODY.DAT`.
@@ -238,10 +250,11 @@ dictionary count:
 - unloaded preload capacity is not drawn as present data; and
 - the quality-budget trace remains diagnostic-only.
 
-`buffer_remaining.npz` schema 6 contains physical remaining amounts, capacities,
+`buffer_remaining.npz` schema 7 contains physical remaining amounts, capacities,
 realized loads, base and effective quality reserve traces, predicted demand,
-the CRAM-priority frame mask and shortage, preload credits, and physical BODY
-payload/control/pad accounting. The decision log also freezes
+the terminal-drain start/credit/balance/debt traces, the CRAM-priority frame
+mask and shortage, preload credits, and physical BODY payload/control/pad
+accounting. The decision log also freezes
 `pattern_supply` schema 2, `pattern_transfers` schema 2, and the physical
 schedule used by the packer.
 
@@ -408,23 +421,33 @@ frame後のreserve =
 Full reserveとfresh supplyの合計を超えるdemandは意図的にclipし、通常のpriority、
 approximation、carry、Missで解決します。
 
+Encoderは、strict reserveが継続して0になる最初のframeも求めます。そのself-funded suffixで、
+全予測demandを払った後に残るfresh allowanceがterminal-drain creditです。このcreditを
+前のRaw/Buf格上げで利用し、最終frameへ向けて0まで減らします。物理delivery limitを
+変えず、tailで使われないallowanceを前へ移します。
+
 Frameごとのlimitは次のとおりです。
 
 ```text
 spendable = frame前のquality budget
           + fresh frame supply
-          - frame後に必要なreserve
+          - (frame後に必要なreserve - terminal-drain credit)
 ```
 
 Frame後は次のように更新します。
 
 ```text
-frame後のquality budget =
-    clamp(frame前のquality budget
-          + fresh frame supply
-          - actual spending,
-          0, quality-budget capacity)
+frame後のquality balance =
+    min(quality-budget capacity,
+        frame前のquality balance
+        + fresh frame supply
+        - actual spending)
 ```
+
+将来suffixのallowanceを借りている間、internal balanceはnegativeになれます。最終frameまでに
+loanを全額返せなければsimは失敗します。`quality_budget_remaining`は借入ではないpositive
+balanceだけを示し、`quality_budget_balance_bytes`と`quality_budget_debt_bytes`がsigned
+balanceとdebtをdiagnostic用に保持します。
 
 Frame 0は`BODY.DAT`外でinstallされるため、frame 1はcomplete quality budgetで始まります。
 
@@ -493,9 +516,10 @@ overflowの安全領域であり、feature memoryではありません。
 - Loadしていないpreload capacityをdataが存在するようには表示しません。
 - Quality-budget traceはdiagnostic専用です。
 
-`buffer_remaining.npz` schema 6は、物理remaining amount、capacity、realized load、
-base/effective quality reserve trace、predicted demand、CRAM-priority frame maskと
-予測不足量、preload credit、物理BODYのpayload/control/pad会計を含みます。
+`buffer_remaining.npz` schema 7は、物理remaining amount、capacity、realized load、
+base/effective quality reserve trace、predicted demand、terminal-drainの
+start/credit/balance/debt trace、CRAM-priority frame maskと予測不足量、preload credit、
+物理BODYのpayload/control/pad会計を含みます。
 Decision logは`pattern_supply` schema 2、
 `pattern_transfers` schema 2、packerが使うphysical scheduleも固定します。
 

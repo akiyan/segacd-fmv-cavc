@@ -47,6 +47,18 @@ class ReservePlan:
     shortfall: np.ndarray
 
 
+@dataclass(frozen=True)
+class TerminalDrainPlan:
+    """Future allowance that a self-funded suffix can lend to earlier frames."""
+
+    start_frame: int
+    credit: np.ndarray
+
+    @property
+    def maximum_credit(self) -> int:
+        return int(self.credit.max(initial=0))
+
+
 def select_peak_priority_frames(
     trigger_frames: Sequence[bool] | np.ndarray,
     risk_scores: Sequence[int] | np.ndarray,
@@ -341,6 +353,59 @@ def build_reserve_curve(
     return reserve
 
 
+def build_terminal_drain_plan(
+    demand: Sequence[int] | np.ndarray,
+    supply: int | Sequence[int] | np.ndarray,
+    reserve: Sequence[int] | np.ndarray,
+) -> TerminalDrainPlan:
+    """Return future suffix surplus that can be spent before it arrives.
+
+    ``reserve[i]`` is the strict allowance retained after frame ``i``.  Its
+    final all-zero suffix proves that every later demand can pay for itself.
+    Any allowance left after those later demands is otherwise stranded at the
+    movie end.  The returned credit lends only that proven surplus to earlier
+    frames and tapers to zero at the final frame, so a signed live ledger must
+    repay every borrowed byte by the end.
+    """
+
+    demand_arr = np.asarray(demand, dtype=np.int64)
+    reserve_arr = np.asarray(reserve, dtype=np.int64)
+    if demand_arr.ndim != 1:
+        raise ValueError("demand must be one-dimensional")
+    if reserve_arr.shape != demand_arr.shape:
+        raise ValueError("reserve must match demand")
+    if np.any(demand_arr < 0) or np.any(reserve_arr < 0):
+        raise ValueError("demand and reserve must be non-negative")
+    if np.isscalar(supply):
+        supply_arr = np.full(len(demand_arr), int(supply), np.int64)
+    else:
+        supply_arr = np.asarray(supply, dtype=np.int64)
+        if supply_arr.shape != demand_arr.shape:
+            raise ValueError("supply must be scalar or match demand")
+    if np.any(supply_arr < 0):
+        raise ValueError("supply must be non-negative")
+    if not len(demand_arr):
+        return TerminalDrainPlan(0, np.zeros(0, np.int64))
+    if int(reserve_arr[-1]) != 0:
+        raise ValueError("terminal reserve must be zero")
+
+    nonzero = np.flatnonzero(reserve_arr)
+    start_frame = int(nonzero[-1] + 1) if nonzero.size else 0
+    credit = np.zeros(len(demand_arr), np.int64)
+    future_surplus = 0
+    for frame in range(len(demand_arr) - 2, start_frame - 1, -1):
+        next_frame = frame + 1
+        net = int(supply_arr[next_frame]) - int(demand_arr[next_frame])
+        if net < 0:
+            raise ValueError(
+                "zero-reserve suffix contains demand above frame supply")
+        future_surplus += net
+        credit[frame] = future_surplus
+    if start_frame:
+        credit[:start_frame] = credit[start_frame]
+    return TerminalDrainPlan(start_frame, credit)
+
+
 def _peak_buffer_draw(
     demand: np.ndarray,
     supply: np.ndarray,
@@ -514,10 +579,12 @@ def planned_spend_limit(
 
     A caller may pass work already committed before planning. In that case it
     remains authoritative and later work receives no additional bytes.
+    ``budget_before`` and ``reserve_after`` may be negative while a terminal
+    drain loan is outstanding; frame supply and committed spending cannot.
     """
 
-    if min(budget_before, frame_supply, reserve_after, already_spent) < 0:
+    if min(frame_supply, already_spent) < 0:
         raise ValueError(
-            "budget, supply, reserve, and spending must be non-negative")
+            "supply and spending must be non-negative")
     spendable = max(0, budget_before + frame_supply - reserve_after)
     return max(already_spent, spendable)

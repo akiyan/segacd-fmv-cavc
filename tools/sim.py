@@ -1387,6 +1387,8 @@ def main():
     prefetch_cold_log = []      # physical PrgBuf loads without a name update
     quality_budget = QUALITY_BUDGET_BYTES if QUALITY_BUDGET_ON else 0
     quality_budget_log = []
+    quality_budget_balance_log = []
+    quality_budget_debt_log = []
 
     # DEBUG色はCRAMに既にある色だけを並べ替えて固定する。異なるパレット行との
     # 入替があり得るので、全フレームを最終的な行構成に対して量子化する前に行う。
@@ -1692,6 +1694,14 @@ def main():
         cram_quality_priority_frames,
         cram_quality_risk_bytes,
     )
+    terminal_drain_plan = upgrade_planner.build_terminal_drain_plan(
+        upgrade_demand,
+        upgrade_supply,
+        upgrade_base_reserve,
+    )
+    terminal_drain_credit = terminal_drain_plan.credit
+    main_reserve_floor = main_reserve - terminal_drain_credit
+    upgrade_reserve_floor = upgrade_reserve - terminal_drain_credit
     print(
         "quality plan: upgrade exact reserve "
         f"start={upgrade_reserve[0] // 1024 if n else 0}KB "
@@ -1706,7 +1716,10 @@ def main():
         f"search={CRAM_QUALITY_PRIORITY_SEARCH_FRAMES}frames "
         f"selected={int(np.count_nonzero(cram_quality_priority_frames))}frames "
         f"relief={int(cram_quality_risk_bytes[
-            cram_quality_priority_frames].sum()) // 1024}KB",
+            cram_quality_priority_frames].sum()) // 1024}KB; "
+        "terminal drain "
+        f"start=f{terminal_drain_plan.start_frame} "
+        f"credit={terminal_drain_plan.maximum_credit // 1024}KB",
         flush=True,
     )
     print(
@@ -1846,7 +1859,7 @@ def main():
             funded_limit = upgrade_planner.planned_spend_limit(
                 budget_before=quality_budget,
                 frame_supply=frame_cd,
-                reserve_after=int(main_reserve[i]),
+                reserve_after=int(main_reserve_floor[i]),
                 already_spent=0,
             )
             decision_budget = funded_limit
@@ -2420,7 +2433,7 @@ def main():
             upgrade_funded_limit = upgrade_planner.planned_spend_limit(
                 budget_before=quality_budget,
                 frame_supply=frame_cd,
-                reserve_after=int(upgrade_reserve[i]),
+                reserve_after=int(upgrade_reserve_floor[i]),
                 already_spent=current_reserved_spend(),
             )
             upgrade_limit = max(
@@ -2815,17 +2828,16 @@ def main():
                     f"frame {i}: encoder decision spend {spent_tiles}B != "
                     f"BODY update/payload spend {decision_spent}B")
             available = quality_budget + frame_cd
-            if variable_body_spent > available:
-                raise SystemExit(
-                    f"frame {i}: exact BODY variable work {variable_body_spent}B "
-                    f"exceeds funded bytes {available}B after fixed control")
             quality_budget = min(
                 QUALITY_BUDGET_BYTES,
                 available - variable_body_spent)
         elif QUALITY_BUDGET_ON:
             quality_budget = QUALITY_BUDGET_BYTES
         if QUALITY_BUDGET_ON:
-            quality_budget_log.append(quality_budget // PATTERN_BYTES)
+            quality_budget_log.append(
+                max(0, quality_budget) // PATTERN_BYTES)
+            quality_budget_balance_log.append(quality_budget)
+            quality_budget_debt_log.append(max(0, -quality_budget))
         if _loop_profile:
             _lp_t = _lp_mark("budget_finalize", _lp_t, _lp_frame)
 
@@ -2976,6 +2988,10 @@ def main():
             for _name in _lp_nested_totals:
                 _lp_nested_frames[_name].append(_lp_nested_frame[_name])
 
+    if QUALITY_BUDGET_ON and quality_budget < 0:
+        raise SystemExit(
+            "sim: terminal quality drain did not repay its future allowance "
+            f"loan (debt={-quality_budget}B)")
     if _gc_was_enabled:
         _gc.enable()
     _t = _mark("Decide", _t)
@@ -3222,6 +3238,10 @@ def main():
     prg_remaining = np.asarray(
         physical_schedule["ring_occupancy"], np.int64)
     quality_budget_remaining = np.asarray(quality_budget_log, np.int64)
+    quality_budget_balance = np.asarray(
+        quality_budget_balance_log, np.int64)
+    quality_budget_debt = np.asarray(
+        quality_budget_debt_log, np.int64)
 
     def preload_remaining(loads):
         total = int(loads.sum())
@@ -3287,7 +3307,8 @@ def main():
         f"cap={QUALITY_BUDGET_BYTES//PATTERN_BYTES}patterns"
         + (f" budget: start={quality_budget_remaining[0]} "
            f"end={quality_budget_remaining[-1]} "
-           f"min={quality_budget_remaining.min()}"
+           f"min={quality_budget_remaining.min()} "
+           f"debt_peak={quality_budget_debt.max(initial=0)}B"
            if QUALITY_BUDGET_ON else ""),
         f"PrgBuf: start={prg_remaining[0]} end={prg_remaining[-1]} "
         f"min={prg_remaining.min()} peak={prg_remaining.max()}patterns "
@@ -3380,6 +3401,8 @@ def main():
             wr1_preloaded=np.int64(wr1_loads.sum()),
             dic_preloaded=np.int64(supply_budget.dic_patterns),
             quality_budget_remaining=quality_budget_remaining,
+            quality_budget_balance_bytes=quality_budget_balance,
+            quality_budget_debt_bytes=quality_budget_debt,
             exact_demand_bytes=demand_prediction.exact_bytes,
             protected_demand_bytes=demand_prediction.protected_bytes,
             preload_credit_bytes=preload_credit_bytes,
@@ -3389,6 +3412,10 @@ def main():
                 len(upgrade_demand), np.int64),
             upgrade_reserve_bytes=upgrade_reserve,
             upgrade_base_reserve_bytes=upgrade_base_reserve,
+            upgrade_effective_reserve_bytes=upgrade_reserve_floor,
+            terminal_drain_start_frame=np.int64(
+                terminal_drain_plan.start_frame),
+            terminal_drain_credit_bytes=terminal_drain_credit,
             main_risk_demand_bytes=main_demand,
             main_risk_planned_demand_bytes=(
                 main_reserve_plan.planned_demand),

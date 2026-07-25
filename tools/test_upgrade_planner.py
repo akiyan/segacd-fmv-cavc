@@ -205,6 +205,46 @@ class ReserveCurveTests(unittest.TestCase):
 
         np.testing.assert_array_equal(reserve, [90, 0, 0, 0, 0])
 
+    def test_terminal_drain_lends_only_the_self_funded_suffix_surplus(
+        self,
+    ) -> None:
+        reserve = np.array([90, 0, 0, 0, 0], np.int64)
+        plan = upgrade_planner.build_terminal_drain_plan(
+            demand=[0, 140, 20, 20, 20],
+            supply=50,
+            reserve=reserve,
+        )
+
+        self.assertEqual(plan.start_frame, 1)
+        self.assertEqual(plan.maximum_credit, 90)
+        np.testing.assert_array_equal(plan.credit, [90, 90, 60, 30, 0])
+
+    def test_terminal_drain_is_zero_when_the_last_frame_uses_its_supply(
+        self,
+    ) -> None:
+        reserve = upgrade_planner.build_reserve_curve(
+            demand=[0, 20, 80],
+            supply=50,
+            capacity=100,
+        )
+        plan = upgrade_planner.build_terminal_drain_plan(
+            demand=[0, 20, 80],
+            supply=50,
+            reserve=reserve,
+        )
+
+        np.testing.assert_array_equal(reserve, [0, 30, 0])
+        self.assertEqual(plan.start_frame, 2)
+        np.testing.assert_array_equal(plan.credit, [0, 0, 0])
+
+    def test_terminal_drain_validates_the_zero_reserve_suffix(self) -> None:
+        with self.assertRaisesRegex(ValueError, "zero-reserve suffix"):
+            upgrade_planner.build_terminal_drain_plan(
+                demand=[0, 80, 20],
+                supply=50,
+                reserve=[0, 0, 0],
+            )
+
     def test_spend_limit_preserves_reserve_unless_base_work_already_used_it(self) -> None:
         self.assertEqual(
             upgrade_planner.planned_spend_limit(
@@ -223,6 +263,17 @@ class ReserveCurveTests(unittest.TestCase):
                 already_spent=90,
             ),
             90,
+        )
+
+    def test_spend_limit_supports_a_repayable_terminal_drain_loan(self) -> None:
+        self.assertEqual(
+            upgrade_planner.planned_spend_limit(
+                budget_before=-20,
+                frame_supply=50,
+                reserve_after=-40,
+                already_spent=0,
+            ),
+            70,
         )
 
     def test_balanced_plan_spreads_an_unavoidable_two_frame_shortfall(self) -> None:
