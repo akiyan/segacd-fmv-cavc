@@ -110,6 +110,12 @@ QUALITY_BUDGET_KB = quality_budget_kb(30)
 
 assert DELIVERY_CAP_KB - RING_CAP_KB == RING_JITTER_HEADROOM_KB
 
+# A CRAM epoch change rebuilds the visible picture under a newly selected
+# palette. Inspect this many frames starting at each switch and give only the
+# highest predicted Miss-risk frame priority over later quality reserves.
+# Physical sector, cold, PrgBuf, and jitter limits remain authoritative.
+CRAM_QUALITY_PRIORITY_SEARCH_FRAMES = 4
+
 # --- Fixed encoder/player resources ---
 # The resident movie-pattern pool starts at tile 1 and ends immediately before
 # the first movie name table at VRAM 0xC000.  The HUD font lives in the gap at

@@ -234,6 +234,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior. |
 | timed `raw_prefetch` | off | Optional `[encoder]` setting. |
+| `encoder.cram_quality_priority_search_frames` | 4 | Frames inspected from each CRAM switch. At most one positive-risk frame is selected, and its reserve is reduced only by the predicted protected-demand shortage. Zero disables this priority. |
 
 The allocator commits free/Same/Near results, selects cold exact loads while
 reserving two name-entry bytes for every deferred cell, then fills the
@@ -273,6 +274,12 @@ reusable DicBuf entries, assigns finite WordBuf credits under frame-parity
 constraints, and computes backwards reserve curves. Optional Raw/Buf upgrades
 use complete-exact demand; normal exact work protects Miss-risk demand.
 
+For each CRAM switch, the encoder inspects the configured number of frames
+starting at the switch and selects at most one frame with the largest positive
+protected-demand shortage. Only that shortage is subtracted from the selected
+frame's reserve target. The remaining future reserve and all physical sector,
+cold, PrgBuf, and jitter limits stay unchanged.
+
 The final reserve is zero, so a light suffix releases saved allowance
 naturally. Demand beyond the complete capacity is handled by the normal
 priority, approximation, carry, and Miss rules. The physical Prg schedule is
@@ -310,7 +317,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | Sim work directory, decoded-input reuse, and decision-log output. |
-| `[encoder]` | optional `raw_prefetch`, optional `cold_cap` | Timed raw prefetch and qualified cold-cap raise. |
+| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | Timed raw prefetch, qualified cold-cap raise, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
@@ -324,7 +331,8 @@ uses the full grid. A smaller value is verified against every master frame.
 It affects accounting, not the cold-cap baseline.
 
 The loader rejects unknown keys, unsupported modes, non-tile-aligned
-dimensions, unsafe profile names, and a `cold_cap` below baseline. GPU, the
+dimensions, unsafe profile names, a `cold_cap` below baseline, and a negative
+or non-integer CRAM-risk search length. GPU, the
 1,535-tile resident pool, dither, segmented palettes, Near, boot prefetch, and
 the four physical supplies are fixed behavior.
 
@@ -584,6 +592,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。 |
 | timed `raw_prefetch` | off | optional `[encoder]` setting。 |
+| `encoder.cram_quality_priority_search_frames` | 4 | 各CRAM switchから調べるframe数。positive riskが最大の1 frameだけを選び、予測protected-demand不足分だけreserveを減らします。0で無効です。 |
 
 allocatorはfree/Same/Near結果を確定し、全deferred cellの2-byte name entryを予約しながら
 cold exact loadを選び、残りを改善するFlbk residentで埋めます。
@@ -621,6 +630,11 @@ frame parity制約の下で有限WordBuf creditを割り当て、後ろ向きres
 optional Raw/Buf upgradeはcomplete-exact demand、通常exact workはMiss-risk demandを
 保護します。
 
+各CRAM switchについて、encoderはswitch frameから設定frame数を調べ、positiveな
+protected-demand不足が最大の1 frameだけを選びます。選択frameのreserve targetから
+その不足分だけを引きます。残りの将来reserveと、物理sector、cold、PrgBuf、jitterの
+全limitは変えません。
+
 最終reserveはzeroなので、軽い末尾では保存済みallowanceが自然に解放されます。全容量を
 超えるdemandは通常のpriority、approximation、carry、Miss ruleで処理します。物理Prg
 scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py` が
@@ -656,7 +670,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | sim work directory、decoded-input reuse、decision-log output。 |
-| `[encoder]` | optional `raw_prefetch`, optional `cold_cap` | timed raw prefetchと認定済みcold-cap引き上げ。 |
+| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | timed raw prefetch、認定済みcold-cap引き上げ、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 
@@ -670,7 +684,8 @@ aspectは8:7、H40は32:35です。
 baselineには影響しません。
 
 loaderは未知key、未対応mode、tile境界に揃わないdimension、安全でないprofile名、
-baseline未満の `cold_cap` を拒否します。GPU、1,535-tile resident pool、dither、
+baseline未満の `cold_cap`、負または整数でないCRAM-risk search長を拒否します。
+GPU、1,535-tile resident pool、dither、
 segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 
 ## Build switch

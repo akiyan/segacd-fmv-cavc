@@ -118,6 +118,65 @@ class DemandPredictionTests(unittest.TestCase):
 
 
 class ReserveCurveTests(unittest.TestCase):
+    def test_priority_search_selects_one_peak_after_each_trigger(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [False, True, False, False, True, False, False],
+            [0, 2, 9, 4, 3, 8, 5],
+            3,
+        )
+
+        np.testing.assert_array_equal(
+            mask, [False, False, True, False, False, True, False])
+
+    def test_zero_length_priority_search_disables_exception(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [False, True, False],
+            [0, 10, 20],
+            0,
+        )
+
+        np.testing.assert_array_equal(mask, [False, False, False])
+
+    def test_zero_risk_region_selects_no_priority_frame(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [False, True, False],
+            [0, 0, 0],
+            3,
+        )
+
+        np.testing.assert_array_equal(mask, [False, False, False])
+
+    def test_priority_search_stops_before_the_next_trigger(self) -> None:
+        mask = upgrade_planner.select_peak_priority_frames(
+            [True, False, True, False],
+            [1, 9, 8, 2],
+            4,
+        )
+
+        np.testing.assert_array_equal(mask, [False, True, True, False])
+
+    def test_priority_relief_lowers_only_selected_reserve_targets(self) -> None:
+        effective = upgrade_planner.relax_reserve_for_priority_frames(
+            [40, 50, 60, 70, 80],
+            [False, True, True, False, False],
+            [1, 20, 90, 40, 50],
+        )
+
+        np.testing.assert_array_equal(effective, [40, 30, 0, 70, 80])
+
+    def test_priority_search_rejects_invalid_lengths_and_shapes(self) -> None:
+        with self.assertRaisesRegex(ValueError, "non-negative"):
+            upgrade_planner.select_peak_priority_frames([True], [1], -1)
+        with self.assertRaisesRegex(ValueError, "must match"):
+            upgrade_planner.select_peak_priority_frames(
+                [True, False], [1], 2)
+        with self.assertRaisesRegex(ValueError, "must match"):
+            upgrade_planner.relax_reserve_for_priority_frames(
+                [10, 20], [True], [1, 1])
+        with self.assertRaisesRegex(ValueError, "must match"):
+            upgrade_planner.relax_reserve_for_priority_frames(
+                [10, 20], [True, False], [1])
+
     def test_future_burst_builds_only_the_needed_reserve(self) -> None:
         reserve = upgrade_planner.build_reserve_curve(
             demand=[0, 20, 20, 140, 20],

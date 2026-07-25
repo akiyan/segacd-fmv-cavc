@@ -68,11 +68,14 @@ per-frame decisions:
 9. Walk the adjusted quality demand backwards to build complete-exact and
    protected Miss-risk reserve curves. CRAM-switch name-table bytes are a hard
    floor.
-10. Run one stateful encoder pass. It consumes preload credits only for
+10. At each CRAM switch, inspect the configured short region and select at most
+    one frame with the largest positive protected-demand shortage. Lower that
+    frame's reserve only by the predicted shortage.
+11. Run one stateful encoder pass. It consumes preload credits only for
     selected cold patterns and stays within the Prg, cold, and control limits
     known at the start of each frame.
-11. Freeze one physical source for every update in the decision log.
-12. Pack and independently replay the frozen assignment. No downstream stage
+12. Freeze one physical source for every update in the decision log.
+13. Pack and independently replay the frozen assignment. No downstream stage
     may invent a different source choice.
 
 ## Demand Prediction
@@ -166,6 +169,13 @@ quality budget after frame =
 Frame 1 starts with the complete quality budget because frame 0 is installed
 outside `BODY.DAT`.
 
+At each CRAM switch, the encoder searches a short configurable region starting
+at the switch. It selects at most one frame whose predicted protected demand
+exceeds fresh frame supply, then lowers that frame's reserve target by exactly
+the predicted shortage. A zero-risk region selects nothing. This concentrates
+available quality on the single forecast peak without clearing the complete
+future reserve or changing any physical delivery limit.
+
 ## Frozen Physical Sources
 
 Sources are assigned to realized cold updates rather than predicted totals.
@@ -229,8 +239,9 @@ dictionary count:
 - the quality-budget trace remains diagnostic-only.
 
 `buffer_remaining.npz` schema 6 contains physical remaining amounts, capacities,
-realized loads, quality reserve traces, predicted demand, preload credits, and
-physical BODY payload/control/pad accounting. The decision log also freezes
+realized loads, base and effective quality reserve traces, predicted demand,
+the CRAM-priority frame mask and shortage, preload credits, and physical BODY
+payload/control/pad accounting. The decision log also freezes
 `pattern_supply` schema 2, `pattern_transfers` schema 2, and the physical
 schedule used by the packer.
 
@@ -322,10 +333,12 @@ Planningはpalette選択とquantizationの後、最終frame decisionの前に行
    4-byte run descriptorを予約し、allocation確定後にexact physical run byteをcommitします。
 9. 調整後のquality demandを後ろ向きに走査し、complete-exactとprotected Miss-riskの
    reserve curveを作ります。CRAM switchのname-table byteはhard floorです。
-10. 1回のstateful encoder passを実行します。選ばれたcold patternにだけpreload
+10. 各CRAM switchで設定された短い区間を調べ、positiveなprotected-demand不足が
+    最大の1 frameだけを選びます。そのframeのreserveを予測不足分だけ減らします。
+11. 1回のstateful encoder passを実行します。選ばれたcold patternにだけpreload
     creditを使い、各frame開始時点で既知のPrg、cold、control limitを守ります。
-11. 全updateの物理sourceをdecision logへ固定します。
-12. 固定assignmentをpackし、独立にreplayします。後工程は別のsource choiceを
+12. 全updateの物理sourceをdecision logへ固定します。
+13. 固定assignmentをpackし、独立にreplayします。後工程は別のsource choiceを
     作れません。
 
 ## Demand予測
@@ -415,6 +428,12 @@ frame後のquality budget =
 
 Frame 0は`BODY.DAT`外でinstallされるため、frame 1はcomplete quality budgetで始まります。
 
+各CRAM switchで、encoderはswitch frameから始まる短い設定可能区間を調べます。
+予測protected demandがfresh frame supplyを超えるframeを最大1つ選び、そのframeの
+reserve targetを予測不足分だけ減らします。Riskがzeroの区間は何も選びません。
+将来reserve全体を空にせず、物理delivery limitも変えずに、予測peak 1 frameへ利用可能な
+qualityを集中します。
+
 ## 固定された物理source
 
 Sourceは予測totalではなく、実際のcold updateへ割り当てます。実keyがdictionaryにあれば
@@ -475,8 +494,9 @@ overflowの安全領域であり、feature memoryではありません。
 - Quality-budget traceはdiagnostic専用です。
 
 `buffer_remaining.npz` schema 6は、物理remaining amount、capacity、realized load、
-quality reserve trace、predicted demand、preload credit、物理BODYの
-payload/control/pad会計を含みます。Decision logは`pattern_supply` schema 2、
+base/effective quality reserve trace、predicted demand、CRAM-priority frame maskと
+予測不足量、preload credit、物理BODYのpayload/control/pad会計を含みます。
+Decision logは`pattern_supply` schema 2、
 `pattern_transfers` schema 2、packerが使うphysical scheduleも固定します。
 
 ## Validation gate

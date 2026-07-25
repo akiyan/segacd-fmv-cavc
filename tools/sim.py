@@ -252,6 +252,13 @@ PRG_DELIVERY_CAP_KB = av_config.physical_delivery_cap_kb(FPS)
 PRG_JITTER_HEADROOM_KB = av_config.ring_jitter_headroom_kb(FPS)
 QUALITY_BUDGET_KB = av_config.quality_budget_kb(FPS)
 QUALITY_BUDGET_BYTES = QUALITY_BUDGET_KB * 1024
+CRAM_QUALITY_PRIORITY_SEARCH_FRAMES = int(os.environ.get(
+    "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES",
+    str(av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
+))
+if CRAM_QUALITY_PRIORITY_SEARCH_FRAMES < 0:
+    raise SystemExit(
+        "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES must be non-negative")
 # 格上げパス(既定ON): 当該フレームの余り + 画質予算で、近似(Near/Flbk)や持ち越しをRaw/Bufに格上げ。
 # 0で無効(=従来の帯域余し挙動に戻せる, 比較用)。
 UPGRADE_ON = os.environ.get("CBRSIM_UPGRADE", "1") != "0"
@@ -1640,6 +1647,15 @@ def main():
         demand_prediction.exact_bytes - preload_credit_bytes, 0)
     main_demand = np.maximum(
         demand_prediction.protected_bytes - protected_credit_bytes, 0)
+    cram_quality_risk_bytes = np.maximum(
+        main_demand - upgrade_supply, 0)
+    cram_quality_priority_frames = (
+        upgrade_planner.select_peak_priority_frames(
+            cram_switch_frames,
+            cram_quality_risk_bytes,
+            CRAM_QUALITY_PRIORITY_SEARCH_FRAMES,
+        )
+    )
     mandatory_main_demand = np.where(
         cram_switch_frames,
         C_CELLS * NAME_BYTES,
@@ -1661,10 +1677,21 @@ def main():
     # complete-demand reserve strict: balancing this deliberately infeasible
     # all-exact trace spends too much saved allowance before unpredicted live
     # Main work.  Only the narrower Miss-risk trace shares unavoidable loss.
-    upgrade_reserve = upgrade_planner.build_reserve_curve(
+    upgrade_base_reserve = upgrade_planner.build_reserve_curve(
         upgrade_demand, upgrade_supply, QUALITY_BUDGET_BYTES)
-    main_reserve = main_reserve_plan.reserve
-    upgrade_reserve = np.maximum(upgrade_reserve, main_reserve)
+    main_base_reserve = main_reserve_plan.reserve
+    upgrade_base_reserve = np.maximum(
+        upgrade_base_reserve, main_base_reserve)
+    main_reserve = upgrade_planner.relax_reserve_for_priority_frames(
+        main_base_reserve,
+        cram_quality_priority_frames,
+        cram_quality_risk_bytes,
+    )
+    upgrade_reserve = upgrade_planner.relax_reserve_for_priority_frames(
+        upgrade_base_reserve,
+        cram_quality_priority_frames,
+        cram_quality_risk_bytes,
+    )
     print(
         "quality plan: upgrade exact reserve "
         f"start={upgrade_reserve[0] // 1024 if n else 0}KB "
@@ -1674,7 +1701,12 @@ def main():
         f"start={main_reserve[0] // 1024 if n else 0}KB "
         f"peak={main_reserve.max() // 1024 if n else 0}KB "
         f"end={main_reserve[-1] // 1024 if n else 0}KB "
-        f"balanced_shortfall={main_reserve_plan.shortfall.sum() // 1024}KB",
+        f"balanced_shortfall={main_reserve_plan.shortfall.sum() // 1024}KB; "
+        "CRAM priority "
+        f"search={CRAM_QUALITY_PRIORITY_SEARCH_FRAMES}frames "
+        f"selected={int(np.count_nonzero(cram_quality_priority_frames))}frames "
+        f"relief={int(cram_quality_risk_bytes[
+            cram_quality_priority_frames].sum()) // 1024}KB",
         flush=True,
     )
     print(
@@ -3286,7 +3318,8 @@ def main():
          f"{upgrade_reserve[0]//1024}/{upgrade_reserve.max()//1024}/"
          f"{upgrade_reserve[-1]//1024}KB; main risk="
          f"{main_reserve[0]//1024}/{main_reserve.max()//1024}/"
-         f"{main_reserve[-1]//1024}KB"
+         f"{main_reserve[-1]//1024}KB; CRAM priority selected="
+         f"{int(np.count_nonzero(cram_quality_priority_frames))}frames"
          if upgrade_log else "upgrade: (off)"),
     ])
     (OUT / "report.txt").write_text(report)
@@ -3323,7 +3356,7 @@ def main():
         # silently drive any of the four hardware meters.
         np.savez(
             OUT / "buffer_remaining.npz",
-            schema_version=np.int64(6),
+            schema_version=np.int64(7),
             remaining_kind=np.array("three_consumptive_plus_dicbuf"),
             # Compatibility aliases for offline readers predating schema 4.
             remaining=prg_remaining,
@@ -3355,12 +3388,18 @@ def main():
             upgrade_unavoidable_shortfall_bytes=np.zeros(
                 len(upgrade_demand), np.int64),
             upgrade_reserve_bytes=upgrade_reserve,
+            upgrade_base_reserve_bytes=upgrade_base_reserve,
             main_risk_demand_bytes=main_demand,
             main_risk_planned_demand_bytes=(
                 main_reserve_plan.planned_demand),
             main_risk_unavoidable_shortfall_bytes=(
                 main_reserve_plan.shortfall),
             main_risk_reserve_bytes=main_reserve,
+            main_risk_base_reserve_bytes=main_base_reserve,
+            cram_quality_priority_search_frames=np.int64(
+                CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
+            cram_quality_priority_mask=cram_quality_priority_frames,
+            cram_quality_risk_bytes=cram_quality_risk_bytes,
             block_lengths=control_lengths,
             shadow_update_lists=shadow_list_flags,
             payload_sectors=np.asarray(
@@ -3449,6 +3488,8 @@ def main():
                 "raw_prefetch_min_batch": int(RAW_PREFETCH_MIN_BATCH),
                 "raw_prefetch_budget_floor_patterns": int(
                     RAW_PREFETCH_BUDGET_FLOOR_PATTERNS),
+                "cram_quality_priority_search_frames": int(
+                    CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
             },
             "palette": {
                 "algorithm": PAL_ALGO, "seam_weight": float(PAL_SEAM_WEIGHT),
@@ -3626,6 +3667,8 @@ def main():
             "prg_jitter_headroom_kb": int(PRG_JITTER_HEADROOM_KB),
             "prg_physical_ring_kb": int(av_config.RING_SIZE_KB),
             "quality_budget_kb": int(QUALITY_BUDGET_KB),
+            "cram_quality_priority_search_frames": int(
+                CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
         }, open(EMIT_DEC, "wb"), protocol=4)
         print(f"  実機決定ログ: {EMIT_DEC} ({len(dec_frames)} frames)")
 

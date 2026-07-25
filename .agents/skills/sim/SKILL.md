@@ -67,6 +67,12 @@ Other fixed defaults:
   demand traces before earlier optional image updates may spend that quality
   allowance. Its name-table bytes are a hard floor that balanced shortage may
   not dilute. Palette bytes themselves remain boot-preloaded.
+- Starting at each CRAM switch, inspect
+  `encoder.cram_quality_priority_search_frames` frames and select at most one
+  frame with the largest positive protected-demand shortage. Lower only that
+  frame's reserve by the predicted shortage; do not clear the complete future
+  reserve or relax physical sector, cold, PrgBuf, or jitter limits. Zero
+  disables this priority.
 - GPU encoding is on by default. CPU is the fallback.
 - Start sim/render with the locked GPU environment. Do not fall back to a
   system Python or an older venv:

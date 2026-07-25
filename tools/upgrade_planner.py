@@ -47,6 +47,80 @@ class ReservePlan:
     shortfall: np.ndarray
 
 
+def select_peak_priority_frames(
+    trigger_frames: Sequence[bool] | np.ndarray,
+    risk_scores: Sequence[int] | np.ndarray,
+    search_frames: int,
+) -> np.ndarray:
+    """Select at most one highest-risk frame following each trigger.
+
+    ``search_frames`` includes the trigger frame. Zero disables selection.
+    A search stops before the next trigger, and a region whose maximum score
+    is zero selects no frame.
+    """
+
+    triggers = np.asarray(trigger_frames, dtype=bool)
+    scores = np.asarray(risk_scores, dtype=np.int64)
+    if triggers.ndim != 1:
+        raise ValueError("trigger frames must be one-dimensional")
+    if scores.shape != triggers.shape:
+        raise ValueError("risk scores must match trigger frames")
+    if np.any(scores < 0):
+        raise ValueError("risk scores must be non-negative")
+    if isinstance(search_frames, bool) or not isinstance(
+            search_frames, (int, np.integer)):
+        raise ValueError("search frames must be an integer")
+    if search_frames < 0:
+        raise ValueError("search frames must be non-negative")
+    priority = np.zeros(triggers.shape, bool)
+    trigger_indices = np.flatnonzero(triggers)
+    for position, trigger in enumerate(trigger_indices):
+        next_trigger = (
+            int(trigger_indices[position + 1])
+            if position + 1 < len(trigger_indices) else len(priority)
+        )
+        end = min(
+            int(trigger) + int(search_frames),
+            next_trigger,
+            len(priority),
+        )
+        if end <= trigger:
+            continue
+        relative = int(np.argmax(scores[int(trigger):end]))
+        selected = int(trigger) + relative
+        if int(scores[selected]) > 0:
+            priority[selected] = True
+    return priority
+
+
+def relax_reserve_for_priority_frames(
+    reserve: Sequence[int] | np.ndarray,
+    priority_frames: Sequence[bool] | np.ndarray,
+    relief: Sequence[int] | np.ndarray,
+) -> np.ndarray:
+    """Lower selected reserve targets by their predicted risk deficit."""
+
+    reserve_arr = np.asarray(reserve, dtype=np.int64)
+    priority_arr = np.asarray(priority_frames, dtype=bool)
+    relief_arr = np.asarray(relief, dtype=np.int64)
+    if reserve_arr.ndim != 1:
+        raise ValueError("reserve must be one-dimensional")
+    if priority_arr.shape != reserve_arr.shape:
+        raise ValueError("priority frames must match reserve")
+    if relief_arr.shape != reserve_arr.shape:
+        raise ValueError("relief must match reserve")
+    if np.any(reserve_arr < 0):
+        raise ValueError("reserve must be non-negative")
+    if np.any(relief_arr < 0):
+        raise ValueError("relief must be non-negative")
+    effective = reserve_arr.copy()
+    effective[priority_arr] = np.maximum(
+        0,
+        reserve_arr[priority_arr] - relief_arr[priority_arr],
+    )
+    return effective
+
+
 def predict_update_demands(
     pattern_frames: Sequence[np.ndarray],
     palette_frames: Sequence[np.ndarray],
