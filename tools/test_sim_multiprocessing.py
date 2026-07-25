@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import os
 import unittest
-from types import SimpleNamespace
-
 import numpy as np
 
 # Import sim with a valid fps-derived cold cap. The module resolves playback
@@ -20,7 +18,6 @@ _sim_env = {
 _old_env = {name: os.environ.get(name) for name in _sim_env}
 os.environ.update(_sim_env)
 import sim
-import slot_locality_pipeline
 for _name, _value in _old_env.items():
     if _value is None:
         os.environ.pop(_name, None)
@@ -93,25 +90,10 @@ class SimMultiprocessingTests(unittest.TestCase):
         self.assertEqual(sim.ghost_escalate_frames(0.2, 24), 4)
         self.assertEqual(sim.ghost_escalate_frames(0.2, 15), 3)
 
-    def test_boot_inline_selection_follows_packed_physical_order(self) -> None:
-        # Request order is logical 1,2,3, but the physical permutation puts
-        # logical 2 and 3 first.  These are the records pack_stream places in
-        # frame 0's inline suffix; logical 1 belongs in the sidecar.
-        mapping = np.array([3, 2, 0, 1], np.int64)
-        self.assertEqual(
-            sim._inline_boot_prefetch_slots((1, 2, 3), 2, mapping),
-            (2, 3),
-        )
+    def test_boot_inline_selection_follows_allocator_order(self) -> None:
         self.assertEqual(
             sim._inline_boot_prefetch_slots((1, 2, 3), 2),
             (1, 2),
-        )
-
-    def test_untimed_frame_zero_is_absent_from_run_optimization(self) -> None:
-        replay = SimpleNamespace(cold_slots=((0, 1, 2), (3, 4)))
-        self.assertEqual(
-            slot_locality_pipeline.accounted_cold_slots(replay, 2),
-            ((), (3, 4)),
         )
 
     def test_resident_distance_luts_match_direct_f3_math(self) -> None:

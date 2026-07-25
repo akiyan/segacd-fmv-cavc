@@ -49,9 +49,7 @@ from quantize_md_video import rgb333_to_rgb888
 from tile_alloc import (
     TileAllocator,
     cold_transfer_order,
-    remap_placements,
     slot_runs,
-    validate_physical_slots,
 )
 
 SECTOR = 2048
@@ -251,17 +249,6 @@ def resolve(log, POOL, mode="lru"):
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     nfr = len(frames)
     alloc = TileAllocator(C_CELLS, POOL, BASE)   # 共有割り当て(連続)。sim も同一 = cap=realized
-    locality = log.get("slot_locality") or {}
-    locality_schema = int(locality.get("schema_version", 0))
-    if locality_schema not in (0, 1, 2):
-        raise SystemExit(
-            f"pack: unsupported slot-locality schema {locality_schema}")
-    locality_enabled = bool(locality.get("enabled", True))
-    physical_by_logical = validate_physical_slots(
-        locality.get("physical_by_logical", np.arange(POOL))
-        if locality_enabled else np.arange(POOL),
-        POOL,
-    )
     per = []
     transfer_orders = []
     n_load = np.zeros(nfr, np.int64)
@@ -280,10 +267,8 @@ def resolve(log, POOL, mode="lru"):
 
     for i in range(nfr):
         fr = sorted(frames[i], key=lambda t: t[0])
-        logical_results = alloc.place_frame(
+        results = alloc.place_frame(
             [(int(cell), key) for (cell, pal, key) in fr], i)
-        results = remap_placements(
-            logical_results, physical_by_logical)
         transfer_order = cold_transfer_order(results)
         pal_w[i] = 1 if (i == 0 or frame_seg[i] != frame_seg[i - 1]) else 0
         cells, entries, colds = [], [], []
@@ -313,8 +298,7 @@ def resolve(log, POOL, mode="lru"):
                 if result is None:
                     raise SystemExit(
                         f"pack: raw-prefetch allocation diverged at frame {i}")
-                logical_slot, cold = result
-                physical_slot = int(physical_by_logical[logical_slot])
+                physical_slot, cold = result
                 if cold:
                     n_load[i] += 1
                     physical_patterns[physical_slot] = key
@@ -335,7 +319,7 @@ def resolve(log, POOL, mode="lru"):
             physical_slot = int(displayed_slots[cell])
             if physical_patterns[physical_slot] != expected:
                 raise SystemExit(
-                    f"pack: slot-locality display mismatch at frame {i}, "
+                    f"pack: slot display mismatch at frame {i}, "
                     f"cell {cell}, physical slot {physical_slot}")
         prefetch_per.append(frame_prefetch)
         transfer_orders.append(transfer_order)
@@ -351,8 +335,7 @@ def resolve(log, POOL, mode="lru"):
                 frozen_cold, actual_cold):
             raise SystemExit("pack: raw-prefetch cold trace differs from simulation")
     print(
-        f"  physical-slot display照合: {nfr}/{nfr} frames exact "
-        f"(slot-locality={'on' if locality_enabled else 'off/identity'})")
+        f"  physical-slot display照合: {nfr}/{nfr} frames exact")
     return (
         per, prefetch_per, tuple(transfer_orders), n_load, n_upd, pal_w,
         Plist, alloc.tearing)
