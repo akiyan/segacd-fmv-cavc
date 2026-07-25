@@ -121,14 +121,17 @@ TCOLS, TROWS, _decision_cells, _decision_tile = _geom
 if _decision_cells != C or _decision_tile != 8:
     raise SystemExit("analysis decision geometry differs from stats")
 W, H = TCOLS * _decision_tile, TROWS * _decision_tile
-_display_categories = DECISIONS.get("display_categories") or {}
-if int(_display_categories.get("schema_version", 0)) != 1:
+_display_category_masks = DECISIONS.get("display_category_masks") or {}
+if int(_display_category_masks.get("schema_version", 0)) != 1:
     raise SystemExit(
-        "analysis per-cell categories are missing; re-run sim")
-CATEGORY_ORDER = tuple(str(name) for name in _display_categories.get("order", ()))
-CATEGORY_ROWS = tuple(_display_categories.get("rows", ()))
-if len(CATEGORY_ROWS) != NF or any(len(row) != C for row in CATEGORY_ROWS):
-    raise SystemExit("analysis per-cell category rows have the wrong shape")
+        "analysis per-cell category masks are missing; re-run sim")
+CATEGORY_MASK_ORDER = tuple(
+    str(name) for name in _display_category_masks.get("bit_order", ()))
+CATEGORY_MASK_ROWS = tuple(_display_category_masks.get("rows", ()))
+if (len(CATEGORY_MASK_ROWS) != NF
+        or any(len(row) != C * np.dtype(np.uint16).itemsize
+               for row in CATEGORY_MASK_ROWS)):
+    raise SystemExit("analysis per-cell category masks have the wrong shape")
 if "audio_label" in z:
     AUDIO_STR = str(z["audio_label"])        # sim側のADPCM音声ラベル
 if "audio_playback_file" in z:
@@ -426,13 +429,14 @@ def materialize_analysis_panels(frames):
         (catmap_dir / f"{frame:05d}.png").unlink(missing_ok=True)
 
     required_order = (
-        "Raw", "Same", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+        "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
     )
-    if CATEGORY_ORDER != required_order:
+    if CATEGORY_MASK_ORDER != required_order:
         raise SystemExit(
-            f"analysis category order differs: {CATEGORY_ORDER!r}")
-    category_index = {
-        name: index for index, name in enumerate(CATEGORY_ORDER)
+            f"analysis category-mask order differs: {CATEGORY_MASK_ORDER!r}")
+    category_bits = {
+        name: np.uint16(1 << index)
+        for index, name in enumerate(CATEGORY_MASK_ORDER)
     }
     display_idx = np.zeros((C, 64), np.uint8)
     display_pal = np.zeros(C, np.uint8)
@@ -446,13 +450,14 @@ def materialize_analysis_panels(frames):
             display_idx[cell] = indices
             display_pal[cell] = int(palette)
 
-        categories = np.frombuffer(CATEGORY_ROWS[frame], np.uint8)
-        counts = np.bincount(categories, minlength=len(CATEGORY_ORDER))
-        expected = np.asarray(
-            [int(FULL[name][frame]) for name in CATEGORY_ORDER], np.int64)
-        if not np.array_equal(counts, expected):
-            raise SystemExit(
-                f"analysis frame {frame} per-cell categories differ from stats")
+        category_masks = np.frombuffer(
+            CATEGORY_MASK_ROWS[frame], dtype="<u2")
+        for name in CATEGORY_MASK_ORDER:
+            count = int(np.count_nonzero(
+                category_masks & category_bits[name]))
+            if count != int(FULL[name][frame]):
+                raise SystemExit(
+                    f"analysis frame {frame} {name} mask differs from stats")
         if frame not in requested:
             continue
 
@@ -467,10 +472,15 @@ def materialize_analysis_panels(frames):
         ).save(preview_dir / f"{frame:05d}.png")
 
         category_rgb = cell_rgb.astype(np.float64)
-        category_rgb[categories == category_index["Miss"]] = 0
+        category_rgb[
+            (category_masks & category_bits["Miss"]) != 0
+        ] = 0
         for name in ("Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic"):
             style.apply_numpy_category_border(
-                category_rgb, categories == category_index[name], name)
+                category_rgb,
+                (category_masks & category_bits[name]) != 0,
+                name,
+            )
         Image.fromarray(
             _cells_to_image(
                 category_rgb.clip(0, 255).astype(np.uint8)

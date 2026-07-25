@@ -121,8 +121,8 @@ AUDIO_PLAYBACK_FILE = "audio_playback_adpcm22_rf5c.wav"
 AUDIO_RATE, AUDIO_PCM_BYTES, AUDIO_CONTROL_BYTES = av_config.audio_frame_layout(
     FPS)
 AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * FPS))
-DISPLAY_CATEGORY_ORDER = (
-    "Raw", "Same", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+DISPLAY_CATEGORY_MASK_ORDER = (
+    "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
 )
 PATTERN_BYTES = 32              # 4bpp 8x8 パターン
 NAME_BYTES = 2                  # ネームテーブル1エントリ(tile index + palette + priority)
@@ -2887,8 +2887,11 @@ def main():
             dec_cats.append((
                 raw_count, same_count, near_count, flbk_count,
                 source_count, miss))
-            category_row = np.full(
-                C_CELLS, DISPLAY_CATEGORY_ORDER.index("Same"), np.uint8)
+            # Category styling is intentionally a bit set, not one category
+            # ID per cell. A physical cold-load attribution can share a cell
+            # with its Near/Flbk quality result after allocator ordering moves
+            # the load carrier away from the decision that funded it.
+            category_row = np.zeros(C_CELLS, np.uint16)
             for name, mask in (
                     ("Raw", raw_display_mask),
                     ("Near", near_eff),
@@ -2898,19 +2901,11 @@ def main():
                     ("Wr1", wr1_source_mask),
                     ("Dic", dic_source_mask),
                     ("Miss", stale)):
-                category_row[mask] = DISPLAY_CATEGORY_ORDER.index(name)
-            category_counts = np.bincount(
-                category_row, minlength=len(DISPLAY_CATEGORY_ORDER))
-            expected_counts = np.asarray((
-                raw_count, same_count, near_count, flbk_count,
-                int(prg_source_mask.sum()), int(wr0_source_mask.sum()),
-                int(wr1_source_mask.sum()), int(dic_source_mask.sum()), miss,
-            ), np.int64)
-            if not np.array_equal(category_counts, expected_counts):
-                raise AssertionError(
-                    f"frame {i}: per-cell analysis categories differ "
-                    "from the encoded category totals")
-            dec_category_rows.append(category_row.tobytes())
+                bit = np.uint16(
+                    1 << DISPLAY_CATEGORY_MASK_ORDER.index(name))
+                category_row[mask] |= bit
+            dec_category_rows.append(
+                category_row.astype("<u2", copy=False).tobytes())
         # waitはTSVのMiss継続観測専用。優先度のage_pressとは独立。
         carry = int((stale & (wait >= 1)).sum())
         # 滞留 = 待たされた連続フレーム数(=wait)。今フレームも未更新なので+1
@@ -3466,9 +3461,9 @@ def main():
             "seg_pals": [np.asarray(p, np.uint8) for p in seg_pals],  # list of (4,15,3)
             "frame_seg": np.asarray(frame_seg, np.int32),
             "frames": dec_frames,                                     # [[(cell,pal,key),...], ...]
-            "display_categories": {
+            "display_category_masks": {
                 "schema_version": 1,
-                "order": DISPLAY_CATEGORY_ORDER,
+                "bit_order": DISPLAY_CATEGORY_MASK_ORDER,
                 "rows": dec_category_rows,
             },
             "pattern_supply": {

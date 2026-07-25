@@ -22,13 +22,13 @@ class SimArtifactCacheTests(unittest.TestCase):
             "max_cold": 1,
         }
         if categories:
-            decisions["display_categories"] = {
+            decisions["display_category_masks"] = {
                 "schema_version": 1,
-                "order": (
-                    "Raw", "Same", "Near", "Flbk", "Prg",
+                "bit_order": (
+                    "Raw", "Near", "Flbk", "Prg",
                     "Wr0", "Wr1", "Dic", "Miss",
                 ),
-                "rows": [b"\x00"],
+                "rows": [b"\x00\x00"],
             }
         with (data / "decisions.pkl").open("wb") as output:
             pickle.dump(decisions, output)
@@ -50,12 +50,12 @@ class SimArtifactCacheTests(unittest.TestCase):
             result = cache.validate_completed_data(fixture["data"], {})
         self.assertEqual(result, {"frames": 1})
 
-    def test_completed_data_requires_per_cell_analysis_categories(self) -> None:
+    def test_completed_data_requires_per_cell_analysis_category_masks(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             fixture = self._write_completed_data(
                 Path(tmp), categories=False)
             with self.assertRaisesRegex(
-                    cache.CacheValidationError, "per-cell categories"):
+                    cache.CacheValidationError, "per-cell category masks"):
                 cache.validate_completed_data(fixture["data"], {})
 
     def test_identity_ignores_paths_and_output_controls(self) -> None:

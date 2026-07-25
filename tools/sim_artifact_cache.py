@@ -153,16 +153,17 @@ def validate_completed_data(
         raise CacheValidationError("decision frame_seg length differs")
     if int(decisions.get("max_cold", -1)) <= 0:
         raise CacheValidationError("decision log has no valid cold cap")
-    categories = decisions.get("display_categories") or {}
+    categories = decisions.get("display_category_masks") or {}
     if int(categories.get("schema_version", 0)) != 1:
-        raise CacheValidationError("decision log has no per-cell categories")
+        raise CacheValidationError("decision log has no per-cell category masks")
     category_rows = categories.get("rows")
     cells = int((decisions.get("geom") or (0, 0, 0, 0))[2])
     if (not isinstance(category_rows, list)
             or len(category_rows) != frame_count
-            or any(len(row) != cells for row in category_rows)):
+            or any(len(row) != cells * np.dtype(np.uint16).itemsize
+                   for row in category_rows)):
         raise CacheValidationError(
-            "decision per-cell category rows have the wrong shape")
+            "decision per-cell category masks have the wrong shape")
 
     with np.load(data / "stats.npz") as stats:
         stats_lengths = {

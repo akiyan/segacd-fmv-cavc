@@ -7,7 +7,9 @@ This document defines, exactly and completely, every element drawn in the
 functions on real encoder output.
 `tools/render_analysis.py` replays `decisions.pkl` and materializes the
 decoded-preview and per-cell category PNGs on demand. `tools/sim.py` stores the
-compact decisions and category rows but does not generate those PNGs.
+compact decisions and per-cell category masks but does not generate those PNGs.
+The masks can overlap when allocator order places a physical cold-load
+attribution on a cell that also has a Near or Flbk quality result.
 
 Every render also writes a machine-readable, one-row-per-frame TSV under
 `logs/`. Its unique filename contains local date/time, profile name, a
