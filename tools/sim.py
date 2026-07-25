@@ -1682,10 +1682,16 @@ def main():
     main_base_reserve = main_reserve_plan.reserve
     upgrade_base_reserve = np.maximum(
         upgrade_base_reserve, main_base_reserve)
-    main_reserve = upgrade_planner.relax_reserve_in_priority_windows(
-        main_base_reserve, cram_quality_priority_frames)
-    upgrade_reserve = upgrade_planner.relax_reserve_in_priority_windows(
-        upgrade_base_reserve, cram_quality_priority_frames)
+    main_reserve = upgrade_planner.relax_reserve_for_priority_frames(
+        main_base_reserve,
+        cram_quality_priority_frames,
+        cram_quality_risk_bytes,
+    )
+    upgrade_reserve = upgrade_planner.relax_reserve_for_priority_frames(
+        upgrade_base_reserve,
+        cram_quality_priority_frames,
+        cram_quality_risk_bytes,
+    )
     print(
         "quality plan: upgrade exact reserve "
         f"start={upgrade_reserve[0] // 1024 if n else 0}KB "
@@ -1698,7 +1704,9 @@ def main():
         f"balanced_shortfall={main_reserve_plan.shortfall.sum() // 1024}KB; "
         "CRAM priority "
         f"search={CRAM_QUALITY_PRIORITY_SEARCH_FRAMES}frames "
-        f"selected={int(np.count_nonzero(cram_quality_priority_frames))}frames",
+        f"selected={int(np.count_nonzero(cram_quality_priority_frames))}frames "
+        f"relief={int(cram_quality_risk_bytes[
+            cram_quality_priority_frames].sum()) // 1024}KB",
         flush=True,
     )
     print(

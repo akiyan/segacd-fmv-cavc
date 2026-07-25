@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e127: Limit each selected CRAM-priority frame's reserve reduction to its
+#         predicted protected-demand deficit over fresh frame supply. This
+#         funds the forecast shortage without emptying the complete future
+#         reserve target or moving a large Miss cliff to the following frame.
 #   e126: Inspect the existing Miss-risk forecast at each CRAM switch and its
 #         next three frames, then let only the highest-risk frame spend without
 #         retaining a later quality reserve. Zero-risk regions select none;
@@ -792,5 +796,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260725
-e=126
+e=127
 p=90

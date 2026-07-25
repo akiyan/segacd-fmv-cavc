@@ -155,13 +155,14 @@ class ReserveCurveTests(unittest.TestCase):
 
         np.testing.assert_array_equal(mask, [False, True, True, False])
 
-    def test_priority_window_lowers_only_its_reserve_targets(self) -> None:
-        effective = upgrade_planner.relax_reserve_in_priority_windows(
+    def test_priority_relief_lowers_only_selected_reserve_targets(self) -> None:
+        effective = upgrade_planner.relax_reserve_for_priority_frames(
             [40, 50, 60, 70, 80],
             [False, True, True, False, False],
+            [1, 20, 90, 40, 50],
         )
 
-        np.testing.assert_array_equal(effective, [40, 0, 0, 70, 80])
+        np.testing.assert_array_equal(effective, [40, 30, 0, 70, 80])
 
     def test_priority_search_rejects_invalid_lengths_and_shapes(self) -> None:
         with self.assertRaisesRegex(ValueError, "non-negative"):
@@ -170,8 +171,11 @@ class ReserveCurveTests(unittest.TestCase):
             upgrade_planner.select_peak_priority_frames(
                 [True, False], [1], 2)
         with self.assertRaisesRegex(ValueError, "must match"):
-            upgrade_planner.relax_reserve_in_priority_windows(
-                [10, 20], [True])
+            upgrade_planner.relax_reserve_for_priority_frames(
+                [10, 20], [True], [1, 1])
+        with self.assertRaisesRegex(ValueError, "must match"):
+            upgrade_planner.relax_reserve_for_priority_frames(
+                [10, 20], [True, False], [1])
 
     def test_future_burst_builds_only_the_needed_reserve(self) -> None:
         reserve = upgrade_planner.build_reserve_curve(

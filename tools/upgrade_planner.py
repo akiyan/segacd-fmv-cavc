@@ -93,22 +93,31 @@ def select_peak_priority_frames(
     return priority
 
 
-def relax_reserve_in_priority_windows(
+def relax_reserve_for_priority_frames(
     reserve: Sequence[int] | np.ndarray,
     priority_frames: Sequence[bool] | np.ndarray,
+    relief: Sequence[int] | np.ndarray,
 ) -> np.ndarray:
-    """Return a reserve curve with priority-window targets lowered to zero."""
+    """Lower selected reserve targets by their predicted risk deficit."""
 
     reserve_arr = np.asarray(reserve, dtype=np.int64)
     priority_arr = np.asarray(priority_frames, dtype=bool)
+    relief_arr = np.asarray(relief, dtype=np.int64)
     if reserve_arr.ndim != 1:
         raise ValueError("reserve must be one-dimensional")
     if priority_arr.shape != reserve_arr.shape:
         raise ValueError("priority frames must match reserve")
+    if relief_arr.shape != reserve_arr.shape:
+        raise ValueError("relief must match reserve")
     if np.any(reserve_arr < 0):
         raise ValueError("reserve must be non-negative")
+    if np.any(relief_arr < 0):
+        raise ValueError("relief must be non-negative")
     effective = reserve_arr.copy()
-    effective[priority_arr] = 0
+    effective[priority_arr] = np.maximum(
+        0,
+        reserve_arr[priority_arr] - relief_arr[priority_arr],
+    )
     return effective
 
 
