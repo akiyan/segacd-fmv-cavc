@@ -1,189 +1,163 @@
+EN / [JP](#jp)
+
 # Tile Texture Reuse Codec — a SEGA-CD / Genesis FMV codec
 
-A full-motion-video codec built **specifically for the Sega CD**,
-not a general video codec ported onto it. It targets the exact hardware the
-Sega CD gives you — the Genesis VDP with its CRAM palettes and VRAM tile pool,
-a constant-rate CD data stream, PRG-RAM as a buffer, and the RF5C164 PCM chip —
-and squeezes moving pictures through those constraints on real hardware (and on
-Genesis Plus GX).
+Tile Texture Reuse Codec is a full-motion-video codec designed for Sega CD
+hardware. It targets the Genesis VDP tile and CRAM model, continuous CD 1x
+delivery, Sub-CPU PRG RAM, 1M/1M Word RAM, and the RF5C164 PCM chip. The same
+stream runs on physical hardware and Genesis Plus GX.
 
-> The codec name may change. The on-disc stream carries a `version` field, and
-> file names in this repo are kept generic so a rename never breaks paths.
+The on-disc stream contains an explicit version. Generic repository filenames
+keep the implementation independent from the displayed codec name.
 
-## Why this is a SEGA-CD-specific codec
+## Core idea
 
-The whole design falls out of one Genesis fact: **the screen is built from
-8x8 tile patterns in VRAM, addressed by a name table.** A tile pattern already
-resident in VRAM can be shown at any cell for the cost of a **2-byte name-table
-entry**, versus **32 bytes** to send a fresh pattern. So the codec's core move —
-the one it is named for — is **reusing tile textures already resident in VRAM,
-across frames**, paying for a fresh pattern only when nothing resident is good
-enough. General codecs think in pixels and macroblocks; this one thinks in
-*"which resident tile is closest, and can I just re-point a name-table entry?"*
+The Genesis screen is built from 8x8 patterns in VRAM and a name table that
+chooses one pattern for each cell. Reusing a resident pattern costs a two-byte
+name-table entry; loading a fresh pattern costs 32 bytes plus its name entry.
 
-Everything else is shaped by Sega CD hardware, not by video theory:
+The encoder therefore asks, for every changed cell:
 
-- **CRAM palette budget.** The VDP shows at most 4 lines x 15 colours = 60
-  colours at once. The codec trains those 60 colours, splits the movie into
-  segments at safe (dark) cut points, and re-trains per segment via a single
-  CRAM reload during the cut. A lossless row/index permutation keeps the
-  globally brightest existing colour at P0/index15 without sacrificing any of
-  the 60 colours.
-- **VRAM tile pool + name table.** A persistent pool of resident tile patterns
-  is kept in VRAM. Each frame the codec searches that pool for the best match to
-  every changed cell and re-points name-table entries (2 bytes) instead of
-  re-sending patterns (32 bytes). This *tile texture reuse* is the codec.
-- **Best-match tiers (Near / Flbk).** With no exact resident match, a
-  near-perfect resident may be accepted as `Near`. For everything else, one
-  automatic three-phase pass commits cheap reuse, selects exact cold loads
-  while reserving the two-byte fallback names, then lets `Flbk` reuse the best
-  resident that improves the current display. Flbk may inspect adjacent
-  mean-colour buckets only when the target bucket cannot improve the result.
-  Both avoid a pattern transfer, but Flbk remains emergency fallback rather
-  than normal quality.
-- **Whole-movie quality budget + four pattern supplies.** The encoder first
-  dry-runs the quantized movie through the same VRAM allocator used for the
-  final encode. It selects the boot-only 256-entry DicBuf from whole-movie reuse,
-  assigns WordBuf0 and WordBuf1 to the remaining risky bursts, then a backwards pass reserves only the offline quality
-  allowance needed by future updates. Remaining patterns arrive through the
-  streamed PRG-RAM PrgBuf. Quality funding and physical source are frozen
-  independently for every update.
-- **DMA-limited refresh.** How many tiles can be written to VRAM per frame is
-  bounded by the VBLANK DMA window for the screen mode and fps, so the tile grid
-  size is chosen to fit that budget.
-- **RF5C164 audio, interleaved.** Checkpointed 22.05 kHz mono IMA ADPCM controls
-  share the same CD stream. The Sub CPU reconstructs them into the
-  wave-RAM writer, with a persistent startup lead keeping audio aligned. The
-  analysis and straight sim videos audition the same reconstructed IMA and
-  RF5C164-quantized samples, not the clean extraction used as packer input.
-- **PRG-RAM discipline.** Buffers, queues, and PrgBuf live in PRG-RAM regions
-  that stay safe during continuous CD reads (see [AGENTS.md](AGENTS.md) hardware notes).
+> Is a suitable pattern already resident, so this cell can point to it?
+
+Exact resident reuse, visually close reuse, and improving fallback reuse save
+CD bandwidth and VBlank transfer time. New patterns are loaded only when the
+available resident choices are not good enough.
+
+## Hardware-shaped design
+
+- **CRAM palettes.** The VDP exposes four palette lines with 15 usable colours
+  each. The encoder trains 60 colours, creates local segments at safe
+  transitions, and preloads every segment palette into Main RAM. A timed
+  switch carries only a palette reference. The darkest and brightest existing
+  colours are moved to fixed DEBUG HUD positions without changing the colour
+  set.
+- **Resident VRAM pool.** Tiles 1–1,535 form one persistent pattern pool shared
+  by H32 and H40. Each name-table update points into this pool.
+- **Near and Flbk reuse.** Near accepts a visually close resident. Flbk accepts
+  a resident only when it improves the displayed cell. Exact work reserves the
+  name bytes needed by fallback work before spending the physical allowance.
+- **Four pattern supplies.** PrgBuf is streamed through Sub-CPU PRG RAM.
+  WordBuf0 and WordBuf1 are different boot-preloaded sequences selected by
+  frame parity. DicBuf is a persistent 256-entry Main-RAM dictionary.
+- **Whole-movie quality planning.** A dry run predicts future exact and
+  Miss-risk demand. The encoder reserves enough offline allowance for hard
+  bursts, assigns boot-preload credits, and keeps quality funding separate from
+  the physical pattern source.
+- **Sector-aware scheduling.** Control bytes, run descriptors, CRAM switches,
+  audio, Prg payload, and pad share one physical-sector plan before per-frame
+  decisions are frozen. The packer replays the same proof.
+- **VBlank-limited transfer.** Screen geometry and cold work must fit the
+  mode-specific Main-CPU transfer budget.
+- **Checkpointed audio.** The only TTRC v16 audio format is 22.05 kHz mono IMA
+  ADPCM. Sub decodes it to RF5C164 samples while continuously servicing CD
+  delivery.
 
 ## Configurable within Sega CD limits
 
-Resolution, aspect, and frame rate are **encoder settings**, chosen per
-source within what the hardware allows — not fixed project constants:
+Each source has a strict TOML profile.
 
-- **Display mode / resolution / aspect:** H32, H40, or mode4, with the tile grid
-  sized to the per-frame DMA budget and the source's display aspect.
-- **Frame rate:** the source's native rate is kept (15 / 24 / 30 fps, etc.).
-- **Audio:** checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
-  CPU and written to the RF5C164. It is the sole TTRC v16 audio format. Routine
-  recording verifies audio stream structure but does not apply
-  content-dependent waveform thresholds. Real hardware and additional
-  cadence/display combinations are broader compatibility checks. See
-  [ADPCM.md](ADPCM.md).
-  The separate Z80-offload experiment remains shelved because BUSREQ feeding
-  contends with Main CPU video work.
+- **Display:** H32, H40, or mode4; tile-aligned output geometry and
+  aspect-aware pad/crop conversion.
+- **Frame rate:** the source's native rate, including delivery-paced rates
+  such as 24 fps.
+- **Audio:** checkpointed 22.05 kHz mono IMA ADPCM.
+- **Cold cap:** an fps-derived baseline, optionally raised by a fully qualified
+  source profile.
+- **Palette algorithm:** `stl4` or `mosaic-gm`.
+- **Analysis canvas:** optional and never changes the encoded stream.
 
-## Pipeline
+See [`CONFIG.md`](CONFIG.md) for the complete schema and limits.
 
-Generic, source-side video handling (things any codec might do) lives here; the
-Sega CD-specific compression is the "Encode" step.
+## Simulation pipeline
 
-1. **Preprocess** the source: crop black bars, scale, optionally remove the
-   source's own dithering. Ordinary video preprocessing.
-2. **Detect** fades / flashes as safe points for a palette change.
-3. **Build palettes** per segment, weighting the k-means so thin high-contrast
-   edges (e.g. anime line art) keep palette slots despite tiny area — a general
-   image-quality trick, not a hardware one. The encoder then canonicalizes the
-   palette rows and indices, remapping tile attributes and pixel indices so the
-   rendered RGB333 image stays exactly the same.
-4. **Quantize** each 8x8 tile to the chosen Genesis palettes (position-fixed
-   Bayer dithering).
-5. **Plan and encode (the codec):** dry-run the exact target to predict
-   name-table and cold-pattern demand, spread any capacity-unavoidable
-   Miss-risk shortage across that burst, and build backwards reserve curves
-   that end at zero; then maintain the resident VRAM tile pool and reuse exact /
-   near / fallback residents where possible and spend only the
-   whole-movie quality allowance not reserved for a harder future burst. Exact
-   cold loads are then assigned to Prg, Wr0, Wr1, or Dic.
-6. **Pack** video control, tile payload, palettes, and ADPCM audio into the
-   two-file CD stream: an armed startup `HEADER.DAT` and
-   a continuously read `BODY.DAT`.
+`tools/sim.py` uses six named stages:
+
+```text
+Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
+```
+
+1. **Extract** decodes encoder frames, comparison frames, and mono audio.
+2. **Palette** finds segment boundaries and trains Genesis CRAM palettes.
+3. **Quantize** produces palette assignments and indexed 8x8 patterns.
+4. **Forecast** calculates future demand, physical limits, quality reserves,
+   and boot-preload use.
+5. **Decide** chooses exact or reused patterns, allocates physical VRAM slots,
+   assigns Prg/WordBuf/DicBuf sources, and commits the physical budget.
+6. **Finalize** verifies the complete schedule and writes numeric traces and
+   the decision log.
+
+Disc packing follows simulation. Analysis rendering is optional and separate;
+preview and category PNGs are generated only by `tools/render_analysis.py`.
+See [`ENCODE.md`](ENCODE.md) for current measured stage times.
 
 ## Analysis
 
-Every encode can be rendered as a 1920x1080 analysis overlay (left = decoded
-Sega CD output, right = source / per-tile category map / Miss and MissCarry
-state, bottom = bandwidth, four physical pattern supplies, DMA, waveform, and
-stacked timelines).
-[`ANALYSIS.md`](ANALYSIS.md) is the exact reference for every meter and tile
-category.
+The optional 1920x1080 analysis video shows decoded Sega CD output, source,
+per-cell categories, audio, physical delivery, pattern supplies, DMA, and
+whole-movie timelines. Frame 0 is omitted from timed-work values and graph
+maxima.
+
+[`ANALYSIS.md`](ANALYSIS.md) defines every panel, meter, category, and TSV
+field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
 
 ## Documentation
 
-- [README.md](README.md): this overview of the codec concept, pipeline, build
-  targets, and repository layout.
-- [ANALYSIS.md](ANALYSIS.md): the analysis-overlay reference, covering every
-  panel, meter, timeline, and tile category drawn by `tools/render_analysis.py`.
-- [HUD.md](HUD.md): the on-hardware values-only DEBUG HUD, including field
-  meanings, timing units, layout, cross-field diagnosis, and OCR workflow.
-- [BUEFFERING.md](BUEFFERING.md): the four physical pattern supplies, the
-  separate whole-movie quality planner, diagnostics, and validation.
-- [MOVIE.md](MOVIE.md): the exact `HEADER.DAT` / `BODY.DAT` on-disc stream
-  format written by `tools/pack_stream.py` and read by the Sega CD player.
-- [STREAMING.md](STREAMING.md): the live player memory maps and conservative
-  Main/Sub CPU headroom for planning additional streaming features.
-- [BUDGETS.md](BUDGETS.md): working notes for tile, DMA, CD bandwidth, and
-  playback pipeline budgets used when choosing encoder targets.
-- [ADPCM.md](ADPCM.md): the current v10 checkpointed 22.05 kHz Sub-CPU ADPCM
-  design, full-table Word-RAM allocation, completed profile evidence, and the
-  remaining physical-hardware compatibility scope.
-- [AGENTS.md](AGENTS.md): agent and maintenance guidance, including hardware
-  facts, recording rules, output paths, and documentation policy.
-- [CLAUDE.md](CLAUDE.md): compatibility entry point for Claude-based agents; it
-  points to the shared project guidance in [`AGENTS.md`](AGENTS.md).
+- [`ENCODE.md`](ENCODE.md): simulation stages and measured processing time.
+- [`CONFIG.md`](CONFIG.md): profile schema, shared settings, throttles, and
+  capacities.
+- [`MOVIE.md`](MOVIE.md): exact TTRC v16 `HEADER.DAT` / `BODY.DAT` format.
+- [`BUEFFERING.md`](BUEFFERING.md): physical pattern supplies and whole-movie
+  quality planning.
+- [`STREAMING.md`](STREAMING.md): live Main/Sub memory maps and headroom.
+- [`ANALYSIS.md`](ANALYSIS.md): analysis video and TSV reference.
+- [`HUD.md`](HUD.md): DEBUG HUD layout, units, gate, and OCR workflow.
+- [`ADPCM.md`](ADPCM.md): supported audio format and Sub-CPU decoder.
+- [`BUDGETS.md`](BUDGETS.md): tile, DMA, and CD first-order budgets.
+- [`REMOVED.md`](REMOVED.md): implementation notes for removed features that
+  may inform a clean reimplementation.
+- [`AGENTS.md`](AGENTS.md): maintenance, recording, and agent guidance.
+- [`CLAUDE.md`](CLAUDE.md): compatibility entry point for the shared guidance.
 
 ## Implementation
 
-- `tools/sim.py`: the offline encoder simulator — makes every per-tile
-  decision and emits the decision log plus analysis data. Its seed and
-  accounting passes share one invocation-local, identity-checked cache for
-  palette/quantization/future-planning results; the cache is deleted when that
-  invocation exits. A completed sim artifact remains reusable across
-  invocations when the source bytes, effective settings, and encoder code
-  fingerprint all match.
-- `tools/pack_stream.py`: packs the decisions into `HEADER.DAT` and `BODY.DAT`,
-  and writes the matching canonical segment-0 `palettes.bin` used to build the
-  Main CPU player. It also writes their concatenation as an off-disc
-  `MOVIE.DAT` compatibility file for analysis and regression tools.
-- `tools/render_analysis.py` + `tools/layout_preview.py`: the analysis overlay.
-  The renderer materializes decoded-preview and category PNGs from sim
-  decisions only when analysis output is requested. Disposable PNG/MP4 data
-  lives in managed tmpfs behind the familiar
-  `videos/` paths. Per-frame TSVs remain persistent below `logs/`, uniquely
-  named by time, profile, short profile checksum, and encoder version.
-- `boot/`: the Sub/Main CPU playback runtime for real hardware. DEBUG builds
-  keep a values-only hexadecimal HUD in the top row of the inactive VDP Plane A
-  movie table. H32 and H40 share the same 30-cell internal order
-  `F/P/S/D/R/L/C/W/M/A/U/N/J`. `U/N` show Main pattern-transfer time and the
-  source-aware cold-run count; `J` is the sticky maximum streamed PrgBuf
-  occupancy above the stream's fps-derived normal ceiling. Only those 30 cells are
-  replaced; the unused right-hand cells retain the current movie frame. Before
-  playback, specialized DEBUG and
-  release builds use the same 16-glyph font to show loaded PrgBuf KiB as four
-  hexadecimal digits at the physical top-left. The font remains reserved above
-  the 1,518-tile resident pool; its fixed P0/index15 colours do not blink across
-  video-plane flips or palette switches.
+- `tools/sim.py`: offline encoder. It writes the frozen decision log,
+  `buffer_remaining.npz`, analysis data, and the completed artifact marker.
+- `tools/pack_stream.py`: verifies decisions and writes `HEADER.DAT`,
+  `BODY.DAT`, off-disc `MOVIE.DAT`, and `palettes.bin`.
+- `tools/render_analysis.py`: materializes analysis PNGs, TSV, and video from a
+  completed sim result.
+- `tools/layout_preview.py`: shared analysis layout and graph rendering.
+- `tools/physical_budget.py`: per-frame control/Prg ceilings and prefix ledger.
+- `tools/stream_schedule.py`: exact BODY routing and physical slot schedule.
+- `boot/movieplay_sp.s`: Sub-CPU disc, PrgBuf, Word-RAM, ADPCM, and handoff
+  runtime.
+- `boot/movieplay_ip.s`: Main-CPU VRAM, CRAM, name-table, DMA, and DEBUG HUD
+  runtime.
 
-## Build Targets
+Completed sim artifacts are reusable only when source bytes, effective
+settings, and the output-affecting encoder fingerprint match. Sim work and
+derived videos use the managed tmpfs workspace behind `videos/`; native
+lossless emulator captures remain ordinary files. Per-frame TSVs remain under
+`logs/`.
+
+## Build targets
 
 | Target | Purpose |
 |---|---|
-| `movieplay` | Current stream player (`disc`, the default target, is an alias). |
-| `cdcbench` | Measures continuous versus restarted CD reads. |
-| `dmabench` | Measures the largest VRAM DMA that fits in one VBlank, per screen mode. |
-| `still256` | Static one-frame H32 still renderer (display bring-up test). |
+| `movieplay` / `disc` | TTRC player disc. |
+| `cdcbench` | Continuous and restarted CD-read measurement. |
+| `dmabench` | Maximum VRAM DMA per VBlank and screen mode. |
+| `still256` | Static H32 display bring-up. |
 | `streamtest` | Minimal continuous stream test. |
-| `pcmtest` | RF5C164 PCM register and wave RAM test. |
-| `test1m` | 1M/1M Word RAM swap test. |
-| `prgtest` | PRG-RAM write and streaming interaction test. |
-| `asictest` / `upscaletest` | Graphics ASIC and CPU upscale experiments. |
+| `pcmtest` | RF5C164 register and wave-RAM test. |
+| `test1m` | 1M/1M Word-RAM swap test. |
+| `prgtest` | PRG-RAM and streaming interaction test. |
+| `asictest` / `upscaletest` | Graphics ASIC and CPU-upscale experiments. |
 
-## Workstation Setup (Ubuntu)
+## Workstation setup
 
-Install the host-side encoder, disc, video, and headless-recording tools:
+Ubuntu host packages:
 
 ```sh
 sudo apt update
@@ -194,12 +168,7 @@ sudo apt install \
   retroarch rsync xdotool xvfb
 ```
 
-`fonts-ipafont-gothic` supplies the exact font used by
-`tools/layout_preview.py` and `tools/render_analysis.py`.
-
-Install the pinned `uv` bootstrap, then let it install the project's managed
-CPython. The CPU environment is fully isolated under `.venv`: it does not use
-`/usr/bin/python` or distribution NumPy/Pillow packages.
+Install the pinned `uv` and isolated CPU environment:
 
 ```sh
 pipx install 'uv==0.11.29'
@@ -208,10 +177,7 @@ tools/python.sh -c \
   'import sys, numpy, PIL; print(sys.base_prefix, numpy.__version__, PIL.__version__)'
 ```
 
-For NVIDIA GPU acceleration, create a second isolated environment from the same
-lock. The `ctk` extra supplies CUDA user-space libraries without depending on a
-system CUDA Toolkit; the host NVIDIA driver is still required. Run the CUDA
-probe outside a sandbox that hides `/dev/nvidia*`.
+For NVIDIA GPU acceleration:
 
 ```sh
 tools/bootstrap_python.sh --gpu
@@ -220,30 +186,27 @@ tools/python.sh --gpu -c \
 ```
 
 `tools/python.sh` selects `.venv`; `tools/python.sh --gpu` selects
-`.venv-gpu`. It never falls back to a system Python or system site-packages.
-The CPU environment uses managed CPython 3.14.4; the long-sim-qualified GPU
-environment uses managed CPython 3.13.14. Both pin NumPy 2.3.5 and Pillow
-12.1.1, while the GPU extra pins CuPy 14.1.1. The version files and lock make
-both environments reproducible.
+`.venv-gpu`. Neither falls back to system Python or distribution packages.
+The lock uses managed CPython 3.14.4 for CPU, CPython 3.13.14 for GPU, NumPy
+2.3.5, Pillow 12.1.1, and CuPy 14.1.1.
 
-Install a Marsdev `m68k-elf` toolchain at `~/toolchains/mars`. The Makefile
-expects these executables by default:
+Install a Marsdev `m68k-elf` toolchain at `~/toolchains/mars`, or set
+`MARSDEV` / `M68K_PREFIX` to another installation. The Makefile expects:
 
 ```text
-~/toolchains/mars/m68k-elf/bin/m68k-elf-as
-~/toolchains/mars/m68k-elf/bin/m68k-elf-gcc
-~/toolchains/mars/m68k-elf/bin/m68k-elf-ld
-~/toolchains/mars/m68k-elf/bin/m68k-elf-objcopy
+m68k-elf-as
+m68k-elf-gcc
+m68k-elf-ld
+m68k-elf-objcopy
 ```
 
-Set `MARSDEV=/another/path` or `M68K_PREFIX=/another/prefix/m68k-elf-` when
-using a different location. Run `make check-tools
-CONFIG=configs/PROFILE.toml` to verify the toolchain and ISO writer before a
-full build.
+Check the toolchain and ISO writer:
 
-The Japanese Mega-CD BIOS used for local testing is a user-supplied,
-git-ignored file at `original/jp_mcd2_9212.bin`; it is not distributed by this
-repository. Install that project-local copy for Genesis Plus GX as follows:
+```sh
+make check-tools CONFIG=configs/PROFILE.toml
+```
+
+The Japanese Mega-CD BIOS is user-supplied and git-ignored:
 
 ```sh
 install -d -m 700 ~/.config/retroarch/system
@@ -251,64 +214,58 @@ install -m 600 original/jp_mcd2_9212.bin \
   ~/.config/retroarch/system/bios_CD_J.bin
 ```
 
-The recording harness uses the distro Genesis Plus GX core at
-`/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so`. Override
-`CORE`, `BIOS_IMAGE`, or `SYSTEM_DIR` only when the distro or BIOS layout
-differs. Each run stages `BIOS_IMAGE` as `bios_CD_J.bin` and prints its SHA-256
-so Replay and capture provenance stay explicit. Replay generation presses
-START once per second across the BIOS/CD-player transition instead of relying
-on one BIOS revision's fixed startup time.
+The recording harness defaults to
+`/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so`. `CORE`,
+`BIOS_IMAGE`, and `SYSTEM_DIR` override host-specific layouts.
 
 ## Build
 
-Required tools: `uv`, Marsdev / `m68k-elf` toolchain, `mkisofs` or
-`genisoimage`, `ffmpeg` / `ffprobe`, and a Sega CD BIOS for emulator testing.
-Bootstrap `.venv` (and `.venv-gpu` for an NVIDIA encode) as described above.
-
-For a new encode, run the pipeline in this order:
+Run a full encode and DEBUG disc build:
 
 ```sh
 tools/python.sh --gpu tools/sim.py configs/PROFILE.toml
 make disc CONFIG=configs/PROFILE.toml DEBUG=1
 ```
 
-`make disc` first removes any packed stream left by an older format, profile,
-or decision log. It then runs the packer's complete verification against the
-current profile-authenticated `decisions.pkl` before building the player disc
-as `out/PROFILE.iso` + `out/PROFILE.cue`. This prevents a stale
-`HEADER.DAT`/`BODY.DAT` pair from entering a new disc. The packer writes `HEADER.DAT`,
-`BODY.DAT`, `MOVIE.DAT`, and `palettes.bin` under `out/PROFILE/`, using the
-TOML filename as the artifact identity. Transient assembler files, disc staging,
-and the default direct-emulator scratch area are separated under `tmp/PROFILE/`.
-`HEADER.DAT` contains all startup state, including an exact Raw/Same-only frame
-0, any future patterns placed into otherwise-free VRAM during that boot load,
-and the PrgBuf prebuffer;
-`BODY.DAT` starts at frame 1 and is read continuously. Their on-disc names
-remain fixed because the player opens those TTRC format names.
+`make disc` cleans the selected profile's packed stream, verifies the
+profile-authenticated `decisions.pkl`, specializes the player, and writes:
+
+```text
+out/PROFILE/HEADER.DAT
+out/PROFILE/BODY.DAT
+out/PROFILE/MOVIE.DAT
+out/PROFILE/palettes.bin
+out/PROFILE.iso
+out/PROFILE.cue
+```
+
+Transient objects, disc staging, and direct-emulator scratch files live under
+`tmp/PROFILE/`. `HEADER.DAT` contains startup state, exact frame 0, boot VRAM
+prefetch, and the PrgBuf prebuffer. `BODY.DAT` starts at frame 1 and is read
+continuously.
 
 ## Recording
 
-Use the headless RetroArch harness (emulator-synchronized A/V output; do not
-remux offline audio when verifying playback):
+Use emulator-synchronized A/V:
 
 ```sh
 tools/record_movie.sh --config configs/PROFILE.toml \
   --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
 ```
 
-The high-level recorder defaults to a fixed-Replay, faster-than-realtime
-native-size FFV1/FLAC lossless MKV under `videos/`; the MP4 is only its quick
-verification preview. Use `--realtime-lossless` for a wall-clock-paced
-FFV1/FLAC diagnostic baseline. An explicit `--preset realtime` capture uses
-4:2:0 chroma and is not an upload master. The default keeps the Mega-CD startup
-screens. Trimming is an explicit movie-only option, not part of the normal
-recording or upload path.
+The recorder defaults to fixed-Replay, faster-than-realtime, native-size
+FFV1/FLAC. The MP4 is a quick verification preview. `--realtime-lossless`
+creates a paced FFV1/FLAC diagnostic baseline. `--preset realtime` is 4:2:0
+and is not an upload master. Recordings retain Mega-CD startup unless an
+explicit movie-only trim is requested.
 
-## YouTube Upload Setup
+Every full DEBUG recording requires complete HUD extraction, gate evaluation,
+and a public hudline. Analysis/playback publishing continues only after PASS
+or WARNING.
 
-Upload automation intentionally keeps OAuth credentials and its Python
-environment outside the public repository. The project automation currently
-expects this user-local layout:
+## YouTube upload setup
+
+OAuth credentials and their Python environment stay outside the repository:
 
 ```text
 ~/.claude/skills/youtube/youtube.py
@@ -317,8 +274,7 @@ expects this user-local layout:
 ~/.config/youtube/venv/
 ```
 
-Create the Python environment on each workstation instead of copying a venv
-from another Python version:
+Create the local environment:
 
 ```sh
 uv venv --managed-python --python 3.14.4 ~/.config/youtube/venv
@@ -328,18 +284,301 @@ chmod 600 ~/.claude/skills/youtube/client_secret.json \
   ~/.config/youtube/youtube_token.json
 ```
 
-If no reusable token is available, run the helper's `auth` command once on the
-new workstation. A copied token is usable only when it carries the full
-`youtube` scope and its refresh token remains valid. Never commit the client
-secret, token, BIOS, source media, generated videos, or their upload sidecars.
+The token needs the complete `youtube` scope and a valid refresh token. Never
+commit client secrets, tokens, BIOS files, source media, generated videos, or
+upload sidecars.
 
-## Repository Layout
+## Repository layout
 
 ```text
-boot/        68000 IP/SP/Main player and test programs
+boot/        68000 Main/Sub player and hardware tests
 cfg/         linker scripts
-tools/       encoders, packers, analysis tools, and recording harnesses
+configs/     per-source TOML profiles
+harness/     reproducible diagnostics and their local documentation
+tools/       encoder, packer, analysis, build, and recording tools
 vendor/      third-party reference code
 ```
 
-Generated output and copyrighted sample media are not part of the public repo.
+Generated output and copyrighted source media are not part of the public
+repository.
+
+<a id="jp"></a>
+
+# Tile Texture Reuse Codec — SEGA-CD / Genesis FMV codec
+
+Tile Texture Reuse CodecはSega CD hardware専用に設計したfull-motion-video
+codecです。Genesis VDPのtile/CRAM model、連続CD 1x delivery、Sub-CPU PRG RAM、
+1M/1M Word RAM、RF5C164 PCM chipを直接対象にします。同じstreamを実機と
+Genesis Plus GXで再生します。
+
+ディスク上のstreamは明示的なversionを持ちます。repository内のgeneric filenameに
+より、実装pathは表示上のcodec名から独立しています。
+
+## 中心となる考え方
+
+Genesisの画面は、VRAM内の8x8 patternと、各cellで使うpatternを選ぶname tableから
+できています。resident patternの再利用は2-byte name-table entryだけで済みます。
+fresh patternのloadには32 byteとname entryが必要です。
+
+そのためencoderは変更cellごとに次を判断します。
+
+> 適切なpatternがすでにresidentで、そのpatternを参照するだけで済むか？
+
+正確なresident再利用、見た目が近い再利用、表示を改善するfallback再利用は、CD帯域と
+VBlank transfer時間を節約します。利用可能なresident候補が十分でないときだけ新しい
+patternをloadします。
+
+## Hardwareに合わせた設計
+
+- **CRAM palette。** VDPは使用可能な15色を持つpalette lineを4本表示します。encoderは
+  60色を学習し、安全なtransitionでlocal segmentを作り、全segment paletteをMain RAM
+  へpreloadします。timed switchはpalette参照だけを持ちます。色集合を変えず、既存の
+  最暗色と最明色をDEBUG HUDの固定位置へ移します。
+- **Resident VRAM pool。** tile 1〜1,535をH32/H40共通のpersistent pattern poolとして
+  使います。各name-table updateがこのpoolを参照します。
+- **NearとFlbk再利用。** Nearは見た目が近いresidentを採用します。Flbkは表示cellを
+  改善するときだけresidentを採用します。exact workは物理allowanceを使う前に
+  fallback workに必要なname byteを予約します。
+- **4つのpattern供給。** PrgBufはSub-CPU PRG RAMへstreamします。WordBuf0とWordBuf1は
+  frame parityで選ぶ異なるboot-preload sequenceです。DicBufはpersistent 256-entry
+  Main-RAM dictionaryです。
+- **Movie全体quality planning。** dry runが将来のexact demandとMiss-risk demandを
+  予測します。encoderは難しいburstに必要なoffline allowanceを予約し、boot-preload
+  creditを割り当て、quality fundingと物理pattern sourceを分離します。
+- **Sector-aware scheduling。** per-frame decision確定前に、control byte、run descriptor、
+  CRAM switch、audio、Prg payload、padを1つの物理sector planへ入れます。packerが同じ
+  proofを再生します。
+- **VBlank-limited transfer。** screen geometryとcold workはmode別Main-CPU transfer
+  budgetへ収めます。
+- **Checkpointed audio。** TTRC v16のaudioは22.05 kHz mono IMA ADPCMだけです。Subは
+  連続CD deliveryを処理しながらRF5C164 sampleへdecodeします。
+
+## Sega CD limit内で設定できるもの
+
+sourceごとにstrict TOML profileを使います。
+
+- **Display:** H32、H40、mode4。tile-aligned output geometryとaspect-awareなpad/crop。
+- **Frame rate:** 24 fpsのようなdelivery-paced rateも含むsource native rate。
+- **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
+- **Cold cap:** fps由来baseline。完全に認定したsource profileだけ引き上げ可能。
+- **Palette algorithm:** `stl4` または `mosaic-gm`。
+- **Analysis canvas:** optionalで、encoded streamは変えない。
+
+schemaとlimitの全体は [`CONFIG.md`](CONFIG.md) を参照してください。
+
+## Simulation pipeline
+
+`tools/sim.py` は6つの名前付きstageを使います。
+
+```text
+Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
+```
+
+1. **Extract** はencoder frame、comparison frame、mono audioをdecodeします。
+2. **Palette** はsegment boundaryを見つけ、Genesis CRAM paletteを学習します。
+3. **Quantize** はpalette assignmentとindexed 8x8 patternを生成します。
+4. **Forecast** は将来demand、物理limit、quality reserve、boot-preload利用を計算します。
+5. **Decide** はexact/reused patternを選び、物理VRAM slotを割り当て、
+   Prg/WordBuf/DicBuf sourceを決め、物理budgetを確定します。
+6. **Finalize** は全scheduleを検証し、数値traceとdecision logを書きます。
+
+disc packはsimulationの後に行います。analysis renderはoptionalかつ別工程です。
+preview/category PNGは `tools/render_analysis.py` だけが生成します。現在のstage別実測時間は
+[`ENCODE.md`](ENCODE.md) を参照してください。
+
+## Analysis
+
+optional 1920x1080 analysis videoはdecoded Sega CD output、source、cell別category、
+audio、物理delivery、pattern供給、DMA、movie全体timelineを表示します。frame 0は
+timed-work valueとgraph maximumから除外します。
+
+全panel、meter、category、TSV fieldは [`ANALYSIS.md`](ANALYSIS.md)、
+実機/emulatorのvalues-only DEBUG HUDは [`HUD.md`](HUD.md) にあります。
+
+## Documentation
+
+- [`ENCODE.md`](ENCODE.md): simulation stageと実測処理時間。
+- [`CONFIG.md`](CONFIG.md): profile schema、共通設定、throttle、容量。
+- [`MOVIE.md`](MOVIE.md): 正確なTTRC v16 `HEADER.DAT` / `BODY.DAT` format。
+- [`BUEFFERING.md`](BUEFFERING.md): 物理pattern供給とmovie全体quality planning。
+- [`STREAMING.md`](STREAMING.md): live Main/Sub memory mapとheadroom。
+- [`ANALYSIS.md`](ANALYSIS.md): analysis videoとTSVのreference。
+- [`HUD.md`](HUD.md): DEBUG HUD layout、unit、gate、OCR workflow。
+- [`ADPCM.md`](ADPCM.md): 対応audio formatとSub-CPU decoder。
+- [`BUDGETS.md`](BUDGETS.md): tile、DMA、CDの一次budget。
+- [`REMOVED.md`](REMOVED.md): cleanな再実装の参考になるremoved featureの実装記録。
+- [`AGENTS.md`](AGENTS.md): maintenance、recording、agent guidance。
+- [`CLAUDE.md`](CLAUDE.md): shared guidanceへのcompatibility entry point。
+
+## Implementation
+
+- `tools/sim.py`: offline encoder。固定済みdecision log、`buffer_remaining.npz`、
+  analysis data、completed artifact markerを書きます。
+- `tools/pack_stream.py`: decisionを検証し、`HEADER.DAT`、`BODY.DAT`、ディスク外の
+  `MOVIE.DAT`、`palettes.bin` を書きます。
+- `tools/render_analysis.py`: completed sim resultからanalysis PNG、TSV、videoを生成します。
+- `tools/layout_preview.py`: 共通analysis layoutとgraph rendering。
+- `tools/physical_budget.py`: frame別control/Prg ceilingとprefix ledger。
+- `tools/stream_schedule.py`: 正確なBODY routingと物理slot schedule。
+- `boot/movieplay_sp.s`: Sub-CPUのdisc、PrgBuf、Word-RAM、ADPCM、handoff runtime。
+- `boot/movieplay_ip.s`: Main-CPUのVRAM、CRAM、name table、DMA、DEBUG HUD runtime。
+
+completed sim artifactはsource byte、effective setting、outputに影響するencoder fingerprintが
+一致するときだけ再利用します。sim workとderived videoは `videos/` の背後にあるmanaged
+tmpfs workspaceを使い、native lossless emulator captureは通常fileとして保持します。
+frame別TSVは `logs/` に保持します。
+
+## Build target
+
+| Target | 用途 |
+|---|---|
+| `movieplay` / `disc` | TTRC player disc。 |
+| `cdcbench` | continuous/restarted CD read計測。 |
+| `dmabench` | screen mode別のVBlank当たり最大VRAM DMA。 |
+| `still256` | static H32 display bring-up。 |
+| `streamtest` | minimal continuous stream test。 |
+| `pcmtest` | RF5C164 register/wave-RAM test。 |
+| `test1m` | 1M/1M Word-RAM swap test。 |
+| `prgtest` | PRG-RAMとstreaming interaction test。 |
+| `asictest` / `upscaletest` | graphics ASICとCPU upscale experiment。 |
+
+## Workstation setup
+
+Ubuntu host package:
+
+```sh
+sudo apt update
+sudo apt install \
+  ffmpeg fonts-ipafont-gothic genisoimage imagemagick \
+  libretro-genesisplusgx \
+  pipx \
+  retroarch rsync xdotool xvfb
+```
+
+pinned `uv` とisolated CPU environmentをinstallします。
+
+```sh
+pipx install 'uv==0.11.29'
+tools/bootstrap_python.sh --cpu
+tools/python.sh -c \
+  'import sys, numpy, PIL; print(sys.base_prefix, numpy.__version__, PIL.__version__)'
+```
+
+NVIDIA GPU acceleration:
+
+```sh
+tools/bootstrap_python.sh --gpu
+tools/python.sh --gpu -c \
+  'import cupy as cp; assert int(cp.arange(16).sum()) == 120'
+```
+
+`tools/python.sh` は `.venv`、`tools/python.sh --gpu` は `.venv-gpu` を選びます。
+system Pythonやdistribution packageへfallbackしません。lockはCPUにmanaged CPython
+3.14.4、GPUにCPython 3.13.14、NumPy 2.3.5、Pillow 12.1.1、CuPy 14.1.1を使います。
+
+Marsdev `m68k-elf` toolchainを `~/toolchains/mars` にinstallするか、別installationを
+`MARSDEV` / `M68K_PREFIX` で指定します。Makefileは次を使います。
+
+```text
+m68k-elf-as
+m68k-elf-gcc
+m68k-elf-ld
+m68k-elf-objcopy
+```
+
+toolchainとISO writerを確認します。
+
+```sh
+make check-tools CONFIG=configs/PROFILE.toml
+```
+
+Japanese Mega-CD BIOSはuser suppliedかつgit-ignoredです。
+
+```sh
+install -d -m 700 ~/.config/retroarch/system
+install -m 600 original/jp_mcd2_9212.bin \
+  ~/.config/retroarch/system/bios_CD_J.bin
+```
+
+recording harnessのdefault coreは
+`/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so` です。
+host固有layoutは `CORE`、`BIOS_IMAGE`、`SYSTEM_DIR` で上書きします。
+
+## Build
+
+full encodeとDEBUG disc build:
+
+```sh
+tools/python.sh --gpu tools/sim.py configs/PROFILE.toml
+make disc CONFIG=configs/PROFILE.toml DEBUG=1
+```
+
+`make disc` は選択profileのpacked streamをcleanし、profile-authenticated
+`decisions.pkl` を検証し、playerをspecializeして次を書きます。
+
+```text
+out/PROFILE/HEADER.DAT
+out/PROFILE/BODY.DAT
+out/PROFILE/MOVIE.DAT
+out/PROFILE/palettes.bin
+out/PROFILE.iso
+out/PROFILE.cue
+```
+
+transient object、disc staging、direct-emulator scratch fileは `tmp/PROFILE/` に置きます。
+`HEADER.DAT` はstartup state、正確なframe 0、boot VRAM prefetch、PrgBuf prebufferを
+持ちます。`BODY.DAT` はframe 1から始まり、連続して読みます。
+
+## Recording
+
+emulator-synchronized A/Vを使います。
+
+```sh
+tools/record_movie.sh --config configs/PROFILE.toml \
+  --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
+```
+
+recorderのdefaultはfixed-Replay、faster-than-realtime、native-size FFV1/FLACです。
+MP4は短時間確認用previewです。`--realtime-lossless` はpaced FFV1/FLAC diagnostic
+baselineを作ります。`--preset realtime` は4:2:0でupload masterには使いません。
+明示的なmovie-only trimを要求しない限りMega-CD startupを保持します。
+
+full DEBUG recordingごとに、完全なHUD抽出、gate評価、public hudlineが必要です。PASS
+またはWARNINGの後だけanalysis/playback publishへ進みます。
+
+## YouTube upload setup
+
+OAuth credentialとPython environmentはrepository外に置きます。
+
+```text
+~/.claude/skills/youtube/youtube.py
+~/.claude/skills/youtube/client_secret.json
+~/.config/youtube/youtube_token.json
+~/.config/youtube/venv/
+```
+
+local environmentを作ります。
+
+```sh
+uv venv --managed-python --python 3.14.4 ~/.config/youtube/venv
+uv pip install --python ~/.config/youtube/venv/bin/python \
+  google-api-python-client google-auth-oauthlib google-auth-httplib2
+chmod 600 ~/.claude/skills/youtube/client_secret.json \
+  ~/.config/youtube/youtube_token.json
+```
+
+tokenには完全な `youtube` scopeと有効なrefresh tokenが必要です。client secret、token、
+BIOS file、source media、generated video、upload sidecarをcommitしてはいけません。
+
+## Repository layout
+
+```text
+boot/        68000 Main/Sub player and hardware tests
+cfg/         linker scripts
+configs/     per-source TOML profiles
+harness/     reproducible diagnostics and their local documentation
+tools/       encoder, packer, analysis, build, and recording tools
+vendor/      third-party reference code
+```
+
+generated outputとcopyrighted source mediaはpublic repositoryに含めません。
