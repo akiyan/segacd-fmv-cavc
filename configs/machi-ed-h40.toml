@@ -10,7 +10,7 @@ sar = "32:35"
 mode = "H40"
 width = 320
 height = 224
-fit = "crop"
+fit = "pad"
 master_denoise = false
 
 [output]
@@ -19,7 +19,7 @@ reuse = false
 emit_decisions = true
 
 [encoder]
-cold_cap = 380
+cold_cap = 480
 
 [palette]
 algorithm = "mosaic-gm"
