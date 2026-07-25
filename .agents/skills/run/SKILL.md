@@ -130,6 +130,8 @@ Run `tools/sim.py` with the profile and preferred GPU Python. Require a normal
 completion and record:
 
 - frame count and effective source fps;
+- configured cold cap, realized timed maximum cold, number of frames at that
+  maximum, and the first/last matching frame numbers;
 - average useful BODY delivery rate (`body_useful_bps`), kept separate from
   the encoder's `codec_work_bps` diagnostic;
 - starved-frame count and percentage;
@@ -139,6 +141,15 @@ Starvation is reportable, not automatically a failure. Reject an incomplete
 run or missing decision data. Band divides useful bytes by each slot's actual
 physical CD read time, so it must stay at or below CD 1x (150 KiB/s); pad is
 shown as unused bandwidth.
+
+Run the bundled cold-delivery reporter immediately after simulation. It reads
+the frozen physical transfer trace, excludes boot-loaded frame 0, and prevents
+the configured cap from being mistaken for the realized maximum:
+
+```sh
+tools/python.sh .agents/skills/run/scripts/report_cold.py \
+  videos/STEM/tmp/decisions.pkl
+```
 
 Write the persistent TSV immediately with the zero-frame analysis-data mode,
 run the `timeline` skill, inspect the PNG, publish it to a public Gist, and show
@@ -249,6 +260,15 @@ The full render writes another persistent TSV. Immediately run the `timeline`
 skill for that TSV, publish the PNG to a public Gist, show it to the user, and
 put the Gist URL in the YouTube description.
 
+Run the cold-delivery reporter again with that final TSV. It must confirm that
+the analysis `status_cold` maximum equals the physical transfer trace:
+
+```sh
+tools/python.sh .agents/skills/run/scripts/report_cold.py \
+  videos/STEM/tmp/decisions.pkl \
+  --analysis-tsv videos/STEM_analysis.tsv
+```
+
 Regenerate `mixline` against this final analysis timeline and the already
 accepted hudline, then inspect, publish, and show the final combined image.
 This keeps the published mixed evidence tied to the exact TSV used by the
@@ -332,6 +352,8 @@ upload artifact from current inputs, as required by `AGENTS.md`.
 Report one compact result block per source with:
 
 - profile and artifact stem;
+- configured cold cap, realized timed maximum cold, number of matching frames,
+  and first/last matching frame numbers (frame 0 excluded);
 - analysis URL, output path, average rate, and starvation result;
 - pack verification result;
 - lossless recording and preview paths, duration, raster/fps, and audio metrics;
