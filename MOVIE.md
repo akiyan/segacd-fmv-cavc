@@ -1,129 +1,59 @@
+EN / [JP](#jp)
+
 # HEADER.DAT / BODY.DAT binary format (TTRC)
 
 `HEADER.DAT` and `BODY.DAT` are the two on-disc files of the **Tile Texture
-Reuse Codec**. They are written by `tools/pack_stream.py` from the `tools/sim.py`
-decision log and read by the Sega CD player (`boot/movieplay_sp.s` streams them,
-`boot/movieplay_ip.s` displays them). This document describes their byte layout
-exactly.
+Reuse Codec**. `tools/pack_stream.py` writes them from the `tools/sim.py`
+decision log. `boot/movieplay_sp.s` streams them and `boot/movieplay_ip.s`
+displays them.
 
-The packer also writes `MOVIE.DAT = HEADER.DAT || BODY.DAT` as an off-disc
-compatibility container for analysis and regression tools. `make disc` places
-only `HEADER.DAT` and `BODY.DAT` on the disc.
+The packer also writes `MOVIE.DAT = HEADER.DAT || BODY.DAT` for off-disc
+analysis and regression tools. The disc contains only `HEADER.DAT` and
+`BODY.DAT`.
 
-All multi-byte integers are **big-endian**. Every region is sector-aligned. The
-Sub CPU reads all of `HEADER.DAT`, prepares frame 0 with no timed read active,
+All multi-byte integers are big-endian. Every region is sector-aligned. The Sub
+CPU reads all of `HEADER.DAT`, prepares frame 0 while no timed read is active,
 then issues one continuous `ROM_READN` for `BODY.DAT`.
 
-```
-SECTOR         = 2048            (one Mode-1 CD sector)
-MAGIC          = "TTRC"          (0x54545243; Tile Texture Reuse Codec)
-VERSION        = 15              (ADPCM-only stream interpretation)
-FRAME_SECTORS  = 5               (routing-byte maximum; v4+ frames are variable)
-PAT            = 32              (one 8x8 4bpp tile pattern = 32 bytes)
-AUDIO          = decoded header field (normally 1472 samples at N4;
-                                      736 samples at N2)
-BASE           = 1               (POOL_TILE_BASE: VRAM tile index = BASE + slot)
+```text
+SECTOR         = 2048            # one Mode-1 CD sector
+MAGIC          = "TTRC"          # 0x54545243
+VERSION        = 16
+FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
+PAT            = 32              # one 8x8 4bpp tile pattern
+BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-Version history: **v2** moved frame 0 out of the frame stream into a dedicated
-block right after the header (loaded during boot, bypassing the streaming
-ring). **v3** added the **PALTAB** (all segment palettes pre-loaded at boot
-into a Main-RAM table) and dropped the per-frame in-stream CRAM payload. **v4**
-added rate-matched variable frame sectors plus per-stream VBlank, audio-byte and
-nominal-fps fields.
-**v5** added a boot-prefix PCM preload. Legacy streams duplicated the first
-audio chunks into one sector each and skipped their control writes. Current
-streams use the same fields for a persistent prefetch: the prefix holds the
-source start and controls carry future chunks.
-**v6** split the boot prefix and timed stream into `HEADER.DAT` and `BODY.DAT`,
-put frame 0 entirely in `HEADER.DAT`, and changed each timed frame from
-payload-first to control-first. The `[n_pay_sec, n_ctrl_sec]` routing-byte order
-did not change. Header feature bit 0 is an optional v6 extension that appends
-cold-slot run descriptors after audio without moving any legacy field.
-**v7** packed each routing entry from two bytes into one byte containing the
-control-sector count and total-sector count. This doubled the resident-table
-limit from 8192 to 16384 frames without changing the BODY sector order.
-**v8** retained that one-byte routing layout and every header-field offset, but
-defined feature bit 1 as the authoritative fixed-cadence contract. It was
-originally named `FEATURE_FIXED_N2` and selected two VBlanks plus 1001 sectors
-per 400 frames. The current v16 implementation generalizes the same bit as
-`FEATURE_FIXED_N`: header `vsync_n` is authoritative, so N=2 uses 1001/400 and
-N=4 uses 1001/200. The packer sets it only for rates classified by
-`uses_fixed_n_cadence`; 24fps leaves it clear and retains delivery-paced
-`75 / fps_int`.
-**v9** introduced checkpointed continuous IMA ADPCM. Header offset 54 is the
-decoded RF5C164 sample count, while live controls store a four-byte checkpoint
-plus one nibble per sample. Offset 58 became the RF5C164 frequency delta, and a
-full decoder-table region was added after PALTAB.
-**v10** adds feature bit 3 (`FEATURE_PATTERN_SUPPLY`). Cold update entries use
-bits 11-12 for the physical source, and cold-run counts use bits 14-15 for the
-same source. A `PSUP` extension in the first header sector gives the actual
-three preload sizes and sector counts. Separate boot regions carried
-WordBuf0, WordBuf1, and the former Main-RAM preload; only Prg-sourced patterns remained in
-the timed payload stream.
-**v11** adds feature bit 4 (`FEATURE_SHADOW_UPDATE_LISTS`) and allows each
-control block to choose its shadow-update representation with the high bit of
-the `n_upd` word. A clear high bit retains the v10 bitmap plus source-coded
-entries. A set high bit replaces those bytes with completed
-`(shadow_byte_offset, final_name_entry)` pairs; the source-aware cold-run suffix
-remains authoritative for physical pattern delivery.
-The optional feature bit 5 (`FEATURE_VRAM_RAW_PREFETCH`) keeps the same v11
-run-suffix syntax but allows additional Prg runs that have no same-frame name
-update. They load exact future patterns into unreferenced VRAM slots; a later
-name update reuses the resident slot without another pattern transfer. The
-same syntax is valid in frame 0: after its exact display patterns, the remaining
-boot pattern allowance may preload future patterns directly into free VRAM.
-**v12** renames the Main-RAM pattern source to persistent `DicBuf`, expands it
-from 208 to 256 entries, and adds feature bit 6
-(`FEATURE_DICBUF_INDEXED_RUNS`). The existing four-byte run descriptor now
-carries an 8-bit DicBuf start index; Dic entries are reusable and are no longer
-consumed in chronological order. The `PSUP` extension version is 2.
-**v13** adds feature bit 7 (`FEATURE_BOOT_VRAM_SIDECAR`). Frame 0 still uses
-the existing control/F0PAT path for its visible exact patterns and any inline
-prefetch that fits that path. Additional future patterns are stored in a
-boot-stage sidecar and written directly to otherwise-unreferenced resident VRAM
-slots by the Main CPU. The sidecar changes startup only; it adds no timed-frame
-control record or playback-loop work.
-**v14** removes the unused per-frame `dbg` byte and optional 22-byte diagnostic
-block. The palette reference now occupies the complete `u16` at the same
-mini-header position, so the header remains 8 bytes and all following words
-remain evenly aligned.
-**v15** removes the audio-codec choice and its feature bit. Every control uses
-checkpointed IMA ADPCM, every header includes the five-sector decoder table,
-and offset 54 always means the even decoded-sample count.
-**v16** word-aligns the entry array after bitmap controls. When
-`ceil(cells / 8)` is odd, one zero byte follows the bitmap before the first
-16-bit entry. This prevents an address error on the 68000; list controls are
-already word-aligned and do not add this byte. The run-suffix alignment and
-the complete control length are unchanged because the former pre-suffix pad
-moves to the bitmap boundary.
+The player accepts version 16. Bitmap controls insert one zero byte after an
+odd-sized bitmap so the following 16-bit entry array is word-aligned. List
+controls are already word-aligned. This pad does not change the run-suffix
+alignment or the complete even control length.
 
 ## File layout
 
-```
+```text
 HEADER.DAT
 +--------------------------------------------------+  sector 0
 | HEADER (1 sector, zero-padded)                   |
-+--------------------------------------------------+  sector 1
-| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB plus optional boot-VRAM sidecar
 +--------------------------------------------------+
-| ADPCM_TABLE (5 sectors)                          |  8,800 B full lookup image
+| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + optional VRAM sidecar
 +--------------------------------------------------+
-| WR0_PRELOAD (wr0_sec sectors when bit 3 set)     |  WordBuf0 patterns
+| ADPCM_TABLE (5 sectors)                          |  8,800 B lookup image
 +--------------------------------------------------+
-| WR1_PRELOAD (wr1_sec sectors when bit 3 set)     |  WordBuf1 patterns
+| WR0_PRELOAD (wr0_sec sectors)                    |  WordBuf0 patterns
 +--------------------------------------------------+
-| DIC_PRELOAD (dic_sec sectors when bit 3 set)     |  DicBuf dictionary staging
+| WR1_PRELOAD (wr1_sec sectors)                    |  WordBuf1 patterns
 +--------------------------------------------------+
-| STARTUP_AUDIO (audio_preload_sec sectors)        |  one PCM chunk per sector
+| DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
++--------------------------------------------------+
+| STARTUP_AUDIO (audio_preload_sec sectors)        |  one decoded chunk per sector
 +--------------------------------------------------+
 | FRAME 0 (f0_ctrl_sec + f0_pat_sec sectors)       |  control, then patterns
 +--------------------------------------------------+
-| ROUTING (routing_sec sectors)                    |  v7+: 1 byte per frame, max 16384 frames
+| ROUTING (routing_sec sectors)                    |  one byte per frame
 +--------------------------------------------------+
-| PREBUFFER (prebuf_sec sectors)                   |  frame-1 PrgBuf prefill (Bpat patterns)
+| PREBUFFER (prebuf_sec sectors)                   |  frame-1 PrgBuf prefill
 +--------------------------------------------------+
-                                                     end of HEADER.DAT
 
 BODY.DAT
 +--------------------------------------------------+  sector 0
@@ -133,226 +63,144 @@ BODY.DAT
 +--------------------------------------------------+
 ```
 
-The player drains all of `HEADER.DAT`, writing STARTUP_AUDIO to wave RAM while
-PCM is stopped. After the header request has ended, the Sub CPU expands frame 0
-and hands its completed Word-RAM bank to the Main CPU while `BODY.DAT` remains
-stopped. The Main CPU finishes the frame-0 VRAM/name-table build, displays it,
-and only then acknowledges the BODY start. The Sub CPU starts `BODY.DAT` at its
-own first sector and fully pre-drains frame 1 before timed handoffs begin. PCM
-stays stopped until the first timed handoff. Frame 0 therefore has no time
-budget and never competes with frame 1 delivery, while PrgBuf starts frame 1
-pre-filled to its usable scheduling ceiling.
+The Sub CPU drains all of `HEADER.DAT` and writes STARTUP_AUDIO to wave RAM
+while PCM is stopped. It expands frame 0 and hands the completed Word-RAM bank
+to Main while `BODY.DAT` is still stopped. Main builds and displays frame 0,
+then acknowledges BODY start. Sub starts `BODY.DAT`, pre-drains frame 1, and
+only then begins timed handoffs. PCM starts with the first timed handoff.
 
-Frame 0 never uses approximation classes. Its complete name table points only
-at exact target patterns: the first physical load of each distinct pattern is
-Raw and its further cell references are Same. With feature bit 5, its cold-run
-suffix may append future-pattern loads without name updates while the ordinary
-frame-0 path remains at most `cells` patterns. With feature bit 7, the remaining
-future patterns use the boot sidecar instead. The combined exact-frame-0 and
-future-prefetch count is capped at the complete resident VRAM pool, not the
-visible cell count. For H40/320x224 with 1,518 resident slots, a frame containing
-1,120 distinct visible patterns can therefore preload all 398 backside slots.
-These patterns are speculative; later visible work may reclaim them before
-their predicted first use.
+Frame 0 has no timed delivery budget. Its visible name table uses exact target
+patterns only. Remaining resident VRAM slots may receive future patterns
+through the frame-0 cold suffix and the boot VRAM sidecar. Analysis reports
+frame-0 Cold, Pre, DMA, Run, and Band as zero because they describe timed work.
 
-During boot, frame 0's pattern stream temporarily occupies the fixed 36 KiB
-boot-only staging area at the top of PRG RAM and the not-yet-active APPLY
-space; the largest H40 frame needs 36 KiB after sector rounding. This staging
-layout is independent of the timed stream's fps-derived normal PrgBuf and
-jitter boundary. The on-disc routing table is
-staged in the not-yet-active APPLY ring,
-then copied identically into the final 16 KiB of both 1M Word-RAM banks after
-`HEADER.DAT` has been drained. Frame 0 is expanded before `BODY.DAT` can reuse
-its temporary PRG-RAM bytes. Duplicating routing is required because the bank
-owned by the Sub CPU follows the display handoff, while delivery may run ahead
-by more than one frame.
+The routing table is staged in the not-yet-active APPLY ring and copied into
+the final 16 KiB of both physical 1M Word-RAM banks. The two copies are required
+because the Sub-owned bank follows the display handoff while delivery may run
+ahead.
 
-The Sub stages the 8,800-byte ADPCM table after PALTAB and copies it to offset
-`+0x12800` of both physical banks. The decoded
-PCM buffer is bank-local at `+0x14C00`. Two boot-time copies avoid every
-per-frame table transfer or pointer change after a bank handoff.
+Frame 0 patterns use the fixed 36 KiB boot-only staging area at PRG RAM
+`0x71000..0x7A000`, which overlaps space that is not yet serving its timed
+purpose. BODY does not start until frame 0 has been expanded, so this area is
+independent of the timed PrgBuf and its jitter reserve.
 
-When feature bit 3 is set, the Sub next loads three different chronological
-pattern sequences. Wr0 is written at offset `+0x15200` in the physical frame-0
-bank, Wr1 at the same offset in the other bank, and Dic is staged at `+0xD000`
-in the frame-0 bank. The Main CPU copies Dic once to `0xFF6600..0xFF8600`
-after the first handoff. Wr0 and Wr1 remain in their own physical banks; they
-are not duplicate copies.
+## Header
 
-## Header (1 sector = 2048 bytes)
-
-First 22 bytes: `struct ">4sHHHHHHHHH"`.
-
-| Off | Size | Field          | Meaning |
-|-----|------|----------------|---------|
-| 0   | 4    | magic          | `"TTRC"` |
-| 4   | 2    | version        | format version (3 = palette table; 4 = rate-matched variable frames; 5 = startup PCM preload; 6 = split files and control-first body; 7 = packed routing; 8 = fixed-N2 contract; 9 = checkpointed ADPCM; 10 = pattern supply; 11 = shadow lists/raw prefetch; 12 = indexed DicBuf; 13 = boot-VRAM sidecar) |
-| 6   | 2    | frames         | total frame count (`nfr`) |
-| 8   | 2    | tcols          | tile grid columns |
-| 10  | 2    | trows          | tile grid rows |
-| 12  | 2    | cells          | total cells = `tcols * trows` (`C_CELLS`) |
-| 14  | 2    | pool           | VRAM tile-pool size (number of resident slots) |
-| 16  | 2    | base           | `POOL_TILE_BASE`; VRAM tile index of slot `s` = `base + s` |
-| 18  | 2    | frame_sectors  | max sectors per frame = 5 (routing-byte cap; v4 frame size is `fsec`, see Routing) |
-| 20  | 2    | n_seg          | number of palette segments |
-
-Next 16 bytes: `struct ">LLLL"`.
-
-| Off | Size | Field        | Meaning |
-|-----|------|--------------|---------|
-| 22  | 4    | prebuf_pat   | `Bpat`: number of Prg patterns pre-buffered before frame 1 |
-| 26  | 4    | routing_sec  | sectors occupied by the routing table |
-| 30  | 4    | prebuf_sec   | sectors occupied by the prebuffer |
-| 34  | 4    | ring_peak    | peak physical PrgBuf usage after a BODY payload may arrive and before that frame consumes its cold patterns, for buffer sizing |
-
-The player reserves the final 16 KiB of each 1M Word-RAM bank for an identical
-ROUTING copy. A v7+ stream uses one byte per frame and may therefore contain at
-most 16384 frames. The packer rejects a longer stream before the table can
-exceed either resident copy.
-
-Then:
-
-- byte 38: display mode. `0` = H32, `1` = H40, `2` = mode4 reserved for a
-  future player path. If absent or zero in old streams, the player treats it as
-  H32.
-- byte 39: zero (pad);
-- offset 40: `u32 f0_ctrl_sec` — sectors of frame 0's control block in
-  `HEADER.DAT` (v2+);
-- offset 44: `u32 f0_pat_sec` — sectors of frame 0's cold patterns in
-  `HEADER.DAT` (v2+);
-- offset 48: `u32 paltab_sec` — sectors of the boot-stage region containing
-  PALTAB (v3+) and, in v13, the optional boot-VRAM sidecar;
-- offset 52: `u16 vsync_n` (v4) — nearest display-VBlank interval
-  `N = round(59.94/fps)` (15fps→4, 24/30fps→2). This is a cadence/performance
-  hint, not a request to round delivery-paced 24fps to 29.97fps. `0` in v2/v3
-  streams (player defaults to 4 = 15fps). This remains a hint when
-  `FEATURE_FIXED_N` is clear. When that feature is set, it is authoritative
-  and must agree with the nominal rate. A 15fps stream fixes N=4, while a
-  24fps stream stores the N=2 hint but leaves the feature clear and remains
-  delivery-paced;
-- offset 54: `u16 audio_bytes` — even decoded RF5C164 samples per effective
-  playback frame, normally 1472 at 15fps, 920 at 24fps, and 736 at 30fps. The
-  live ADPCM control size is `4 + audio_bytes / 2`;
-- offset 56: `u16 fps_int` (v4) — nominal fps (15/24/30). When
-  `FEATURE_FIXED_N` is clear, the Sub CPU uses this as the modulus of the
-  delivery-paced 75/fps sector schedule (see Routing/Frame). Fixed-N instead
-  selects the exact `1001*N/800` rate, reduced to 1001/400 at N=2 and
-  1001/200 at N=4. Historical v2/v3 streams stored `0`; the
-  v8+ players require a nonzero nominal fps and reject `0`;
-- offset 58: `u16 audio_fd` (v9) — RF5C164 frequency delta derived from the
-  fixed decoded chunk size and effective playback cadence. Older formats used
-  this word as a duplicate-skip count; v9 requires a nonzero frequency value;
-- offset 60: `u16 audio_preload_sec` (v5+) — sectors in STARTUP_AUDIO. v5+
-  uses one decoded PCM chunk per sector. The requested value is clamped by
-  wave-RAM capacity and the decoded chunk size;
-- offset 62: `u16 features` (v6+ optional extensions). Bit 0
-  (`FEATURE_COLD_RUNS`) means every control block appends the cold-slot run
-  suffix described below. Bit 1 (`FEATURE_FIXED_N`, introduced as
-  `FEATURE_FIXED_N2` in v8) makes `vsync_n` authoritative for both Main display
-  flips and the Sub CD accumulator. The packer derives it with
-  `uses_fixed_n_cadence`; 24fps leaves it clear even though its nearest
-  `vsync_n` hint is 2. Bit 2 is reserved in v16. Bit 3
-  (`FEATURE_PATTERN_SUPPLY`, v10) means update/run source bits are active,
-  the `PSUP` extension is present, and the three boot-preload regions follow
-  the ADPCM table. Bit 4 (`FEATURE_SHADOW_UPDATE_LISTS`, v11) means
-  high-bit-tagged completed-list controls may occur; it is valid only together
-  with bit 3 because completed-list entries omit cold/source metadata.
-  Bit 5 (`FEATURE_VRAM_RAW_PREFETCH`, v11) allows the cold-run suffix to carry
-  additional Prg patterns that are not represented by same-frame updates,
-  including frame-0 boot loads of future patterns.
-  Bit 6 (`FEATURE_DICBUF_INDEXED_RUNS`, v12) selects indexed persistent DicBuf
-  run descriptors. Bit 7 (`FEATURE_BOOT_VRAM_SIDECAR`, v13) means the boot
-  stage carries the direct-to-VRAM sidecar described below.
-  Unknown bits must not move any legacy field;
-- offset 64: 128 bytes = **`seg0`**, the CRAM palette (4 lines x 16 words) for the
-  segment of frame 0, so the screen has correct colours before the first frame;
-- offset 192: `u32 player_signature` — CRC-32 of bytes 0 through 63. The build
-  generates `player_constants.inc` from this same sector and bakes the signature
-  into both player objects. The Sub CPU compares it before accepting the stream,
-  so combining a player with another profile's `HEADER.DAT` stops with a
-  diagnostic instead of silently using the wrong immediate values;
-- offset 196: 20-byte `PSUP` extension when feature bit 3 is set (see below);
-- remainder up to 2048 is zero.
-
-The v12 `PSUP` extension is `struct ">4s8H"`:
+The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
-| 196 | 4 | magic | `"PSUP"`. |
-| 200 | 2 | version | Pattern-supply extension version, currently 2. |
-| 202 | 2 | reserved | Must be zero. |
-| 204 | 2 | wr0_patterns | Actual WordBuf0 preload count, at most 880. |
-| 206 | 2 | wr1_patterns | Actual WordBuf1 preload count, at most 880. |
-| 208 | 2 | dic_patterns | Actual DicBuf entry count, at most 256. |
-| 210 | 2 | wr0_sectors | Sector-rounded WR0_PRELOAD size. |
-| 212 | 2 | wr1_sectors | Sector-rounded WR1_PRELOAD size. |
-| 214 | 2 | dic_sectors | Sector-rounded DIC_PRELOAD size. |
+| 0 | 4 | magic | `"TTRC"` |
+| 4 | 2 | version | exactly `16` |
+| 6 | 2 | frames | total frame count (`nfr`) |
+| 8 | 2 | tcols | tile-grid columns |
+| 10 | 2 | trows | tile-grid rows |
+| 12 | 2 | cells | `tcols * trows` |
+| 14 | 2 | pool | resident VRAM tile-pool size |
+| 16 | 2 | base | tile index of physical slot 0 |
+| 18 | 2 | frame_sectors | maximum useful sectors per routing entry, `5` |
+| 20 | 2 | n_seg | palette-segment count |
 
-For each preload, the sector count must equal the ceiling of
-`patterns * 32 / 2048`. The generated player constants freeze all six values;
-the build and Sub-CPU signature checks reject a mismatched header/player pair.
+The next 16 bytes are `struct ">LLLL"`.
 
-The player reads byte 38 while preparing frame 0, before entering `play_loop`.
-It sets VDP H32/H40, the screen-column origin, and the matching VBlank DMA
-budget once. The per-frame loop uses the cached values; it does not reread or
-branch on the mode, so carrying the mode in the header adds no playback-loop
-overhead.
+| Off | Size | Field | Meaning |
+|---:|---:|---|---|
+| 22 | 4 | prebuf_pat | number of Prg patterns prebuffered before frame 1 |
+| 26 | 4 | routing_sec | sectors occupied by ROUTING |
+| 30 | 4 | prebuf_sec | sectors occupied by PREBUFFER |
+| 34 | 4 | ring_peak | peak physical PrgBuf use after delivery and before consumption |
 
-A 128-byte CRAM block is 4 palette lines x 16 words; each word is
-`0000BBB0GGG0RRR0` (Genesis colour). Only 15 of the 16 entries per line are
-usable colour (entry 0 = transparent).
+The remaining fields are:
 
-Every current encoder palette reserves two existing RGB333 colours before frame
-quantisation. Among the 60 usable entries, the globally darkest colour (smallest
-`R + G + B`) is moved to palette line 0, index 1 and the globally brightest is
-moved to palette line 0, index 15. Only positions change: the complete 60-colour
-multiset is identical, and index 0 in all four lines stays zero. Frames are then
-quantised against that final grouping. This is a representation invariant, not
-another stream-layout version.
+| Off | Size | Field | Meaning |
+|---:|---:|---|---|
+| 38 | 1 | display_mode | `0` H32, `1` H40, `2` mode4 |
+| 39 | 1 | pad | zero |
+| 40 | 4 | f0_ctrl_sec | FRAME 0 control sectors |
+| 44 | 4 | f0_pat_sec | FRAME 0 pattern sectors |
+| 48 | 4 | paltab_sec | BOOT_STAGE sectors |
+| 52 | 2 | vsync_n | nearest display-VBlank interval |
+| 54 | 2 | audio_bytes | even decoded samples per effective playback frame |
+| 56 | 2 | fps_int | nominal content rate |
+| 58 | 2 | audio_fd | RF5C164 frequency delta |
+| 60 | 2 | audio_preload_sec | STARTUP_AUDIO sectors |
+| 62 | 2 | features | feature bits described below |
+| 64 | 128 | seg0 | frame-0 CRAM palette |
+| 192 | 4 | player_signature | CRC-32 of bytes 0 through 63 |
+| 196 | 20 | PSUP | pattern-supply extension when feature bit 3 is set |
+| 216 | 1832 | pad | zero |
 
-## Boot stage / PALTAB (v13; palette table introduced in v3)
+`vsync_n` is authoritative when `FEATURE_FIXED_N` is set. Otherwise it is a
+display hint and delivery follows `75 / fps_int`. `audio_bytes` is normally
+1472 at 15 fps, 920 at 24 fps, and 736 at 30 fps. A live ADPCM chunk occupies
+`4 + audio_bytes / 2` bytes before alignment.
 
-`paltab_sec` sectors immediately follow the first sector of `HEADER.DAT`. The
-v13 stage is 24 KiB and is copied to Word-RAM bank offset `+0xA000`. All
-`n_seg` segment palettes remain back to back at `+0xB000`, 128 bytes each. At
-boot the Sub CPU stages this region into the frame-0 bank and
-the Main CPU copies it **once** into a Main-RAM table (8 KB, capacity
-`PALTAB_MAX_SEG` = 64 segments — see `tools/av_config.py`, asserted against the
-player at build time). Every later palette switch just indexes this table via
-the control block's `pal` byte, so palettes are independent of stream delivery
-timing: a CD slip or re-seek can never corrupt the colours of a segment.
-The PALTAB already contains the canonical line/slot order described above; the
-packer rejects a stale decision log unless P0/index1 is tied for the global
-minimum and P0/index15 is tied for the global maximum. These fixed entries let
-a DEBUG player upload an opaque dark background and bright font once. Palette
-switches require no colour search, glyph rewrite, font DMA, or extra VBlank wait.
+The player signature is generated from the same header sector as
+`player_constants.inc` and baked into both player objects. A player/header
+mismatch stops with a diagnostic.
 
-When feature bit 7 is set, the same stage contains a directory at `+0xAFC0`:
-`"BVRM"`, then three big-endian `u16` record counts. Each record is a
-zero-based physical VRAM slot (`u16`) plus one packed 32-byte pattern. Records
-occupy three preserved holes: `+0xA000..+0xAF00`, the bytes after the palette
-table through `+0xD000`, and `+0xF000..+0x10000`. The intervening ranges are
-reserved for frame diagnostics, the duplicated 64-byte `O_HDR`, and the
-`+0xD000..+0xF000` Dic staging area. Before starting the continuous BODY read,
-the Sub CPU hands the frame-0 bank to Main. Main writes the records directly to
-their resident VRAM slots and acknowledges the boot-only handoff; only then
-does Sub arm BODY.DAT. It repeats the same sequence on movie restart. The
-packer sorts the complete boot-prefetch suffix by physical VRAM slot:
-the lowest slots that fit frame 0 staging remain in `O_LOADS`, and the rest
-become sidecar records. The simulator uses the same partition when counting
-runs. Frame 0 has no display deadline, so its work is outside timed run
-accounting. Sidecar patterns do not appear in frame 0's run suffix or
-`O_LOADS`, but they do count in frame 0's internal boot-load totals. Analysis
-deliberately displays frame-0 Cold, Pre, DMA, Run, and Band as zero because
-they are timed-work meters. Sidecar patterns are not PrgBuf occupancy or a
-`Prg` displayed category: their physical source at this point is the
-temporary Word-RAM boot stage.
+### Feature bits
 
-## ADPCM_TABLE
+| Bit | Name | Meaning |
+|---:|---|---|
+| 0 | `FEATURE_COLD_RUNS` | every control ends with the cold-run suffix |
+| 1 | `FEATURE_FIXED_N` | `vsync_n` controls display and CD cadence |
+| 2 | reserved | must be clear |
+| 3 | `FEATURE_PATTERN_SUPPLY` | source bits, PSUP, and boot preload regions are active |
+| 4 | `FEATURE_SHADOW_UPDATE_LISTS` | completed shadow-update lists may occur |
+| 5 | `FEATURE_VRAM_RAW_PREFETCH` | cold runs may load future Prg patterns without a same-frame name update |
+| 6 | `FEATURE_DICBUF_INDEXED_RUNS` | DicBuf runs carry reusable dictionary indices |
+| 7 | `FEATURE_BOOT_VRAM_SIDECAR` | BOOT_STAGE contains direct-to-VRAM records |
 
-Five sectors always follow the boot stage. The first 8,800 bytes are the
-immutable big-endian decoder image and the remaining 1,440 bytes are zero
-padding:
+Unknown feature bits are rejected.
+
+### PSUP extension
+
+PSUP is `struct ">4s8H"`.
+
+| Off | Size | Field | Meaning |
+|---:|---:|---|---|
+| 196 | 4 | magic | `"PSUP"` |
+| 200 | 2 | version | exactly `2` |
+| 202 | 2 | reserved | zero |
+| 204 | 2 | wr0_patterns | WordBuf0 count, at most 880 |
+| 206 | 2 | wr1_patterns | WordBuf1 count, at most 880 |
+| 208 | 2 | dic_patterns | DicBuf count, at most 256 |
+| 210 | 2 | wr0_sectors | WR0_PRELOAD sectors |
+| 212 | 2 | wr1_sectors | WR1_PRELOAD sectors |
+| 214 | 2 | dic_sectors | DIC_PRELOAD sectors |
+
+Each sector count must equal `ceil(patterns * 32 / 2048)`. Generated player
+constants freeze all six values.
+
+The 128-byte CRAM block contains four palette lines of 16 Genesis colour words
+(`0000BBB0GGG0RRR0`). Entry 0 of each line is transparent. Of the 60 usable
+entries, the darkest colour is placed at line 0/index 1 and the brightest at
+line 0/index 15 before quantisation. Only their positions change.
+
+## Boot stage
+
+BOOT_STAGE is 24 KiB and is copied to Word-RAM bank offset `+0xA000`. All
+palette segments are stored consecutively at `+0xB000`, 128 bytes each. Main
+copies them once to the 8 KiB PALTAB at `0xFFB000..0xFFD000`. The capacity is
+64 segments. A timed palette switch reads PALTAB through the control block's
+`pal` field, so CRAM data does not depend on same-frame CD delivery.
+
+When feature bit 7 is set, a directory at `+0xAFC0` contains `"BVRM"` and three
+big-endian `u16` record counts. Each record is `u16 physical_slot` followed by
+one 32-byte pattern. Records occupy these preserved holes:
+
+- `+0xA000..+0xAF00`
+- the unused palette-table tail through `+0xD000`
+- `+0xF000..+0x10000`
+
+Main writes the records directly to unreferenced resident VRAM slots before Sub
+starts BODY. The same sequence runs on movie restart.
+
+## ADPCM table
+
+Five sectors follow BOOT_STAGE. The first 8,800 bytes are immutable lookup data
+and the remaining 1,440 bytes are zero.
 
 | Offset | Size | Contents |
 |---:|---:|---|
@@ -360,294 +208,540 @@ padding:
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
 
-At boot the Sub CPU stages this image in PRG-RAM and copies exactly 2,200 longs
-to Word-RAM offset `+0x12800` in each physical 1M bank.
+Sub copies exactly 2,200 longs to Word-RAM offset `+0x12800` in both physical
+banks. The decoded PCM buffer is bank-local at `+0x14C00`.
 
-## Pattern preload regions (v12, feature bit 3)
+## Pattern preload regions
 
-The three `PSUP` regions follow the ADPCM table in this fixed order:
-WR0_PRELOAD, WR1_PRELOAD, DIC_PRELOAD. Each contains
-32-byte packed tile patterns, zero-padded to its declared sector boundary.
-Actual pattern and sector counts come from the `PSUP` extension.
+WR0_PRELOAD, WR1_PRELOAD, and DIC_PRELOAD follow the ADPCM table in that order.
+Each contains 32-byte patterns and zero padding to its declared sector boundary.
 
-WordBuf0 and WordBuf1 each have a fixed capacity of 880 patterns at physical
-bank offset `+0x15200`. They hold different sequences. The one source code
-`Wr` in control data selects the bank by timed-frame parity: even frames consume
-Wr0, odd frames consume Wr1. DicBuf has a fixed capacity of 256 patterns. Its
-dictionary is first staged at Word-RAM `+0xD000`, then copied once to Main RAM
-at `0xFF6600..0xFF8600`.
+WordBuf0 and WordBuf1 each hold at most 880 different patterns at physical-bank
+offset `+0x15200`. Even timed frames consume WordBuf0 and odd timed frames
+consume WordBuf1. Their sequences advance monotonically and are never refilled.
 
-WordBuf0 and WordBuf1 are consumed monotonically and are never refilled.
-DicBuf entries are addressed by an 8-bit index and may be reused any number of
-times. Any region may contain fewer patterns than its capacity. Source and
-DicBuf index order are frozen by the sim decision log and verified against the
-source-aware run suffix before packing.
+DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0xD000`
+and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
+8-bit index.
 
-## STARTUP_AUDIO (v5)
+## Startup audio
 
-Each STARTUP_AUDIO sector in `HEADER.DAT` begins with one decoded `audio_bytes`
-PCM chunk and is zero-padded to 2048 bytes. This remains PCM for an ADPCM22
-stream so boot requires no separate compressed staging. During boot the Sub CPU drains one
-sector, appends its chunk to
-wave RAM at `SYNC_LEAD`, and repeats while PCM is stopped. Current streams put
-as many leading source chunks here as fit below the wave-RAM safety limit, then
-put the next chunk in frame 0's control and continue the shifted order. This
-preserves exact source sample order and a persistent write reserve. Historical v5/v6 players
-could instead duplicate leading chunks and skip their live writes; the v7+
-player deliberately removes that obsolete path. PCM starts at the prefetched source prefix after frame 0
-is displayed, so the first audio sample remains aligned with the first visible
-movie frame rather than starting during the Mega-CD boot screen.
+Each STARTUP_AUDIO sector begins with one decoded `audio_bytes` PCM chunk and is
+zero-padded. Sub appends these source-leading chunks to wave RAM at `SYNC_LEAD`
+while PCM is stopped. Live controls continue the shifted source order. PCM
+starts after frame 0 is displayed, so source sample zero aligns with the first
+visible movie frame.
 
 ## Routing table
 
-In v7 and later, `routing_sec` sectors in `HEADER.DAT` hold **one byte per frame**. Each
-byte has this layout:
+ROUTING contains one byte per frame:
 
 | Bits | Field | Meaning |
-|------|-------|---------|
-| 0-2  | `n_ctrl_sec` | control sectors at the start of this BODY frame slot |
-| 3-5  | `total_sec` | control plus payload sectors stored in this slot |
-| 6-7  | reserved | must be zero |
+|---|---|---|
+| 0-2 | `n_ctrl_sec` | control sectors at the start of the BODY slot |
+| 3-5 | `total_sec` | useful control plus payload sectors |
+| 6-7 | reserved | zero |
 
-The encoded byte is `(total_sec << 3) | n_ctrl_sec`, and the payload count is
-recovered as `n_pay_sec = total_sec - n_ctrl_sec`. The player validates that
-the reserved bits are zero and `n_ctrl_sec <= total_sec <= FRAME_SECTORS` before
-using an entry. It also requires the header field to be exactly
-`routing_sec = ceil(nfr / 2048)`; unused bytes in the final sector are zero.
-Frame 0's routing byte is zero because its control and patterns live entirely
-in `HEADER.DAT`, not in `BODY.DAT`; the player validates this zero entry too.
+The byte is `(total_sec << 3) | n_ctrl_sec`; `n_pay_sec = total_sec -
+n_ctrl_sec`. The player requires
+`n_ctrl_sec <= total_sec <= FRAME_SECTORS` and
+`routing_sec = ceil(nfr / 2048)`. Frame 0's entry and unused tail bytes are
+zero. The 16 KiB resident copy supports at most 16,384 frames.
 
-The final 16 KiB of each 1M Word-RAM bank holds an identical resident copy, so
-v7+ supports at most 16384 frames. For comparison, v6 used two bytes per frame,
-`[n_pay_sec, n_ctrl_sec]`, and the same 16 KiB allocation limited it to 8192
-frames. v6 already stored and read the `n_ctrl_sec` control sectors first in
-each `BODY.DAT` frame slot despite the historical payload-first byte order.
+Control and payload are continuous streams split at sector boundaries. One
+control sector may finish multiple future blocks, and payload normally
+prefetches patterns for later frames. The physical schedule proves that:
 
-In v7+, the first `n_ctrl_sec` sectors contain control data. The following
-`n_pay_sec` sectors refill PrgBuf, and any sectors through the
-frame's rate-matched `fsec` are padding.
+- after a slot's control prefix arrives, its control block is complete in the
+  APPLY ring;
+- before a frame's control prefix is read, PREBUFFER and earlier BODY payload
+  already contain every Prg pattern that frame consumes;
+- control bytes, payload bytes, run descriptors, CRAM switches, and pad all fit
+  the same physical-sector plan.
 
-The control and payload data are each continuous byte streams split at sector
-boundaries. A frame slot's sectors therefore do not necessarily belong only to
-that numbered frame: one control sector can finish several future control
-blocks, and payload is normally a forward prefetch for later frames. The packer
-guarantees both of these before writing v6+:
+### Physical cadence
 
-- after frame `i`'s complete control-sector prefix has arrived, control block
-  `i` is present in the apply ring; `n_ctrl_sec = 0` is valid when an earlier
-  sector already carried that block;
-- before frame `i`'s control prefix is read, PREBUFFER plus payload sectors from
-  earlier frame slots already contain every Prg-sourced cold pattern frame `i`
-  consumes. Wr0/Wr1/Dic patterns are already resident from boot.
+The physical slot size is:
 
-The table covers all `nfr` frames. In the historical v6 layout, frame 0's entry
-was the two-byte pair `(0, 0)`; in v7+ it is the single zero byte described
-above.
+```text
+fsec = max(n_ctrl_sec + n_pay_sec, ratedelta - lead)
+```
 
-**Rate-matched frame size (v4+).** A frame's total on-disc sectors is
-`fsec = max(n_pay_sec + n_ctrl_sec, ratedelta - lead)`. `ratedelta` is the number
-of sectors CD 1x delivers in one frame's display time. Both packer and player
-generate the same integer sequence with a numerator/modulus accumulator.
+For fixed-N playback, packer and player use the reduced `1001*N/800` CD-sector
+accumulator. N=2 produces 199 two-sector and 201 three-sector slots per cycle.
+N=4 produces 199 five-sector and one six-sector slot; the sixth sector can only
+be pad because the routing byte caps useful data at five sectors.
 
-For a current stream with `FEATURE_FIXED_N` set, the Main CPU flips every
-exactly `vsync_n` VBlanks. The Sub CPU uses the matching reduced
-`1001*N/800` sector accumulator. N=2 is 1001/400: each complete cycle contains
-199 two-sector frames and 201 three-sector frames. N=4 is 1001/200: each
-complete cycle contains 199 five-sector frames and one six-sector frame. The
-sixth sector can be pad; the routing byte still caps useful control plus
-payload at five sectors. When the feature is clear, including 24fps, the
-player retains the delivery-paced accumulator:
-`acc += 75; ratedelta = acc // fps_int;
-acc %= fps_int`. This gives 3.125 sectors/frame at 24fps. v4-v7 used that same
-75/fps rule for all supported nominal rates,
-including the old 2.5-sector average at 30fps.
+For delivery-paced playback:
 
-`lead` starts at zero and increases by
-`fsec - ratedelta`. A data-heavy frame can therefore run long, while following
-light frames omit padding until that temporary lead is repaid. The complete
-stream converges to the CD 1x display-rate total without overflowing PrgBuf.
-Historical v2/v3 players defaulted `fps_int = 0` to 15, yielding the constant 5
-and reproducing the old fixed-slot behaviour. The current player accepts only v16 and
-rejects a zero nominal fps before entering this schedule.
+```text
+acc += 75
+ratedelta = acc // fps_int
+acc %= fps_int
+```
 
-The v6-and-later packer first spends that frame's allowance on control, then replaces
-otherwise-unused rate padding with future payload while PrgBuf space is
-available. It exceeds the allowance only when a backwards deadline proof says
-a later cold-pattern burst cannot otherwise be armed within the five-sector
-routing cap. The normal `lead` repayment then removes padding from following
-light frames. In particular, a full startup PrgBuf is not refilled to the
-routing cap merely to keep it full; fixed-N light regions remain on their exact
-N2 or N4 physical sector sequence.
+`lead` increases by `fsec - ratedelta`. A necessary burst may exceed that
+slot's fresh allowance; later light slots omit pad until the lead is repaid.
+The packer fills unused rate allowance with future payload while PrgBuf space
+and all deadlines permit it.
 
-The player's opportunistic pump applies back-pressure by the next sector's
-routed destination, not by every buffer at once. A control sector checks APPLY
-space, a payload sector checks PrgBuf space, and a padding sector checks neither
-because it is discarded. This distinction is required by the continuous CD
-read: a full PrgBuf must not prevent an unrelated control or padding sector
-from being acknowledged. BODY payload for a frame may arrive while Main still
-displays the previous frame, before the current frame consumes its cold
-patterns. The scheduler therefore limits and reports the pre-consumption peak,
-not only the smaller end-of-frame occupancy. When frame expansion consumes
-PrgBuf patterns through a local copy cursor, the player publishes that cursor
-before its post-cold refill poll so newly freed space is visible immediately.
+The pump applies back-pressure according to the next sector's destination:
+APPLY space for control, PrgBuf space for payload, and no buffer check for pad.
+The scheduler limits the pre-consumption PrgBuf peak because payload may arrive
+before the current frame consumes its patterns.
 
 ## Prebuffer
 
-The final `prebuf_sec` sectors of `HEADER.DAT` hold the first `Bpat`
-Prg-sourced patterns (32 bytes each) of frames 1 onward. Frame 0's patterns are
-in the earlier FRAME 0 region. The prebuffer is loaded into PrgBuf before
-playback and is capped by the fps-derived normal PrgBuf ceiling (382 KiB at
-15fps, 397 KiB at 24fps, or 402 KiB at 30fps), so frame 1 starts armed.
+PREBUFFER contains the first `prebuf_pat` Prg patterns for frames 1 onward.
+It is loaded before playback and is capped below the physical delivery limit by
+the frame-rate-specific jitter reserve: 382 KiB at 15 fps, 397 KiB at 24 fps,
+and 402 KiB at 30 fps.
 
-## Frame (`fsec` sectors, rate-matched; frames 1..nfr-1)
+## BODY frame slot
 
-```
-[ n_ctrl_sec sectors : control ]  next bytes of the continuous control stream
-[ n_pay_sec sectors : payload  ]  next bytes of the future Prg-pattern stream
+Frames 1 through `nfr - 1` use:
+
+```text
+[ n_ctrl_sec sectors : control ]  next bytes of the control stream
+[ n_pay_sec sectors  : payload ]  next bytes of the future Prg stream
 [ pad to fsec sectors ]
 ```
 
-The analysis trace accounts for this physical slot as useful continuous-control
-bytes, useful cold-pattern payload bytes, and pad bytes. Pad includes both the
-unused tail of each stream's final sector and the final rate-match region. The
-three values must sum to `fsec * 2048`; HEADER regions and frame 0 are not BODY
-delivery and are recorded as zero in slot 0.
+Useful control bytes, useful payload bytes, and pad sum to `fsec * 2048`.
+HEADER regions and frame 0 are not BODY delivery.
 
-**Control** comes first so the Sub CPU can begin the current frame as soon as
-its complete control prefix has arrived, without waiting for the future payload
-refill in the same slot. Readiness is based on all `n_ctrl_sec` sectors, not
-merely the first control sector.
+Payload patterns are 32-byte `pack_key` values: eight rows of four bytes, with
+two 4-bit pixels per byte. Prg patterns consumed by a frame were delivered by
+PREBUFFER or an earlier BODY slot. WordBuf and DicBuf loads have no BODY
+payload.
 
-**Payload** is the chronological stream of 32-byte patterns assigned to Prg.
-The Sub consumes it from PrgBuf and copies the selected patterns into the
-current frame's Word-RAM output. These sectors replenish later frames; Prg
-patterns for the current frame were armed by PREBUFFER or earlier BODY slots.
-Wr0/Wr1/Dic cold loads have no BODY payload because their bytes were loaded at
-boot. A pattern is `pack_key`-encoded: 8 rows x 4 bytes, each byte = two 4bpp
-pixels `(hi<<4)|lo`.
+### Control block
 
-**Control block** (a variable-length block, byte layout):
+| Size | Field | Meaning |
+|---:|---|---|
+| 2 | total_len | complete even block length, including this word |
+| 2 | frame_seq | expected frame sequence, low 16 bits |
+| 2 | n_upd/format | bits 0-14 update count; bit 15 selects completed list |
+| 2 | pal | PALTAB index plus one; zero means no CRAM change |
+| variable | shadow updates | bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
+| `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
+| 0/1 | audio pad | zero byte when needed for word alignment |
+| 2 | n_runs | cold-run count |
+| `n_runs * 4` | cold runs | source-aware physical transfer descriptors |
 
-| Size | Field       | Meaning |
-|------|-------------|---------|
-| 2    | total_len   | total block length **including these 2 bytes**; always even |
-| 2    | frame_seq   | frame sequence number (low 16 bits). The player checks this against the frame it expects; a mismatch means the stream desynced (e.g. a dropped CD sector) — the frame's updates are discarded (previous frame held) and the desync counter increments. |
-| 2    | n_upd/format | bits 0-14 = number of cell updates; bit 15 = v11 completed-list layout |
-| 2    | pal         | v14+ stores the v3 palette reference as a `u16`: `segment index + 1` switches CRAM this frame to that entry of the pre-loaded PALTAB; `0` means no change. (v1/v2 used a 0/1 flag followed by a 128-byte in-stream CRAM payload.) |
-| variable | shadow updates | legacy: `ceil(cells/8)` bitmap, a zero byte if that size is odd, then `n_upd x 2` source-coded entries; completed list: `n_upd x 4` offset/final-entry pairs (see below) |
-| 4 + audio_bytes/2 | audio | `s16 predictor, u8 step_index, u8 reserved_zero`, then low-nibble-first IMA codes. Current prefetched streams carry this logical source chunk `audio_preload_sec` frames ahead. |
-| 0/1  | audio pad   | zero byte when needed to align the optional suffix to a word boundary and keep the legacy block end even |
-| 2    | n_runs      | present when header feature bit 0 is set; number of cold-slot runs |
-| n_runs x 4 | cold runs | present when feature bit 0 is set; repeated v12 indexed descriptor pairs in pattern-consumption order |
+`frame_seq` detects a shifted control stream. Sector MSF continuity is checked
+at the reader; a gap causes re-seek and exact re-read. A remaining sequence
+mismatch holds the previous frame and increments the desync counter.
 
-For the legacy representation, the suffix repeats information already encoded
-by the cold entry flag, source, and tile index. For the completed-list
-representation it is the only physical pattern-delivery description.
-The encoder keeps logical cache residency and cold/reuse decisions separate
-from physical VRAM numbering. By default, one movie-wide slot permutation maps
-the logical allocator onto physical slots, then cold patterns are consumed in
-ascending physical-slot order. This transfer order is intentionally independent
-of the cell/name-update order; the final name entries already contain their
-physical tile indices. The permutation is a bijection, so resident reuse and
-displayed pattern identity are unchanged. A seed pass freezes logical
-decisions, a second pass pays the seed map's exact run-control cost, and the
-delivered map is then derived from those completed decisions. The finalizer
-replays the whole quality budget with the delivered source-aware run counts and
-rejects a map that would make any frozen decision unfunded. A profile may
-disable this optional permutation; logical numbering then remains the identity
-physical numbering and all map-specific passes disappear. The same cold-run
-suffix, byte accounting, capacity checks, and physical delivery proof still
-apply.
-The first word stores the zero-based VRAM slot in bits 0-10 and DicBuf index
-bits 3-7 in bits 11-15. The second word stores count in bits 0-10, DicBuf index
-bits 0-2 in bits 11-13, and source in bits 14-15. Source values are 0=Prg,
-1=Wr (frame parity selects Wr0 or Wr1), 2=Dic, and 3=reserved/invalid. Non-Dic
-runs require all index bits to be zero. A source change starts a new run even
-when VRAM slots remain consecutive; a Dic run also splits unless both VRAM
-slots and dictionary indices remain consecutive. Without feature bit 5, the sum of all masked counts is the
-number of cold update entries. With bit 5, it is the number of physical pattern
-loads and may additionally include Prg raw prefetch loads. Each run stays
-within the header's `pool` slots. The Main CPU can therefore
-build its source-aware transfer table without walking all update entries a
-second time.
+Bitmap updates use `ceil(cells / 8)` bytes, followed by a zero byte when that
+size is odd. One 16-bit entry follows for each set bit in ascending cell order:
 
-**Update entry** (2 bytes each), one per set bit in the bitmap, in ascending
-cell order:
+- bit 15: cold physical load;
+- bits 13-14: palette line;
+- bits 11-12: source (`0` Prg, `1` WordBuf, `2` DicBuf, `3` invalid);
+- bits 0-10: VDP tile index, `base + physical_slot`.
 
-- bit 15 (`0x8000`) = **cold**: this cell writes a new pattern into its VRAM
-  slot from the encoded physical source. If clear, the cell only re-points its
-  name-table entry to a pattern already resident and source must be zero.
-- bits 13..14 = the palette line (0..3).
-- bits 11..12 = source: 0=Prg, 1=Wr (Wr0 on even timed frames, Wr1 on odd),
-  2=Dic, 3=reserved/invalid.
-- bits 0..10 = the VDP tile index = `base + slot` (the player recovers the VRAM
-  slot as `(entry & 0x07FF) - base`).
+The displayed name-table word is `entry & 0x67FF`.
 
-The player writes `entry & 0x67FF` to the VDP name table, removing the cold and
-source metadata while preserving palette and tile index. Priority and flip bits
-are unused. This is the core *tile texture reuse*: most cells cost just this
-2-byte entry.
+A completed-list item contains `u16 shadow_byte_offset` and
+`u16 final_name_entry`. The offset is even and below `cells * 2`; the final
+entry contains no cold/source metadata. Frame 0 always uses bitmap controls.
+The encoder selects a list only when it is faster and no larger than the
+bitmap form, and the packer verifies that frozen choice.
 
-**Completed shadow-list item** (4 bytes each, selected when `n_upd` bit 15 is
-set), in ascending cell order:
+The allocator's slot is the physical VRAM slot. Cold loads are consumed in
+ascending physical-slot order. Run descriptors and all sector/deadline proofs
+account for that exact order and byte cost.
 
-- `u16 shadow_byte_offset` = `cell * 2`; it must be even and below
-  `cells * 2` in a valid stream.
-- `u16 final_name_entry` = the display-ready legacy entry masked with
-  `0x67FF`; it contains palette and tile index but no cold/source metadata.
+A cold-run descriptor contains two words:
 
-The Main CPU writes each final word directly into its shadow name table. Its
-runtime offset mask confines a corrupt item to an even address inside a padded
-4 KiB shadow allocation. The Sub CPU uses `n_upd * 4` to locate audio and then
-uses the ordinary source-aware run suffix for every physical pattern transfer.
-Frame 0 always uses the legacy representation.
+- word 0: physical slot in bits 0-10 and DicBuf index bits 3-7 in bits 11-15;
+- word 1: count in bits 0-10, DicBuf index bits 0-2 in bits 11-13, and source in
+  bits 14-15.
 
-The encoder freezes this choice per frame. The qualified path accepts a list
-only when it is faster and no larger than the legacy bytes. Early full-length
-testing showed that unchanged PrgBuf and control-readiness minima alone do not
-protect the Sub CPU from the cumulative cost of copying larger controls, so the
-planned positive-growth cycle/byte threshold remains disabled. The complete
-physical schedule must still preserve the all-legacy minima. The packer
-recomputes the cycle model and rejects a stale or non-improving frozen choice.
+Non-Dic runs require zero index bits. A source change starts another run. A Dic
+run also splits unless both slot and dictionary index remain consecutive.
+Without raw prefetch, masked run counts equal cold update entries. With raw
+prefetch, they equal all physical loads and may include future Prg patterns
+without same-frame name updates.
 
-**Audio**: PCM streams carry `audio_bytes` per frame of RF5C164 sign-magnitude 8-bit PCM (positive
-= `0..0x7F`, negative = `0x80 | magnitude`, magnitude clamped to `0x7E` so the
-byte `0xFF` — the RF5C164 loop-stop marker — never appears), fed to the PCM chip
-in sync. ADPCM22 controls carry the smaller checkpointed chunk described above;
-the Sub CPU reconstructs exactly `audio_bytes` RF5C164 samples into its bank-local
-buffer before calling the same wave-RAM writer.
+Audio is always checkpointed IMA ADPCM. Each chunk begins with `s16 predictor`,
+`u8 step_index`, and a reserved zero byte, followed by one low-nibble-first code
+per sample. Sub decodes exactly `audio_bytes` samples into its bank-local
+buffer.
 
-## How the player advances (and the extension points)
+## Player reconstruction
 
-The Sub CPU reads `total_len` at the start of each control block, copies exactly
-`total_len` bytes out of the circular apply buffer (linearised into a Word-RAM
-scratch area), and advances its cursor by `total_len` (`boot/movieplay_sp.s`).
-It parses by length, not by scanning to a fixed end, so `total_len` must stay
-even (odd desyncs by 1 byte per frame).
+Sub copies exactly `total_len` bytes from the APPLY ring into Word RAM and
+advances by that even length. Main optionally reloads CRAM from PALTAB, applies
+source-aware physical pattern transfers to the resident VRAM pool, and updates
+the shadow name table. Most reused cells require only a two-byte name entry.
+Audio is decoded and written to the PCM chip. The two 1M Word-RAM banks swap at
+frame boundaries.
 
-**Slip detection and recovery.** Right after copying a block the player checks
-`frame_seq` against the frame it expects. A mismatch means the continuous
-`BODY.DAT` read dropped a sector (the ring and control streams shifted). The player detects this
-at the source: `drain1` reads each sector's MSF header and, when it sees a gap
-(non-consecutive MSF), re-seeks (`CDC_STOP`+`ROM_READN`) to the lost sector and
-re-reads it — recovering the exact data with no quality loss. Slips are rare, so
-the brief re-seek is cheap; the `frame_seq` check is the backstop (a mismatched
-frame is dropped, holding the previous frame). The debug HUD shows `S` =
-slip/re-seek count and `D` = residual desyncs (normally 0).
+<a id="jp"></a>
 
-The forward-compatible extension point is **appending within `total_len`**.
-Feature bit 0 uses this extension point for
-   the cold-run suffix. Because the player advances by `total_len`, trailing
-   bytes remain skippable by a player that does not know them. Any future
-   suffix must stay inside `total_len`, follow the selected update
-   representation, and keep the complete block even.
+# HEADER.DAT / BODY.DAT バイナリ形式（TTRC）
 
-## Reconstruction (player)
+`HEADER.DAT` と `BODY.DAT` は **Tile Texture Reuse Codec** のディスク上の
+2ファイルです。`tools/pack_stream.py` が `tools/sim.py` の判断ログから生成し、
+`boot/movieplay_sp.s` がストリーミング、`boot/movieplay_ip.s` が表示を担当します。
 
-The player keeps a VRAM **tile pool** of `pool` resident patterns (an
-LRU/double-buffer-protected ring, `base + slot` in VRAM) and a name table. Per
-frame: if `pal`, reload CRAM from the Main-RAM PALTAB table (entry `pal - 1`);
-DMA the payload's cold patterns into their slots; for every set bit in the
-bitmap, apply its entry — cold entries having just filled a slot, warm entries
-re-pointing the name table to an existing `base + slot`. Audio is streamed to
-the PCM chip. A 1M/1M Word RAM double buffer swaps at frame boundaries.
+packer はディスク外の解析・回帰確認用に
+`MOVIE.DAT = HEADER.DAT || BODY.DAT` も生成します。ディスクに収録するのは
+`HEADER.DAT` と `BODY.DAT` だけです。
+
+複数バイト整数はすべてビッグエンディアンです。各領域は sector 境界に揃えます。
+Sub CPU は `HEADER.DAT` 全体を読み、時間制約のある読み出しを始める前に frame 0
+を準備し、その後 `BODY.DAT` に対して1回の連続 `ROM_READN` を発行します。
+
+```text
+SECTOR         = 2048            # Mode-1 CD sector 1個
+MAGIC          = "TTRC"          # 0x54545243
+VERSION        = 16
+FRAME_SECTORS  = 5               # routing entry内の有効sector上限
+PAT            = 32              # 8x8 4bpp tile pattern 1個
+BASE           = 1               # VRAM tile index = BASE + physical slot
+```
+
+player が受け付ける version は16です。bitmap controlではbitmapサイズが奇数byteの
+ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
+controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
+偶数長を変えません。
+
+## ファイル配置
+
+```text
+HEADER.DAT
++--------------------------------------------------+  sector 0
+| HEADER (1 sector, zero-padded)                   |
++--------------------------------------------------+
+| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + optional VRAM sidecar
++--------------------------------------------------+
+| ADPCM_TABLE (5 sectors)                          |  8,800 B lookup image
++--------------------------------------------------+
+| WR0_PRELOAD (wr0_sec sectors)                    |  WordBuf0 patterns
++--------------------------------------------------+
+| WR1_PRELOAD (wr1_sec sectors)                    |  WordBuf1 patterns
++--------------------------------------------------+
+| DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
++--------------------------------------------------+
+| STARTUP_AUDIO (audio_preload_sec sectors)        |  one decoded chunk per sector
++--------------------------------------------------+
+| FRAME 0 (f0_ctrl_sec + f0_pat_sec sectors)       |  control, then patterns
++--------------------------------------------------+
+| ROUTING (routing_sec sectors)                    |  one byte per frame
++--------------------------------------------------+
+| PREBUFFER (prebuf_sec sectors)                   |  frame-1 PrgBuf prefill
++--------------------------------------------------+
+
+BODY.DAT
++--------------------------------------------------+  sector 0
+| FRAME 1  (control, future payload, rate pad)     |
+| ...                                              |
+| FRAME nfr-1                                      |
++--------------------------------------------------+
+```
+
+Sub CPUはPCM停止中に `HEADER.DAT` 全体を読み、STARTUP_AUDIOをwave RAMへ書きます。
+`BODY.DAT` を止めたままframe 0を展開し、完成したWord-RAM bankをMainへ渡します。
+Mainがframe 0を構築・表示してBODY開始を返答すると、Subは `BODY.DAT` を開始して
+frame 1を先に読み切り、その後に時間制約のあるhandoffへ入ります。PCMは最初の
+timed handoffで始まります。
+
+frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
+patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
+boot VRAM sidecarを使って将来patternを置けます。frame 0のCold、Pre、DMA、Run、
+Bandはtimed workではないため解析では0とします。
+
+routing tableは未使用のAPPLY ringへ一時配置し、両方の物理1M Word-RAM bankの
+末尾16 KiBへコピーします。表示handoffに応じてSub所有bankが変わり、deliveryが
+先行し得るため、両bankに同一copyが必要です。
+
+frame 0 patternはPRG RAM `0x71000..0x7A000` の固定36 KiB boot-only staging
+領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。frame 0
+展開完了までBODYを開始しないため、timed PrgBufとそのjitter reserveから独立しています。
+
+## Header
+
+先頭22 byteは `struct ">4sHHHHHHHHH"` です。
+
+| Off | Size | Field | 意味 |
+|---:|---:|---|---|
+| 0 | 4 | magic | `"TTRC"` |
+| 4 | 2 | version | 必ず `16` |
+| 6 | 2 | frames | 総frame数（`nfr`） |
+| 8 | 2 | tcols | tile gridの列数 |
+| 10 | 2 | trows | tile gridの行数 |
+| 12 | 2 | cells | `tcols * trows` |
+| 14 | 2 | pool | resident VRAM tile poolの大きさ |
+| 16 | 2 | base | physical slot 0のtile index |
+| 18 | 2 | frame_sectors | routing entry当たりの有効sector上限、`5` |
+| 20 | 2 | n_seg | palette segment数 |
+
+次の16 byteは `struct ">LLLL"` です。
+
+| Off | Size | Field | 意味 |
+|---:|---:|---|---|
+| 22 | 4 | prebuf_pat | frame 1より前にPrgBufへ置くpattern数 |
+| 26 | 4 | routing_sec | ROUTINGのsector数 |
+| 30 | 4 | prebuf_sec | PREBUFFERのsector数 |
+| 34 | 4 | ring_peak | delivery後、消費前の物理PrgBuf最大使用量 |
+
+残りのfieldは次の通りです。
+
+| Off | Size | Field | 意味 |
+|---:|---:|---|---|
+| 38 | 1 | display_mode | `0` H32、`1` H40、`2` mode4 |
+| 39 | 1 | pad | zero |
+| 40 | 4 | f0_ctrl_sec | FRAME 0 control sector数 |
+| 44 | 4 | f0_pat_sec | FRAME 0 pattern sector数 |
+| 48 | 4 | paltab_sec | BOOT_STAGE sector数 |
+| 52 | 2 | vsync_n | 最も近いdisplay VBlank間隔 |
+| 54 | 2 | audio_bytes | 実効playback frameごとの偶数decoded sample数 |
+| 56 | 2 | fps_int | nominal content rate |
+| 58 | 2 | audio_fd | RF5C164 frequency delta |
+| 60 | 2 | audio_preload_sec | STARTUP_AUDIO sector数 |
+| 62 | 2 | features | 下記のfeature bit |
+| 64 | 128 | seg0 | frame 0のCRAM palette |
+| 192 | 4 | player_signature | byte 0〜63のCRC-32 |
+| 196 | 20 | PSUP | feature bit 3がsetのときのpattern-supply extension |
+| 216 | 1832 | pad | zero |
+
+`FEATURE_FIXED_N` がsetなら `vsync_n` が正式なcadenceです。clearならdisplay
+hintとして使い、deliveryは `75 / fps_int` に従います。`audio_bytes` は通常、
+15 fpsで1472、24 fpsで920、30 fpsで736です。live ADPCM chunkはalignment前で
+`4 + audio_bytes / 2` byteです。
+
+player signatureは同じheader sectorから生成する `player_constants.inc` とともに
+両player objectへ埋め込みます。playerとheaderが不一致なら診断表示で停止します。
+
+### Feature bit
+
+| Bit | Name | 意味 |
+|---:|---|---|
+| 0 | `FEATURE_COLD_RUNS` | 各control末尾にcold-run suffixがある |
+| 1 | `FEATURE_FIXED_N` | `vsync_n` がdisplayとCD cadenceを決める |
+| 2 | reserved | clearでなければならない |
+| 3 | `FEATURE_PATTERN_SUPPLY` | source bit、PSUP、boot preload領域が有効 |
+| 4 | `FEATURE_SHADOW_UPDATE_LISTS` | completed shadow-update listを使用できる |
+| 5 | `FEATURE_VRAM_RAW_PREFETCH` | 同frameのname updateなしに将来Prg patternをcold runで置ける |
+| 6 | `FEATURE_DICBUF_INDEXED_RUNS` | DicBuf runが再利用可能なdictionary indexを持つ |
+| 7 | `FEATURE_BOOT_VRAM_SIDECAR` | BOOT_STAGEがdirect-to-VRAM recordを持つ |
+
+未知のfeature bitは拒否します。
+
+### PSUP extension
+
+PSUPは `struct ">4s8H"` です。
+
+| Off | Size | Field | 意味 |
+|---:|---:|---|---|
+| 196 | 4 | magic | `"PSUP"` |
+| 200 | 2 | version | 必ず `2` |
+| 202 | 2 | reserved | zero |
+| 204 | 2 | wr0_patterns | WordBuf0数、最大880 |
+| 206 | 2 | wr1_patterns | WordBuf1数、最大880 |
+| 208 | 2 | dic_patterns | DicBuf数、最大256 |
+| 210 | 2 | wr0_sectors | WR0_PRELOAD sector数 |
+| 212 | 2 | wr1_sectors | WR1_PRELOAD sector数 |
+| 214 | 2 | dic_sectors | DIC_PRELOAD sector数 |
+
+各sector数は `ceil(patterns * 32 / 2048)` と一致する必要があります。生成する
+player constantsが6値すべてを固定します。
+
+128-byte CRAM blockは、16個のGenesis colour word
+（`0000BBB0GGG0RRR0`）を持つpalette line 4本です。各lineのentry 0は透明です。
+使用可能な60 entryのうち、最暗色をline 0/index 1、最明色をline 0/index 15へ
+置いてから量子化します。色の集合は変えず、位置だけを変えます。
+
+## Boot stage
+
+BOOT_STAGEは24 KiBで、Word-RAM bank offset `+0xA000` へcopyします。全palette
+segmentは `+0xB000` から128 byteずつ連続配置します。Mainは起動時に1回だけ
+8 KiBのPALTAB（`0xFFB000..0xFFD000`）へcopyします。上限は64 segmentです。
+timed palette switchはcontrol blockの `pal` でPALTABを参照するため、CRAM dataは
+同じframeのCD deliveryに依存しません。
+
+feature bit 7がsetなら、`+0xAFC0` のdirectoryに `"BVRM"` と3個のbig-endian
+`u16` record countがあります。各recordは `u16 physical_slot` と32-byte pattern
+です。recordは次の保存領域に配置します。
+
+- `+0xA000..+0xAF00`
+- palette tableの未使用末尾から `+0xD000`
+- `+0xF000..+0x10000`
+
+SubがBODYを開始する前に、Mainがrecordを未参照のresident VRAM slotへ直接書きます。
+movie restartでも同じ手順を実行します。
+
+## ADPCM table
+
+BOOT_STAGEの直後に5 sector置きます。先頭8,800 byteは不変のlookup data、残り
+1,440 byteはzeroです。
+
+| Offset | Size | 内容 |
+|---:|---:|---|
+| 0 | 2,848 B | `u16 next_index_x32[89][16]` |
+| 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
+| 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
+
+Subは両方の物理bankのWord-RAM offset `+0x12800` へ2,200 longずつcopyします。
+decoded PCM bufferは各bankの `+0x14C00` にあります。
+
+## Pattern preload領域
+
+ADPCM tableの後にWR0_PRELOAD、WR1_PRELOAD、DIC_PRELOADの順で置きます。各領域は
+32-byte patternを持ち、宣言したsector境界までzero padします。
+
+WordBuf0とWordBuf1は、それぞれ物理bank offset `+0x15200` に最大880個の異なる
+patternを持ちます。偶数timed frameはWordBuf0、奇数timed frameはWordBuf1を
+消費します。sequenceは単調に進み、補充しません。
+
+DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0xD000` に一時配置し、
+Main RAM `0xFF6600..0xFF8600` へ起動時に1回copyします。controlは8-bit indexで
+entryを参照します。
+
+## Startup audio
+
+各STARTUP_AUDIO sectorは、先頭にdecoded `audio_bytes` PCM chunkを1個置き、残りを
+zero padします。SubはPCM停止中にsource先頭のchunkを `SYNC_LEAD` からwave RAMへ
+追記します。live controlは続くsource順を維持します。PCMはframe 0表示後に始まる
+ため、source sample 0は最初のmovie表示frameと揃います。
+
+## Routing table
+
+ROUTINGはframeごとに1 byteです。
+
+| Bits | Field | 意味 |
+|---|---|---|
+| 0-2 | `n_ctrl_sec` | BODY slot先頭のcontrol sector数 |
+| 3-5 | `total_sec` | 有効なcontrol + payload sector数 |
+| 6-7 | reserved | zero |
+
+byte値は `(total_sec << 3) | n_ctrl_sec` で、
+`n_pay_sec = total_sec - n_ctrl_sec` です。playerは
+`n_ctrl_sec <= total_sec <= FRAME_SECTORS` と
+`routing_sec = ceil(nfr / 2048)` を要求します。frame 0のentryと末尾の未使用byteは
+zeroです。16 KiBのresident copyには最大16,384 frameが入ります。
+
+controlとpayloadはsector境界で分割した連続streamです。1個のcontrol sectorが複数の
+将来blockを完成させることがあり、payloadは通常、後のframeで使うpatternを先読み
+します。物理scheduleは次を証明します。
+
+- slotのcontrol prefix到着後、そのcontrol block全体がAPPLY ringにある
+- frameのcontrol prefixを読む前に、PREBUFFERと過去のBODY payloadが、そのframeで
+  消費する全Prg patternを届けている
+- control byte、payload byte、run descriptor、CRAM switch、padが、同じ物理sector
+  planに収まる
+
+### 物理cadence
+
+物理slot sizeは次の通りです。
+
+```text
+fsec = max(n_ctrl_sec + n_pay_sec, ratedelta - lead)
+```
+
+fixed-N playbackではpackerとplayerが `1001*N/800` を約分したCD-sector accumulator
+を使います。N=2は1周期に2-sector slotを199個、3-sector slotを201個生成します。
+N=4は5-sector slotを199個、6-sector slotを1個生成します。routing byteの有効data
+上限は5 sectorなので、6個目はpadだけに使えます。
+
+delivery-paced playbackでは次を使います。
+
+```text
+acc += 75
+ratedelta = acc // fps_int
+acc %= fps_int
+```
+
+`lead` は `fsec - ratedelta` だけ増えます。必要なburstはそのslotの新規allowanceを
+超えられますが、後の軽いslotがpadを省いてleadを返済します。packerはPrgBuf空きと
+全deadlineが許す範囲で未使用rate allowanceを将来payloadに置き換えます。
+
+pumpのback-pressureは次sectorの行き先ごとに適用します。controlならAPPLY空き、
+payloadならPrgBuf空き、padならbuffer checkなしです。payloadはcurrent frameが
+patternを消費する前に届き得るため、schedulerは消費前のPrgBuf peakを制限します。
+
+## Prebuffer
+
+PREBUFFERはframe 1以降で最初に使う `prebuf_pat` 個のPrg patternを持ちます。playback
+前に読み込み、物理delivery上限からframe rate別jitter reserveを引いた値に制限します。
+15 fpsで382 KiB、24 fpsで397 KiB、30 fpsで402 KiBです。
+
+## BODY frame slot
+
+frame 1から `nfr - 1` までは次の形式です。
+
+```text
+[ n_ctrl_sec sectors : control ]  control streamの次のbyte列
+[ n_pay_sec sectors  : payload ]  将来Prg streamの次のbyte列
+[ pad to fsec sectors ]
+```
+
+有効control byte、有効payload byte、padの合計は `fsec * 2048` です。HEADER領域と
+frame 0はBODY deliveryに含みません。
+
+payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-bit pixelを
+2個持ちます。frameが消費するPrg patternはPREBUFFERまたは過去のBODY slotから
+届いています。WordBufとDicBuf loadにはBODY payloadがありません。
+
+### Control block
+
+| Size | Field | 意味 |
+|---:|---|---|
+| 2 | total_len | このwordを含むblock全体の偶数長 |
+| 2 | frame_seq | 期待frame sequenceの下位16 bit |
+| 2 | n_upd/format | bits 0-14はupdate数、bit 15はcompleted list |
+| 2 | pal | PALTAB index + 1、zeroはCRAM変更なし |
+| variable | shadow updates | bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
+| `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
+| 0/1 | audio pad | word alignmentに必要なzero byte |
+| 2 | n_runs | cold-run数 |
+| `n_runs * 4` | cold runs | source-aware physical transfer descriptor |
+
+`frame_seq` はcontrol streamのずれを検出します。readerはsector MSFの連続性を確認し、
+gapがあればre-seekして正確に読み直します。それでもsequenceが一致しない場合は
+前frameを保持し、desync counterを増やします。
+
+bitmap updateは `ceil(cells / 8)` byteで、そのサイズが奇数ならzero byteを続けます。
+set bitごとにcell昇順で16-bit entryを1個置きます。
+
+- bit 15: cold physical load
+- bits 13-14: palette line
+- bits 11-12: source（`0` Prg、`1` WordBuf、`2` DicBuf、`3` invalid）
+- bits 0-10: VDP tile index、`base + physical_slot`
+
+表示name-table wordは `entry & 0x67FF` です。
+
+completed-list itemは `u16 shadow_byte_offset` と `u16 final_name_entry` です。
+offsetは偶数かつ `cells * 2` 未満で、final entryはcold/source metadataを持ちません。
+frame 0は必ずbitmap controlを使います。encoderはbitmap形式以下のサイズで、かつ
+高速な場合だけlistを選び、packerが固定済み選択を検証します。
+
+allocatorのslotがそのまま物理VRAM slotです。cold loadはphysical slot昇順で消費
+します。run descriptorと全sector・deadline proofは、その正確な順序とbyte costを
+含めます。
+
+cold-run descriptorは2 wordです。
+
+- word 0: bits 0-10がphysical slot、bits 11-15がDicBuf indexのbits 3-7
+- word 1: bits 0-10がcount、bits 11-13がDicBuf indexのbits 0-2、
+  bits 14-15がsource
+
+Dic以外のrunはindex bitがzeroでなければなりません。sourceが変われば別runです。
+Dic runはslotとdictionary indexの両方が連続しなければ分割します。raw prefetchなし
+ではmasked run count合計がcold update数です。raw prefetchありでは全physical load
+数であり、同frameのname updateを持たない将来Prg patternも含められます。
+
+audioは常にcheckpointed IMA ADPCMです。chunk先頭に `s16 predictor`、
+`u8 step_index`、reserved zero byteを置き、sampleごとにlow-nibble-first codeを
+続けます。Subはbank-local bufferへ正確に `audio_bytes` sampleをdecodeします。
+
+## Playerでの再構築
+
+SubはAPPLY ringから正確に `total_len` byteをWord RAMへcopyし、その偶数長だけcursorを
+進めます。Mainは必要ならPALTABからCRAMを切り替え、source-aware physical pattern
+transferをresident VRAM poolへ適用し、shadow name tableを更新します。再利用cellの
+大半は2-byte name entryだけで済みます。audioをdecodeしてPCM chipへ書き、frame境界
+で2つの1M Word-RAM bankを交換します。
