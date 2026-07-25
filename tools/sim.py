@@ -1124,7 +1124,7 @@ def main():
         print(
             "source preprocessing: endpoint_snap "
             f"black_max={PREPROCESS_BLACK_MAX} white_min={PREPROCESS_WHITE_MIN}")
-    # 各処理フェーズの所要時間を計測し、終了時にフレームあたり秒数付きで報告する。
+    # Stage timing uses the same short names as ENCODE.md.
     _t_all = time.perf_counter()
     _phases = []
 
@@ -1134,6 +1134,7 @@ def main():
         return time.perf_counter()
     _t = time.perf_counter()
 
+    # Extract: create the master, comparison, and audio inputs.
     # CBRSIM_REUSE=1: 既に展開済みの master/raw/audio を再利用し ffmpeg 展開を省く
     # (レイアウト調整でパネルだけ描き直したいとき用。OUTは丸ごとクリアしない)。
     reuse = (
@@ -1165,7 +1166,7 @@ def main():
              "-ss", "0", "-t", DURATION, "-i", SRC,
              "-vn", "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
              str(OUT / AUDIO_FILE)])
-    _t = _mark("展開(reuse)" if cached else "抽出(ffmpeg)", _t)
+    _t = _mark("Extract", _t)
     frames = sorted(master_dir.glob("*.png"))
     n = len(frames)
     body_fresh = stream_schedule.body_fresh_byte_supply(
@@ -1242,6 +1243,7 @@ def main():
         print(f"  PRG先読み(patch): {len(prg_patch)}カット, distinct {uniq} tiles "
               f"({uniq*PATTERN_BYTES/1024:.0f}KB) をロード時バッファ")
 
+    # Palette: train the CRAM palette segments.
     print(f"training palettes ({PAL_ALGO})  DITHER={DITHER_ON} SEGPAL={SEGPAL_ON} NEAR={NEAR_ON} ...")
     frame_cache = FrameFeatureCache(frames) if PAL_ALGO == MOSAIC_GM else None
     _global_pals, seg_pals, frame_seg, seg_bounds, palette_stats = segment_and_train(
@@ -1254,7 +1256,7 @@ def main():
     if SEGPAL_ON:
         print(f"  per-segment palettes: {len(seg_pals)}区間, CRAM差替 {len(seg_bounds)}点 "
               f"(candidates={palette_stats['candidate_segments']})")
-    _t = _mark("パレット学習", _t)
+    _t = _mark("Palette", _t)
 
     border_mask = border_weight_mask()
     border_bool = border_mask < 1.0        # 外周2タイル(True)。ここのMissは飢餓に数えない
@@ -1365,7 +1367,7 @@ def main():
     dec_frames = []            # 実機決定ログ: 各要素 = そのフレームの [(cell, pal, key), ...]
     dec_miss = []              # per-frame Miss数(デバッグオーバーレイ用。デコード側では算出不能)
     dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss](デバッグ欄用)
-    dec_category_rows = []     # analysis用: 1 byte/cell の表示カテゴリ
+    dec_category_rows = []     # analysis: 2-byte/cell overlapping category masks
     transfer_tiles_log = []    # pack/player照合用: cold pattern tile数
     transfer_runs_log = []     # pack/player照合用: packed cold-run record数
     supply_sources_log = []    # per-frame update-aligned Prg/Wr/Dic source codes
@@ -1387,6 +1389,7 @@ def main():
           f"index15 brightest swaps "
           f"{pal_extreme_stats['bright_swapped_segments']}/{pal_extreme_stats['segments']}")
 
+    # Quantize: build palette assignments and indexed patterns.
     # フレーム独立の割当/索引を並列で前計算(実行時間の大半)。以降のループは逐次(状態依存)。
     Q_detail, Q_assign, Q_pidx = precompute_quant(
         frames, seg_pals, frame_seg, frame_cache=frame_cache)
@@ -1395,7 +1398,7 @@ def main():
     # lossless index-15 canonicalizer preserves rendered pixels.
     seg_pals, pal15_stats = canonicalize_p0_index15(
         seg_pals, frame_seg, Q_assign, Q_pidx)
-    _t = _mark("量子化", _t)
+    _t = _mark("Quantize", _t)
     # palettes.bin is the legacy fallback CRAM image.  In segmented mode the
     # separately trained global palette was never the actual initial CRAM, so
     # write canonical segment 0 and keep every consumer aligned with PALTAB.
@@ -1410,6 +1413,7 @@ def main():
           f"({pal15_stats['reassigned_tiles']} tile assignments and "
           f"{pal15_stats['reindexed_pixels']} indices remapped, frame0 included)")
 
+    # Forecast: build future demand and physical-delivery limits.
     # Optional quality upgrades use a whole-movie reserve plan. The dry run
     # follows the exact quantized target with the shared VRAM allocator. A
     # backwards pass then retains only the quality-budget bytes that future
@@ -1424,8 +1428,8 @@ def main():
     cram_switch_frames = np.zeros(n, bool)
     if n > 1:
         cram_switch_frames[1:] = frame_seg[1:] != frame_seg[:-1]
-    def plan_future_demand():
-        """Build the one-pass future-demand and boot-prefetch plan."""
+    def build_forecast():
+        """Build the Forecast stage's demand and boot-prefetch plan."""
         # Only changes that fit Near may degrade gracefully. Anything beyond
         # Near is at risk of Flbk or Miss and justifies moving budget capacity
         # away from an earlier frame.
@@ -1555,7 +1559,7 @@ def main():
         demand_prediction,
         supply_budget,
         prefetch_forecast,
-    ) = plan_future_demand()
+    ) = build_forecast()
     if np.any(cram_switch_frames):
         full_name_refresh_bytes = C_CELLS * NAME_BYTES
         protected_all = np.all(
@@ -1698,8 +1702,9 @@ def main():
         f"requested_patterns={int(prefetch_forecast.requested_patterns.sum())}",
         flush=True,
     )
-    _t = _mark("格上げ残量計画", _t)
+    _t = _mark("Forecast", _t)
 
+    # Encode: make and commit the frame decisions in playback order.
     # Optional, low-frequency timing for the sequential decision loop.  Keep
     # this disabled for normal encodes: the nested resident-search timers are
     # deliberately detailed enough to add measurable profiling overhead.
@@ -2941,8 +2946,8 @@ def main():
 
     if _gc_was_enabled:
         _gc.enable()
-    _loop_total = time.perf_counter() - _t
-    _phases.append(("差分ループ:commit/探索", _loop_total))
+    _t = _mark("Encode", _t)
+    _loop_total = _phases[-1][1]
     if _loop_profile:
         _profiled_total = sum(_lp_totals.values())
         print("loop profile (exclusive decision-loop sections):", flush=True)
@@ -2992,6 +2997,7 @@ def main():
             flush=True,
         )
 
+    # Finalize: prove the complete physical schedule and write artifacts.
     final_control_trace = (
         np.asarray(body_fixed_control_bytes, np.int64)
         + np.asarray(name_records_log, np.int64) * NAME_BYTES
@@ -3050,8 +3056,6 @@ def main():
 
     print(f"coldlife {_cl_line('raw')}", flush=True)
     print(f"coldlife {_cl_line('buf')}", flush=True)
-
-    _t = time.perf_counter()
 
     fb_baseline = np.array(frame_bytes_log, np.float64)
     tr = np.array(tile_records_log, np.float64)       # encoder Raw funding class
@@ -3625,15 +3629,18 @@ def main():
         }, open(EMIT_DEC, "wb"), protocol=4)
         print(f"  実機決定ログ: {EMIT_DEC} ({len(dec_frames)} frames)")
 
-    _mark("保存(stats/npy/決定ログ)", _t)
+    _mark("Finalize", _t)
     total = time.perf_counter() - _t_all
     import gpu_quant
     gpu_on = gpu_quant.enabled()
-    print("\n==== エンコード時間サマリー ("
-          f"{n}フレーム {W}x{H} {C_CELLS}セル gpu={'ON' if gpu_on else 'off'}) ====")
+    print("\n==== Encode timing ("
+          f"{n} frames {W}x{H} {C_CELLS} cells "
+          f"gpu={'ON' if gpu_on else 'off'}) ====")
     for name, dt in _phases:
         print(f"  {name:<22s} {dt:8.1f}s  ({dt / n * 1000:7.1f} ms/frame  {dt / n:8.4f} s/frame)")
-    print(f"  {'合計':<22s} {total:8.1f}s  ({total / n * 1000:7.1f} ms/frame  {total / n:8.4f} s/frame)")
+    print(f"  {'Total':<22s} {total:8.1f}s  "
+          f"({total / n * 1000:7.1f} ms/frame  "
+          f"{total / n:8.4f} s/frame)")
 
 
 _SIM_CACHE_IDENTITY = None

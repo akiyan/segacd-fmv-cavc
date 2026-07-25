@@ -168,6 +168,9 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   - [`REMOVED.md`](REMOVED.md) - the archive for removed feature designs,
     dependencies, and implementation notes needed for a possible clean
     reimplementation. It is not a description of the active pipeline.
+  - [`ENCODE.md`](ENCODE.md) - the current simulation-encoding flow and a
+    versioned full-encode timing example. Keep its short stage names aligned
+    with the timers and comments in `tools/sim.py`.
 - Claude skill files under `.claude/skills/**/SKILL.md` are allowed and should
   remain in place.
 - Do not reintroduce game-specific extraction notes or copyrighted sample
