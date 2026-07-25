@@ -21,7 +21,7 @@ from analysis_logs import encoder_version
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-CACHE_SCHEMA_VERSION = 3
+CACHE_SCHEMA_VERSION = 4
 
 # Performance controls and per-pass plumbing do not change encoded decisions.
 _IGNORED_ENV_EXACT = {
@@ -29,17 +29,8 @@ _IGNORED_ENV_EXACT = {
     "CBRSIM_EMIT_DEC",
     "CBRSIM_FORCE_REENCODE",
     "CBRSIM_LOOP_PROFILE_INTERVAL",
-    "CBRSIM_NOPANELS",
     "CBRSIM_OUT",
-    "CBRSIM_PASS_CACHE",
-    "CBRSIM_PASS_CACHE_INVOCATION",
-    "CBRSIM_PNG_WORKERS",
     "CBRSIM_REUSE",
-    "CBRSIM_SLOT_LOCALITY_MAP",
-    "CBRSIM_SLOT_LOCALITY_RETRY_ALLOWED",
-    "CBRSIM_SLOT_LOCALITY_RETRY_MAP",
-    "CBRSIM_SLOT_LOCALITY_REUSE",
-    "CBRSIM_SLOT_LOCALITY_STAGE",
     "CBRSIM_TMPFS_PREPARED",
     "CBRSIM_WORKERS",
 }
@@ -162,6 +153,17 @@ def validate_completed_data(
         raise CacheValidationError("decision frame_seg length differs")
     if int(decisions.get("max_cold", -1)) <= 0:
         raise CacheValidationError("decision log has no valid cold cap")
+    categories = decisions.get("display_category_masks") or {}
+    if int(categories.get("schema_version", 0)) != 1:
+        raise CacheValidationError("decision log has no per-cell category masks")
+    category_rows = categories.get("rows")
+    cells = int((decisions.get("geom") or (0, 0, 0, 0))[2])
+    if (not isinstance(category_rows, list)
+            or len(category_rows) != frame_count
+            or any(len(row) != cells * np.dtype(np.uint16).itemsize
+                   for row in category_rows)):
+        raise CacheValidationError(
+            "decision per-cell category masks have the wrong shape")
 
     with np.load(data / "stats.npz") as stats:
         stats_lengths = {
@@ -172,7 +174,7 @@ def validate_completed_data(
     if frame_count not in stats_lengths:
         raise CacheValidationError("stats.npz does not contain the full trace")
 
-    for directory in ("master", "raw", "preview", "catmap"):
+    for directory in ("master", "raw"):
         count = sum(1 for _path in (data / directory).glob("*.png"))
         if count != frame_count:
             raise CacheValidationError(

@@ -133,6 +133,16 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
 
 - Keep public documentation in [`README.md`](README.md).
 - Keep agent and maintenance instructions in `AGENTS.md`.
+- Write every public Markdown document located at the repository root in
+  English first, followed by a complete Japanese version below it. Keep the
+  two language sections structurally equivalent and update both together.
+- Describe only the current system in public root documentation. Do not use
+  chronology-dependent narratives such as "previously", "formerly", "the old
+  implementation", or "this was changed to". State the active behavior
+  directly. [`REMOVED.md`](REMOVED.md) is the only exception: it preserves
+  timeless implementation and reimplementation notes for features that are
+  absent from the active system, without release chronology or historical
+  storytelling.
 - Keep Markdown self-contained. Do not link to or name GitHub issues from
   Markdown files; describe the current behavior or plan directly instead.
 - Do not add new scattered Markdown documents for project notes at the repo root.
@@ -155,6 +165,12 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     its field order, widths, timing units, rendering path, and OCR workflow in
     sync with `boot/movieplay_ip.s`, `tools/read_frameno.py`, and the HUD
     harnesses.
+  - [`REMOVED.md`](REMOVED.md) - the archive for removed feature designs,
+    dependencies, and implementation notes needed for a possible clean
+    reimplementation. It is not a description of the active pipeline.
+  - [`ENCODE.md`](ENCODE.md) - the current simulation-encoding flow and a
+    versioned full-encode timing example. Keep its short stage names aligned
+    with the timers and comments in `tools/sim.py`.
 - Claude skill files under `.claude/skills/**/SKILL.md` are allowed and should
   remain in place.
 - Do not reintroduce game-specific extraction notes or copyrighted sample
@@ -236,7 +252,7 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 | Analysis-frame video (from `sim`) | `videos/<stem>_analysis.mp4` |
 | Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_<encoder>.tsv` (`videos/<stem>_analysis.tsv` is a latest-run symlink) |
 | Straight sim output, video+audio, no overlay (`export_sim_video.py`) | `videos/<stem>_sim.mp4` |
-| Sim PNGs, stats, and decision data | `videos/<stem>/tmp/` (tmpfs-backed sim working-dir symlink) |
+| Sim inputs, stats, and decision data | `videos/<stem>/tmp/` (tmpfs-backed sim working-dir symlink; analysis creates `preview/` and `catmap/` here on demand) |
 | Lossless emulator capture (`record`) | `videos/<stem>_emu_lossless.mkv` |
 | Verification preview (`record`) | `videos/<stem>_emu_preview.mp4` |
 | Upload compilation (`compilation`) | `videos/<stem>_emu.mp4` |
@@ -546,10 +562,6 @@ evidence alone.
   can segfault the parent interpreter part-way through precomputation.
   CPU-only sim runs may keep the cheaper `fork` path. GPU runs default to the
   verified four feeder processes; `CBRSIM_WORKERS` remains a diagnostic override.
-- All supported Python versions default sim PNG output to synchronous writes.
-  Six concurrent Pillow/NumPy writer threads corrupted NumPy array metadata on
-  CPython 3.13 and crashed CPython 3.14 during long encodes.
-  `CBRSIM_PNG_WORKERS` is a diagnostic override, not a normal tuning knob.
 - If `/sbin/ub-device-create --verbose` says the `/dev/nvidia*` nodes already
   exist with correct permissions outside the sandbox, the host device setup is
   healthy; the missing nodes seen inside the sandbox are an isolation artifact.

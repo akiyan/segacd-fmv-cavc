@@ -1,202 +1,157 @@
-# Pattern supply and whole-movie quality planning
+EN / [JP](#jp)
+
+# Pattern Supply and Whole-Movie Quality Planning
 
 This document defines how exact 32-byte tile patterns reach VRAM, how the four
-physical pattern supplies differ from the encoder's offline quality budget, and
-how boot-only memory is assigned to the frames where it prevents concentrated
-Miss bursts.
+physical pattern supplies differ from the encoder's offline quality budget,
+and how boot-only memory is assigned to frames with concentrated exact demand.
 
 ## Names
 
-Use these names for physical pattern storage:
-
-| Public name | Analysis label | Memory | Capacity | Lifetime |
+| Public name | Analysis | Memory | Capacity | Lifetime |
 |---|---|---|---:|---|
-| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | cadence-specific: 12,224 / 12,704 / 12,864 patterns at 15 / 24 / 30fps (382 / 397 / 402 KiB) | Streamed circular buffer; refilled from `BODY.DAT`. |
-| `WordBuf0` | `Wr0` | physical 1M Word-RAM bank 0 | 880 patterns / 27.5 KiB | Loaded once from `HEADER.DAT`, then drained by eligible even frames. |
-| `WordBuf1` | `Wr1` | physical 1M Word-RAM bank 1 | 880 patterns / 27.5 KiB | Loaded once from `HEADER.DAT`, then drained by eligible odd frames. |
-| `DicBuf` | `Dic` | Main RAM | 256 patterns / 8 KiB | Staged through Word RAM at boot, copied once to Main RAM, then reused by 8-bit index. |
+| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 12,224 / 12,704 / 12,864 patterns at 15 / 24 / 30 fps (382 / 397 / 402 KiB) | Streamed circular buffer refilled from `BODY.DAT`. |
+| `WordBuf0` | `Wr0` | physical 1M Word-RAM bank 0 | 880 patterns / 27.5 KiB | Loaded from `HEADER.DAT`, then consumed by eligible even frames. |
+| `WordBuf1` | `Wr1` | physical 1M Word-RAM bank 1 | 880 patterns / 27.5 KiB | Loaded from `HEADER.DAT`, then consumed by eligible odd frames. |
+| `DicBuf` | `Dic` | Main RAM | 256 patterns / 8 KiB | Staged through Word RAM at boot, copied to Main RAM, and reused by 8-bit index. |
 
-`PrgBuf` is physically implemented as a ring buffer, which is why the player
-still has internal assembly constants such as `RING_BASE` and `RING_SIZE`.
-“RING” describes the data structure; `PrgBuf` is the public name of that
-pattern supply.
+`PrgBuf` is implemented as a ring buffer, so player assembly uses internal
+names such as `RING_BASE` and `RING_SIZE`. `PrgBuf` is the public name of the
+pattern supply; `RING_*` describes its data structure.
 
-The old name **Tank** is retired. There is no Tank object or Tank meter.
+There is no physical object or analysis meter named Tank. `Buf` is an encoder
+funding category for an exact cold load that uses saved quality allowance or a
+boot-preload credit. It is not a physical buffer.
 
-The analysis category **Buf** is not a buffer. It is a historical funding
-class meaning that an exact load used saved whole-movie quality budget rather
-than only the current frame's fresh allowance. It remains one of the seven tile
-categories, but there is no separate Buf meter.
+## Two Layers
 
-## Two separate layers
-
-The design has one offline planning layer and four physical supplies:
-
-| Layer | Exists where | Purpose |
+| Layer | Location | Purpose |
 |---|---|---|
 | whole-movie quality budget | encoder only | Moves permission to spend bytes from light frames to demanding frames. |
-| `PrgBuf` / `WordBuf0` / `WordBuf1` / `DicBuf` | player memory | Hold the exact pattern bytes that the chosen updates use. |
+| `PrgBuf`, `WordBuf0`, `WordBuf1`, `DicBuf` | player memory | Hold the exact pattern bytes selected for playback. |
 
-The quality budget is accounting, not a fifth player buffer. Its trace is kept
-for diagnostics but is not shown as a physical-supply meter. Its
-cadence-specific ceiling matches the usable `PrgBuf` scheduling ceiling so the
-encoder cannot assume more time-shifting freedom than the stream can provide.
-Equal ceilings do not make the two traces interchangeable.
+The quality budget is accounting, not a fifth player buffer. Its
+cadence-specific ceiling equals the normal `PrgBuf` scheduling ceiling so the
+encoder cannot assume more time-shifting freedom than the stream can deliver.
+The quality-budget and physical-occupancy traces remain different values.
 
 ## Objective
 
-The primary quality objective is to prevent many Miss cells from arriving in
-one frame. A small approximation spread across the picture is usually less
+The primary quality objective is to avoid concentrating many Miss cells in one
+frame. A small approximation distributed across the picture is generally less
 damaging than a frame with hundreds of unchanged holes.
 
-The planner therefore gives priority to future changes that are likely to fall
-through to Flbk or Miss. It does not optimize a single whole-frame pixel-error
-score, and it does not hide starvation by lowering the selected raster or
-frame rate.
+The planner prioritizes future changes likely to fall through to Flbk or Miss.
+It does not hide starvation by lowering raster size or frame rate.
 
-## End-to-end planning
+## End-to-End Planning
 
-Planning happens after palette selection and quantization but before the final
+Planning runs after palette selection and quantization and before final
 per-frame decisions:
 
 1. Render the exact quantized target for every frame.
-2. Mark changed cells whose visual change exceeds the Near bound. These are the
-   narrower Miss-risk set. Mark every cell at a CRAM segment switch because
-   that switch invalidates every live name-table palette reference.
-3. Dry-run the complete exact target through the same `TileAllocator` used by
-   the final encode.
-4. Record, per frame, complete exact bytes/cold patterns and protected
-   Miss-risk bytes/cold patterns.
-5. Select `DicBuf` from whole-movie reuse first, remove its hits from provisional
-   Prg demand, then allocate finite `WordBuf0` and `WordBuf1` credits to the
-   remaining risky bursts.
-6. Subtract only the saved 32-byte pattern payload from the future demand. A
-   preloaded exact tile still needs its 2-byte name-table entry.
-7. Start one shared-sector prefix ledger. Before frame `i` makes image
-   decisions, round the exact control bytes finalized through frame `i-1` and
-   turn every other cumulative sector into frame `i`'s Prg deadline limit.
-8. Give frame `i` a matching control-byte ceiling. Reserve one four-byte
-   descriptor per tentative cold choice inside that frame, then commit only
-   its exact physical run bytes. The difference is available when frame
-   `i+1` begins; no movie retry is involved.
-9. Walk the adjusted quality demand backwards to build the complete-exact and
-   Miss-risk reserve curves. Unavoidable shortage may reduce ordinary risk
-   demand proportionally, but never the full name-table bytes at a CRAM
-   switch.
-10. Run the normal encoder pass. It consumes boot-preload credits only for cold
-    patterns that are actually selected and may not exceed the Prg, cold, or
-    control limit known at the start of that frame.
+2. Mark changed cells whose visual difference exceeds the Near bounds. Mark
+   every cell at a CRAM segment switch because the switch invalidates every
+   live name-table palette reference.
+3. Dry-run the complete target through the same `TileAllocator` used by the
+   final encode.
+4. Record complete exact demand and protected Miss-risk demand per frame.
+5. Select reusable `DicBuf` entries, subtract their provisional hits, then
+   assign the finite `WordBuf0` and `WordBuf1` credits.
+6. Subtract only saved 32-byte pattern payload. Every preloaded exact tile
+   still needs its two-byte name-table entry.
+7. Start one shared-sector prefix ledger. Before frame `i` makes decisions,
+   exact control bytes through frame `i-1` determine frame `i`'s Prg limit.
+8. Give frame `i` a matching control-byte ceiling. Reserve one four-byte run
+   descriptor per tentative cold choice and commit the exact physical run
+   bytes once allocation is known.
+9. Walk the adjusted quality demand backwards to build complete-exact and
+   protected Miss-risk reserve curves. CRAM-switch name-table bytes are a hard
+   floor.
+10. Run one stateful encoder pass. It consumes preload credits only for
+    selected cold patterns and stays within the Prg, cold, and control limits
+    known at the start of each frame.
 11. Freeze one physical source for every update in the decision log.
-12. Pack and independently replay that frozen assignment. No later stage is
-    allowed to invent a different source choice.
+12. Pack and independently replay the frozen assignment. No downstream stage
+    may invent a different source choice.
 
-The previous occupancy-percentage lanes, recovery holdback, and terminal drain
-ramp are removed. The backwards whole-movie plan is the only quality-budget
-allocation policy.
-
-## Exact-demand prediction
+## Demand Prediction
 
 `upgrade_planner.predict_update_demand_details()` advances one shared VRAM
-allocator through the exact target. For each frame after frame 0, exact demand
-contains:
+allocator through the exact target. For each timed frame, exact demand contains:
 
-- 2 bytes for every cell whose exact pattern or palette assignment changed;
-- 2 bytes for every cell at a CRAM segment switch, including cells whose
-  numeric palette-line assignment stayed the same;
-- 32 bytes once for every distinct changed pattern that is not resident;
-- a cold-pattern count clipped to the measured mode/fps/active-area limit.
+- two bytes for every changed pattern or palette assignment;
+- two bytes for every cell at a CRAM segment switch;
+- 32 bytes once for every distinct changed pattern that is not resident; and
+- a cold-pattern count clipped to the effective cold cap.
 
-Repeated cells that use one newly loaded pattern share its 32-byte cost. An
-exact pattern already in VRAM costs only the 2-byte name entry. Frame 0 has zero
-timed-stream demand because `HEADER.DAT` loads it during boot, but it still
-seeds predicted VRAM residency for frame 1.
+Repeated cells sharing one new pattern share its 32-byte cost. A resident exact
+pattern costs only the name entry. Frame 0 has no timed-stream demand because
+`HEADER.DAT` installs it at boot, but its placement seeds frame 1 residency.
 
-At a palette boundary, the complete name table is mandatory and protected
-demand. The previous exact indices are also rendered through the new palette
-before visual distance is measured. The reserve therefore covers both the
-physical full refresh and the colour change caused by the real CRAM switch.
-The balanced-shortfall pass may thin ordinary protected work, but the complete
-name-table byte count is a hard floor and cannot be thinned.
+At a palette boundary, the complete name table is mandatory. The previous
+indices are rendered through the selected segment palette before visual
+distance is measured, so the reserve accounts for the real CRAM change.
 
-The prediction exposes two traces:
-
-| Trace | Includes | Protects |
+| Trace | Includes | Purpose |
 |---|---|---|
 | complete exact | every exact changed cell and predicted cold pattern | Optional correction of Near, Flbk, Miss, and carried approximations. |
-| protected Miss-risk | changed cells whose visual change exceeds the Near bounds | Normal allocation against future Flbk/Miss bursts. |
+| protected Miss-risk | changed cells beyond the Near bounds | Normal allocation against future Flbk/Miss bursts. |
 
-The complete trace is deliberately strict for optional upgrades. The protected
-trace is narrower so a Near-safe change can degrade gracefully instead of
-starving the current frame to preserve unnecessary bytes for the future.
-
-## Assigning the boot preloads
+## Boot-Preload Assignment
 
 `pattern_supply.plan_frame_budgets()` assigns one 32-byte credit at a time.
-This is a water-fill policy: after every credit, the affected frame's remaining
-risk is recomputed before the next credit is selected. It avoids dumping an
-entire buffer into the frame that merely started with the largest burst.
+After each credit it recomputes the affected frame's remaining risk.
 
-Credits are ordered as follows:
+Credits are ordered by:
 
 1. protected cold demand before unprotected exact demand;
 2. largest remaining protected-byte demand;
-3. largest remaining exact-byte and cold demand;
+3. largest remaining exact-byte and cold demand; and
 4. frame number as the deterministic final tie-break.
 
-Word RAM is allocated first because it is parity-constrained:
+`DicBuf` entries are selected by whole-movie exact reuse, with protected reuse
+as the first tie-break. Dictionary hits do not consume entries. Word RAM is
+then assigned under its parity constraint:
 
-- `WordBuf0` can serve even timed frames;
-- `WordBuf1` can serve odd timed frames;
-- frame 0 is excluded because it already has its own boot block.
+- `WordBuf0` serves even timed frames;
+- `WordBuf1` serves odd timed frames; and
+- frame 0 uses its dedicated boot construction.
 
-`DicBuf` is selected before Word RAM. Entries are ranked by whole-movie exact
-reuse, with protected/Miss-risk reuse as the first tie-break. Its hits do not
-consume entries. No frame receives more WordBuf credits than its residual exact
-cold count, and no physical capacity may be exceeded.
+The two Word-RAM buffers hold different chronological pattern sequences. They
+are not duplicate caches.
 
-The two Word-RAM buffers are not duplicate caches. They hold different pattern
-sequences selected for their own frame parity. This preserves the full 1,760
-pattern contribution of the two physical banks instead of spending half of it
-on an identical copy.
+## Quality Reserve
 
-## Building and spending the quality reserve
-
-Each timed frame receives fresh offline spending allowance:
+Each timed frame receives fresh offline allowance:
 
 ```text
 frame supply = target bytes per frame
-             - audio/control bytes
+             - audio and fixed control bytes
              - fixed name-table allowance
-             - any in-stream palette bytes
+             - in-stream palette bytes
 ```
 
-For each reserve trace, the encoder walks from the movie end towards frame 0:
+The encoder walks backwards from the movie end:
 
 ```text
-reserve after this frame =
+reserve after frame =
     clamp(next reserve + next demand - next supply,
           0, quality-budget capacity)
 ```
 
-The last reserve is zero. A light run before a burst grows the reserve, while a
-light tail releases it naturally. If one burst needs more than a full quality
-budget plus its own supply, clipping is intentional: restraint alone cannot
-make that burst fully exact, so the normal priority, approximation, carry, and
-Miss paths choose the best achievable result.
+The final reserve is zero. Light frames before a burst build reserve; a light
+tail releases it. Demand larger than the full reserve plus fresh supply is
+intentionally clipped and resolved by normal priority, approximation, carry,
+and Miss behavior.
 
-The per-frame spending limit is:
+The per-frame limit is:
 
 ```text
 spendable = quality budget before frame
           + fresh frame supply
           - reserve required after frame
 ```
-
-Already committed work is never undone. The normal pass uses the protected
-Miss-risk reserve. The optional exact-upgrade pass uses the complete-exact
-reserve and starts from the bytes already spent by the normal pass. Persistent
-approximations retain their high correction priority, but all candidates share
-this one planned limit.
 
 After the frame:
 
@@ -208,160 +163,341 @@ quality budget after frame =
           0, quality-budget capacity)
 ```
 
-Frame 0 is the exception: boot loads it outside `BODY.DAT`, so frame 1 starts
-with the complete quality budget.
+Frame 1 starts with the complete quality budget because frame 0 is installed
+outside `BODY.DAT`.
 
-## Freezing the physical source
+## Frozen Physical Sources
 
-The final encoder may select fewer cold loads than prediction, or select them
-in a different priority order. It therefore assigns sources to realized cold
-updates, not merely to predicted frame totals.
+Sources are assigned to realized cold updates rather than predicted totals.
+A realized key uses `Dic` when present in the dictionary, then consumes the
+frame's planned Word credit, and otherwise uses `Prg`. Resident repoints use a
+neutral `Prg` source code because they consume no pattern bytes.
 
-For each frame, a realized cold key uses `Dic` when it is in DicBuf. Remaining
-loads consume that frame's planned Word credit, then use `Prg`. Non-cold resident
-repoints always carry source `Prg` as a neutral value because no pattern source
-is consumed.
-
-The decision log stores the source array aligned with the update array. The
-packer validates update counts, cold flags, frame-0 restrictions, all three
-preload capacities, per-frame source totals, and the source-aware run count.
-It then writes three chronological streams and one indexed dictionary:
+The decision log stores source codes aligned with update records. The packer
+validates update counts, cold flags, frame-0 rules, preload capacities,
+per-frame source totals, and source-aware runs. It materializes:
 
 - the continuously delivered Prg stream;
 - the boot-only Wr0 stream;
-- the boot-only Wr1 stream;
-- the boot-only DicBuf dictionary.
+- the boot-only Wr1 stream; and
+- the boot-only indexed DicBuf dictionary.
 
-## Player path
+## Player Path
 
-TTRC v10+ carries a source code in each legacy cold update and each run
-descriptor. In v11 completed-list frames, the run descriptor is authoritative
-because the display-ready shadow item deliberately omits source metadata.
-The source changes where the Main CPU reads the 32-byte pattern; it does not
-change the destination VRAM slot or the displayed name-table value.
+TTRC v16 carries the source in each cold run descriptor. The descriptor is
+authoritative for physical pattern transfer. Source selection changes the
+32-byte read address, not the destination VRAM slot or displayed name value.
 
-- `Prg`: the Sub CPU consumes the next `PrgBuf` pattern and copies it into the
-  frame's Word-RAM output area. Main reads that Word-RAM source.
-- `Wr0` / `Wr1`: Main reads directly from the immutable preload region in the
-  physical Word-RAM bank handed over for that frame. One source code is enough;
-  frame parity selects the physical bank.
-- `Dic`: boot stages the dictionary through frame-0 Word RAM and Main copies it
-  once to `DicBuf`. Later pattern transfers address Main RAM by 8-bit index.
+- `Prg`: Sub consumes the next `PrgBuf` pattern and copies it into the frame's
+  Word-RAM output.
+- `Wr0` / `Wr1`: Main reads the immutable preload region in the physical bank
+  handed over for that frame; frame parity identifies the bank.
+- `Dic`: Main addresses the persistent dictionary by 8-bit index.
 
-Word-RAM sources use the measured VDP DMA first-word correction. `DicBuf` DMA
-does not need that correction. One- and two-tile runs retain the direct-CPU
-fast path; longer runs use bounded VBlank DMA. Source changes split runs even
-when VRAM slots are consecutive.
+Word-RAM DMA uses the measured first-word correction. Main-RAM DicBuf DMA does
+not. One- and two-tile runs use direct CPU writes; longer runs use bounded
+VBlank DMA. A source boundary always splits a run.
 
-## Physical PrgBuf scheduling is a construction constraint
+## Physical PrgBuf Construction
 
-Only `Prg` loads consume the timed payload stream. The physical constraint is
-resolved during the one stateful encoder pass:
+Only `Prg` loads consume timed payload. The one-pass construction is:
 
 1. `physical_budget.py` tracks cumulative useful route sectors.
-2. At the start of frame `i`, control bytes through frame `i-1` are already
-   exact. Their independently rounded sectors are subtracted before frame
-   `i` receives a Prg limit.
-3. The frame's Prg ceiling determines its independently rounded payload
-   prefix, which in turn gives that frame a strict control-byte ceiling.
-4. Once physical slots make the real run count known, exact control bytes are
-   committed. Run savings change frame `i+1`'s limit before its decisions.
-5. Every prefix proves that control through frame `i` plus payload needed by
-   frame `i+1`, each rounded separately, fits the accumulated five-sector
-   route.
-6. `stream_schedule.py` materializes that proven split, and
-   `pack_stream.py --verify` repeats the prefix proof and exact trace equality.
+2. At frame `i`, exact control through frame `i-1` is rounded to sectors and
+   subtracted before calculating the Prg deadline.
+3. The resulting Prg prefix sets a strict control-byte ceiling.
+4. Exact run bytes are committed after physical slots are known. Savings affect
+   frame `i+1` before it makes decisions.
+5. Every prefix proves that rounded control through frame `i` plus rounded
+   payload needed by frame `i+1` fits the cumulative route.
+6. `stream_schedule.py` materializes the split, and
+   `pack_stream.py --verify` repeats the proof and trace comparison.
 
-The underlying PRG-RAM allocation is a 428 KiB circular buffer. Normal
-prebuffer capacity is 382/397/402 KiB at 15/24/30 fps, and timed delivery may
-use the cadence-scaled jitter interval up to 422 KiB. The remaining guard stays
-below player back-pressure; none of it is a fifth supply or free feature
-memory.
+The physical ring is 428 KiB. Normal prebuffer capacity is 382 / 397 / 402 KiB
+at 15 / 24 / 30 fps. Scheduled delivery may rise to 422 KiB; the remaining
+space is delivery and overflow safety, not feature memory.
 
-## Analysis display
+## Analysis and Diagnostics
 
-The old Tank and Buf gauges are replaced by three independent remaining-pattern
-meters plus the `Dic:XXX` category legend:
+Analysis shows three consumptive remaining-pattern meters and one reusable
+dictionary count:
 
-- `Prg` can rise when `BODY.DAT` prefetches future payload and fall when a
-  frame consumes Prg patterns;
-- `Wr0` and `Wr1` begin at their actual boot-loaded totals and only fall as
-  their patterns are consumed;
-- DicBuf has no remaining meter because its installed entries are reusable;
-- an unused preload capacity is not drawn as if bytes were loaded;
-- the middle timeline row stacks the three consumptive remaining amounts with distinct
-  colours against the sum of their fixed capacities.
+- `Prg` rises with future payload delivery and falls with consumption;
+- `Wr0` and `Wr1` start at their actual loaded totals and only fall;
+- `Dic` is shown as an installed-entry count because hits do not consume it;
+- unloaded preload capacity is not drawn as present data; and
+- the quality-budget trace remains diagnostic-only.
 
-The offline quality-budget trace remains available in the data file but has no
-meter. This keeps the picture faithful to the physical supplies.
+`buffer_remaining.npz` schema 6 contains physical remaining amounts, capacities,
+realized loads, quality reserve traces, predicted demand, preload credits, and
+physical BODY payload/control/pad accounting. The decision log also freezes
+`pattern_supply` schema 2, `pattern_transfers` schema 2, and the physical
+schedule used by the packer.
 
-## Diagnostics
+## Validation Gates
 
-Schema 5 `buffer_remaining.npz` contains:
+Every change must pass:
 
-| Array | Unit | Meaning |
-|---|---:|---|
-| `prg_remaining` | patterns | End-of-frame physical `PrgBuf` occupancy. |
-| `wr0_remaining` | patterns | Unconsumed boot patterns in `WordBuf0`. |
-| `wr1_remaining` | patterns | Unconsumed boot patterns in `WordBuf1`. |
-| `dic_remaining` | patterns | Installed DicBuf entry count; constant because hits do not consume entries. |
-| `prg_capacity`, `wr0_capacity`, `wr1_capacity`, `dic_capacity` | patterns | Fixed capacities used to scale the physical supplies. |
-| `prg_loads`, `wr0_loads`, `wr1_loads`, `dic_loads` | patterns/frame | Realized source use. |
-| `wr0_preloaded`, `wr1_preloaded`, `dic_preloaded` | patterns | Actual boot-loaded totals. |
-| `quality_budget_remaining` | 32-byte pattern slots | Offline quality-budget level after each frame; diagnostic only. |
-| `exact_demand_bytes`, `protected_demand_bytes` | bytes | Predicted demand before boot-preload credits. |
-| `preload_credit_bytes` | bytes | Predicted payload bytes removed by boot assignment. |
-| `upgrade_demand_bytes`, `main_risk_demand_bytes` | bytes | Demand after applicable preload credits. |
-| `upgrade_reserve_bytes`, `main_risk_reserve_bytes` | bytes | Backwards reserve curves. |
-| `body_useful_payload_bytes`, `body_useful_control_bytes`, `body_pad_bytes`, `body_physical_bytes` | bytes/frame slot | Physical `BODY.DAT` delivery accounting. |
+1. allocator, budget, and supply-planner unit tests;
+2. sim-to-pack equality for update sources, loads, and run counts;
+3. independent replay of every frame and VRAM cell;
+4. PrgBuf proof with no underrun or over-cap event;
+5. player constants, memory overlap, generated-code, and binary-size checks;
+6. a full DEBUG recording with HUD, audio, and visual verification.
 
-The decision log additionally stores schema-1 `pattern_supply` data with the
-update-aligned source codes, planned frame credits, realized source loads, and
-capacities. `pattern_transfers` schema 2 freezes total tiles, source-aware runs,
-and per-source loads for pack-time equality checks.
+## Source Locations
 
-## Validation gates
+- `tools/upgrade_planner.py`: demand prediction and backwards reserves.
+- `tools/physical_budget.py`: shared-sector prefix ledger.
+- `tools/pattern_supply.py`: preload allocation and source validation.
+- `tools/sim.py`: decisions, source assignment, and frozen logs.
+- `tools/pack_stream.py`: serialization and schedule verification.
+- `boot/movieplay_sp.s`: boot loading, Prg consumption, and handoff.
+- `boot/movieplay_ip.s`: source-aware VRAM transfer.
+- `ANALYSIS.md`: meters and timelines.
+- `MOVIE.md`: on-disc representation.
 
-Every change to this path must pass all of these gates:
+---
 
-1. allocator and supply-planner unit tests;
-2. sim-to-pack equality for every update source, source load, and run count;
-3. independent replay of all frames and every VRAM cell;
-4. `PrgBuf` delivery proof with no under-run or over-cap event;
-5. player constant, memory-overlap, code-generation, and binary-size checks;
-6. a full DEBUG ADPCM22 recording for the target profile, including HUD,
-   audio, and visual verification.
+<a id="jp"></a>
 
-The older consumptive-preload qualification numbers do not describe v12
-DicBuf and must not be reused as its proof. A current qualification must report
-the 256 installed dictionary entries, realized Dic hits, residual Wr0/Wr1/Prg
-loads, indexed-run equality, and the ordinary full-stream/recording checks.
+# パターン供給と全編画質計画
 
-The corresponding full DEBUG recording kept all 6,575 timed frame intervals at
-exactly two 60 Hz scanouts. HUD `S`, `D`, `R`, and `C` stayed zero, Main VBlank
-wait `M` stayed at most one, Main transfer time `U` stayed at most 549 stopwatch
-ticks, and run count `N` stayed at most 69. The same Replay produced identical
-14,801 decoded video frames, 10,893,312 stereo PCM sample frames, packet timing,
-and stream metadata in realtime, offline, and repeated-offline captures. The
-recorder only requires a structurally valid non-empty audio stream during
-routine runs; it no longer applies waveform thresholds.
+この文書は、正確な32-byte tile patternがVRAMへ届く経路、4つの物理pattern供給と
+encoder内のoffline画質予算の違い、boot専用memoryを正確な需要が集中するframeへ
+割り当てる方法を定義します。
 
-## Source locations
+## 名前
 
-- `tools/upgrade_planner.py`: exact/protected prediction, backwards reserve,
-  and spending limit.
-- `tools/physical_budget.py`: one-pass shared-sector prefix ledger and
-  physically feasible per-frame Prg/control limits.
-- `tools/pattern_supply.py`: capacities, water-fill allocation, frozen source
-  validation, and physical stream materialization.
-- `tools/sim.py`: demand construction, final source assignment, diagnostics,
-  and decision-log freezing.
-- `tools/pack_stream.py`: v11 serialization and exact schedule verification.
-- `boot/movieplay_sp.s`: boot loading, Prg consumption, and frame handoff.
-- `boot/movieplay_ip.s`: source-aware run construction and VRAM transfer.
-- `ANALYSIS.md`: the four meters and stacked timeline.
-- `MOVIE.md`: the exact v11 on-disc representation.
+| 公開名 | 解析表示 | Memory | 容量 | Lifetime |
+|---|---|---|---:|---|
+| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 15 / 24 / 30 fpsで12,224 / 12,704 / 12,864 pattern（382 / 397 / 402 KiB） | `BODY.DAT`から補充するstreamed circular buffer |
+| `WordBuf0` | `Wr0` | physical 1M Word-RAM bank 0 | 880 pattern / 27.5 KiB | `HEADER.DAT`からloadし、対象となるeven frameが消費 |
+| `WordBuf1` | `Wr1` | physical 1M Word-RAM bank 1 | 880 pattern / 27.5 KiB | `HEADER.DAT`からloadし、対象となるodd frameが消費 |
+| `DicBuf` | `Dic` | Main RAM | 256 pattern / 8 KiB | boot時にWord RAM経由でMain RAMへcopyし、8-bit indexで再利用 |
 
-Changes affect encoder and player output, so they require both build-version
-counters in `tools/av_version.txt` to be reviewed, a clean sim, packed-stream
-verification, and representative full-length playback validation.
+`PrgBuf`はring bufferとして実装されるため、player assemblyは`RING_BASE`や
+`RING_SIZE`などの内部名を使います。Pattern供給の公開名は`PrgBuf`であり、
+`RING_*`はdata structureを表します。
+
+Tankという物理objectや解析meterはありません。`Buf`は、保存した画質allowanceまたは
+boot-preload creditを使う正確なcold loadのencoder funding categoryであり、
+物理bufferではありません。
+
+## 2つのlayer
+
+| Layer | 場所 | 目的 |
+|---|---|---|
+| 全編画質予算 | encoderのみ | 軽いframeから負荷の高いframeへbyte支出の許可を移動 |
+| `PrgBuf`、`WordBuf0`、`WordBuf1`、`DicBuf` | player memory | 再生用に選んだ正確なpattern byteを保持 |
+
+画質予算は会計であり、5つ目のplayer bufferではありません。Cadenceごとのceilingは
+通常の`PrgBuf` scheduling ceilingと同じなので、encoderはstreamが配信できる範囲を
+超えて時間移動できません。画質予算traceと物理occupancy traceは別の値です。
+
+## 目的
+
+主な画質目的は、多数のMiss cellが1 frameへ集中することを避けることです。画面全体へ
+分散した小さな近似は、数百のcellが更新されないframeより一般に目立ちません。
+
+Plannerは、FlbkまたはMissへ落ちやすい将来の変化を優先します。Raster sizeやframe rateを
+下げてstarvationを隠しません。
+
+## End-to-end planning
+
+Planningはpalette選択とquantizationの後、最終frame decisionの前に行います。
+
+1. 全frameの正確なquantized targetをrenderします。
+2. 見た目の差がNear boundを超えるchanged cellをmarkします。CRAM segment switchでは
+   liveなname-table palette referenceがすべて無効になるため、全cellをmarkします。
+3. 最終encodeと同じ`TileAllocator`でcomplete targetをdry-runします。
+4. Frameごとのcomplete exact demandとprotected Miss-risk demandを記録します。
+5. 再利用可能な`DicBuf` entryを選び、その暫定hitを引いてから、有限の`WordBuf0`と
+   `WordBuf1` creditを割り当てます。
+6. 節約した32-byte pattern payloadだけを引きます。Preload済みexact tileにも
+   2-byte name-table entryが必要です。
+7. 1つのshared-sector prefix ledgerを開始します。Frame `i`のdecision前に、
+   frame `i-1`までのexact control byteからframe `i`のPrg limitを求めます。
+8. Frame `i`へ対応するcontrol-byte ceilingを与えます。Tentative cold choiceごとに
+   4-byte run descriptorを予約し、allocation確定後にexact physical run byteをcommitします。
+9. 調整後のquality demandを後ろ向きに走査し、complete-exactとprotected Miss-riskの
+   reserve curveを作ります。CRAM switchのname-table byteはhard floorです。
+10. 1回のstateful encoder passを実行します。選ばれたcold patternにだけpreload
+    creditを使い、各frame開始時点で既知のPrg、cold、control limitを守ります。
+11. 全updateの物理sourceをdecision logへ固定します。
+12. 固定assignmentをpackし、独立にreplayします。後工程は別のsource choiceを
+    作れません。
+
+## Demand予測
+
+`upgrade_planner.predict_update_demand_details()`は1つのshared VRAM allocatorを
+exact target全体で進めます。各timed frameのexact demandには次を含めます。
+
+- patternまたはpalette assignmentが変わるcellごとに2 byte
+- CRAM segment switchの全cellに2 byte
+- residentでないdistinct changed patternごとに1回だけ32 byte
+- effective cold cap以内に制限したcold-pattern数
+
+同じnew patternを共有するcellは32-byte costを共有します。Resident exact patternは
+name entryだけを使います。Frame 0はboot時に`HEADER.DAT`がinstallするためtimed-stream
+demandを持ちませんが、そのplacementがframe 1のresidencyを初期化します。
+
+Palette boundaryではcomplete name tableが必須です。Visual distanceを測る前に、直前の
+indexを選択segment paletteでrenderするため、reserveは実際のCRAM変化を含みます。
+
+| Trace | 内容 | 目的 |
+|---|---|---|
+| complete exact | 全exact changed cellと予測cold pattern | Near、Flbk、Miss、持越し近似のoptional correction |
+| protected Miss-risk | Near boundを超えるchanged cell | 将来のFlbk/Miss burstに対する通常配分 |
+
+## Boot-preload割り当て
+
+`pattern_supply.plan_frame_budgets()`は32-byte creditを1つずつ割り当てます。各creditの
+後に、対象frameの残riskを再計算します。
+
+Creditの順序は次のとおりです。
+
+1. unprotected exact demandよりprotected cold demand
+2. 残protected-byte demandが最大
+3. 残exact-byte demandとcold demandが最大
+4. 最後のdeterministic tie-breakとしてframe番号
+
+`DicBuf` entryは全編exact reuseで選び、最初のtie-breakにprotected reuseを使います。
+Dictionary hitはentryを消費しません。その後、parity制約付きでWord RAMを割り当てます。
+
+- `WordBuf0`はeven timed frameを供給します。
+- `WordBuf1`はodd timed frameを供給します。
+- Frame 0は専用boot constructionを使います。
+
+2つのWord-RAM bufferは異なる時系列pattern sequenceを保持し、duplicate cacheでは
+ありません。
+
+## 画質reserve
+
+各timed frameは新しいoffline allowanceを受け取ります。
+
+```text
+frame supply = frameごとのtarget byte
+             - audioとfixed control byte
+             - fixed name-table allowance
+             - in-stream palette byte
+```
+
+Encoderは動画末尾から後ろ向きに走査します。
+
+```text
+frame後のreserve =
+    clamp(next reserve + next demand - next supply,
+          0, quality-budget capacity)
+```
+
+最後のreserveは0です。Burst前のlight frameがreserveを作り、軽いtailが解放します。
+Full reserveとfresh supplyの合計を超えるdemandは意図的にclipし、通常のpriority、
+approximation、carry、Missで解決します。
+
+Frameごとのlimitは次のとおりです。
+
+```text
+spendable = frame前のquality budget
+          + fresh frame supply
+          - frame後に必要なreserve
+```
+
+Frame後は次のように更新します。
+
+```text
+frame後のquality budget =
+    clamp(frame前のquality budget
+          + fresh frame supply
+          - actual spending,
+          0, quality-budget capacity)
+```
+
+Frame 0は`BODY.DAT`外でinstallされるため、frame 1はcomplete quality budgetで始まります。
+
+## 固定された物理source
+
+Sourceは予測totalではなく、実際のcold updateへ割り当てます。実keyがdictionaryにあれば
+`Dic`を使い、次にそのframeのplanned Word creditを消費し、それ以外は`Prg`を使います。
+Resident repointはpattern byteを消費しないため、neutralな`Prg` source codeを持ちます。
+
+Decision logはupdate recordと整列したsource codeを保存します。Packerはupdate count、
+cold flag、frame-0 rule、preload capacity、frameごとのsource total、source-aware runを
+検証し、次をmaterializeします。
+
+- 連続配信するPrg stream
+- boot専用Wr0 stream
+- boot専用Wr1 stream
+- boot専用indexed DicBuf dictionary
+
+## Player経路
+
+TTRC v16は各cold run descriptorにsourceを持ちます。物理pattern transferではdescriptorが
+正本です。Source choiceは32-byte read addressを変えますが、destination VRAM slotや
+表示name valueは変えません。
+
+- `Prg`: Subが次の`PrgBuf` patternを消費し、そのframeのWord-RAM outputへcopyします。
+- `Wr0` / `Wr1`: Mainが、そのframeでhandoffされたphysical bankのimmutable preload
+  regionを読みます。Frame parityがbankを決めます。
+- `Dic`: Mainがpersistent dictionaryを8-bit indexで参照します。
+
+Word-RAM DMAは実測済みfirst-word correctionを使います。Main-RAM上のDicBuf DMAには
+不要です。1・2 tile runはdirect CPU write、より長いrunはbounded VBlank DMAを使います。
+Source境界は必ずrunを分割します。
+
+## 物理PrgBufの構築
+
+Timed payloadを消費するのは`Prg` loadだけです。1-pass構築は次のとおりです。
+
+1. `physical_budget.py`がcumulative useful route sectorを追跡します。
+2. Frame `i`では、frame `i-1`までのexact controlをsectorへ丸め、Prg deadline計算前に
+   引きます。
+3. 得られたPrg prefixがstrict control-byte ceilingを決めます。
+4. Physical slot確定後にexact run byteをcommitします。節約分はframe `i+1`のdecision前に
+   反映されます。
+5. 各prefixは、frame `i`までのrounded controlとframe `i+1`に必要なrounded payloadが
+   cumulative routeへ収まることを証明します。
+6. `stream_schedule.py`がsplitをmaterializeし、`pack_stream.py --verify`が証明と
+   trace比較を繰り返します。
+
+Physical ringは428 KiBです。通常prebuffer capacityは15 / 24 / 30 fpsで
+382 / 397 / 402 KiBです。Scheduled deliveryは422 KiBまで使えます。残りはdeliveryと
+overflowの安全領域であり、feature memoryではありません。
+
+## 解析とdiagnostic
+
+解析は3つの消費型remaining-pattern meterと、再利用可能なdictionary countを表示します。
+
+- `Prg`は将来payloadの配信で増え、消費で減ります。
+- `Wr0`と`Wr1`は実際のload totalから始まり、減少だけします。
+- `Dic`はhitで消費しないため、installed-entry countとして表示します。
+- Loadしていないpreload capacityをdataが存在するようには表示しません。
+- Quality-budget traceはdiagnostic専用です。
+
+`buffer_remaining.npz` schema 6は、物理remaining amount、capacity、realized load、
+quality reserve trace、predicted demand、preload credit、物理BODYの
+payload/control/pad会計を含みます。Decision logは`pattern_supply` schema 2、
+`pattern_transfers` schema 2、packerが使うphysical scheduleも固定します。
+
+## Validation gate
+
+すべての変更で次を通します。
+
+1. allocator、budget、supply-planner unit test
+2. update source、load、run countのsim-to-pack一致
+3. 全frame・全VRAM cellの独立replay
+4. underrunとover-capがないPrgBuf証明
+5. player constant、memory overlap、generated code、binary size check
+6. HUD、audio、visual verificationを含むfull DEBUG recording
+
+## Source location
+
+- `tools/upgrade_planner.py`: demand predictionとbackwards reserve
+- `tools/physical_budget.py`: shared-sector prefix ledger
+- `tools/pattern_supply.py`: preload allocationとsource validation
+- `tools/sim.py`: decision、source assignment、frozen log
+- `tools/pack_stream.py`: serializationとschedule verification
+- `boot/movieplay_sp.s`: boot loading、Prg consumption、handoff
+- `boot/movieplay_ip.s`: source-aware VRAM transfer
+- `ANALYSIS.md`: meterとtimeline
+- `MOVIE.md`: disc上の表現

@@ -11,11 +11,6 @@ from tile_alloc import (
     TileAllocator,
     cold_transfer_order,
     count_slot_runs,
-    evaluate_slot_locality,
-    optimize_slot_locality,
-    remap_placements,
-    validate_physical_slots,
-    verify_display_equivalence,
 )
 
 
@@ -56,7 +51,7 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
         self.assertEqual(alloc.prefetch_cache_evictions, 1)
 
 
-class SlotLocalityTests(unittest.TestCase):
+class ColdRunTests(unittest.TestCase):
     def test_identity_contiguous_allocation_matches_legacy_and_suffix_runs(self):
         alloc = TileAllocator(4, 6)
         frames = [
@@ -76,55 +71,9 @@ class SlotLocalityTests(unittest.TestCase):
                 count_slot_runs(suffix_slots),
             )
 
-    def test_transfer_order_follows_physical_slots_without_changing_cold(self):
+    def test_transfer_order_follows_physical_slots(self):
         placements = [(5, True), (2, False), (1, True), (3, True)]
         self.assertEqual(cold_transfer_order(placements), (2, 3, 0))
-
-        mapping = validate_physical_slots([2, 0, 3, 1], 4)
-        logical = [(0, True), (3, False), (2, True)]
-        self.assertEqual(
-            remap_placements(logical, mapping),
-            [(2, True), (1, False), (3, True)],
-        )
-
-    def test_physical_permutation_is_display_equivalent_for_every_frame(self):
-        frames = [
-            [(0, b"a"), (1, b"b"), (2, b"c")],
-            [(0, b"d"), (2, b"a")],
-            [(1, b"d"), (2, b"e")],
-            [(0, b"b"), (1, b"e")],
-        ]
-        result = verify_display_equivalence(
-            frames, 3, 6, [4, 1, 5, 0, 3, 2])
-        self.assertEqual(result["frames"], len(frames))
-        self.assertEqual(result["tearing"], 0)
-
-    def test_optimizer_targets_heavy_runs_without_changing_membership(self):
-        heavy = tuple(range(0, 100, 2))
-        trace = [(), heavy, tuple(range(1, 100, 2)), heavy]
-        plan = optimize_slot_locality(trace, 100, cold_cap=50, iterations=6)
-        validate_physical_slots(plan.physical_by_logical, 100)
-        self.assertEqual(plan.cold.tolist(), [0, 50, 50, 50])
-        self.assertLess(
-            int(plan.optimized_runs[plan.risk_frames].max()),
-            int(plan.baseline_runs[plan.risk_frames].max()),
-        )
-
-    def test_fixed_map_evaluation_uses_the_supplied_permutation(self):
-        trace = [(), (0, 2, 4), (1, 3, 5)]
-        plan = evaluate_slot_locality(
-            trace, 6, [0, 3, 1, 4, 2, 5], cold_cap=3)
-        self.assertEqual(plan.baseline_runs.tolist(), [0, 3, 3])
-        self.assertEqual(plan.optimized_runs.tolist(), [0, 1, 1])
-
-    def test_run_groups_keep_physical_sources_separate(self):
-        trace = [(), (0, 1, 2, 3)]
-        groups = [(), ((0, 2), (1, 3))]
-        plan = evaluate_slot_locality(
-            trace, 4, [0, 2, 1, 3], cold_cap=4,
-            run_groups_by_frame=groups)
-        self.assertEqual(plan.baseline_runs.tolist(), [0, 4])
-        self.assertEqual(plan.optimized_runs.tolist(), [0, 2])
 
 
 if __name__ == "__main__":

@@ -1,3 +1,5 @@
+EN / [JP](#jp)
+
 # On-hardware DEBUG HUD
 
 This document is the complete reference for the values-only playback HUD drawn
@@ -6,9 +8,8 @@ not the minimal four-digit boot preload counter and not the offline analysis
 overlay documented in [`ANALYSIS.md`](ANALYSIS.md). The boot counter reuses the
 same 16 hexadecimal glyphs; their VRAM is fixed at `0xD000` (tiles 1664..1679)
 in the unused `0xD000`-`0xDFFF` gap between the two name tables, identical in
-DEBUG and release builds. Because the font no longer sits above the resident
-pool, the pool can grow to a full 1535 slots and DEBUG and release share exactly
-the same pool shape.
+DEBUG and release builds. The resident pool therefore has 1535 slots and both
+build types share the same pool shape.
 
 The HUD answers three different questions at once:
 
@@ -28,8 +29,8 @@ make disc CONFIG=configs/PROFILE.toml DEBUG=1
 ```
 
 `tools/record_movie.sh` uses a DEBUG disc by default. Release builds omit the
-HUD. They retain the older slip-triggered CRAM0 red indicator, while DEBUG
-builds keep the HUD colours stable and expose slips through `S` instead.
+HUD and use a slip-triggered CRAM0 red indicator. DEBUG builds keep the HUD
+colours stable and expose slips through `S`.
 
 ## Physical layout
 
@@ -209,7 +210,7 @@ using the profile's effective playback sample rate.
 `C` is the low byte of two per-frame counts added together:
 
 - pumps needed to finish this frame's control sectors;
-- pumps needed while an older BODY payload or padding slot was still draining.
+- pumps needed while a preceding BODY payload or padding slot was still draining.
 
 Each pump drains one physical sector. `C=00` means the needed control was
 already armed when `process_frame` reached it. A small nonzero value is not a
@@ -316,7 +317,7 @@ Late-in-blank flips read higher, and a sufficiently slipped frame saturates at
 stopwatch distance from the previous flip in 4-tick units. It measures the
 complete pre-transfer Main phase — CMD_SWAP wait (`W`), control parse, the
 bitmap/list shadow walk, and the name-table blit — against the hard
-deadline this investigation identified: Pass2 must enter before field 1's
+deadline: Pass2 must enter before field 1's
 VBlank (one field = 543 ticks = `E` about `88`) or the transfer consumes
 the flip's own VBlank and the frame slips to three fields. `U` alone
 cannot show this because its stopwatch starts only inside the transfer
@@ -432,3 +433,388 @@ Any field, width, or ordering change must update these together:
 Keep the HUD values-only unless a new layout is deliberately qualified. Adding
 labels consumes movie cells and Main-side publication work; it is not a free
 presentation change.
+
+---
+
+<a id="jp"></a>
+
+# 実機DEBUG HUD
+
+この文書は、`DEBUG=1` buildで`boot/movieplay_ip.s`が描くvalues-only playback HUDの
+完全なreferenceです。Runtime movie HUDを対象とし、最小4-digit boot preload counterや、
+[`ANALYSIS.md`](ANALYSIS.md)のoffline analysis overlayは対象外です。Boot counterも
+同じ16個のhex glyphを使います。Glyph VRAMは2つのname table間の未使用gap
+`0xD000..0xDFFF`にある`0xD000`（tile 1664..1679）で、DEBUG/release共通です。
+Resident poolは1535 slotで、両buildが同じpool shapeを使います。
+
+HUDは同時に3つの問いへ答えます。
+
+1. どのmovie frameとpalette segmentが実際に見えているか
+2. Sub CPUがCD streamとaudioをreadyに保てているか
+3. Main CPUがdisplay deadline前にpattern transferを完了しているか
+
+これはdiagnostic表示です。Nonzero valueが必ずcodec failureを意味するわけではなく、
+一部fieldは大きなcounterのlow byteだけを表示します。
+
+## HUDの有効化
+
+ProfileをDEBUG付きでbuildします。
+
+```sh
+make disc CONFIG=configs/PROFILE.toml DEBUG=1
+```
+
+`tools/record_movie.sh`は既定でDEBUG discを使います。Release buildはHUDを省き、
+slip-triggered CRAM0 red indicatorを使います。DEBUG buildはHUD colourを固定し、
+slipを`S`で表示します。
+
+## 物理layout
+
+Hardware上はhex valueだけを描き、label、space、separatorはありません。下記spaceは
+field boundaryを示します。
+
+```text
+H32/H40: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
+```
+
+固定解釈順は次のとおりです。
+
+```text
+F / P / S / D / R / L / C / W / M / A / U / N / J
+```
+
+H32とH40は同じ共通layoutです。1 digitは1つの8x8 cellを使います。H40 DEBUG buildは
+さらに3つのflip-phase fieldを追加し、`... / J / V / O / E`の36 cellになります。
+H32は30-cell layoutを使い、32-cell rowにはextensionの余地がありません。
+
+| Field | Cell columns | Native pixel range | Digits |
+|---|---:|---:|---:|
+| `F` | 0-3 | x=0-31 | 4 |
+| `P` | 4-5 | x=32-47 | 2 |
+| `S` | 6-7 | x=48-63 | 2 |
+| `D` | 8-9 | x=64-79 | 2 |
+| `R` | 10-11 | x=80-95 | 2 |
+| `L` | 12-13 | x=96-111 | 2 |
+| `C` | 14-15 | x=112-127 | 2 |
+| `W` | 16-17 | x=128-143 | 2 |
+| `M` | 18-19 | x=144-159 | 2 |
+| `A` | 20-21 | x=160-175 | 2 |
+| `U` | 22-25 | x=176-207 | 4 |
+| `N` | 26-27 | x=208-223 | 2 |
+| `J` | 28-29 | x=224-239 | 2 |
+| `V`（H40のみ） | 30-31 | x=240-255 | 2 |
+| `O`（H40のみ） | 32-33 | x=256-271 | 2 |
+| `E`（H40のみ） | 34-35 | x=272-287 | 2 |
+
+共通部は30 cell、240 pixelです。H32右端の2 cellはmovie表示のままです。H40は36 cellを
+使い、右端4 cellがmovie表示のままです。
+
+HUDはnative 256x224または320x224 rasterのrow 0を常に使います。Active pictureを
+覆う場合があり、letterboxに合わせて移動しません。
+
+Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体を必須gateとし、
+結果は`PASS`、`WARNING`、`FAIL`です。`WARNING`はupload可能です。`S/D/R`は0を
+維持する必要があります。`C/M`と`J` thresholdはprofileのplayer cadenceに従います。
+
+Fixed-Nは`C>00`でwarningになり、介在する`N-1`個のpattern-work fieldを使えます。
+Fixed N2は`M>01`でfail、fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは
+`C>03`でwarning、`M>03`でfailです。Passing `J`の最大値はnormal ceilingから
+physical endまでの差より1 KiB小さい値で、15 fpsは`2D`、24 fpsは`1E`、30 fpsは
+`19`です。Normal jitter interval（それぞれ`28`、`19`、`14`）を超える値は、
+422 KiB scheduled-delivery ceilingを越えて2 KiB back-pressure guardまたは4 KiB
+physical guardへ入ったことを示します。値は報告しますが、cadence固有passing limit内の
+`J`だけで再確認やfailにはしません。
+
+PASS/WARNINGでは全gate maximumと全C warning frameを報告します。Taskがpublicationを
+許可済みなら、gate実行だけを理由に追加approvalは求めません。
+
+Frame 0はuntimed boot constructionで、playback measurementではありません。
+First-loop sequenceとframe-axis alignmentのためだけに保持し、全HUD値をgate maximum、
+warning/failure event、timeline bar、dynamic scale maximum、OCR aggregate、derived
+VBlank cadenceから除外します。`/hudline`の全metric rowでframe-0範囲をblankにします。
+Final frameは次のmovie-frame transitionがないため、derived VBlankはunknownです。
+
+## Field早見表
+
+| Field | Owner | Scope | 意味 | Healthyな解釈 |
+|---|---|---|---|---|
+| `F` | Main | current state | Visible movie frame number | Movie cadenceどおりに進む |
+| `P` | Main | current state | zero-based CRAM palette-segment number | 予定palette boundaryだけで変化 |
+| `S` | Sub | cumulative | CD sector-slip / re-seek recovery count | clean run全体で`00` |
+| `D` | Sub | cumulative | control-stream frame-sequence mismatch count | clean run全体で`00` |
+| `R` | Sub | cumulative | RF5C164 write-pointer re-sync count | `00`が理想 |
+| `L` | Sub | current state | audio write lead。256 decoded byte単位 | configured lead range内で安定 |
+| `C` | Sub | per frame | control実行前のblocking CD sector pump | `00`ならcontrol ready済み |
+| `W` | Main | per frame | Sub handoff待ち。概算scanline単位 | 小さく安定 |
+| `M` | Main | per timed frame | Main pattern pathが待ったVBlank start数。Frame 0は除外 | `00`または`01`。`02+`はextra spill |
+| `A` | Sub | per frame | ADPCM decode phase time | 同profileで安定したband |
+| `U` | Main | per frame | Main pattern-transfer elapsed time | frameのtransfer window未満 |
+| `N` | Main | per frame | source-aware cold-run descriptor count | content依存。`U`と相関を見る |
+| `J` | Sub | cumulative peak | fps-derived normal ceilingを超えたstreamed PrgBuf occupancy最大値 | `00`ならjitter headroom未使用 |
+| `V` | Main | previous frame | accepted display flip時のV-counter（H40のみ） | `E0`ならVBlank start。大きいblank lineはlate flip |
+| `O` | Main | previous frame | flip intervalの1024 tick超過分（H40のみ） | nominal N2は約`3E`、`FF`は3-field slip |
+| `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位（H40のみ） | 1 field未満で余裕を持つ。`88`は544 tick |
+
+`S`、`D`、`R`はcumulative counterで、一度増えるとrestartまでnonzeroです。表示low byteは
+`FF`から`00`へwrapします。`J`もcumulativeですがevent数ではなく最大excessを保持します。
+`C/W/M/A/U/N`は1 frame、`F/P/L`はcurrent stateです。
+
+`V/O`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
+作られます。Frame `F`のrowはframe `F - 1`をpublishしたflipを示すため、per-frame
+workloadと比較するとき1 frame shiftします。`E`はframe `F`自身のbuild中、transfer
+VBlank wait前にsampleし、shift不要です。
+
+## Field詳細
+
+### `F`: displayed frame
+
+`F`はfull 16-bit movie frame numberです。Frame 0は`0000`です。Main CPUはinactive
+tableへ値をformatし、pictureをpublishするPlane A flipと同じflipでtableを選ぶため、
+値とimageは同じframeを示します。
+
+Valid streamは65536 frame未満なので1 loop内でwrapせず、end hold後のloop開始時に
+`0000`へ戻ります。
+
+### `P`: active palette segment
+
+`P`はCRAMが現在使うzero-based palette-segment numberのlow byteです。Segment 0は
+`00`です。Streamはsegment+1を保存し、Main CPUがHUD state更新前に1を引きます。
+
+Switch commandではなくactive stateを示すため、CRAM change間は一定です。Table capacityは
+64 segmentなのでvalid streamでbyte wrapは不要です。
+
+### `S`: CD sector slipとre-seek recovery
+
+`S`はcumulative `slip_count`のlow byteです。Continuous CD deliveryがsectorをlostまたは
+skipし、recovery pathがread positionを再確立するとSub CPUがincrementします。
+新incrementは実streaming incidentで、visual/timing glitch boundaryになり得ます。
+
+Clean qualified runでは`S=00`が必須です。Low byteだけなので、後の`00`だけでincidentが
+なかったとは判断せず、隣接frameのtransitionを比較します。
+
+### `D`: control-stream desynchronization
+
+各control blockはframe sequenceを持ちます。Sub CPUのexpected frameと一致しないと
+`D`が増え、playerはcorrupt dataを歩かずmismatched controlを拒否して直前imageを
+保持します。通常encoder Missより重大で、clean runは`D=00`です。
+
+### `R`: audio pointer re-sync
+
+RF5C164 writerは通常playbackより先行します。Measured leadが`[SYNC_MIN, SYNC_MAX]`を
+外れると`R`が増え、writerは`play + SYNC_LEAD`へjumpします。安全は回復しますが、
+audibleな場合があります。
+
+`R=00`が理想です。Increment直前の`L` trendと合わせて診断し、持続nonzero valueより
+transitionを重視します。
+
+### `L`: audio lead
+
+`L`はRF5C164 play pointerからwrite pointerまでのring distanceのhigh byteです。
+1 unitは256 decoded sample byteです。
+
+```text
+lead_bytesは約 L * 256 から L * 256 + 255
+```
+
+`SYNC_LEAD=0x3000`は`L=30`付近、`SYNC_MAX=0x6800`は`L=68`付近です。`00`へ近づくと
+reserve減少、upper boundaryへ近づくか超えるとwriter先行過多です。Byteからtimeへの
+変換にはprofileのeffective playback sample rateを使います。
+
+### `C`: Sub critical path上のblocking CD work
+
+`C`は次のper-frame countを合算したlow byteです。
+
+- このframeのcontrol sectorを完了するためのpump
+- 直前BODY payloadまたはpadding slotをdrain中に必要なpump
+
+1 pumpは1 physical sectorをdrainします。`C=00`なら`process_frame`到達時にcontrolが
+armed済みです。Small nonzeroはsector slipではなく、delivery workがcurrent frameの
+critical pathへ入ったことを示します。Threshold超過は`WARNING`で`FAIL`ではありません。
+Rising `W`を伴うpersistent Cはisolated peakより強い証拠です。
+
+### `W`: MainのSub CPU待ち
+
+Main CPUは`CMD_SWAP`時のV counterをsampleし、Sub CPUの`STAT_READY`または`STAT_END`を
+待って再sampleします。`W`はmasked 8-bit differenceを概算scanlineで表します。
+
+Control delivery、expansion、ADPCM work、late command responseなどhandoffを妨げるものを
+含みます。Cycle-accurate timerではなく256でwrapするため、同mode内のrelative comparisonと
+spikeに使います。
+
+### `M`: Main pattern-path VBlank wait
+
+`M`はcurrent frameのMain-side pattern transfer pathが消費したVBlank start数です。
+Display cadence待ちは除外するため、deadline diagnosticになります。
+
+Fixed-Nの正常範囲は`M=00..N-1`で、`N`到達はpattern workがfixed display deadlineへ
+spillした証明です。Fixed N2は`M<=01`、fixed N4は`M<=03`です。Delivery-paced contentは
+`ceil(60000/1001/fps)`をlimitにします。`U/N`と相関させ、transfer volumeとrun
+fragmentationを分けます。
+
+### `A`: Sub ADPCM decode time
+
+Sub CPUはMega-CD stopwatchでcheckpoint付きIMA decode phaseを測ります。Playerはraw
+valueを2 bit右shiftし、そのlow byteを表示します。
+
+```text
+1 A unit = 4 * 30.72 us = 約0.12288 ms
+```
+
+例えば`A=40`は約7.86 msです。Low frame rateのdecoderはCDCをperiodic serviceするため、
+`A`へinterleaved pump workも入る場合があります。その後のRF5C164 wave-RAM write phaseは
+含みません。
+
+### `U`: Main pattern-transfer time
+
+`U`はMain CPUのMega-CD stopwatchを4 hex digitで表示します。1 tickは30.72 usです。
+最初のcold runから最後のDMA repairまたはshort-run CPU writeまでを測り、long runが
+VBlank word-budget boundaryをまたぐときのpiece間waitも含みます。
+
+Hardware counterは12-bitでdifferenceを`0x0FFF`へmaskするため、4096 tick、約125.83 msで
+wrapします。Cold runがないframeは`0000`です。
+
+### `N`: packed cold-run count
+
+`N`はframe用source-aware cold-run descriptor countのlow byteです。同じphysical pattern
+sourceのconsecutive VRAM slotを1 runにします。Prg、parity-selected WordBuf、DicBufの
+境界はdestination slotが連続していてもrunを分けます。
+
+Cold-tile countでもphysical VDP DMA command数でもありません。1・2 tile runはCPU write、
+long runはDMAを使い、VBlank boundaryでさらに分割される場合があります。`N`はhardware
+transfer choice前のfragmentationを測ります。
+
+### `J`: streamed PrgBuf jitter-reserve high-water mark
+
+`J`はBODY streaming開始後に観測した、fps-derived normal ceilingを超えるstreamed
+PrgBuf simultaneous occupancyの最大値です。Normal ceilingは15 fpsで382 KiB、
+24 fpsで397 KiB、30 fpsで402 KiBです。KiBへ切り上げhex表示します。
+`J=00`はceiling未超過、`J=01`は0より大きく1 KiB以下、`J=0A`は10 KiB以下の
+最大excessです。
+
+Sub CPUは各BODY payload sector append直後にoccupancyをsampleします。Appendだけが
+high-water markを上げるため、pollやpattern consumptionでの追加sampleは不要です。
+Frame-0 blockはこのpathを通らないため除外します。Fieldはsimultaneous occupancyを
+測り、circular pointerがnormal boundaryより上のphysical addressへ入ったかどうかとは
+別です。
+
+### `V` / `O` / `E`: flip phaseとPass2 entry phase（H40 DEBUG）
+
+`V`はaccepted display flipのregister write直後に読むraw V-counter high byteです。
+`E0`（line 224）はVBlank startちょうどのflipで、dominant healthy valueです。大きい
+blank lineはlate flipで、terminal line `FC..FF`はacceptしません。
+
+`O`はflip-to-flip stopwatch intervalから`N*512` tickを引き、`0..FF`へclampします。
+Nominal fixed-N2の約1086 tickは約`3E`、fixed N4の約2172 tickは約`7C`です。
+Late-in-blank flipは大きくなり、slipが十分大きいと`FF`になります。`V/O`はprevious
+frameをpublishしたflipを示します。
+
+`E`はPass2 entry（`bf_dma`）でVBlank wait前にsampleする、previous flipからの
+stopwatch distanceです。4-tick unitで、CMD_SWAP wait（`W`）、control parse、
+bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main phaseを
+測ります。Pass2はfield 1のVBlank前に入る必要があります。1 fieldは543 tick、
+`E`約`88`です。`U`はtransfer VBlank内で始まるため、このdeadlineを単独では示せません。
+
+## 組合せの読み方
+
+| Observation | 解釈候補 |
+|---|---|
+| `S/D/R`が`00` | CD loss、control desync、audio pointer jumpを検出していない |
+| `S`増加後も`D=00` | control alignmentを失わずsector recovery |
+| `D`増加 | control blockを拒否し直前imageをhold |
+| `L`がboundaryへ向かい`R`増加 | audio reserveがsafe range外へ出てwrite pointer jump |
+| `C`と`W`が同時上昇 | CD/control workがSub-to-Main handoffを遅延 |
+| `A`と`W`が上昇し`C`は低い | ADPCM decodeまたはinternal CDC serviceがSub側主要cost |
+| `N`と`U`が同時上昇 | Run fragmentationがMain fixed overheadを増加 |
+| `U`上昇、`N`は小さい | Descriptor数よりpattern volumeまたはVBlank splitが支配 |
+| `M>=02` | Main pattern workがextra VBlank deadlineをcross |
+| `P`変化、`S/D`安定 | 正常なscheduled CRAM segment switch |
+| `J`が`00`から変化 | Physical jitter reserveを使用 |
+| `J`がさらに上昇 | Timed playbackがそれまでのhigh-water markを更新 |
+
+単独のproofではなくcorrelationです。Regression調査ではnative lossless captureとpacked
+streamを使います。
+
+## HUD rendering
+
+HUDはWindow planeを使いません。各frameでMain CPUは次を行います。
+
+1. inactive Plane A tableへcomplete next movie name tableを構築
+2. 60-byte Main-RAM row（`V/O/E`付きは72 byte）へHUDをformat
+3. 最初の30 name-table cell（H40 DEBUGは36）だけ上書き
+4. Movieと同じregister-2 flipでcompleted tableを選択
+
+Inactive tableはVRAM `0xC000`と`0xE000`です。HUD publicationは15 longword write、
+`V/O/E`付きで18 write、DMAなしです。未使用cellはmovie entryを保持し、無関係な
+Plane B frameを露出しません。
+
+Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで
+tableを選びません。
+
+## Hex fontとCRAM安定性
+
+HUD fontはhex digitごとに16 patternだけを持ちます。各8x8 glyphは次を含みます。
+
+- top rowに4-bit barcode。1 bitを2 pixel、MSB first
+- その下にcompactな6x7 human-readable hex glyph
+
+16 patternはstartup時にVRAM `0xD000`（tile 1664..1679）へ1回uploadします。
+Name-table cellはfixed tile indexを直接参照します。Font upload時にsource colour 0を
+P0/index1、source colour 1をP0/index15へ展開します。Encoderとpackerは全palette segmentで
+これらをglobal darkest/brightest usable colourへcanonicalizeします。このためCRAM
+switchでHUDがrecolour/blinkせず、frameごとのfont scan、recolour、DMA、extra VBlank waitは
+不要です。
+
+## OCRとrecording解析
+
+Native screenshotを読みます。
+
+```sh
+tools/python.sh tools/read_frameno.py frame.png
+```
+
+結果は全fieldとconfidenceを含みます。
+
+```text
+frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
+```
+
+`read_frameno.py`はbarcodeをdecodeし、lower glyphをnormalized correlationでcheckします。
+H32/H40は同じfield layoutで、native widthはmode metadataとして保持します。H40 imageを
+すでにnarrow cropした場合は`read_hud`へ`HUD_H40_LAYOUT`を明示します。
+
+Complete recordingでは`harness/startup_resync/analyze.py`が`F`ごとにrepeated 60 Hz
+capture frameをgroup化し、field別confidenceとcounter transitionを報告します。
+HUD timingはdiagnostic専用で、publication recordingのtrimやYouTube chapter配置には
+使いません。
+
+Canonical project TSVを書きます。
+
+```sh
+tools/python.sh harness/startup_resync/analyze.py \
+  videos/STEM_emu_lossless.mkv configs/PROFILE.toml \
+  --tsv videos/STEM_emu_hud.tsv \
+  --gate-json videos/STEM_emu_hud_gate.json \
+  --expected-frames FRAME_COUNT
+```
+
+LogはUTF-8、header row、tab separator、LF line ending、`.tsv` extensionです。
+Project-owned HUD logはcomma-delimitedにしません。
+
+Glyph/layoutのreproducible proofは次です。
+
+```sh
+tools/python.sh harness/hud_ocr/verify.py
+```
+
+## Maintenance contract
+
+Field、width、order変更時は次を同時更新します。
+
+- `boot/movieplay_ip.s`の`prepare_dbg`と`publish_dbg`
+- `tools/read_frameno.py`のlayoutとfield decode
+- `harness/hud_ocr/verify.py`のlayout/OCR proof
+- この文書とREADMEのshort summary
+- `harness/pipeline_speedup/verify_run_hud.py`などのfield固有verification
+
+意図的にnew layoutをqualificationしない限り、HUDはvalues-onlyを維持します。Label追加は
+movie cellとMain-side publication workを消費し、freeなpresentation changeではありません。

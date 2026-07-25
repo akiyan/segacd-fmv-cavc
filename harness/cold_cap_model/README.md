@@ -3,9 +3,8 @@
 Goal: identify, with per-frame evidence, which resource breaks the fixed
 two-VBlank cadence as the H40/30fps/1,120-tile cold cap rises, rank the fixes,
 and retain the full qualification evidence for the selected cap. Phase 0 mines
-historical packs and DEBUG HUD OCR series; later phases add timing probes,
-targeted player experiments, physical-slot locality, and full-length ladder
-recordings.
+packed streams and DEBUG HUD OCR series; later phases add timing probes,
+targeted player experiments, and full-length ladder recordings.
 
 ## Tools
 
@@ -18,23 +17,10 @@ recordings.
   parsed per-frame run count against the DEBUG HUD `N` column of a
   recording; a full-length match also proves that recording played exactly
   that stream.
-- `verify_slot_locality.py` — replays the shared logical allocator, applies
-  the frozen logical-to-physical VRAM slot permutation, and models every cold
-  transfer and displayed cell. A disabled decision log uses identity physical
-  numbering. It proves that a permutation changes neither cold/reuse decisions
-  nor displayed patterns. The source-aware optimizer
-  protects every frame at 85% or more of the measured cold cap and includes
-  Prg/Wr/Dic boundaries in its minimax run target. The report deliberately
-  treats total run count as informational: the optimizer may add runs to light
-  frames when that lowers the worst heavy-frame deadline cost.
-
 ```sh
 tools/python.sh harness/cold_cap_model/extract_frames.py \
     out/sonic-jam-op-h40 --tsv frames_175.tsv \
     --hud-tsv videos/SonicJamOp_H40_jitter_final_hud.tsv
-
-tools/python.sh harness/cold_cap_model/verify_slot_locality.py \
-    videos/SonicJamOp_H40_320x224_adpcm22/tmp/decisions.pkl
 ```
 
 ## Specimen inventory (all full-length Sonic Jam OP, H40/30fps/1,120 tiles)
@@ -44,9 +30,6 @@ tools/python.sh harness/cold_cap_model/verify_slot_locality.py \
 | 175 (v12, shadow lists, pre-e83 baseline) | `out/sonic-jam-op-h40` | `SonicJamOp_H40_jitter_final(_repeat)` | 2,714/2,714 |
 | 178 (v10) | `videos/SonicJamOp_H40_cold195_test/packed` (byte-identical copy in `..._cold200_test/packed`) | `SonicJamOp_H40_cold195_emu`, `SonicJamOp_H40_cold200_emu` | 2,714/2,714 each |
 | 190 (v10) | `out/sonic-jam-op-h40-cold190-hudinline` | `SonicJamOp_H40_cold190_hudinline(_repeat)` | 2,714/2,714 |
-| 180 (v12, e83 locality) | `out/sonic-jam-op-h40-cold180` | `SonicJamOp_H40_cold180_locality_e83_debug` | 2,714/2,714 |
-| 185 (v12, e83 locality) | `out/sonic-jam-op-h40-cold185` | `SonicJamOp_H40_cold185_locality_e83_debug(_repeat)` | 2,714/2,714 each |
-| 190 (v12, e83 locality) | `out/sonic-jam-op-h40-cold190` | `SonicJamOp_H40_cold190_locality_e83` | 2,714/2,714 |
 
 Every `*_repeat` recording is hash-identical to its first run (see
 `videos/*_repeat_compare.json`), so each disc's behaviour is fully
@@ -238,63 +221,6 @@ Full-length A/B recordings falsified two mechanisms and confirmed one:
   now sit at V=EE with 14 lines of guard margin.  (First attempt DMAed
   the 40-pitch shadow directly and scrambled the 64-wide plane — caught
   by frame comparison, fixed by the staging buffer.)
-
-**The remaining bottleneck was encoder-side run fragmentation.** The former
-v12 encoder produced 85-95 cold runs of 1-2 patterns (gaps of 1-3 slots) at
-the plateau. The initial issue report's 15-30 v10 comparison was incorrect:
-re-parsing the actual v10 pack showed that it was fragmented there too. At
-~40 us of unavoidable per-run boundary cost plus the data,
-95 runs cannot fit the available blank time no matter how they are
-issued, so the plateau transfer stays ~16 ms and caps 185+ keep losing
-exactly one plateau frame per run. The e83 two-pass physical-slot optimizer is
-a new fix rather than a v10 restoration: its cold180 measurement pack keeps
-all 208 frames at 153 or more cold patterns to at most 30 source-aware runs,
-with the plateau at 25-29. It proves all 2,714 displayed frames exact, leaves
-the finalized quality budget at least 3,244 bytes above zero, and packs with no
-Prg underrun.
-
-## Phase 4: e83 locality ladder and qualification (player p76)
-
-The final 180/185/190 packs all pass the static gates: all 2,714 displayed
-frames are exact, tearing is zero, the finalized quality budget stays positive,
-and the physical BODY/Prg schedule has no underrun. The locality target covers
-every frame at 85% or more of its measured cap and counts Prg/Wr/Dic source
-boundaries because those boundaries split real player transfers.
-
-| cap | heavy threshold / frames | max source-aware runs | plateau f1960-1976 | quality-budget floor |
-|---:|---:|---:|---:|---:|
-| 180 | 153 / 208 | 30 | 25-29 | 3,244 B |
-| 185 | 158 / 192 | 30 | 21-30 | 3,666 B |
-| 190 | 162 / 182 | 30 | 24-30 | 3,152 B |
-
-Whole-movie run total is deliberately not an acceptance condition. Adding
-runs to light frames is harmless when it reduces the worst deadline cost of
-heavy frames; only the heavy-frame maximum and the real playback cadence are
-gates.
-
-Each candidate was rebuilt as a DEBUG H40 320x224 disc, recorded for the full
-movie, and read with the V/O/E HUD fields enabled. All three recordings keep
-`S/D/R/C=0` and `M=1`, and all 2,714 HUD `N` values match their packed streams:
-
-| cap | 3-field holds among 2,713 timed intervals | max U / N | J high-water | frame 2712 |
-|---:|---|---:|---:|---:|
-| 180 | f1051 | 389 / 67 | 16 KiB | 2 fields |
-| 185 | none | 409 / 65 | 12 KiB | 2 fields |
-| 190 | f995 | 380 / 67 | 15 KiB | 2 fields |
-
-The cap180 and cap190 failures are the rare freeze-type event: both occur far
-from the repaired heavy plateau, move non-monotonically with cap, and are
-followed by the delayed `O=FF` report. The deterministic plateau transfer cliff
-is gone. The old end-of-stream frame-2712 three-field hold also does not recur
-in any e83 ladder recording.
-
-Cap185 is therefore the highest zero-break candidate in this ladder. A second
-recording from the same Replay is byte-exact at all 7,191 decoded video frames,
-all 5,294,592 stereo PCM sample frames, packet timing, and metadata; its
-independent HUD gate also passes with the same `S/D/R/C=0`, `M=1`, `J=12 KiB`,
-and 2,713 exact two-field intervals. The separate cap-independent freeze-type
-stall remains an open diagnostic question, but it does not block the measured
-cap185 tuple.
 
 ## Transfer-cliff fix (superseded analysis)
 
