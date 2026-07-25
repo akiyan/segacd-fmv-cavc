@@ -150,7 +150,7 @@ validated the new fields and immediately restructured the model:
   E (Pass2 entry since previous flip) has median 104 (12.8 ms) and p99
   140 (17.2 ms) — parse + bitmap walk + name-table blit plus the swap
   wait cost 12-14 ms even on ordinary frames, versus the ~8.5 ms
-  STREAMING.md planning envelope.  The VDP FIFO throttling of the
+  PLAYER.md planning envelope.  The VDP FIFO throttling of the
   1,120-word name-table blit during active display is the likely gap.
 - **Two measured cliffs.** (1) Entry cliff: E*4 must stay below the
   field-1 blank end (~622 ticks, E≈155); observed max 147. (2) Transfer

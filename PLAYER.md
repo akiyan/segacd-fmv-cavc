@@ -1,6 +1,6 @@
 EN / [JP](#jp)
 
-# Streaming Memory and CPU Headroom
+# Player Memory and CPU Headroom
 
 This document answers one planning question: **what memory and CPU time can a
 live-playback feature use without consuming an existing safety margin?**
@@ -37,6 +37,19 @@ lifetime and a full validation of every overlapping phase.
 
 PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 
+The address split below uses 30 fps as the primary example. The physical ring,
+delivery guard, and overflow guard stay fixed, while the boundary between
+normal PrgBuf capacity and delivery-jitter headroom follows the content
+cadence:
+
+```text
+normal PrgBuf KiB = 422 - jitter headroom KiB = 422 - ceil(20 * 30 / fps)
+```
+
+These values come from `ring_jitter_headroom_kb()` and `prg_buf_cap_kb()` in
+`tools/av_config.py`; this document does not define an independent capacity.
+Lower fps increases jitter headroom and reduces the normal PrgBuf ceiling.
+
 | Address | Size | Owner | New feature use |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | No |
@@ -45,8 +58,9 @@ PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 | `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratch and BIOS-unsafe streaming range | No |
 | `0x08000..0x097FF` | **6.00 KiB** | unassigned, marker-verified safe range | **Yes, after adding an overlap check** |
 | `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads | No |
-| `0x0C000..0x70FFF` | 404.00 KiB | normal PrgBuf capacity at the largest cadence reserve | No |
-| `0x71000..0x75FFF` | 20.00 KiB | delivery-jitter headroom and frame-0 staging | No |
+| `0x0C000..0x707FF` | 402.00 KiB | normal PrgBuf capacity at 30 fps | No |
+| `0x70800..0x757FF` | 20.00 KiB | delivery-jitter headroom at 30 fps | No |
+| `0x75800..0x75FFF` | 2.00 KiB | scheduled-delivery guard before pump back-pressure | No |
 | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard | No |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | No |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | No |
@@ -56,6 +70,10 @@ The physical PrgBuf ring is 428 KiB. Its normal scheduling cap is below the
 422 KiB delivery ceiling by a cadence-scaled jitter reserve. Pump
 back-pressure begins below the physical end, and the remaining 4 KiB is a
 separate overflow guard. None of these differences is feature memory.
+
+During boot only, frame-0 pattern staging uses
+`0x71000..0x79FFF`. It may overlap the timed ring tail and APPLY because those
+owners are inactive in that phase; it does not change the timed 30 fps map.
 
 The APPLY queue also retains deliberate back-pressure headroom. Its unused
 instantaneous occupancy is not a fixed allocation.
@@ -214,7 +232,7 @@ before revising any elapsed-time or memory-headroom claim.
 
 <a id="jp"></a>
 
-# Streaming memoryとCPU余裕
+# Player memoryとCPU余裕
 
 この文書は、**既存の安全余裕を消費せずにlive-playback featureが使えるmemoryとCPU
 時間はどれだけか**、というplanning上の問いに答えます。
@@ -247,6 +265,18 @@ before revising any elapsed-time or memory-headroom claim.
 
 PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 
+次のaddress分割は30 fpsを主例にしています。Physical ring、delivery guard、
+overflow guardは固定ですが、normal PrgBuf容量とdelivery-jitter headroomの境界は
+content cadenceに応じて動きます。
+
+```text
+normal PrgBuf KiB = 422 - jitter headroom KiB = 422 - ceil(20 * 30 / fps)
+```
+
+数値は `tools/av_config.py` の `ring_jitter_headroom_kb()` と
+`prg_buf_cap_kb()` から得ます。この文書では独立した容量を定義しません。fpsが下がるほど
+jitter headroomは増え、normal PrgBuf上限は減ります。
+
 | Address | Size | Owner | New featureでの利用 |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | 不可 |
@@ -255,8 +285,9 @@ PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 | `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratchとBIOS-unsafe streaming range | 不可 |
 | `0x08000..0x097FF` | **6.00 KiB** | 未割当でmarker検証済みのsafe range | **overlap check追加後に利用可** |
 | `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 | 不可 |
-| `0x0C000..0x70FFF` | 404.00 KiB | 最大cadence reserve時のnormal PrgBuf capacity | 不可 |
-| `0x71000..0x75FFF` | 20.00 KiB | delivery-jitter headroomとframe-0 staging | 不可 |
+| `0x0C000..0x707FF` | 402.00 KiB | 30 fpsのnormal PrgBuf capacity | 不可 |
+| `0x70800..0x757FF` | 20.00 KiB | 30 fpsのdelivery-jitter headroom | 不可 |
+| `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前のscheduled-delivery guard | 不可 |
 | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard | 不可 |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | 不可 |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | 不可 |
@@ -266,6 +297,10 @@ Physical PrgBuf ringは428 KiBです。Normal scheduling capは、cadenceに応�
 reserve分だけ422 KiB delivery ceilingより小さくなります。Pump back-pressureはphysical
 endより前に始まり、残る4 KiBは別のoverflow guardです。これらの差分はfeature
 memoryではありません。
+
+boot中だけ、frame-0 pattern stagingは `0x71000..0x79FFF` を使います。そのphaseでは
+timed ring tailとAPPLYのownerがinactiveなので重複できます。timed 30 fps mapは
+変わりません。
 
 APPLY queueにも意図的なback-pressure headroomがあります。瞬間的な未使用occupancyは
 固定allocationではありません。
