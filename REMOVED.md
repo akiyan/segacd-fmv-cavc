@@ -1,3 +1,5 @@
+EN / [JP](#jp)
+
 # Removed Features
 
 This document preserves engineering information for features that are absent
@@ -118,6 +120,8 @@ limit, and physical CD/PrgBuf scheduling remain valid without it.
    trace before treating lower run counts as a usable improvement.
 
 ---
+
+<a id="jp"></a>
 
 # 削除済み機能
 

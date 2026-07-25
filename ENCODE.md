@@ -1,3 +1,5 @@
+EN / [JP](#jp)
+
 # Simulation Encoding Pipeline
 
 This document describes the processing flow and measured time of
@@ -36,6 +38,8 @@ cached simulation artifact.
 | **Total** | **216.9 s** | **79.9 ms** |
 
 ---
+
+<a id="jp"></a>
 
 # シミュレーション・エンコード工程
 
