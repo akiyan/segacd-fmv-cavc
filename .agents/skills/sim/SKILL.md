@@ -198,6 +198,13 @@ After completion:
   is a pipeline bug; do not lower the cold cap or repeat the encode with a
   session-local adjustment.
 - Check the completion line: `starved_frames=N (X%)`.
+- Report both the configured cold cap and the realized timed maximum cold.
+  Read the authoritative physical transfer trace from
+  `decisions.pkl["pattern_transfers"]["tiles"]`, exclude frame 0 because it is
+  boot-loaded and exempt from the timed cap, then report the maximum, how many
+  frames reach it, and the first/last matching frame numbers. When a complete
+  analysis TSV already exists, `status_cold` must give the same timed maximum;
+  treat a mismatch as a pipeline bug.
 - Check `body_useful_bps`, the mean useful BODY delivery rate shown by Band.
   It is weighted by total physical BODY read time, and each slot must remain at
   or below CD 1x (150 KiB/s). `codec_work_bps` is a separate
