@@ -412,7 +412,11 @@ tools/python.sh harness/startup_resync/analyze.py \
 ```
 
 The log is UTF-8 with a header row, tab separators, LF line endings, and a
-`.tsv` extension. Project-owned HUD logs are never comma-delimited.
+`.tsv` extension. With the required profile argument, its permanent file is
+written as
+`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the `--tsv` path becomes
+a run-specific compatibility symlink to that log. Project-owned HUD logs are
+never comma-delimited.
 
 The reproducible glyph/layout proof is:
 
@@ -798,7 +802,10 @@ tools/python.sh harness/startup_resync/analyze.py \
 ```
 
 LogはUTF-8、header row、tab separator、LF line ending、`.tsv` extensionです。
-Project-owned HUD logはcomma-delimitedにしません。
+Required profile引数がある場合、実体は
+`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`へ永続保存し、`--tsv` pathは
+そのlogへのrun-specific compatibility symlinkになります。Project-owned HUD logは
+comma-delimitedにしません。
 
 Glyph/layoutのreproducible proofは次です。
 

@@ -20,12 +20,24 @@ class AnalysisLogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(
                 os.environ, {"ANALYSIS_LOG_DIR": tmp}):
             path = analysis_logs.unique_tsv_path(
-                Profile(), now=datetime(
+                Profile(), kind="timeline", now=datetime(
                     2026, 7, 23, 12, 34, 56, 123456, tzinfo=timezone.utc))
             self.assertRegex(
                 path.name,
                 r"^20260723-123456-123456_sonic-jam-op-h40_"
-                r"4dd3ae5754_e\d+\.tsv$")
+                r"4dd3ae5754_e\d+_p\d+_timeline\.tsv$")
+
+    def test_av_versions_include_encoder_and_player(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "av_version.txt"
+            path.write_text(
+                "# test\ndate=20260725\ne=132\np=90\n",
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                analysis_logs.av_versions(path),
+                ("e132", "p90"),
+            )
 
     def test_alias_points_to_persistent_log(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

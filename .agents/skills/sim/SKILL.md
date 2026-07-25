@@ -246,7 +246,9 @@ tools/python.sh --gpu tools/render_analysis.py configs/<source>-<mode>.toml
 
 Every invocation first writes the complete per-frame numeric sidecar to a
 unique persistent file below `logs/`. Its filename includes local date/time,
-the profile name, the first 10 profile-SHA characters, and the encoder version.
+the profile name, the first 10 profile-SHA characters, encoder version, player
+version, and the `timeline` kind:
+`<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv`.
 `videos/<stem>_analysis.tsv` (or `ANALYSIS_TSV` when explicitly set) is only a
 compatibility symlink to that permanent log. Use the `logs/` file for maxima,
 totals, and frame-to-frame comparisons instead of OCR. The full render then
