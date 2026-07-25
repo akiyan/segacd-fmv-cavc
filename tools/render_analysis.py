@@ -6,8 +6,9 @@
 動画へ焼き込む数値と元statsの全列は、同じ実データから1フレーム1行のTSVにも出力する。
 
 入力(env):
-  CBRSIM_OUT       sim出力ディレクトリ(preview/raw/catmap/stats.npz/miss_masks.npy/
-                   buffer_remaining.npz/palettes.bin/audio WAV/report.txt)
+  CBRSIM_OUT       sim出力ディレクトリ(raw/decisions.pkl/stats.npz/
+                   miss_masks.npy/buffer_remaining.npz/palettes.bin/
+                   audio WAV/report.txt)。preview/catmap は本工程で生成する。
   CBRSIM_SRCLABEL  右Sourceパネル見出し(既定 "Source")
   CBRSIM_MODE      画面モード H32/H40 (既定 H32。DMA理論値に使う)
   ANALYSIS_OUT     出力mp4パス (既定 videos/<stem>_analysis.mp4)
@@ -104,6 +105,30 @@ ACTIVE_TILES = int(z["active_tiles"]) if "active_tiles" in z else C
 COLD_CAP = (int(z["max_cold"]) if "max_cold" in z else
             L.av_config.cold_cap_for_fps(FPS))
 NF = len(S)
+DECISION_PATH = Path(SIM) / "decisions.pkl"
+if not DECISION_PATH.is_file():
+    raise FileNotFoundError(
+        f"analysis decisions are missing: {DECISION_PATH}; re-run sim")
+with DECISION_PATH.open("rb") as _decision_source:
+    DECISIONS = pickle.load(_decision_source)
+DECISION_FRAMES = DECISIONS.get("frames")
+if not isinstance(DECISION_FRAMES, list) or len(DECISION_FRAMES) != NF:
+    raise SystemExit("analysis decision-frame count differs from stats")
+_geom = tuple(int(value) for value in DECISIONS.get("geom", ()))
+if len(_geom) != 4:
+    raise SystemExit("analysis decision geometry is missing")
+TCOLS, TROWS, _decision_cells, _decision_tile = _geom
+if _decision_cells != C or _decision_tile != 8:
+    raise SystemExit("analysis decision geometry differs from stats")
+W, H = TCOLS * _decision_tile, TROWS * _decision_tile
+_display_categories = DECISIONS.get("display_categories") or {}
+if int(_display_categories.get("schema_version", 0)) != 1:
+    raise SystemExit(
+        "analysis per-cell categories are missing; re-run sim")
+CATEGORY_ORDER = tuple(str(name) for name in _display_categories.get("order", ()))
+CATEGORY_ROWS = tuple(_display_categories.get("rows", ()))
+if len(CATEGORY_ROWS) != NF or any(len(row) != C for row in CATEGORY_ROWS):
+    raise SystemExit("analysis per-cell category rows have the wrong shape")
 if "audio_label" in z:
     AUDIO_STR = str(z["audio_label"])        # sim側のADPCM音声ラベル
 if "audio_playback_file" in z:
@@ -116,10 +141,7 @@ else:
     _legacy_audio = sorted(glob.glob(f"{SIM}/audio_*.wav"))
     AUDIO_PATH = Path(_legacy_audio[0]) if len(_legacy_audio) == 1 else Path(
         SIM) / "audio_13k3_u8_mono.wav"
-_pv = sorted(glob.glob(f"{SIM}/preview/*.png"))
 _raw = sorted(glob.glob(f"{SIM}/raw/*.png"))
-W, H = Image.open(_pv[0]).size                # タイルグリッド画素(=WxH)
-TCOLS, TROWS = W // 8, H // 8
 RW, RH = Image.open(_raw[0]).size             # Sourceパネル素材の画素
 _SOURCE_SAR = Fraction(os.environ.get("CBRSIM_SOURCE_SAR", "1:1").replace(":", "/"))
 SOURCE_SAR_NUM = _SOURCE_SAR.numerator
@@ -381,6 +403,84 @@ def frame_palettes(i):
     return {"Prev": seg_pal_rgb(s - 1) if s > 0 else None,      # 前後にパレット無し=ブランク
             "Current": seg_pal_rgb(s),
             "Next": seg_pal_rgb(s + 1) if s < last else None}
+
+
+def _cells_to_image(cell_rgb):
+    return (
+        cell_rgb.reshape(TROWS, TCOLS, 8, 8, 3)
+        .transpose(0, 2, 1, 3, 4)
+        .reshape(H, W, 3)
+    )
+
+
+def materialize_analysis_panels(frames):
+    """Replay decisions and create preview/category PNGs for analysis only."""
+    requested = {int(frame) for frame in frames}
+    preview_dir = Path(SIM) / "preview"
+    catmap_dir = Path(SIM) / "catmap"
+    preview_dir.mkdir(parents=True, exist_ok=True)
+    catmap_dir.mkdir(parents=True, exist_ok=True)
+    targets = range(NF) if len(requested) == NF else requested
+    for frame in targets:
+        (preview_dir / f"{frame:05d}.png").unlink(missing_ok=True)
+        (catmap_dir / f"{frame:05d}.png").unlink(missing_ok=True)
+
+    required_order = (
+        "Raw", "Same", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+    )
+    if CATEGORY_ORDER != required_order:
+        raise SystemExit(
+            f"analysis category order differs: {CATEGORY_ORDER!r}")
+    category_index = {
+        name: index for index, name in enumerate(CATEGORY_ORDER)
+    }
+    display_idx = np.zeros((C, 64), np.uint8)
+    display_pal = np.zeros(C, np.uint8)
+    for frame, updates in enumerate(DECISION_FRAMES):
+        for cell, palette, key in updates:
+            cell = int(cell)
+            indices = np.frombuffer(key, np.uint8)
+            if indices.shape != (64,):
+                raise SystemExit(
+                    f"analysis frame {frame} cell {cell} has an invalid pattern")
+            display_idx[cell] = indices
+            display_pal[cell] = int(palette)
+
+        categories = np.frombuffer(CATEGORY_ROWS[frame], np.uint8)
+        counts = np.bincount(categories, minlength=len(CATEGORY_ORDER))
+        expected = np.asarray(
+            [int(FULL[name][frame]) for name in CATEGORY_ORDER], np.int64)
+        if not np.array_equal(counts, expected):
+            raise SystemExit(
+                f"analysis frame {frame} per-cell categories differ from stats")
+        if frame not in requested:
+            continue
+
+        segment = int(FRAME_SEG[frame])
+        full_palette = np.zeros((4, 16, 3), np.uint8)
+        full_palette[:, 1:] = SEG_PALS[segment]
+        cell_rgb = (
+            full_palette[display_pal[:, None], display_idx] * 36
+        ).reshape(C, 8, 8, 3).astype(np.uint8)
+        Image.fromarray(
+            _cells_to_image(cell_rgb), "RGB"
+        ).save(preview_dir / f"{frame:05d}.png")
+
+        category_rgb = cell_rgb.astype(np.float64)
+        category_rgb[categories == category_index["Miss"]] = 0
+        for name in ("Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic"):
+            style.apply_numpy_category_border(
+                category_rgb, categories == category_index[name], name)
+        Image.fromarray(
+            _cells_to_image(
+                category_rgb.clip(0, 255).astype(np.uint8)
+            ),
+            "RGB",
+        ).save(catmap_dir / f"{frame:05d}.png")
+    print(
+        f"analysis panels: materialized {len(requested)} preview/category frames",
+        flush=True,
+    )
 
 
 CAT_TOTALS = {k: int(FULL[k].sum()) for k, _ in style.CATS}
@@ -906,6 +1006,7 @@ if __name__ == "__main__":
                 mp4_actual = OUT_MP4
                 mp4_actual.parent.mkdir(parents=True, exist_ok=True)
         os.makedirs(FRAMES_DIR, exist_ok=True)
+        materialize_analysis_panels(frames)
         print(f"analysis data -> {write_analysis_tsv()}", flush=True)
         print(f"render {len(frames)} frames @ {W}x{H} ({TCOLS}x{TROWS}) fps={FPS} -> {FRAMES_DIR}", flush=True)
         nw = min(max(1, len(frames)), max(1, (os.cpu_count() or 2) - 2))

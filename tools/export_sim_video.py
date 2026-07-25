@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """sim の素の出力(映像+音声)を『ストレートに』mp4 化する。解析オーバーレイ無し。
 
-sim(sim.py)は解析フレーム用の素材(preview/ = オーバーレイ無しの復号フレームと復元音声)を
-出すが、単体の再生用動画は出さない。本ツールはその preview/ を実機画面(モード別サイズ)へ
+render_analysis.pyは解析時にpreview/（オーバーレイ無しの復号フレーム）をdecisionから
+生成する。本ツールはそのpreview/を実機画面(モード別サイズ)へ
 中央配置し、表示アスペクト(PAR)を適用して、sim 音声を多重化した素の mp4 を書き出す。
 = エミュ録画の「理想版」(ハード再生アーティファクトもデバッグHUDも無い Encoder ideal output)。
 
 ffmpeg の pad+scale だけで完結(PILループ不要=速い)。
 
 env:
-  CBRSIM_OUT      sim出力ディレクトリ(既定 videos/<stem>/tmp)。preview/ と stats.npz 指定音声を使う
+  CBRSIM_OUT      sim出力ディレクトリ(既定 videos/<stem>/tmp)。
+                  解析工程が生成したpreview/とstats.npz指定音声を使う
   CBRSIM_MODE     画面モード H32/H40/mode4 (既定 H32)。画面サイズと PAR に使う
   STRAIGHT_OUT    出力mp4 (既定 videos/<stem>_sim.mp4)
   STRAIGHT_SCALE  整数拡大率 (既定 4)
@@ -65,6 +66,9 @@ def _export(actual_out: Path):
     z = np.load(f"{SIM}/stats.npz", allow_pickle=True)
     fps = int(z["fps"])
     pv = sorted(glob.glob(f"{SIM}/preview/*.png"))
+    if not pv:
+        raise SystemExit(
+            "preview PNGs are missing; run tools/render_analysis.py first")
     if not pv:
         sys.exit("no preview frames in %s/preview" % SIM)
     W, H = Image.open(pv[0]).size                       # コンテンツ画素(タイルグリッド)

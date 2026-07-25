@@ -249,7 +249,7 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 | Analysis-frame video (from `sim`) | `videos/<stem>_analysis.mp4` |
 | Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_<encoder>.tsv` (`videos/<stem>_analysis.tsv` is a latest-run symlink) |
 | Straight sim output, video+audio, no overlay (`export_sim_video.py`) | `videos/<stem>_sim.mp4` |
-| Sim PNGs, stats, and decision data | `videos/<stem>/tmp/` (tmpfs-backed sim working-dir symlink) |
+| Sim inputs, stats, and decision data | `videos/<stem>/tmp/` (tmpfs-backed sim working-dir symlink; analysis creates `preview/` and `catmap/` here on demand) |
 | Lossless emulator capture (`record`) | `videos/<stem>_emu_lossless.mkv` |
 | Verification preview (`record`) | `videos/<stem>_emu_preview.mp4` |
 | Upload compilation (`compilation`) | `videos/<stem>_emu.mp4` |
@@ -559,10 +559,6 @@ evidence alone.
   can segfault the parent interpreter part-way through precomputation.
   CPU-only sim runs may keep the cheaper `fork` path. GPU runs default to the
   verified four feeder processes; `CBRSIM_WORKERS` remains a diagnostic override.
-- All supported Python versions default sim PNG output to synchronous writes.
-  Six concurrent Pillow/NumPy writer threads corrupted NumPy array metadata on
-  CPython 3.13 and crashed CPython 3.14 during long encodes.
-  `CBRSIM_PNG_WORKERS` is a diagnostic override, not a normal tuning knob.
 - If `/sbin/ub-device-create --verbose` says the `/dev/nvidia*` nodes already
   exist with correct permissions outside the sandbox, the host device setup is
   healthy; the missing nodes seen inside the sandbox are an isolation artifact.

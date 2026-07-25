@@ -46,7 +46,6 @@ from encode_config import consume_config_arg, profile_identity  # noqa: E402
 CONFIG_PROFILE = consume_config_arg(
     sys.argv, required=__name__ == "__main__")
 import av_config  # noqa: E402
-import analysis_style as analysis_style  # noqa: E402
 import ima_adpcm  # noqa: E402
 import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
@@ -122,6 +121,9 @@ AUDIO_PLAYBACK_FILE = "audio_playback_adpcm22_rf5c.wav"
 AUDIO_RATE, AUDIO_PCM_BYTES, AUDIO_CONTROL_BYTES = av_config.audio_frame_layout(
     FPS)
 AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * FPS))
+DISPLAY_CATEGORY_ORDER = (
+    "Raw", "Same", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+)
 PATTERN_BYTES = 32              # 4bpp 8x8 パターン
 NAME_BYTES = 2                  # ネームテーブル1エントリ(tile index + palette + priority)
 VRAM_TILES = av_config.VRAM_PATTERN_POOL_TILES
@@ -162,19 +164,6 @@ def update_age_pressure(age_press, cell_tier, diff):
     )
 
 
-# Compatibility aliases for diagnostics importing sim constants.  The
-# canonical values and border semantics live in analysis_style.py.
-COL_SAME = analysis_style.CAT_DEDUP
-CAT_RAW = analysis_style.CAT_RAW
-CAT_SAME = analysis_style.CAT_SAME
-CAT_DEDUP = analysis_style.CAT_DEDUP
-CAT_MISS = analysis_style.CAT_MISS
-CAT_NEAR = analysis_style.CAT_NEAR
-CAT_FLBK = analysis_style.CAT_FLBK
-CAT_PRG = analysis_style.COL_PRG
-CAT_WR1 = analysis_style.COL_WR1
-CAT_WR0 = analysis_style.COL_WR0
-CAT_DIC = analysis_style.COL_DIC
 # Resident candidate search narrows by rendered mean colour before the full
 # F3 comparison. This is search acceleration only; it does not accept a quality
 # tier by itself.
@@ -249,7 +238,6 @@ def near_mask_eval(cur, plain, changed):
 # 再登場したらCDから読み直さずRAM→VRAM DMAで復帰させる(CDバイト0)。CDが唯一の
 # ボトルネックなのでDMAは実質フリー扱い。0=無効(既定)。512KB/32B=16384枚。
 L3_TILES = int(os.environ.get("CBRSIM_L3", "0"))
-NO_PANELS = bool(os.environ.get("CBRSIM_NOPANELS"))   # 計測専用: 解析パネルPNGの書き出しを省く
 # PRG-RAM先読みバッファ: 再生前にPRGへ載せた静的タイル集合(pickle set of pattern keys)。
 # ここにあるパターンは再生中いつでもCD 0バイト(RAM→VRAM DMAのみ)で出せる=Fill扱い。
 PRG_PRELOAD_PATH = os.environ.get("CBRSIM_PRG_PRELOAD", "")
@@ -975,10 +963,6 @@ def canonicalize_p0_index15(seg_pals, frame_seg, assigns, pidxs):
     return canonical, stats
 
 
-def cells_to_image(cell_rgb):
-    return cell_rgb.reshape(TROWS, TCOLS, TILE, TILE, 3).transpose(0, 2, 1, 3, 4).reshape(H, W, 3)
-
-
 # --- フレーム独立の量子化(読込→333化→タイル化→パレット割当→索引→レンダ)を並列化 ---
 # 差分/画質予算の本体は逐次(前フレーム状態に依存)だが、ここは各フレーム独立=実行時間の大半。
 # ワーカー数は PC の CPU コア数-2(動的)。env CBRSIM_WORKERS で上書き可、1で逐次。
@@ -1040,25 +1024,6 @@ def quant_pool_start_method(gpu_enabled):
     path because they have no device context to inherit.
     """
     return "spawn" if gpu_enabled else "fork"
-
-
-def default_png_workers(version_info):
-    """Return the safe default PNG writer count for supported CPython versions.
-
-    Concurrent Pillow PNG writes corrupted live NumPy metadata during a long
-    CPython 3.13 encode, and had already crashed CPython 3.14. Keep writes
-    synchronous on every supported interpreter. The argument remains for API
-    compatibility with older callers.
-    """
-    del version_info
-    return 1
-
-
-def png_workers():
-    env = os.environ.get("CBRSIM_PNG_WORKERS")
-    if env:
-        return max(1, int(env))
-    return default_png_workers(sys.version_info)
 
 
 def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
@@ -1291,12 +1256,6 @@ def main():
               f"(candidates={palette_stats['candidate_segments']})")
     _t = _mark("パレット学習", _t)
 
-    main_dir = OUT / "preview"      # SEGA-CD 実出力(ゴースト有り)
-    catmap_dir = OUT / "catmap"     # category borders; Raw has none, Miss is overlaid later
-    if not NO_PANELS:
-        for d in (main_dir, catmap_dir):
-            prepare_dir(d, clean=True)
-
     border_mask = border_weight_mask()
     border_bool = border_mask < 1.0        # 外周2タイル(True)。ここのMissは飢餓に数えない
     # 中央距離(同点tie-break用): 画面中心からの二乗距離。小さい=中央=優先。
@@ -1406,6 +1365,7 @@ def main():
     dec_frames = []            # 実機決定ログ: 各要素 = そのフレームの [(cell, pal, key), ...]
     dec_miss = []              # per-frame Miss数(デバッグオーバーレイ用。デコード側では算出不能)
     dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss](デバッグ欄用)
+    dec_category_rows = []     # analysis用: 1 byte/cell の表示カテゴリ
     transfer_tiles_log = []    # pack/player照合用: cold pattern tile数
     transfer_runs_log = []     # pack/player照合用: packed cold-run record数
     supply_sources_log = []    # per-frame update-aligned Prg/Wr/Dic source codes
@@ -1740,7 +1700,6 @@ def main():
     )
     _t = _mark("格上げ残量計画", _t)
 
-    _t_render = 0.0        # ループ内訳: 描画+PNG保存に費やした時間(残りがcommit/探索)
     # Optional, low-frequency timing for the sequential decision loop.  Keep
     # this disabled for normal encodes: the nested resident-search timers are
     # deliberately detailed enough to add measurable profiling overhead.
@@ -1771,39 +1730,6 @@ def main():
         elapsed = now - started
         frame_times[name] += elapsed
         return now
-    # PNG保存(3枚/コマ)。Pillowの並列保存はCPython 3.13/3.14の長時間simで
-    # NumPy配列を壊した実績があるため、全対応版で既定同期保存。
-    from concurrent.futures import ThreadPoolExecutor
-    import collections as _collections
-    _png_workers = png_workers()
-    _png_pool = (ThreadPoolExecutor(max_workers=_png_workers)
-                 if not NO_PANELS and _png_workers > 1 else None)
-    _png_futs = _collections.deque()
-    if not NO_PANELS:
-        print(f"PNG writers: {_png_workers} ({'async' if _png_pool else 'synchronous'})", flush=True)
-
-    def _write_png(arr, path):
-        """Write one complete, decodable PNG before replacing the old frame."""
-        temp = path.with_name(path.name + ".tmp")
-        try:
-            Image.fromarray(arr, "RGB").save(temp, format="PNG")
-            with Image.open(temp) as check:
-                check.load()
-            os.replace(temp, path)
-        finally:
-            temp.unlink(missing_ok=True)
-
-    def _save_png(arr, path):
-        # cells_to_image can return a view into live frame state.  Freeze it
-        # before the worker starts so the next frame cannot mutate its buffer.
-        frozen = np.ascontiguousarray(arr).copy()
-        if _png_pool is None:
-            _write_png(frozen, path)
-            return
-        if len(_png_futs) >= 96:          # 背圧: 生成が速すぎてもメモリ膨張を防ぐ
-            _png_futs.popleft().result()
-        _png_futs.append(_png_pool.submit(_write_png, frozen, path))
-
     # The loop creates and releases many short-lived containers but no
     # intentional reference cycles.  A generation-2 cyclic-GC scan over the
     # growing pattern dictionaries causes isolated 50-90 ms stalls.  Collect
@@ -2961,6 +2887,30 @@ def main():
             dec_cats.append((
                 raw_count, same_count, near_count, flbk_count,
                 source_count, miss))
+            category_row = np.full(
+                C_CELLS, DISPLAY_CATEGORY_ORDER.index("Same"), np.uint8)
+            for name, mask in (
+                    ("Raw", raw_display_mask),
+                    ("Near", near_eff),
+                    ("Flbk", flbk_mask),
+                    ("Prg", prg_source_mask),
+                    ("Wr0", wr0_source_mask),
+                    ("Wr1", wr1_source_mask),
+                    ("Dic", dic_source_mask),
+                    ("Miss", stale)):
+                category_row[mask] = DISPLAY_CATEGORY_ORDER.index(name)
+            category_counts = np.bincount(
+                category_row, minlength=len(DISPLAY_CATEGORY_ORDER))
+            expected_counts = np.asarray((
+                raw_count, same_count, near_count, flbk_count,
+                int(prg_source_mask.sum()), int(wr0_source_mask.sum()),
+                int(wr1_source_mask.sum()), int(dic_source_mask.sum()), miss,
+            ), np.int64)
+            if not np.array_equal(category_counts, expected_counts):
+                raise AssertionError(
+                    f"frame {i}: per-cell analysis categories differ "
+                    "from the encoded category totals")
+            dec_category_rows.append(category_row.tobytes())
         # waitはTSVのMiss継続観測専用。優先度のage_pressとは独立。
         carry = int((stale & (wait >= 1)).sum())
         # 滞留 = 待たされた連続フレーム数(=wait)。今フレームも未更新なので+1
@@ -2984,37 +2934,6 @@ def main():
         if _loop_profile:
             _lp_t = _lp_mark("accounting", _lp_t, _lp_frame)
 
-        # レンダリング(計測専用モードでは省く)
-        if not NO_PANELS:
-            _r0 = time.perf_counter()
-            _save_png(cells_to_image(cur_rgb), main_dir / f"{i:05d}.png")
-
-            # Category map: Raw=thin dashed frame; Same=no frame;
-            # Near/Flbk use thin frames.
-            # Dic/Prg/Wr use thin colour-and-black dashed frames.
-            # Miss becomes a red fill in the renderer.
-            cat = cur_rgb.astype(np.float64)
-            cat[stale] = 0
-            analysis_style.apply_numpy_category_border(
-                cat, raw_display_mask, "Raw")
-            analysis_style.apply_numpy_category_border(cat, near_eff, "Near")
-            analysis_style.apply_numpy_category_border(cat, flbk_mask, "Flbk")
-            analysis_style.apply_numpy_category_border(
-                cat, prg_source_mask, "Prg")
-            analysis_style.apply_numpy_category_border(
-                cat, wr0_source_mask, "Wr0")
-            analysis_style.apply_numpy_category_border(
-                cat, wr1_source_mask, "Wr1")
-            analysis_style.apply_numpy_category_border(
-                cat, dic_source_mask, "Dic")
-            _save_png(cells_to_image(cat.clip(0, 255).astype(np.uint8)), catmap_dir / f"{i:05d}.png")
-
-            _t_render += time.perf_counter() - _r0
-
-        if _loop_profile:
-            # Panel generation is intentionally outside the decision profile.
-            _lp_t = time.perf_counter()
-
         if (i + 1) % 200 == 0 or i + 1 == n:
             print(f"  {i+1}/{n}", flush=True)
         if _loop_profile:
@@ -3027,13 +2946,8 @@ def main():
 
     if _gc_was_enabled:
         _gc.enable()
-    if _png_pool is not None:                      # 残りのPNG保存を全て完了させてから閉じる
-        for _f in _png_futs:
-            _f.result()
-        _png_pool.shutdown()
     _loop_total = time.perf_counter() - _t
-    _phases.append(("差分ループ:commit/探索", _loop_total - _t_render))
-    _phases.append(("差分ループ:描画+PNG保存", _t_render))
+    _phases.append(("差分ループ:commit/探索", _loop_total))
     if _loop_profile:
         _profiled_total = sum(_lp_totals.values())
         print("loop profile (exclusive decision-loop sections):", flush=True)
@@ -3049,7 +2963,7 @@ def main():
             )
         print(
             f"  profiled total      {_profiled_total:8.3f}s; "
-            f"loop commit/search={_loop_total - _t_render:.3f}s",
+            f"loop commit/search={_loop_total:.3f}s",
             flush=True,
         )
         print("loop profile (nested resident search; included in decision_commit):", flush=True)
@@ -3462,7 +3376,7 @@ def main():
             body_fixed_control_bytes=body_fixed_control_bytes,
             body_variable_supply_bytes=body_variable_supply_bytes,
         )
-    print(f"wrote {main_dir}, {catmap_dir}; stats.npz + miss_masks.npy saved")
+    print("wrote stats.npz + miss_masks.npy; analysis PNGs are deferred")
 
     # 実機TTRCエンコード用の決定ログ(既定off)。品質決定(区間パレット/ディザ/Near/Flbk/画質予算/fill)は
     # すべてこのログに畳み込まれる=pack_streamは再生するだけでmp4と同じ画を出せる(唯一の真実源)。
@@ -3552,6 +3466,11 @@ def main():
             "seg_pals": [np.asarray(p, np.uint8) for p in seg_pals],  # list of (4,15,3)
             "frame_seg": np.asarray(frame_seg, np.int32),
             "frames": dec_frames,                                     # [[(cell,pal,key),...], ...]
+            "display_categories": {
+                "schema_version": 1,
+                "order": DISPLAY_CATEGORY_ORDER,
+                "rows": dec_category_rows,
+            },
             "pattern_supply": {
                 "schema_version": 2,
                 "enabled": bool(PATTERN_SUPPLY_ON),
@@ -3753,10 +3672,11 @@ def _estimated_frame_count():
 
 def _sim_tmpfs_required_bytes():
     # PNG compression varies substantially by source. This estimate covers the
-    # two extracted inputs, the three sim panels, and ordinary sidecars while
-    # retaining a fixed headroom for palettes, decisions, and audio.
+    # two extracted inputs and ordinary sidecars while retaining fixed headroom
+    # for palettes, decisions, and audio. Analysis panels have their own render
+    # reservation and do not belong to the mandatory sim stage.
     pixels = _estimated_frame_count() * W * H
-    return pixels * 10 + 1024 ** 3
+    return pixels * 6 + 1024 ** 3
 
 
 def _activate_sim_tmpfs():

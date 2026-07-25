@@ -252,8 +252,8 @@ allowance.
 `CBRSIM_LOOP_PROFILE=1` is a diagnostic-only timing mode for the sequential
 decision loop. It reports exclusive per-frame timing percentiles, resident
 candidate-search sub-times, and candidate/cache counts. It does not change the
-encoded decisions. Combine it with `CBRSIM_NOPANELS=1` when measuring the
-encoder without analysis PNG time.
+encoded decisions. Preview and category PNG generation belongs to
+`tools/render_analysis.py`, so it is never included in this timing.
 
 After quantization, the encoder dry-runs the exact target through the shared
 VRAM allocator and predicts each frame's name-table and cold-pattern demand.

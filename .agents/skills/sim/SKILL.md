@@ -198,8 +198,6 @@ After completion:
   quality-allocation diagnostic.
 - Starvation is allowed, but report it.
 - Output appears under `videos/<stem>/`:
-  - `preview/`
-  - `catmap/`
   - `stats.npz`
   - `audio_13k3_u8_mono.wav`, or for ADPCM22 both the packer input
     `audio_22k05_s16_mono.wav` and the analysis/straight-video playback model
@@ -257,7 +255,9 @@ Important rendering notes:
 
 - W/H, tile count, display aspect, resolution text, fps, and average useful
   BODY kbps are auto-derived from simulation output: `stats.npz`,
-  `buffer_remaining.npz`, preview, and raw images.
+  `buffer_remaining.npz`, decisions, and raw images.
+- `render_analysis.py` replays the decisions and creates `preview/` and
+  `catmap/` PNGs only when analysis output is requested.
 - Only the source label is passed with `CBRSIM_SRCLABEL`.
 - Layout details are implemented in `layout_preview.py`:
   - right column: Source / Category / whole-clip category totals / Audio
@@ -336,8 +336,8 @@ ps -eo pid,etimes,args | grep -E "sim\\.py|render_analysis\\.py" | grep -v grep
 
 - If another user's simulation is running, wait until it finishes.
 - Never kill another session's process. Kill only jobs you started.
-- Other simulations can often be identified through env choices, for example
-  `CBRSIM_EMIT_DEC` or `NOPANELS`, and through their profile-specific
+- Other simulations can often be identified through env choices such as
+  `CBRSIM_EMIT_DEC`, and through their profile-specific
   `videos/<stem>/tmp` working directory. Do not use a shared `tmp/sim` for
   player decision output. See `[[shared-machine-sim-coordination]]`.
 - The analysis layout is consolidated into:

@@ -38,10 +38,6 @@ class SimMultiprocessingTests(unittest.TestCase):
     def test_cpu_loader_pool_keeps_fast_fork_path(self) -> None:
         self.assertEqual(sim.quant_pool_start_method(False), "fork")
 
-    def test_all_supported_pythons_default_to_synchronous_png_writes(self) -> None:
-        self.assertEqual(sim.default_png_workers((3, 14, 0)), 1)
-        self.assertEqual(sim.default_png_workers((3, 13, 9)), 1)
-
     def test_pattern_cache_owns_compact_rgb(self) -> None:
         rgb_frame = np.zeros((4, 8, 8, 3), np.uint8)
         rgb = sim.own_pattern_cache_rgb(rgb_frame[2])

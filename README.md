@@ -149,7 +149,9 @@ category.
   Main CPU player. It also writes their concatenation as an off-disc
   `MOVIE.DAT` compatibility file for analysis and regression tools.
 - `tools/render_analysis.py` + `tools/layout_preview.py`: the analysis overlay.
-  Disposable sim PNG/MP4 data lives in managed tmpfs behind the familiar
+  The renderer materializes decoded-preview and category PNGs from sim
+  decisions only when analysis output is requested. Disposable PNG/MP4 data
+  lives in managed tmpfs behind the familiar
   `videos/` paths. Per-frame TSVs remain persistent below `logs/`, uniquely
   named by time, profile, short profile checksum, and encoder version.
 - `boot/`: the Sub/Main CPU playback runtime for real hardware. DEBUG builds

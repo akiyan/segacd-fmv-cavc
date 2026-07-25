@@ -1,14 +1,63 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pickle
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import numpy as np
 
 import sim_artifact_cache as cache
 
 
 class SimArtifactCacheTests(unittest.TestCase):
+    def _write_completed_data(self, root: Path, *, categories=True) -> dict:
+        data = root / "data"
+        data.mkdir()
+        decisions = {
+            "frames": [[(0, 0, b"\x01" * 64)]],
+            "frame_seg": np.zeros(1, np.int32),
+            "geom": (1, 1, 1, 8),
+            "max_cold": 1,
+        }
+        if categories:
+            decisions["display_categories"] = {
+                "schema_version": 1,
+                "order": (
+                    "Raw", "Same", "Near", "Flbk", "Prg",
+                    "Wr0", "Wr1", "Dic", "Miss",
+                ),
+                "rows": [b"\x00"],
+            }
+        with (data / "decisions.pkl").open("wb") as output:
+            pickle.dump(decisions, output)
+        np.savez(data / "stats.npz", stats=np.zeros((1, 1)))
+        for name in (
+                "buffer_remaining.npz", "miss_masks.npy", "palettes.bin",
+                "seg_palettes.npz", "audio_22k05_s16_mono.wav",
+                "audio_playback_adpcm22_rf5c.wav"):
+            (data / name).touch()
+        for directory in ("master", "raw"):
+            path = data / directory
+            path.mkdir()
+            (path / "00001.png").touch()
+        return {"data": data, "decisions": decisions}
+
+    def test_completed_data_does_not_require_analysis_panel_pngs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self._write_completed_data(Path(tmp))
+            result = cache.validate_completed_data(fixture["data"], {})
+        self.assertEqual(result, {"frames": 1})
+
+    def test_completed_data_requires_per_cell_analysis_categories(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = self._write_completed_data(
+                Path(tmp), categories=False)
+            with self.assertRaisesRegex(
+                    cache.CacheValidationError, "per-cell categories"):
+                cache.validate_completed_data(fixture["data"], {})
+
     def test_identity_ignores_paths_and_output_controls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "movie.mp4"

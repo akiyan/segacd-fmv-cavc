@@ -5,6 +5,9 @@ This document defines, exactly and completely, every element drawn in the
 **Tile Texture Reuse Codec**. The layout "source of truth" is
 `tools/layout_preview.py` (dummy data); `render_analysis` runs the same drawing
 functions on real encoder output.
+`tools/render_analysis.py` replays `decisions.pkl` and materializes the
+decoded-preview and per-cell category PNGs on demand. `tools/sim.py` stores the
+compact decisions and category rows but does not generate those PNGs.
 
 Every render also writes a machine-readable, one-row-per-frame TSV under
 `logs/`. Its unique filename contains local date/time, profile name, a
