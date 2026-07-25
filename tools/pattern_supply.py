@@ -206,6 +206,7 @@ class FrameSupplyBudget:
     wr: np.ndarray
     dic: np.ndarray
     dic_dictionary: tuple[bytes, ...] = ()
+    prg_pressure_start: int = -1
 
     @property
     def total(self) -> np.ndarray:
@@ -338,20 +339,59 @@ def _allocate_credits(
         push(frame)
 
 
+def estimate_prg_pressure_start(
+    demand_patterns: Sequence[int] | np.ndarray,
+    supply_patterns: int | Sequence[int] | np.ndarray,
+    capacity_patterns: int,
+) -> int:
+    """Estimate the first frame where PrgBuf has no pattern balance left."""
+
+    demand = np.asarray(demand_patterns, dtype=np.int64)
+    if demand.ndim != 1:
+        raise ValueError("Prg demand must be one-dimensional")
+    if np.any(demand < 0):
+        raise ValueError("Prg demand must be non-negative")
+    if capacity_patterns < 0:
+        raise ValueError("Prg capacity must be non-negative")
+    if np.isscalar(supply_patterns):
+        supply = np.full(len(demand), int(supply_patterns), np.int64)
+    else:
+        supply = np.asarray(supply_patterns, dtype=np.int64)
+        if supply.shape != demand.shape:
+            raise ValueError("Prg supply must be scalar or match demand")
+    if np.any(supply < 0):
+        raise ValueError("Prg supply must be non-negative")
+
+    balance = int(capacity_patterns)
+    for frame, (frame_demand, frame_supply) in enumerate(
+            zip(demand, supply)):
+        balance = min(
+            int(capacity_patterns),
+            balance + int(frame_supply) - int(frame_demand),
+        )
+        if balance <= 0:
+            return frame
+    return len(demand)
+
+
 def plan_frame_budgets(
     prediction,
     *,
     enabled: bool = True,
     wr_patterns: int = WORD_BUF_PATTERNS,
     dic_patterns: int = DIC_BUF_PATTERNS,
+    prg_supply_patterns: int | Sequence[int] | np.ndarray | None = None,
+    prg_capacity_patterns: int = 0,
 ) -> FrameSupplyBudget:
     """Select DicBuf hits, then allocate residual Wr credits.
 
     Current predictions expose the cold keys for the complete movie. DicBuf is
     selected first as a persistent dictionary. Its hits are removed from the
-    provisional Prg demand, after which parity-constrained Wr0/Wr1 credits
-    water-fill the remaining protected/Miss-risk bursts. Older count-only test
-    fixtures retain the former finite-credit behavior.
+    provisional Prg demand. When a Prg supply trace is present, a lightweight
+    balance forecast finds the first frame that would exhaust PrgBuf without
+    Word RAM, then each parity bank water-fills only that pressure suffix.
+    Older count-only callers without a supply trace retain whole-movie
+    water-fill behavior.
     """
     exact_bytes = np.asarray(prediction.exact_bytes, dtype=np.int64)
     protected_bytes = np.asarray(prediction.protected_bytes, dtype=np.int64)
@@ -400,6 +440,34 @@ def plan_frame_budgets(
         available = residual_exact_cold.copy()
         available[0] = 0
         allocated = np.zeros(shape, np.int64)
+        pressure_start = -1
+        if prg_supply_patterns is not None:
+            pressure_start = estimate_prg_pressure_start(
+                residual_exact_cold,
+                prg_supply_patterns,
+                prg_capacity_patterns,
+            )
+            for parity in (0, 1):
+                _allocate_credits(
+                    wr,
+                    available,
+                    allocated,
+                    (
+                        frame for frame in range(1, len(exact_bytes))
+                        if frame >= pressure_start and frame % 2 == parity
+                    ),
+                    wr_patterns,
+                    residual_exact_bytes,
+                    residual_protected_bytes,
+                    residual_exact_cold,
+                    residual_protected_cold,
+                )
+            return FrameSupplyBudget(
+                wr=wr,
+                dic=dic,
+                dic_dictionary=dictionary,
+                prg_pressure_start=pressure_start,
+            )
         for parity in (0, 1):
             _allocate_credits(
                 wr, available, allocated,
@@ -412,6 +480,33 @@ def plan_frame_budgets(
     available = exact_cold.copy()
     available[0] = 0
     allocated = np.zeros(shape, np.int64)
+    pressure_start = -1
+    if prg_supply_patterns is not None:
+        pressure_start = estimate_prg_pressure_start(
+            exact_cold,
+            prg_supply_patterns,
+            prg_capacity_patterns,
+        )
+        for parity in (0, 1):
+            _allocate_credits(
+                wr,
+                available,
+                allocated,
+                (
+                    frame for frame in range(1, len(exact_bytes))
+                    if frame >= pressure_start and frame % 2 == parity
+                ),
+                wr_patterns,
+                exact_bytes,
+                protected_bytes,
+                exact_cold,
+                protected_cold,
+            )
+        return FrameSupplyBudget(
+            wr=wr,
+            dic=dic,
+            prg_pressure_start=pressure_start,
+        )
     for parity in (0, 1):
         _allocate_credits(
             wr, available, allocated,

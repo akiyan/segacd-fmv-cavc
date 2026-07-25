@@ -270,9 +270,13 @@ shared allocator. It builds two future-demand traces:
 
 A CRAM segment switch reserves a full name-table refresh in both traces before
 optional earlier updates may spend quality allowance. The planner selects
-reusable DicBuf entries, assigns finite WordBuf credits under frame-parity
-constraints, and computes backwards reserve curves. Optional Raw/Buf upgrades
-use complete-exact demand; normal exact work protects Miss-risk demand.
+reusable DicBuf entries, predicts the first PrgBuf pressure frame from
+cumulative exact cold demand and provisional payload supply, assigns finite
+WordBuf credits by water-filling only the suffix from that frame under parity
+constraints, and computes backwards reserve curves. This pressure forecast is
+lightweight; the one-pass physical sector planner remains the final proof.
+Optional Raw/Buf upgrades use complete-exact demand; normal exact work
+protects Miss-risk demand.
 
 For each CRAM switch, the encoder inspects the configured number of frames
 starting at the switch and selects at most one frame with the largest positive
@@ -281,10 +285,13 @@ frame's reserve target. The remaining future reserve and all physical sector,
 cold, PrgBuf, and jitter limits stay unchanged.
 
 The final reserve is zero, so a light suffix releases saved allowance
-naturally. Demand beyond the complete capacity is handled by the normal
-priority, approximation, carry, and Miss rules. The physical Prg schedule is
-constructed in `tools/physical_budget.py` and materialized by
-`tools/stream_schedule.py`.
+naturally. The first suffix whose strict reserve stays zero also exposes its
+surplus fresh allowance as a terminal-drain credit. Earlier Raw/Buf upgrades
+may borrow that credit; it tapers to zero and the signed quality balance must
+be non-negative again at the final frame. Demand beyond the complete capacity
+is handled by the normal priority, approximation, carry, and Miss rules. The
+physical Prg schedule is constructed in `tools/physical_budget.py` and
+materialized by `tools/stream_schedule.py`.
 
 ## Per-source TOML profiles
 
@@ -626,19 +633,23 @@ demand traceを作ります。
 
 CRAM segment switchは、先行するoptional updateがquality allowanceを使う前に、両trace
 へfull name-table refreshを予約します。plannerは再利用可能なDicBuf entryを選び、
-frame parity制約の下で有限WordBuf creditを割り当て、後ろ向きreserve curveを計算します。
-optional Raw/Buf upgradeはcomplete-exact demand、通常exact workはMiss-risk demandを
-保護します。
+exact cold demandと暫定payload供給の累積から最初のPrgBuf pressure frameを予測し、その
+frame以降のsuffix内だけをparity制約付きでwater-fillして有限WordBuf creditを割り当て、
+後ろ向きreserve curveを計算します。このpressure予測は軽量で、one-pass physical sector
+plannerが最終proofのままです。Optional Raw/Buf upgradeはcomplete-exact demand、通常
+exact workはMiss-risk demandを保護します。
 
 各CRAM switchについて、encoderはswitch frameから設定frame数を調べ、positiveな
 protected-demand不足が最大の1 frameだけを選びます。選択frameのreserve targetから
 その不足分だけを引きます。残りの将来reserveと、物理sector、cold、PrgBuf、jitterの
 全limitは変えません。
 
-最終reserveはzeroなので、軽い末尾では保存済みallowanceが自然に解放されます。全容量を
+最終reserveはzeroなので、軽い末尾では保存済みallowanceが自然に解放されます。Strict
+reserveが継続してzeroになる最初のsuffixは、余るfresh allowanceをterminal-drain
+creditとして公開します。前のRaw/Buf格上げはこのcreditを借りられますが、creditは最終
+frameでzeroになり、signed quality balanceもnon-negativeへ戻る必要があります。全容量を
 超えるdemandは通常のpriority、approximation、carry、Miss ruleで処理します。物理Prg
-scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py` が
-具体化します。
+scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py` が具体化します。
 
 ## SourceごとのTOML profile
 

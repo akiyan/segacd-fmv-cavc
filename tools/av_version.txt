@@ -11,6 +11,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e130: Water-fill each parity WordBuf only inside the predicted PrgBuf
+#         pressure suffix, preserving the delayed start without stranding
+#         credits on one overpredicted frame.
+#   e129: Trial greedy front-loading from the predicted PrgBuf pressure frame.
+#   e128: Lend the proven unused allowance from the permanently self-funded
+#         movie suffix to earlier Raw/Buf upgrades. The signed quality ledger
+#         tapers this terminal-drain credit to zero and requires full repayment.
 #   e127: Limit each selected CRAM-priority frame's reserve reduction to its
 #         predicted protected-demand deficit over fresh frame supply. This
 #         funds the forecast shortage without emptying the complete future
@@ -796,5 +803,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260725
-e=127
+e=130
 p=90

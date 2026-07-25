@@ -103,26 +103,31 @@ distance is measured, so the reserve accounts for the real CRAM change.
 
 ## Boot-Preload Assignment
 
-`pattern_supply.plan_frame_budgets()` assigns one 32-byte credit at a time.
-After each credit it recomputes the affected frame's remaining risk.
-
-Credits are ordered by:
-
-1. protected cold demand before unprotected exact demand;
-2. largest remaining protected-byte demand;
-3. largest remaining exact-byte and cold demand; and
-4. frame number as the deterministic final tie-break.
-
 `DicBuf` entries are selected by whole-movie exact reuse, with protected reuse
-as the first tie-break. Dictionary hits do not consume entries. Word RAM is
-then assigned under its parity constraint:
+as the first tie-break. Dictionary hits do not consume entries.
+
+Word RAM uses a lightweight PrgBuf pressure forecast. For each frame, the
+forecast subtracts predicted name entries and one identity run descriptor per
+cold pattern from the variable BODY allowance. The remaining bytes are
+provisional Prg payload supply. Starting with the normal fps-specific PrgBuf
+capacity, it accumulates that supply against exact cold demand after DicBuf
+hits. The first frame whose predicted balance reaches zero is the pressure
+start.
+
+No WordBuf credit is assigned before the pressure start. From that frame,
+each physical parity bank water-fills only the pressure suffix. Protected
+cold demand is reduced first, followed by complete exact demand. Recomputing
+the affected frame after every credit avoids stranding a bank on one
+overpredicted frame:
 
 - `WordBuf0` serves even timed frames;
 - `WordBuf1` serves odd timed frames; and
 - frame 0 uses its dedicated boot construction.
 
 The two Word-RAM buffers hold different chronological pattern sequences. They
-are not duplicate caches.
+are not duplicate caches. The forecast does not run the physical sector
+scheduler a second time. The one-pass shared-sector planner still supplies the
+authoritative per-frame limits and the final PrgBuf proof.
 
 ## Quality Reserve
 
@@ -148,23 +153,35 @@ tail releases it. Demand larger than the full reserve plus fresh supply is
 intentionally clipped and resolved by normal priority, approximation, carry,
 and Miss behavior.
 
+The encoder also finds the first frame from which the strict reserve stays
+zero. Fresh allowance left after every predicted demand in that self-funded
+suffix is a terminal-drain credit. The credit is available to earlier
+Raw/Buf upgrades and shrinks to zero at the final frame. This moves otherwise
+stranded tail allowance earlier without changing any physical delivery limit.
+
 The per-frame limit is:
 
 ```text
 spendable = quality budget before frame
           + fresh frame supply
-          - reserve required after frame
+          - (reserve required after frame - terminal-drain credit)
 ```
 
 After the frame:
 
 ```text
-quality budget after frame =
-    clamp(quality budget before frame
-          + fresh frame supply
-          - actual spending,
-          0, quality-budget capacity)
+quality balance after frame =
+    min(quality-budget capacity,
+        quality balance before frame
+        + fresh frame supply
+        - actual spending)
 ```
+
+The internal balance may be negative while future suffix allowance is on loan.
+The loan must be fully repaid by the final frame or simulation fails.
+`quality_budget_remaining` reports only the non-borrowed positive balance;
+`quality_budget_balance_bytes` and `quality_budget_debt_bytes` preserve the
+signed balance and debt for diagnostics.
 
 Frame 1 starts with the complete quality budget because frame 0 is installed
 outside `BODY.DAT`.
@@ -238,10 +255,12 @@ dictionary count:
 - unloaded preload capacity is not drawn as present data; and
 - the quality-budget trace remains diagnostic-only.
 
-`buffer_remaining.npz` schema 6 contains physical remaining amounts, capacities,
+`buffer_remaining.npz` schema 7 contains physical remaining amounts, capacities,
 realized loads, base and effective quality reserve traces, predicted demand,
-the CRAM-priority frame mask and shortage, preload credits, and physical BODY
-payload/control/pad accounting. The decision log also freezes
+the terminal-drain start/credit/balance/debt traces, the CRAM-priority frame
+mask and shortage, the WordBuf Prg-pressure start and provisional payload
+supply, preload credits, and physical BODY payload/control/pad accounting.
+The decision log also freezes
 `pattern_supply` schema 2, `pattern_transfers` schema 2, and the physical
 schedule used by the packer.
 
@@ -365,25 +384,26 @@ indexを選択segment paletteでrenderするため、reserveは実際のCRAM変�
 
 ## Boot-preload割り当て
 
-`pattern_supply.plan_frame_budgets()`は32-byte creditを1つずつ割り当てます。各creditの
-後に、対象frameの残riskを再計算します。
-
-Creditの順序は次のとおりです。
-
-1. unprotected exact demandよりprotected cold demand
-2. 残protected-byte demandが最大
-3. 残exact-byte demandとcold demandが最大
-4. 最後のdeterministic tie-breakとしてframe番号
-
 `DicBuf` entryは全編exact reuseで選び、最初のtie-breakにprotected reuseを使います。
-Dictionary hitはentryを消費しません。その後、parity制約付きでWord RAMを割り当てます。
+Dictionary hitはentryを消費しません。
+
+Word RAMは軽量なPrgBuf pressure予測を使います。各frameで、variable BODY allowanceから
+予測name entryとcold patternごとのidentity run descriptor 1つを引き、残りを暫定Prg
+payload供給とします。Fps別のnormal PrgBuf capacityから始め、DicBuf hit後のexact cold
+demandに対してこの供給を累積します。予測残高が最初にzeroになるframeがpressure startです。
+
+Pressure startより前にはWordBuf creditを割り当てません。そのframe以降は、各physical
+parity bankがpressure suffix内だけをwater-fillします。Protected cold demandを先に減らし、
+次にcomplete exact demandを減らします。各credit後に対象frameを再計算するため、予測が
+大きすぎた1 frameへbankを固定して使い残すことを避けます。
 
 - `WordBuf0`はeven timed frameを供給します。
 - `WordBuf1`はodd timed frameを供給します。
 - Frame 0は専用boot constructionを使います。
 
 2つのWord-RAM bufferは異なる時系列pattern sequenceを保持し、duplicate cacheでは
-ありません。
+ありません。この予測のためにphysical sector schedulerを2回走らせません。One-pass
+shared-sector plannerが、引き続き正本のper-frame limitと最終PrgBuf proofを提供します。
 
 ## 画質reserve
 
@@ -408,23 +428,33 @@ frame後のreserve =
 Full reserveとfresh supplyの合計を超えるdemandは意図的にclipし、通常のpriority、
 approximation、carry、Missで解決します。
 
+Encoderは、strict reserveが継続して0になる最初のframeも求めます。そのself-funded suffixで、
+全予測demandを払った後に残るfresh allowanceがterminal-drain creditです。このcreditを
+前のRaw/Buf格上げで利用し、最終frameへ向けて0まで減らします。物理delivery limitを
+変えず、tailで使われないallowanceを前へ移します。
+
 Frameごとのlimitは次のとおりです。
 
 ```text
 spendable = frame前のquality budget
           + fresh frame supply
-          - frame後に必要なreserve
+          - (frame後に必要なreserve - terminal-drain credit)
 ```
 
 Frame後は次のように更新します。
 
 ```text
-frame後のquality budget =
-    clamp(frame前のquality budget
-          + fresh frame supply
-          - actual spending,
-          0, quality-budget capacity)
+frame後のquality balance =
+    min(quality-budget capacity,
+        frame前のquality balance
+        + fresh frame supply
+        - actual spending)
 ```
+
+将来suffixのallowanceを借りている間、internal balanceはnegativeになれます。最終frameまでに
+loanを全額返せなければsimは失敗します。`quality_budget_remaining`は借入ではないpositive
+balanceだけを示し、`quality_budget_balance_bytes`と`quality_budget_debt_bytes`がsigned
+balanceとdebtをdiagnostic用に保持します。
 
 Frame 0は`BODY.DAT`外でinstallされるため、frame 1はcomplete quality budgetで始まります。
 
@@ -493,9 +523,11 @@ overflowの安全領域であり、feature memoryではありません。
 - Loadしていないpreload capacityをdataが存在するようには表示しません。
 - Quality-budget traceはdiagnostic専用です。
 
-`buffer_remaining.npz` schema 6は、物理remaining amount、capacity、realized load、
-base/effective quality reserve trace、predicted demand、CRAM-priority frame maskと
-予測不足量、preload credit、物理BODYのpayload/control/pad会計を含みます。
+`buffer_remaining.npz` schema 7は、物理remaining amount、capacity、realized load、
+base/effective quality reserve trace、predicted demand、terminal-drainの
+start/credit/balance/debt trace、CRAM-priority frame maskと予測不足量、WordBufの
+Prg-pressure startと暫定payload供給、preload credit、物理BODYのpayload/control/pad
+会計を含みます。
 Decision logは`pattern_supply` schema 2、
 `pattern_transfers` schema 2、packerが使うphysical scheduleも固定します。
 
