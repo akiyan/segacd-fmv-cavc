@@ -176,7 +176,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(av_config.baseline_cold_cap_for_fps(15), 360)
         self.assertEqual(env["CBRSIM_COLD_CAP"], "480")
 
-    def test_machi_ed_uses_full_h40_grid_and_profile_cap_380(self) -> None:
+    def test_machi_ed_uses_full_h40_grid_and_profile_cap_360(self) -> None:
         root = Path(__file__).resolve().parents[1]
         profile = load_profile(root / "configs/machi-ed-h40.toml")
         env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
@@ -184,7 +184,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
         self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "pad")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "380")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "360")
 
     def test_profile_without_preprocess_clears_inherited_snap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
