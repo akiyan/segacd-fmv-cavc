@@ -74,23 +74,28 @@ def make_header(case: Case) -> bytes:
         b"TTRC", ttrc_routing.VERSION, frames, tcols, trows, cells,
         1400, 1, ttrc_routing.FRAME_SECTORS, 1,
         12416, ttrc_routing.routing_sector_count(frames), 194, 12416,
-        case.mode, 0, 2, 18 if case.mode else 14, 1,
+        case.mode, 0, 2, 18 if case.mode else 14,
+        av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(case.fps), audio, case.fps,
         audio_fd, 30, features,
     )
     sector = bytearray(
         prefix + bytes(128) + bytes(player_constants.SECTOR - 192))
     if case.pattern_supply:
+        cold_cap = av_config.baseline_cold_cap_for_fps(case.fps)
+        layout = pattern_supply.word_ram_layout(
+            frames, cells, cold_cap)
         player_constants.PATTERN_SUPPLY_STRUCT.pack_into(
             sector, player_constants.PATTERN_SUPPLY_OFFSET,
             player_constants.PATTERN_SUPPLY_MAGIC,
             player_constants.PATTERN_SUPPLY_VERSION, 0,
-            pattern_supply.WORD_BUF_PATTERNS,
-            pattern_supply.WORD_BUF_PATTERNS,
+            layout.wr0_patterns,
+            layout.wr1_patterns,
             pattern_supply.DIC_BUF_PATTERNS,
-            (pattern_supply.WORD_BUF_PATTERNS + 63) // 64,
-            (pattern_supply.WORD_BUF_PATTERNS + 63) // 64,
+            (layout.wr0_patterns + 63) // 64,
+            (layout.wr1_patterns + 63) // 64,
             (pattern_supply.DIC_BUF_PATTERNS + 63) // 64,
+            cold_cap,
         )
     return player_constants.stamp_header_sector(sector)
 
@@ -224,8 +229,16 @@ def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
     generic_wait = disassembly[generic_match.end():arm_match.start()]
     arm = disassembly[arm_match.end():arm_end_match.start()]
     body_ack = r"\bmovew\s+#1,(?:00)?a12012 <GA_COMCMD1>"
-    if re.search(body_ack, start_wait) or re.search(body_ack, generic_wait):
-        raise AssertionError(f"{obj}: BODY acknowledged inside a preload wait")
+    stage_copy = r"\bbsr\w*\s+[^\n]*<consume_boot_stage>"
+    for name, block in (
+            ("startup", start_wait),
+            ("generic", generic_wait)):
+        if not block:
+            continue
+        if len(re.findall(body_ack, block)) != 1 or not re.search(stage_copy, block):
+            raise AssertionError(
+                f"{obj}: {name} wait must acknowledge exactly one copied "
+                "boot stage")
     if not re.search(body_ack, arm):
         raise AssertionError(f"{obj}: post-frame-0 BODY acknowledgement is missing")
 

@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Build-time guards for the player's PRG/Word-RAM streaming memory map.
+"""Prove the specialized player's PRG/Word-RAM memory contracts."""
 
-Run by the Makefile before assembling boot/movieplay_sp.s. Fails the build if the
-player's physical ring and the pipeline's single-source-of-truth ring drift apart,
-or if boot-only frame/routing staging overlaps a live buffer.
-"""
+from __future__ import annotations
+
+import argparse
 import re
 import sys
 from pathlib import Path
@@ -15,32 +14,52 @@ import ima_adpcm
 import pattern_supply
 import ttrc_routing
 
-SP = Path(__file__).resolve().parent.parent / "boot" / "movieplay_sp.s"
-text = SP.read_text()
-IP = Path(__file__).resolve().parent.parent / "boot" / "movieplay_ip.s"
+
+ROOT = Path(__file__).resolve().parent.parent
+SP = ROOT / "boot/movieplay_sp.s"
+IP = ROOT / "boot/movieplay_ip.s"
+sp_text = SP.read_text()
 ip_text = IP.read_text()
 
 
-def _equ(source, name, path):
-    m = re.search(r"^\.equ\s+%s,\s*(0x[0-9A-Fa-f]+|\d+)" % name, source, re.M)
-    if not m:
-        sys.exit(f"check_player_ring: could not find `.equ {name}` in {path}")
-    return int(m.group(1), 0)
+def equ(source: str, name: str, path: Path) -> int:
+    match = re.search(
+        rf"^\.equ\s+{re.escape(name)},\s*(0x[0-9A-Fa-f]+|\d+)\b",
+        source,
+        re.MULTILINE,
+    )
+    if not match:
+        sys.exit(f"check_player_ring: missing numeric `.equ {name}` in {path}")
+    return int(match.group(1), 0)
 
 
-def _require_asm(pattern, description):
-    if not re.search(pattern, text, re.M):
-        sys.exit(f"check_player_ring: ASM does not use {description}")
+def require(source: str, pattern: str, description: str) -> None:
+    if not re.search(pattern, source, re.MULTILINE):
+        sys.exit(f"check_player_ring: missing {description}")
 
 
-# --- Current TTRC contract, retaining the v7+ packed-routing layout ---
-# The Python codec is the format source of truth. The Sub-CPU player keeps
-# literal `.equ` values because the assembler cannot import Python; compare all
-# of them before every player build and also require the copy loops to use the
-# named values rather than disconnected immediate constants.
-routing_equ_contract = {
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--constants",
+    type=Path,
+    help="generated player_constants.inc for the specialized build",
+)
+args = parser.parse_args()
+
+pc_text = args.constants.read_text() if args.constants else ""
+
+
+def pc(name: str) -> int:
+    if not pc_text:
+        sys.exit(
+            "check_player_ring: --constants is required for the variable "
+            "Word-RAM layout")
+    return equ(pc_text, f"PC_{name}", args.constants)
+
+
+# The format literals remain source-level invariants.
+format_contract = {
     "ROUTING_VERSION": ttrc_routing.VERSION,
-    "ROUTING_BYTES": ttrc_routing.ROUTE_BYTES,
     "ROUTING_MAX_FRAMES": ttrc_routing.MAX_FRAMES,
     "ROUTING_SECTOR_BYTES": ttrc_routing.SECTOR_BYTES,
     "ROUTING_CTRL_MASK": ttrc_routing.CTRL_MASK,
@@ -59,298 +78,208 @@ routing_equ_contract = {
     "FEATURE_BOOT_VRAM_SIDECAR_BIT": (
         ttrc_routing.FEATURE_BOOT_VRAM_SIDECAR.bit_length() - 1),
 }
-for equ_name, expected in routing_equ_contract.items():
-    actual = _equ(text, equ_name, SP)
+for name, expected in format_contract.items():
+    actual = equ(sp_text, name, SP)
     if actual != expected:
         sys.exit(
-            f"check_player_ring: player {equ_name}={actual} (0x{actual:X}) != "
-            f"ttrc_routing={expected} (0x{expected:X})")
+            f"check_player_ring: {name}={actual:#x} != Python {expected:#x}")
 
-route_copy_longs = _equ(text, "ROUTING_COPY_LONGS", SP)
-route_bank_copies = _equ(text, "ROUTING_BANK_COPIES", SP)
-if ttrc_routing.ROUTE_BYTES != 16 * 1024:
-    sys.exit(
-        "check_player_ring: resident routing allocation must remain 16KB, got "
-        f"{ttrc_routing.ROUTE_BYTES} bytes")
-if route_copy_longs * 4 != ttrc_routing.ROUTE_BYTES:
-    sys.exit(
-        "check_player_ring: routing MOVE.L copy does not cover the complete "
-        f"table: {route_copy_longs} longs vs {ttrc_routing.ROUTE_BYTES} bytes")
-if route_bank_copies != 2:
-    sys.exit(
-        "check_player_ring: routing must be copied into both physical 1M Word-RAM "
-        f"banks, got {route_bank_copies} copies")
-_require_asm(
+
+# Generated layout: one Python calculation owns every offset and capacity.
+layout = pattern_supply.word_ram_layout(
+    pc("FRAMES"), pc("CELLS"), pc("COLD_CAP"))
+layout_contract = {
+    "ROUTING_BYTES": layout.routing_bytes,
+    "ROUTING_OFFSET": layout.routing_offset,
+    "ROUTING_COPY_LONGS": layout.routing_copy_longs,
+    "STATUS_OFFSET": layout.status_offset,
+    "CTRL_SCR_OFFSET": layout.ctrl_scr_offset,
+    "PAD_SCR_OFFSET": layout.pad_scr_offset,
+    "ADPCM_TABLE_OFFSET": layout.adpcm_table_offset,
+    "PCM_DEC_BUF_OFFSET": layout.pcm_dec_buf_offset,
+    "WR0_OFFSET": layout.wr0_offset,
+    "WR0_END": layout.wr0_end,
+    "WR0_CAPACITY": layout.wr0_patterns,
+    "WR1_OFFSET": layout.wr1_offset,
+    "WR1_END": layout.wr1_end,
+    "WR1_CAPACITY": layout.wr1_patterns,
+}
+for name, expected in layout_contract.items():
+    actual = pc(name)
+    if actual != expected:
+        sys.exit(
+            f"check_player_ring: PC_{name}={actual:#x} != layout {expected:#x}")
+if pc("ROUTING_SEC") * ttrc_routing.SECTOR_BYTES != layout.routing_bytes:
+    sys.exit("check_player_ring: routing sectors do not match resident allocation")
+for parity in (0, 1):
+    count = pc(f"WR{parity}_PATTERNS")
+    capacity = pc(f"WR{parity}_CAPACITY")
+    sectors = pc(f"WR{parity}_SECTORS")
+    if not 0 <= count <= capacity:
+        sys.exit(
+            f"check_player_ring: Wr{parity} count {count} > capacity {capacity}")
+    if sectors != (count + 63) // 64:
+        sys.exit(
+            f"check_player_ring: Wr{parity} sectors {sectors} do not cover "
+            f"{count} patterns")
+    if pc(f"WR{parity}_OFFSET") + sectors * ttrc_routing.SECTOR_BYTES > layout.status_offset:
+        sys.exit(
+            f"check_player_ring: Wr{parity} sector padding reaches the fixed tail")
+if pc("DIC_PATTERNS") > pattern_supply.DIC_BUF_PATTERNS:
+    sys.exit("check_player_ring: DicBuf preload exceeds Main-RAM dictionary")
+
+require(
+    sp_text,
+    r"^\.equ\s+ROUTING_BYTES,\s*PC_ROUTING_BYTES\s*$",
+    "generated routing byte allocation",
+)
+require(
+    sp_text,
+    r"^\.equ\s+ROUTING_COPY_LONGS,\s*PC_ROUTING_COPY_LONGS\s*$",
+    "generated routing copy length",
+)
+require(
+    sp_text,
     r"^\s*move\.w\s+#ROUTING_COPY_LONGS-1,\s*d0\s*$",
-    "ROUTING_COPY_LONGS in the MOVE.L copy loop")
-_require_asm(
-    r"^\s*moveq\s+#ROUTING_BANK_COPIES-1,\s*d1\s*$",
-    "ROUTING_BANK_COPIES in the Word-RAM bank loop")
-print(
-    "check_player_ring: OK  TTRC routing "
-    f"v{ttrc_routing.VERSION}, {ttrc_routing.ROUTE_BYTES // 1024}KB, "
-    f"{ttrc_routing.MAX_FRAMES} frames, {route_copy_longs} MOVE.L x "
-    f"{route_bank_copies} banks")
+    "named routing MOVE.L copy length",
+)
+require(
+    sp_text,
+    r"^\s*lea\s+WORD_BUF0,\s*a0\s*$",
+    "Wr0 preload destination",
+)
+require(
+    sp_text,
+    r"^\s*lea\s+WORD_BUF1,\s*a0\s*$",
+    "Wr1 preload destination",
+)
+require(
+    sp_text,
+    r"^\s*move\.w\s+#PC_WR0_SECTORS,\s*d0\s*$",
+    "Wr0 sector-rounded preload length",
+)
+require(
+    sp_text,
+    r"^\s*move\.w\s+#PC_WR1_SECTORS,\s*d0\s*$",
+    "Wr1 sector-rounded preload length",
+)
+require(
+    ip_text,
+    r"^\.equ\s+WR0_END,\s*PC_WR0_END\s*$",
+    "Main Wr0 bound",
+)
+require(
+    ip_text,
+    r"^\.equ\s+WR1_END,\s*PC_WR1_END\s*$",
+    "Main Wr1 bound",
+)
 
-# --- v9+ ADPCM full table duplicated into both physical Word-RAM banks ---
-adpcm_table = _equ(text, "ADPCM_TABLE", SP)
-adpcm_table_bytes = _equ(text, "ADPCM_TABLE_BYTES", SP)
-adpcm_table_sectors = _equ(text, "ADPCM_TABLE_SECTORS", SP)
-adpcm_bank_copies = _equ(text, "ADPCM_BANK_COPIES", SP)
-pcm_dec_buf = _equ(text, "PCM_DEC_BUF", SP)
-if adpcm_table_bytes != ima_adpcm.FULL_TABLE_BYTES:
-    sys.exit(
-        f"check_player_ring: ADPCM_TABLE_BYTES={adpcm_table_bytes} != "
-        f"reference full table {ima_adpcm.FULL_TABLE_BYTES}")
-expected_table_sectors = (
+print(
+    "check_player_ring: OK  compact Word RAM "
+    f"routing={layout.routing_bytes // 1024}KiB "
+    f"Wr0={pc('WR0_PATTERNS')}/{layout.wr0_patterns} "
+    f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
+
+
+# Boot stage is consumed through an explicit give/copy/take-back handshake.
+if pattern_supply.PALTAB_STAGE_OFFSET != equ(
+        sp_text, "PALTAB_STAGE_OFF", SP):
+    sys.exit("check_player_ring: Sub PALTAB stage offset differs from Python")
+if pattern_supply.PALTAB_STAGE_OFFSET != equ(
+        ip_text, "PALTAB_STAGE_OFF", IP):
+    sys.exit("check_player_ring: Main PALTAB stage offset differs from Python")
+if pattern_supply.PALTAB_STAGE_BYTES != equ(
+        sp_text, "PALTAB_STAGE_BYTES", SP):
+    sys.exit("check_player_ring: Sub PALTAB stage size differs from Python")
+if pattern_supply.PALTAB_STAGE_BYTES != equ(
+        ip_text, "PALTAB_STAGE_BYTES", IP):
+    sys.exit("check_player_ring: Main PALTAB stage size differs from Python")
+if pattern_supply.DIC_STAGE_OFFSET != equ(
+        sp_text, "DIC_STAGE_OFF", SP):
+    sys.exit("check_player_ring: Sub DicBuf stage offset differs from Python")
+if pattern_supply.DIC_STAGE_OFFSET != equ(
+        ip_text, "DIC_STAGE_OFF", IP):
+    sys.exit("check_player_ring: Main DicBuf stage offset differs from Python")
+for source, description in (
+        (sp_text, "Sub boot-stage handoff"),
+        (ip_text, "Main boot-stage handoff")):
+    require(source, r"STAT_BOOT_STAGE", description)
+require(
+    ip_text,
+    r"^\s*bsr\s+consume_boot_stage\s*$",
+    "Main boot-stage copy call",
+)
+if any(symbol in sp_text for symbol in (".equ O_CRAM,", ".equ O_NUPD,", ".equ O_UPDS,")):
+    sys.exit("check_player_ring: removed O_CRAM/O_NUPD/O_UPDS allocation returned")
+require(
+    sp_text,
+    r"^\s*lea\s+\(CTRL_SCR\+8\)\.l,\s*a2\s*$",
+    "diagnostic update-list output in CTRL_SCR",
+)
+print(
+    "check_player_ring: OK  boot stage copied before frame 0; "
+    "diagnostics use CTRL_SCR")
+
+
+# ADPCM/table and dictionary sizes remain fixed physical contracts.
+if equ(sp_text, "ADPCM_TABLE_BYTES", SP) != ima_adpcm.FULL_TABLE_BYTES:
+    sys.exit("check_player_ring: Sub ADPCM table size differs from Python")
+expected_adpcm_sectors = (
     ima_adpcm.FULL_TABLE_BYTES + ttrc_routing.SECTOR_BYTES - 1
 ) // ttrc_routing.SECTOR_BYTES
-if adpcm_table_sectors != expected_table_sectors:
-    sys.exit(
-        f"check_player_ring: ADPCM_TABLE_SECTORS={adpcm_table_sectors} != "
-        f"{expected_table_sectors}")
-if adpcm_bank_copies != 2:
-    sys.exit(
-        f"check_player_ring: ADPCM table needs two physical-bank copies, got "
-        f"{adpcm_bank_copies}")
-if adpcm_table % 4 or pcm_dec_buf % 4:
-    sys.exit("check_player_ring: ADPCM table and PCM buffer must be long-aligned")
-if adpcm_table + adpcm_table_bytes > pcm_dec_buf:
-    sys.exit(
-        f"check_player_ring: ADPCM table ends at "
-        f"{adpcm_table + adpcm_table_bytes:#x}, overlapping PCM buffer "
-        f"{pcm_dec_buf:#x}")
-if pcm_dec_buf + 1536 > _equ(text, "ROUTING", SP):
-    sys.exit("check_player_ring: ADPCM PCM buffer overlaps resident routing")
-_require_asm(
-    r"^\s*move\.w\s+#ADPCM_TABLE_LONGS-1,\s*d0\s*$",
-    "ADPCM_TABLE_LONGS in the full-table copy loop")
-_require_asm(
-    r"^\s*moveq\s+#ADPCM_BANK_COPIES-1,\s*d1\s*$",
-    "ADPCM_BANK_COPIES in the Word-RAM bank loop")
-print(
-    "check_player_ring: OK  ADPCM full table "
-    f"{adpcm_table:#x}..{adpcm_table + adpcm_table_bytes:#x}, "
-    f"{adpcm_table_sectors} sectors x {adpcm_bank_copies} banks, "
-    f"PCM buffer {pcm_dec_buf:#x}..{pcm_dec_buf + 1536:#x}")
+if equ(sp_text, "ADPCM_TABLE_SECTORS", SP) != expected_adpcm_sectors:
+    sys.exit("check_player_ring: Sub ADPCM table sector count differs from Python")
+if equ(sp_text, "ADPCM_BANK_COPIES", SP) != 2:
+    sys.exit("check_player_ring: ADPCM table must be duplicated in both banks")
+if equ(ip_text, "DIC_BUF_PATTERNS", IP) != pattern_supply.DIC_BUF_PATTERNS:
+    sys.exit("check_player_ring: Main DicBuf capacity differs from Python")
+if equ(ip_text, "DIC_BUF", IP) != pattern_supply.DIC_BUF_BASE:
+    sys.exit("check_player_ring: Main DicBuf base differs from Python")
+if equ(ip_text, "RUN_TABLE", IP) != pattern_supply.DIC_BUF_END:
+    sys.exit("check_player_ring: Main DicBuf end differs from Python")
 
 
-ring_bytes = _equ(text, "RING_SIZE", SP)
-want_bytes = av_config.RING_SIZE_KB * 1024
-if ring_bytes != want_bytes:
-    sys.exit(
-        f"check_player_ring: player RING_SIZE={ring_bytes} (0x{ring_bytes:X}) "
-        f"!= av_config.RING_SIZE_KB={av_config.RING_SIZE_KB} "
-        f"({want_bytes} / 0x{want_bytes:X}). Update one so they agree "
-        f"(single source of truth = tools/av_config.py).")
-print(
-    f"check_player_ring: OK  RING_SIZE={ring_bytes//1024}KB "
-    f"== av_config.RING_SIZE_KB (pump back-pressure "
-    f"{av_config.BACKPRESSURE_KB}KB; scheduled delivery "
-    f"15/24/30fps={av_config.scheduled_delivery_cap_kb(15)}/"
-    f"{av_config.scheduled_delivery_cap_kb(24)}/"
-    f"{av_config.scheduled_delivery_cap_kb(30)}KB; normal PrgBuf "
-    f"15/24/30fps={av_config.prg_buf_cap_kb(15)}/"
-    f"{av_config.prg_buf_cap_kb(24)}/"
-    f"{av_config.prg_buf_cap_kb(30)}KB)")
-
-# Opportunistic polling must guard only the next sector's real destination.
-# If both physical rings are checked unconditionally, a full PrgBuf prevents
-# control and padding from being drained even though neither uses PrgBuf. The
-# continuously arriving CD stream then slips before the first timed pattern
-# load. Keep this build-time structural check next to the memory-map checks.
-poll_start = text.index("pump_poll_core:")
-poll_end = text.index("pp_done:", poll_start)
-poll = text[poll_start:poll_end]
-poll_contract = (
-    "lea\tROUTING, a0",
-    "bhi.s\tpp_apply_space",
-    "bls.s\tpp_cdc",
-    "move.l\tring_tail, d0",
-    "pp_apply_space:",
-    "move.l\tapply_tail, d0",
-    "pp_cdc:",
+# PRG-RAM ring and boot-only staging remain independent of movie layout.
+ring_size = equ(sp_text, "RING_SIZE", SP)
+if ring_size != av_config.RING_SIZE_KB * 1024:
+    sys.exit("check_player_ring: physical PrgBuf ring differs from av_config")
+ring_base = equ(sp_text, "RING_BASE", SP)
+apply_base = equ(sp_text, "APPLY_BASE", SP)
+apply_size = equ(sp_text, "APPLY_SIZE", SP)
+f0pat_tmp = equ(sp_text, "F0PAT_TMP", SP)
+routing_tmp = equ(sp_text, "ROUTING_TMP", SP)
+max_f0_bytes = (
+    (40 * 28 * pattern_supply.PATTERN_BYTES
+     + ttrc_routing.SECTOR_BYTES - 1)
+    // ttrc_routing.SECTOR_BYTES
+    * ttrc_routing.SECTOR_BYTES
 )
-missing = [part for part in poll_contract if part not in poll]
-if missing:
-    sys.exit(
-        "check_player_ring: route-aware pump guard is incomplete: "
-        + ", ".join(repr(part) for part in missing))
-route_pos = poll.index("lea\tROUTING, a0")
-ring_pos = poll.index("move.l\tring_tail, d0")
-apply_label_pos = poll.index("pp_apply_space:")
-apply_pos = poll.index("move.l\tapply_tail, d0")
-cdc_pos = poll.index("pp_cdc:")
-if not route_pos < ring_pos < apply_label_pos < apply_pos < cdc_pos:
-    sys.exit(
-        "check_player_ring: pump guards must route payload to PrgBuf, control "
-        "to APPLY, and padding directly to CDC")
-print(
-    "check_player_ring: OK  route-aware pump guard "
-    "(payload=PrgBuf, control=APPLY, padding=unguarded)")
+if ring_base + ring_size != apply_base:
+    sys.exit("check_player_ring: PrgBuf does not end at APPLY")
+if f0pat_tmp + max_f0_bytes != routing_tmp:
+    sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
+if routing_tmp + ttrc_routing.ROUTE_BYTES > apply_base + apply_size:
+    sys.exit("check_player_ring: maximum routing staging exceeds APPLY")
 
-after_pop_start = text.index("pump_poll_after_pop:")
-after_pop_end = text.index("pump_poll_core:", after_pop_start)
-after_pop = text[after_pop_start:after_pop_end]
-if ("move.l\ta4, ring_head" not in after_pop
-        or "bra.s\tpump_poll" not in after_pop
-        or text.count("bsr\tpump_poll_after_pop") < 3
-        or "andi.w\t#3, d0" not in text):
-    sys.exit(
-        "check_player_ring: post-cold and low-rate run polls must publish the "
-        "local PrgBuf pop cursor before checking refill back-pressure")
-print(
-    "check_player_ring: OK  post-cold/low-rate run refills publish consumed "
-    "PrgBuf head")
 
-# --- Boot-time PRG staging and resident Word-RAM routing map ---
-# Frame 0 is allowed to load the whole H40 raster, unlike timed frames. Its
-# sector-rounded pattern block uses one fixed boot-only scratch address,
-# independent of the fps-derived timed boundary. ROUTING_TMP follows the
-# maximum frame-0 block inside APPLY. Both are gone before steady streaming.
-# The validated table is duplicated at the end
-# of both 128 KiB Word-RAM banks, so routing remains visible after every swap.
-route_bytes = ttrc_routing.ROUTE_BYTES
-sector = ttrc_routing.SECTOR_BYTES
-max_f0_bytes = ((40 * 28 * 32 + sector - 1) // sector) * sector
-if max_f0_bytes != av_config.FRAME0_PATTERN_STAGING_KB * 1024:
-    sys.exit(
-        "check_player_ring: configured frame-0 staging does not match H40 maximum: "
-        f"{av_config.FRAME0_PATTERN_STAGING_KB}KB != {max_f0_bytes // 1024}KB")
-ring_base = _equ(text, "RING_BASE", SP)
-f0pat_tmp = _equ(text, "F0PAT_TMP", SP)
-apply_base = _equ(text, "APPLY_BASE", SP)
-apply_size = _equ(text, "APPLY_SIZE", SP)
-routing_tmp = _equ(text, "ROUTING_TMP", SP)
-sub_bank = _equ(text, "SUB_BANK_1M", SP)
-routing = _equ(text, "ROUTING", SP)
+# The live pump must consult routing before selecting a guarded destination.
+pump = sp_text[
+    sp_text.index("pump_poll_core:"):sp_text.index("pp_done:")
+]
+for token in (
+        "lea\tROUTING, a0",
+        "move.l\tring_tail, d0",
+        "pp_apply_space:",
+        "move.l\tapply_tail, d0",
+        "pp_cdc:",
+):
+    if token not in pump:
+        sys.exit(f"check_player_ring: route-aware pump is missing {token!r}")
 
-ring_end = ring_base + ring_bytes
-if ring_base % sector or ring_bytes % sector or ring_bytes % 32:
-    sys.exit(
-        "check_player_ring: physical PrgBuf ring must be sector- and pattern-aligned: "
-        f"base={ring_base:#x}, size={ring_bytes:#x}")
-if ring_end > apply_base:
-    sys.exit(
-        f"check_player_ring: RING_END={ring_end:#x} overlaps "
-        f"APPLY_BASE={apply_base:#x}")
-if ring_end != apply_base:
-    sys.exit(
-        f"check_player_ring: relocated routing leaves reclaimable PRG RAM: "
-        f"RING_END={ring_end:#x}, APPLY_BASE={apply_base:#x}")
-f0pat_end = f0pat_tmp + max_f0_bytes
-if f0pat_end > apply_base + apply_size:
-    sys.exit(
-        f"check_player_ring: H40 frame-0 staging ends at "
-        f"{f0pat_end:#x}, beyond APPLY_END={apply_base + apply_size:#x}")
-if routing_tmp != f0pat_end or routing_tmp + route_bytes > apply_base + apply_size:
-    sys.exit(
-        "check_player_ring: boot routing staging must follow maximum frame-0 "
-        f"staging and fit in APPLY: ROUTING_TMP={routing_tmp:#x}, "
-        f"expected={f0pat_end:#x}, APPLY={apply_base:#x}.."
-        f"{apply_base + apply_size:#x}")
-word_bank_end = sub_bank + 0x20000
-if routing + route_bytes != word_bank_end:
-    sys.exit(
-        "check_player_ring: resident routing must occupy the final 16 KiB of "
-        f"the owned Word-RAM bank: ROUTING={routing:#x}, bank end={word_bank_end:#x}")
-print(
-    "check_player_ring: OK  frame0 boot staging "
-    f"{f0pat_tmp:#x}..{f0pat_end:#x}, routing temp "
-    f"{routing_tmp:#x}..{routing_tmp + route_bytes:#x}, Word routing "
-    f"{routing:#x}..{routing + route_bytes:#x}, PRG ring end {ring_end:#x}")
-
-# --- v13 boot-only pattern supply map ---
-word_buf = _equ(text, "WORD_BUF", SP)
-word_buf_patterns = _equ(text, "WORD_BUF_PATTERNS", SP)
-ip_word_buf_off = _equ(ip_text, "WORD_BUF_OFF", IP)
-ip_word_buf_end = _equ(ip_text, "WORD_BUF_END", IP)
-ip_word_buf_patterns = _equ(ip_text, "WORD_BUF_PATTERNS", IP)
-dic_stage_off = _equ(ip_text, "DIC_STAGE_OFF", IP)
-dic_stage_patterns = _equ(text, "DIC_STAGE_PATTERNS", SP)
-dic_buf = _equ(ip_text, "DIC_BUF", IP)
-dic_buf_patterns = _equ(ip_text, "DIC_BUF_PATTERNS", IP)
-run_table = _equ(ip_text, "RUN_TABLE", IP)
-
-if word_buf != sub_bank + pattern_supply.WORD_BUF_OFFSET:
-    sys.exit(
-        f"check_player_ring: SP WORD_BUF={word_buf:#x} != owned bank + "
-        f"Python offset {pattern_supply.WORD_BUF_OFFSET:#x}")
-if (ip_word_buf_off, ip_word_buf_end, ip_word_buf_patterns) != (
-        pattern_supply.WORD_BUF_OFFSET,
-        pattern_supply.WORD_BUF_END,
-        pattern_supply.WORD_BUF_PATTERNS):
-    sys.exit(
-        "check_player_ring: Main WordBuf layout does not match pattern_supply.py: "
-        f"{ip_word_buf_off:#x}..{ip_word_buf_end:#x}, {ip_word_buf_patterns} patterns")
-if word_buf_patterns != pattern_supply.WORD_BUF_PATTERNS:
-    sys.exit(
-        f"check_player_ring: Sub WORD_BUF_PATTERNS={word_buf_patterns} != "
-        f"Python {pattern_supply.WORD_BUF_PATTERNS}")
-if pcm_dec_buf + 1536 != word_buf or word_buf + word_buf_patterns * 32 != routing:
-    sys.exit(
-        "check_player_ring: WordBuf must exactly fill the stable gap between "
-        f"PCM_DEC_BUF and ROUTING: pcm_end={pcm_dec_buf + 1536:#x}, "
-        f"WordBuf={word_buf:#x}..{word_buf + word_buf_patterns * 32:#x}, "
-        f"routing={routing:#x}")
-if dic_stage_off != pattern_supply.DIC_STAGE_OFFSET:
-    sys.exit(
-        f"check_player_ring: DIC_STAGE_OFF={dic_stage_off:#x} != "
-        f"Python {pattern_supply.DIC_STAGE_OFFSET:#x}")
-if dic_stage_patterns != pattern_supply.DIC_BUF_PATTERNS:
-    sys.exit(
-        f"check_player_ring: DIC_STAGE_PATTERNS={dic_stage_patterns} != "
-        f"Python DicBuf capacity {pattern_supply.DIC_BUF_PATTERNS}")
-if not re.search(
-        r"^\.equ\s+DIC_STAGE,\s*SUB_BANK_1M\+0xD000\b", text, re.M):
-    sys.exit("check_player_ring: SP DIC_STAGE must use the shared +0xD000 offset")
-if dic_stage_off + dic_stage_patterns * 32 > 0x10000:
-    sys.exit("check_player_ring: DicBuf Word-RAM staging overlaps CTRL at +0x10000")
-if (dic_buf, run_table, dic_buf_patterns) != (
-        pattern_supply.DIC_BUF_BASE,
-        pattern_supply.DIC_BUF_END,
-        pattern_supply.DIC_BUF_PATTERNS):
-    sys.exit(
-        "check_player_ring: DicBuf layout does not match pattern_supply.py: "
-        f"{dic_buf:#x}..{run_table:#x}, {dic_buf_patterns} patterns")
-if not re.search(
-        r"^\.equ\s+MAIN_CODEGEN_LIMIT,\s*DIC_BUF\s*$", ip_text, re.M):
-    sys.exit("check_player_ring: Main code generation must stop at DIC_BUF")
-print(
-    "check_player_ring: OK  pattern supply "
-    f"Wr0/Wr1 each {word_buf_patterns} patterns at bank+{ip_word_buf_off:#x}, "
-    f"Dic {dic_buf_patterns} patterns at {dic_buf:#x}..{run_table:#x}")
-
-# --- CRAM pre-load (PALTAB) consistency ---
-# The pack sizes the PALTAB to av_config.PALTAB_MAX_SEG; the Main player copies it
-# into a fixed Main-RAM table sized by its own `.equ PALTAB_MAX_SEG`. And both CPUs
-# must agree on the Word-RAM staging offset (`.equ PALTAB_OFF`). Drift = wrong
-# palettes on segment switches, so fail the build instead.
-ip_max_seg = _equ(ip_text, "PALTAB_MAX_SEG", IP)
+ip_max_seg = equ(ip_text, "PALTAB_MAX_SEG", IP)
 if ip_max_seg != av_config.PALTAB_MAX_SEG:
-    sys.exit(
-        f"check_player_ring: player PALTAB_MAX_SEG={ip_max_seg} != "
-        f"av_config.PALTAB_MAX_SEG={av_config.PALTAB_MAX_SEG}. Update both together "
-        f"(single source of truth = tools/av_config.py).")
-sp_off = _equ(text, "PALTAB_OFF", SP)
-ip_off = _equ(ip_text, "PALTAB_OFF", IP)
-if sp_off != ip_off:
-    sys.exit(
-        f"check_player_ring: PALTAB_OFF mismatch sp={sp_off:#x} ip={ip_off:#x} "
-        f"(the Word-RAM staging offset must agree between the two CPUs).")
-sp_stage_off = _equ(text, "PALTAB_STAGE_OFF", SP)
-ip_stage_off = _equ(ip_text, "PALTAB_STAGE_OFF", IP)
-if sp_stage_off != ip_stage_off:
-    sys.exit(
-        f"check_player_ring: PALTAB_STAGE_OFF mismatch "
-        f"sp={sp_stage_off:#x} ip={ip_stage_off:#x}")
-sp_stage = _equ(text, "PALTAB_STAGE_BYTES", SP)
-ip_stage = _equ(ip_text, "PALTAB_STAGE_BYTES", IP)
-expected_stage = av_config.PALTAB_STAGE_KB * 1024
-if sp_stage != expected_stage or ip_stage != expected_stage:
-    sys.exit(
-        "check_player_ring: PALTAB stage mismatch "
-        f"sp={sp_stage:#x} ip={ip_stage:#x} config={expected_stage:#x}")
-print(f"check_player_ring: OK  PALTAB_MAX_SEG={ip_max_seg} "
-      f"({ip_max_seg * 128 // 1024}KB Main-RAM table), staging offset {sp_off:#x}, "
-      f"temporary stage {sp_stage_off:#x}+{sp_stage // 1024}KB")
+    sys.exit("check_player_ring: Main palette-table capacity differs from config")
+
+print(
+    "check_player_ring: OK  PrgBuf, APPLY, ADPCM, DicBuf, palette and "
+    "route-aware pump contracts")

@@ -158,7 +158,7 @@ PALETTE_SEGMENT_VALIDATE_FRAMES = 60
 PALETTE_SEGMENT_GAIN_RELATIVE = 0.005
 PALETTE_SEGMENT_GAIN_PER_PIXEL = 0.002
 
-# --- v13 boot stage / CRAM pre-load table (PALTAB) capacity ---
+# --- Boot stage / CRAM pre-load table (PALTAB) capacity ---
 # A fixed 24 KiB boot stage ships right after the header.  All segment palettes
 # occupy its +0x1000..+0x3000 middle region and are copied at boot into a
 # Main-RAM table (player `.equ PALTAB_MAX_SEG` in
@@ -175,13 +175,13 @@ PALETTE_SEGMENT_GAIN_PER_PIXEL = 0.002
 PALTAB_MAX_SEG = 64
 PALTAB_STAGE_KB = 24
 BOOT_VRAM_SIDECAR_ENTRY_BYTES = 34  # slot.u16 + packed 32-byte pattern
-BOOT_VRAM_REGION_A_BYTES = 0x0F00   # bank +0xA000..+0xAF00
-BOOT_VRAM_REGION_B_BYTES = 0x2000   # palette tail through bank +0xD000
-BOOT_VRAM_REGION_C_BYTES = 0x1000   # bank +0xF000..+0x10000
+BOOT_VRAM_REGION_A_BYTES = 0x0F00   # bank +0x0000..+0x0F00
+BOOT_VRAM_REGION_B_BYTES = 0x2000   # palette tail through bank +0x3000
+BOOT_VRAM_REGION_C_BYTES = 0x1000   # bank +0x5000..+0x6000
 
 
 def boot_vram_sidecar_capacity(palette_segments):
-    """Records preserved around frame-0 diagnostics, O_HDR, and Dic staging."""
+    """Records preserved around the directory and palette in BOOT_STAGE."""
     palette_bytes = int(palette_segments) * 128
     if not 0 <= palette_bytes <= BOOT_VRAM_REGION_B_BYTES:
         raise ValueError("palette table exceeds the boot-sidecar middle region")

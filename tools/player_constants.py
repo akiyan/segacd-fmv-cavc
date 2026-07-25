@@ -29,8 +29,8 @@ HEADER_SIGNATURE_OFFSET = FIXED_HEADER_BYTES + SEG0_BYTES
 HEADER_STRUCT = struct.Struct(">4s9H4LBB3L6H")
 PATTERN_SUPPLY_OFFSET = HEADER_SIGNATURE_OFFSET + 4
 PATTERN_SUPPLY_MAGIC = b"PSUP"
-PATTERN_SUPPLY_VERSION = 2
-PATTERN_SUPPLY_STRUCT = struct.Struct(">4s8H")
+PATTERN_SUPPLY_VERSION = 3
+PATTERN_SUPPLY_STRUCT = struct.Struct(">4s9H")
 
 MODE_SPECS = {
     0: ("H32", 32, 2800),
@@ -108,6 +108,21 @@ class PlayerConstants:
     wr0_sectors: int
     wr1_sectors: int
     dic_sectors: int
+    cold_cap: int
+    routing_bytes: int
+    routing_offset: int
+    routing_copy_longs: int
+    status_offset: int
+    ctrl_scr_offset: int
+    pad_scr_offset: int
+    adpcm_table_offset: int
+    pcm_dec_buf_offset: int
+    wr0_offset: int
+    wr0_end: int
+    wr0_capacity: int
+    wr1_offset: int
+    wr1_end: int
+    wr1_capacity: int
 
 
 def parse_header_sector(sector: bytes) -> PlayerConstants:
@@ -152,6 +167,11 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     if frame_sectors != ttrc_routing.FRAME_SECTORS:
         raise ValueError(
             f"frame_sectors={frame_sectors} != {ttrc_routing.FRAME_SECTORS}")
+    expected_paltab_sec = av_config.PALTAB_STAGE_KB * 1024 // SECTOR
+    if paltab_sec != expected_paltab_sec:
+        raise ValueError(
+            f"paltab_sec={paltab_sec} != fixed boot-stage size "
+            f"{expected_paltab_sec}")
     if audio_bytes <= 0 or fps_int <= 0 or vsync_n <= 0 or audio_fd <= 0:
         raise ValueError(
             f"invalid timing: vsync_n={vsync_n} audio={audio_bytes} "
@@ -202,6 +222,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         supply_magic, supply_version, supply_reserved,
         wr0_patterns, wr1_patterns, dic_patterns,
         wr0_sectors, wr1_sectors, dic_sectors,
+        cold_cap,
     ) = supply_values
     if pattern_supply_enabled:
         if not indexed_dicbuf:
@@ -212,9 +233,12 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             raise ValueError(
                 f"invalid pattern-supply header: version={supply_version} "
                 f"reserved={supply_reserved}")
+        if cold_cap <= 0:
+            raise ValueError(f"invalid pattern-supply cold cap: {cold_cap}")
+        wordram = pattern_supply.word_ram_layout(frames, cells, cold_cap)
         capacities = (
-            ("Wr0", wr0_patterns, pattern_supply.WORD_BUF_PATTERNS, wr0_sectors),
-            ("Wr1", wr1_patterns, pattern_supply.WORD_BUF_PATTERNS, wr1_sectors),
+            ("Wr0", wr0_patterns, wordram.wr0_patterns, wr0_sectors),
+            ("Wr1", wr1_patterns, wordram.wr1_patterns, wr1_sectors),
             ("Dic", dic_patterns, pattern_supply.DIC_BUF_PATTERNS, dic_sectors),
         )
         for name, count, capacity, sectors in capacities:
@@ -230,6 +254,8 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             raise ValueError("pattern-supply extension is present while feature bit 3 is clear")
         wr0_patterns = wr1_patterns = dic_patterns = 0
         wr0_sectors = wr1_sectors = dic_sectors = 0
+        cold_cap = av_config.baseline_cold_cap_for_fps(fps_int)
+        wordram = pattern_supply.word_ram_layout(frames, cells, cold_cap)
 
     return PlayerConstants(
         signature=signature,
@@ -283,6 +309,21 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         wr0_sectors=wr0_sectors,
         wr1_sectors=wr1_sectors,
         dic_sectors=dic_sectors,
+        cold_cap=cold_cap,
+        routing_bytes=wordram.routing_bytes,
+        routing_offset=wordram.routing_offset,
+        routing_copy_longs=wordram.routing_copy_longs,
+        status_offset=wordram.status_offset,
+        ctrl_scr_offset=wordram.ctrl_scr_offset,
+        pad_scr_offset=wordram.pad_scr_offset,
+        adpcm_table_offset=wordram.adpcm_table_offset,
+        pcm_dec_buf_offset=wordram.pcm_dec_buf_offset,
+        wr0_offset=wordram.wr0_offset,
+        wr0_end=wordram.wr0_end,
+        wr0_capacity=wordram.wr0_patterns,
+        wr1_offset=wordram.wr1_offset,
+        wr1_end=wordram.wr1_end,
+        wr1_capacity=wordram.wr1_patterns,
     )
 
 
@@ -299,6 +340,11 @@ INCLUDE_ORDER = (
     "jitter_headroom_kb",
     "wr0_patterns", "wr1_patterns", "dic_patterns",
     "wr0_sectors", "wr1_sectors", "dic_sectors",
+    "cold_cap", "routing_bytes", "routing_offset", "routing_copy_longs",
+    "status_offset", "ctrl_scr_offset", "pad_scr_offset",
+    "adpcm_table_offset", "pcm_dec_buf_offset",
+    "wr0_offset", "wr0_end", "wr0_capacity",
+    "wr1_offset", "wr1_end", "wr1_capacity",
 )
 
 
