@@ -11,7 +11,7 @@ import av_config
 
 def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x345,
                 supply_counts=(0, 0, 0), pool=1400, base=1,
-                tcols=None, trows=28):
+                tcols=None, trows=28, cold_cap=190):
     if features is None:
         features = ttrc_routing.FEATURE_COLD_RUNS
         if av_config.uses_fixed_n_cadence(fps):
@@ -27,7 +27,8 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
         b"TTRC", ttrc_routing.VERSION, frames, tcols, trows, cells,
         pool, base, ttrc_routing.FRAME_SECTORS, 13,
         12416, ttrc_routing.routing_sector_count(frames), 194, 12416,
-        mode, 0, 2, 14, 1, av_config.vsync_n_for_fps(fps),
+        mode, 0, 2, 14, av_config.PALTAB_STAGE_KB * 1024 // 2048,
+        av_config.vsync_n_for_fps(fps),
         audio_bytes, fps, audio_fd, 30, features,
     )
     sector = bytearray(prefix + bytes(128) + bytes(player_constants.SECTOR - 192))
@@ -39,6 +40,7 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
             player_constants.PATTERN_SUPPLY_VERSION, 0,
             wr0, wr1, dic,
             (wr0 + 63) // 64, (wr1 + 63) // 64, (dic + 63) // 64,
+            cold_cap,
         )
     return player_constants.stamp_header_sector(sector)
 
@@ -116,6 +118,13 @@ class PlayerConstantsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "signature"):
             player_constants.parse_header_sector(bytes(sector))
 
+    def test_rejects_noncanonical_boot_stage_size(self):
+        sector = bytearray(make_header())
+        sector[48:52] = struct.pack(">L", 1)
+        sector = player_constants.stamp_header_sector(sector)
+        with self.assertRaisesRegex(ValueError, "fixed boot-stage size"):
+            player_constants.parse_header_sector(sector)
+
     def test_adpcm_derives_control_and_table_sizes(self):
         values = player_constants.parse_header_sector(make_header(
             features=(ttrc_routing.FEATURE_COLD_RUNS
@@ -133,18 +142,28 @@ class PlayerConstantsTest(unittest.TestCase):
             ))
 
     def test_pattern_supply_extension(self):
+        layout = pattern_supply.word_ram_layout(
+            frames=2714, cells=32 * 28, cold_cap=190)
         values = player_constants.parse_header_sector(make_header(
             features=(ttrc_routing.FEATURE_COLD_RUNS
                       | ttrc_routing.FEATURE_FIXED_N
                       | ttrc_routing.FEATURE_PATTERN_SUPPLY
                       | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
-            supply_counts=(880, 879, 256),
+            supply_counts=(layout.wr0_patterns, layout.wr1_patterns, 256),
         ))
-        self.assertEqual(values.wr0_patterns, pattern_supply.WORD_BUF_PATTERNS)
-        self.assertEqual(values.wr1_patterns, 879)
+        self.assertEqual(values.wr0_patterns, layout.wr0_patterns)
+        self.assertEqual(values.wr1_patterns, layout.wr1_patterns)
         self.assertEqual(values.dic_patterns, pattern_supply.DIC_BUF_PATTERNS)
         self.assertEqual((values.wr0_sectors, values.wr1_sectors, values.dic_sectors),
-                         (14, 14, 4))
+                         ((layout.wr0_patterns + 63) // 64,
+                          (layout.wr1_patterns + 63) // 64, 4))
+        self.assertEqual(values.routing_bytes, 4096)
+        self.assertEqual(values.routing_offset, layout.routing_offset)
+        self.assertEqual(values.wr0_offset, layout.wr0_offset)
+        self.assertEqual(values.wr0_end, layout.wr0_end)
+        self.assertEqual(values.wr0_capacity, layout.wr0_patterns)
+        self.assertEqual(values.wr1_offset, layout.wr1_offset)
+        self.assertEqual(values.wr1_capacity, layout.wr1_patterns)
 
     def test_pattern_supply_uses_fixed_n4_and_low_rate_polls_at_15fps(self):
         values = player_constants.parse_header_sector(make_header(
@@ -155,6 +174,7 @@ class PlayerConstantsTest(unittest.TestCase):
                       | ttrc_routing.FEATURE_PATTERN_SUPPLY
                       | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
             supply_counts=(880, 880, 256),
+            cold_cap=360,
         ))
         self.assertEqual((values.sec_num, values.sec_mod), (1001, 200))
         self.assertEqual(values.pump_mask, 0x003F)

@@ -9,16 +9,16 @@ The conservative answer is:
 
 | Domain | Unconditional fixed space | Conditional space |
 |---|---:|---:|
-| Sub PRG-RAM | 6.00 KiB | 2 bytes of Sub boot-slot code growth; not data RAM |
-| each physical Word-RAM bank | 10.64 KiB in separate holes | 5.75 KiB only if dump diagnostics are removed or relocated |
+| Sub PRG-RAM | 6.00 KiB | 0 bytes in the 4 KiB Sub boot slot |
+| each physical Word-RAM bank | 0 B | sector-rounding guard below the fixed tail; not allocatable |
 | Main RAM | 2.627 KiB | generated-code and RUN_TABLE tails only with profile-specific assertions |
 | Main CPU | 0 guaranteed cycles | measured profile evidence is not a reusable allowance |
 | Sub CPU | 0 guaranteed cycles | measured decode time excludes variable BIOS, CD, bus, and bank waits |
 
 “Unconditional” means that the range survives frame 0, movie replay, the
 largest supported control block, the physical run-table limit, and both
-Word-RAM bank parities. Any larger scratch allocation requires a specific
-lifetime and a full validation of every overlapping phase.
+Word-RAM bank parities. The packed Word-RAM map assigns all remaining complete
+sectors to WordBuf, so it exposes no general-purpose free range.
 
 ## Safety Rules
 
@@ -55,8 +55,7 @@ variation. The resulting scheduled headroom is 36 KiB.
 | Address | Size | Owner | New feature use |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | No |
-| `0x06000..0x06FFD` | 4,094 B | specialized Sub boot image slot | No |
-| `0x06FFE..0x06FFF` | 2 B | boot-slot remainder | Code growth only |
+| `0x06000..0x06FFF` | 4.00 KiB | specialized Sub boot image slot | No |
 | `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratch and BIOS-unsafe streaming range | No |
 | `0x08000..0x097FF` | **6.00 KiB** | unassigned, marker-verified safe range | **Yes, after adding an overlap check** |
 | `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads | No |
@@ -87,44 +86,50 @@ There are two independent 128 KiB physical banks. Sub owns one bank while Main
 owns the other. A bank swap exchanges ownership; it does not make one copy
 simultaneously visible to both CPUs.
 
-The following offset map applies to each physical bank:
+`tools/pattern_supply.py` derives the map from frame count, cell count, and cold
+cap. Routing occupies `ceil(frames / 2048) * 2048` bytes at the bank end. The
+fixed tail is packed immediately below routing:
 
-| Bank offset | Size | Owner / maximum use | Fixed headroom |
-|---|---:|---|---:|
-| `+0x00000..+0x00083` | 132 B | palette reference, CRAM reserve, `n_load` | 0 |
-| `+0x00084..+0x097FF` | 37.87 KiB | cold load runs; frame 0 can use 35,844 B | 2.87 KiB |
-| `+0x09800..+0x09801` | 2 B | `n_upd` | 0 |
-| `+0x09802..+0x0AEFF` | 5.75 KiB | dump-diagnostic update records | Conditional 5.75 KiB |
-| `+0x0AF00..+0x0AFFF` | 256 B | DEBUG counters and copied header | 156 B in fixed holes |
-| `+0x0B000..+0x0CFFF` | 8.00 KiB | PALTAB staging | 0 |
-| `+0x0D000..+0x0EFFF` | 8.00 KiB | DicBuf boot staging | 0 |
-| `+0x0F000..+0x0FFFF` | **4.00 KiB** | tail after maximum DicBuf stage | **4.00 KiB** |
-| `+0x10000..+0x11FFF` | 8.00 KiB | linear control scratch; maximum 4,900 B | 3.21 KiB |
-| `+0x12000..+0x127FF` | 2.00 KiB | CD-sector stage / pad discard | 0 |
-| `+0x12800..+0x14A5F` | 8,800 B | full ADPCM lookup tables | 0 |
-| `+0x14A60..+0x14BFF` | **416 B** | alignment gap | **416 B** |
-| `+0x14C00..+0x151FF` | 1.50 KiB | decoded ADPCM buffer | 0 |
-| `+0x15200..+0x1BFFF` | 27.50 KiB | immutable WordBuf0 or WordBuf1 | 0 |
-| `+0x1C000..+0x1FFFF` | 16.00 KiB | resident routing table | 0 |
+| Relative order, high to low | Size | Owner |
+|---|---:|---|
+| bank end | variable, sector-rounded | resident routing table |
+| below routing | 1,536 B | decoded ADPCM buffer |
+| next | 8,800 B | full ADPCM lookup tables |
+| next | 2,048 B | CD-sector stage / pad discard |
+| next | 8,192 B | linear control scratch |
+| next | 256 B | DEBUG counters and copied header |
 
-The unconditional fixed total is:
+The front of each bank starts with `O_PALW` and `O_NLOAD` (four bytes total),
+followed by `O_LOADS`. Main reads name updates directly from the control
+scratch; `O_CRAM`, `O_NUPD`, and `O_UPDS` do not exist.
 
-```text
-2.867 KiB  frame-0 load tail
-0.152 KiB  status and header holes
-4.000 KiB  DicBuf-stage tail
-3.215 KiB  control-scratch tail
-0.406 KiB  ADPCM alignment gap
------------
-10.640 KiB per physical bank
-```
+WordBuf starts after the parity-specific `O_LOADS` envelope and ends before the
+fixed tail. Wr0 reserves one frame-0 run containing every encoded cell. Wr1
+reserves 32 pattern bytes plus one four-byte descriptor for every allowed timed
+cold pattern. Each capacity is rounded down to complete 2 KiB preload sectors,
+so disc-sector padding cannot overwrite the fixed tail.
 
-The two WordBuf regions contain different parity-selected streams. Persistent
-state that follows every handoff normally needs a copy in both banks.
-Parity-local or ping-pong state may intentionally differ.
+For a 6,576-frame, 40x28-cell, cold-180 example:
 
-The dump-diagnostic update area is not used by ordinary playback, but remains
-owned until those diagnostics are explicitly removed or relocated.
+| Bank item | Wr0 / frame-0 bank | Wr1 / timed-only bank |
+|---|---:|---:|
+| `O_LOADS` envelope | 35,844 B | 6,480 B |
+| WordBuf range | `+0x08C20..+0x18C1F` | `+0x01960..+0x1895F` |
+| WordBuf capacity | 2,048 patterns | 2,944 patterns |
+| sector-rounding guard below status | 640 B | 1,344 B |
+
+Routing is 8 KiB in this example and starts at `+0x1E000`. The combined
+WordBuf capacity is 4,992 patterns. The two regions contain different
+parity-selected streams.
+
+During boot, BOOT_STAGE uses `+0x0000..+0x5FFF` with PALTAB at `+0x1000`;
+DicBuf staging uses `+0x6000..+0x7FFF`. Sub gives that bank to Main, Main copies
+the palette, dictionary, and optional VRAM sidecar to their persistent homes,
+and Main returns the bank. Sub stops `HEADER.DAT` before this handoff and
+restarts at the exact first unread sector after the return, so the copy
+interval cannot create a sector slip. Frame 0 and WordBuf may then overwrite
+the staging range safely. Dump diagnostics write list-form updates into
+control scratch.
 
 ## Main RAM Map
 
@@ -191,16 +196,13 @@ Use low-risk space in this order:
 
 1. Use Main RAM `0xFFF07E..0xFFFAFF` for Main-only state and keep the stack
    guard.
-2. Use the Word-RAM DicBuf-stage tail or ADPCM alignment gap for small
-   bank-local state, with assertions in both banks.
-3. Use generated-code or RUN_TABLE tails only with profile-specific end
+2. Use generated-code or RUN_TABLE tails only with profile-specific end
    symbols and bounds.
-4. Use PRG `0x08000..0x097FF` only after adding it to
+3. Use PRG `0x08000..0x097FF` only after adding it to
    `tools/check_player_ring.py`.
-5. Reclaim the dump update area only when its diagnostics are removed or moved.
 
 Never allocate from payload jitter, PrgBuf overflow, APPLY back-pressure,
-stack, VBlank, or DMA safety reserves.
+stack, VBlank, DMA safety reserves, or WordBuf sector-rounding guards.
 
 ## CPU Qualification
 
@@ -219,7 +221,8 @@ A sustained new path needs:
 Use the managed Python environment and an explicit profile:
 
 ```sh
-tools/python.sh tools/check_player_ring.py
+tools/python.sh tools/check_player_ring.py \
+  --constants out/PROFILE/player_constants.inc
 make movieplay CONFIG=configs/PROFILE.toml \
   DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
 
@@ -244,15 +247,15 @@ before revising any elapsed-time or memory-headroom claim.
 
 | Domain | 無条件に固定利用できる領域 | 条件付き領域 |
 |---|---:|---:|
-| Sub PRG-RAM | 6.00 KiB | Sub boot slotのcode growth 2 byte。data RAMではない |
-| 各physical Word-RAM bank | 分離したholeの合計10.64 KiB | dump diagnosticを削除または移動する場合だけ5.75 KiB |
+| Sub PRG-RAM | 6.00 KiB | 4 KiB Sub boot slot内の余り0 byte |
+| 各physical Word-RAM bank | 0 B | fixed tail直下のsector丸めguard。割り当て不可 |
 | Main RAM | 2.627 KiB | generated-codeとRUN_TABLEのtailはprofile固有assert付きのみ |
 | Main CPU | 保証cycle 0 | Profile実測は再利用可能なallowanceではない |
 | Sub CPU | 保証cycle 0 | Decode実測は可変のBIOS、CD、bus、bank waitを含まない |
 
 「無条件」とは、frame 0、movie replay、最大対応control block、物理run-table上限、
-両方のWord-RAM bank parityを通して使えることです。それより大きなscratch allocationには、
-明示的なlifetimeと、重なる全phaseのvalidationが必要です。
+両方のWord-RAM bank parityを通して使えることです。Packed Word-RAM mapは残る完全な
+sectorをすべてWordBufへ割り当てるため、汎用free rangeはありません。
 
 ## 安全規則
 
@@ -285,8 +288,7 @@ cadence reserve KiB = ceil(20 * 30 / fps)
 | Address | Size | Owner | New featureでの利用 |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | 不可 |
-| `0x06000..0x06FFD` | 4,094 B | specialized Sub boot image slot | 不可 |
-| `0x06FFE..0x06FFF` | 2 B | boot-slot remainder | code growthのみ |
+| `0x06000..0x06FFF` | 4.00 KiB | specialized Sub boot image slot | 不可 |
 | `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratchとBIOS-unsafe streaming range | 不可 |
 | `0x08000..0x097FF` | **6.00 KiB** | 未割当でmarker検証済みのsafe range | **overlap check追加後に利用可** |
 | `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 | 不可 |
@@ -315,44 +317,46 @@ APPLY queueにも意図的なback-pressure headroomがあります。瞬間的�
 128 KiBの独立したphysical bankが2つあります。Subが一方を所有するときMainは他方を
 所有します。Bank swapはownershipを交換するだけで、同じcopyを両CPUへ同時公開しません。
 
-次のoffset mapは各physical bankに適用されます。
+`tools/pattern_supply.py` がframe数、cell数、cold capからmapを導出します。Routingは
+bank末尾に `ceil(frames / 2048) * 2048` byteを使います。Fixed tailはroutingの直下へ
+次の順で詰めます。
 
-| Bank offset | Size | Owner / 最大利用 | 固定headroom |
-|---|---:|---|---:|
-| `+0x00000..+0x00083` | 132 B | palette reference、CRAM reserve、`n_load` | 0 |
-| `+0x00084..+0x097FF` | 37.87 KiB | cold load run。frame 0は35,844 Bまで使用 | 2.87 KiB |
-| `+0x09800..+0x09801` | 2 B | `n_upd` | 0 |
-| `+0x09802..+0x0AEFF` | 5.75 KiB | dump-diagnostic update record | 条件付き5.75 KiB |
-| `+0x0AF00..+0x0AFFF` | 256 B | DEBUG counterとcopied header | fixed holeに156 B |
-| `+0x0B000..+0x0CFFF` | 8.00 KiB | PALTAB staging | 0 |
-| `+0x0D000..+0x0EFFF` | 8.00 KiB | DicBuf boot staging | 0 |
-| `+0x0F000..+0x0FFFF` | **4.00 KiB** | 最大DicBuf stage後のtail | **4.00 KiB** |
-| `+0x10000..+0x11FFF` | 8.00 KiB | linear control scratch。最大4,900 B | 3.21 KiB |
-| `+0x12000..+0x127FF` | 2.00 KiB | CD-sector stage / pad discard | 0 |
-| `+0x12800..+0x14A5F` | 8,800 B | full ADPCM lookup table | 0 |
-| `+0x14A60..+0x14BFF` | **416 B** | alignment gap | **416 B** |
-| `+0x14C00..+0x151FF` | 1.50 KiB | decoded ADPCM buffer | 0 |
-| `+0x15200..+0x1BFFF` | 27.50 KiB | immutable WordBuf0またはWordBuf1 | 0 |
-| `+0x1C000..+0x1FFFF` | 16.00 KiB | resident routing table | 0 |
+| 上から下への相対順 | Size | Owner |
+|---|---:|---|
+| bank末尾 | 可変、sector丸め | resident routing table |
+| routing直下 | 1,536 B | decoded ADPCM buffer |
+| 次 | 8,800 B | full ADPCM lookup table |
+| 次 | 2,048 B | CD-sector stage / pad discard |
+| 次 | 8,192 B | linear control scratch |
+| 次 | 256 B | DEBUG counterとcopied header |
 
-無条件固定領域の合計は次のとおりです。
+各bankの先頭は `O_PALW` と `O_NLOAD`（合計4 byte）、続いて `O_LOADS` です。Mainは
+name updateをcontrol scratchから直接読むため、`O_CRAM`、`O_NUPD`、`O_UPDS` は
+存在しません。
 
-```text
-2.867 KiB  frame-0 load tail
-0.152 KiB  statusとheaderのhole
-4.000 KiB  DicBuf-stage tail
-3.215 KiB  control-scratch tail
-0.406 KiB  ADPCM alignment gap
------------
-10.640 KiB / physical bank
-```
+WordBufはparity別 `O_LOADS` envelopeの直後からfixed tailの手前までです。Wr0は全encoded
+cellを含むframe-0の1 runを予約します。Wr1はtimed cold上限の各patternにつき32 pattern
+byteと4 byte descriptorを予約します。容量は完全な2 KiB preload sectorへ切り下げるため、
+disk sectorのpadはfixed tailを上書きしません。
 
-2つのWordBuf regionにはparity別の異なるstreamが入ります。全handoffで維持する
-persistent stateは通常、両bankにcopyが必要です。Parity-localまたはping-pong stateは
-意図的に異なる内容を持てます。
+6,576 frame、40x28 cell、cold 180の例は次のとおりです。
 
-Dump-diagnostic update areaは通常再生では使いませんが、diagnosticを明示的に削除または
-移動するまでowner付き領域です。
+| Bank item | Wr0 / frame-0 bank | Wr1 / timed-only bank |
+|---|---:|---:|
+| `O_LOADS` envelope | 35,844 B | 6,480 B |
+| WordBuf range | `+0x08C20..+0x18C1F` | `+0x01960..+0x1895F` |
+| WordBuf capacity | 2,048 patterns | 2,944 patterns |
+| status直下のsector丸めguard | 640 B | 1,344 B |
+
+この例のroutingは8 KiBで、`+0x1E000`から始まります。WordBuf合計容量は4,992
+patternsです。2つのregionにはparity別の異なるstreamが入ります。
+
+Boot中はBOOT_STAGEが `+0x0000..+0x5FFF`、その中のPALTABが `+0x1000`、DicBuf stageが
+`+0x6000..+0x7FFF` を使います。SubがそのbankをMainへ渡し、Mainはpalette、dictionary、
+任意のVRAM sidecarをpersistentな保存先へcopyしてbankを返します。Subはhandoff前に
+`HEADER.DAT` を停止し、返却後に正確な最初の未読sectorから再開するため、copy intervalが
+sector slipを発生させません。その後はframe 0とWordBufがstage rangeを安全に上書き
+できます。Dump diagnosticはlist形式のupdateをcontrol scratchへ書きます。
 
 ## Main RAM map
 
@@ -417,15 +421,12 @@ RF5C164 write、BIOS call、CDC poll、bank settle、shared-memory waitがある
 低risk領域を次の順で使います。
 
 1. Main-only stateにはMain RAM `0xFFF07E..0xFFFAFF`を使い、stack guardを残します。
-2. 小さなbank-local stateにはWord-RAMのDicBuf-stage tailまたはADPCM alignment gapを
-   使い、両bankにassertionを置きます。
-3. Generated-codeまたはRUN_TABLE tailは、profile固有のend symbolとbound付きでだけ
+2. Generated-codeまたはRUN_TABLE tailは、profile固有のend symbolとbound付きでだけ
    使います。
-4. PRG `0x08000..0x097FF`は`tools/check_player_ring.py`へ追加した後に使います。
-5. Dump update areaはdiagnosticを削除または移動した場合だけ再利用します。
+3. PRG `0x08000..0x097FF`は`tools/check_player_ring.py`へ追加した後に使います。
 
 Payload jitter、PrgBuf overflow、APPLY back-pressure、stack、VBlank、DMAの
-safety reserveからは割り当てません。
+safety reserve、WordBufのsector丸めguardからは割り当てません。
 
 ## CPU qualification
 
@@ -443,7 +444,8 @@ safety reserveからは割り当てません。
 Managed Python環境と明示的なprofileを使います。
 
 ```sh
-tools/python.sh tools/check_player_ring.py
+tools/python.sh tools/check_player_ring.py \
+  --constants out/PROFILE/player_constants.inc
 make movieplay CONFIG=configs/PROFILE.toml \
   DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
 

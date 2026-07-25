@@ -11,6 +11,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p92: Make the boot-stage handoff an explicit HEADER read boundary. Stop
+#        before Main copies the temporary bank and restart at the exact first
+#        unread sector, so planned boot work cannot increment the slip counter.
+#   e135/p91: Derive a compact per-movie Word-RAM layout from frame count,
+#         geometry, and cold cap. Routing now occupies only its sector-rounded
+#         bytes, Wr0/Wr1 use parity-specific preload capacities, and a separate
+#         boot-stage handoff lets frame 0 reuse the palette/Dic staging range.
 #   e134: Keep the H40/15 Machi ED profile at cold cap 380 and lower only the
 #         15fps scheduled Prg delivery ceiling from 422 to 418 KiB. The normal
 #         382 KiB PrgBuf cap, 428 KiB physical ring, 424 KiB back-pressure,
@@ -817,5 +824,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260725
-e=134
-p=90
+e=135
+p=92

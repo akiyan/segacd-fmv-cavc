@@ -44,13 +44,13 @@ memory.
 | `ring_jitter_headroom_kb(fps)` | 36 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | Scheduled delivery headroom above the normal ceiling. |
 | `prg_buf_cap_kb(fps)` | 382 / 397 / 402 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf and PREBUFFER ceiling: 422 KiB minus the cadence reserve. |
 | `quality_budget_kb(fps)` | same as `prg_buf_cap_kb` | cfg / sim | Offline whole-movie quality-accounting capacity. It has no physical meter. |
-| `WordBuf0` | 880 patterns, 27.5 KiB | sp / ip / sim / pack | Boot-preloaded sequence in physical bank 0; serves even timed frames. |
-| `WordBuf1` | 880 patterns, 27.5 KiB | sp / ip / sim / pack | Different boot-preloaded sequence in physical bank 1; serves odd timed frames. |
+| `WordBuf0` | build-derived; 2,048 patterns in the 6,576-frame H40 example | sp / ip / sim / pack | Boot-preloaded sequence in the frame-0 physical bank; its start follows the frame-0 `O_LOADS` envelope. |
+| `WordBuf1` | build-derived; 2,944 patterns in the same example | sp / ip / sim / pack | Different boot-preloaded sequence in the other bank; its start follows the timed cold/run envelope. |
 | `DicBuf` | 256 patterns, 8 KiB | ip / sim / pack | Persistent Main-RAM dictionary, reusable by 8-bit index. |
-| routing table | 16 KiB in each Word-RAM bank | sp / pack | One byte per frame, maximum 16,384 frames. |
+| routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 16,384 frames. |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | Circular control-block queue. |
 | frame-0 pattern stage | 36 KiB | sp | Boot-only PRG area `0x71000..0x7A000`. |
-| boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | Word-RAM boot image at bank `+0xA000..+0x10000`; it can fill unreferenced resident VRAM before BODY starts. |
+| boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | Temporary Word-RAM image at bank `+0x0000..+0x6000`; Main consumes it before frame 0 reuses the range. |
 
 `PrgBuf` is the public object; `RING_*` names describe its circular
 implementation. `WordBuf0` and `WordBuf1` contain different sequences, not
@@ -72,7 +72,7 @@ CRAM payload.
 | `PALTAB_MAX_SEG` | 64 | cfg / ip | Palette-segment capacity. |
 | PALTAB size | 8 KiB | ip | Main RAM `0xFFB000..0xFFD000`. |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size. |
-| stage / palette offset | `+0xA000` / `+0xB000` | sp / ip | Word-RAM boot image and palette-table start. |
+| stage / palette offset | `+0x0000` / `+0x1000` | sp / ip | Temporary Word-RAM boot image and palette-table start. |
 | P0/index1 | darkest usable RGB333 colour | sim / pack / ip | Opaque DEBUG HUD background. |
 | P0/index15 | brightest usable RGB333 colour | sim / pack / ip | DEBUG HUD text. |
 
@@ -114,8 +114,8 @@ chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 | decoded `AUDIO_BYTES` | normally 1472 / 920 / 736 at 15 / 24 / 30 fps | cfg / pack / sp | Even decoded samples per effective playback frame. |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | Predictor, step index, reserved byte, and packed IMA codes. |
 | `audio_fd` | header offset 58 | cfg / pack / sp | RF5C164 frequency delta derived from chunk size and playback cadence. |
-| ADPCM table | 8,800 B, five sectors | pack / sp | Full lookup image copied to `+0x12800` in both physical Word-RAM banks. |
-| PCM work buffer | 1,536 B per bank | sp | Reconstructed chunk at `+0x14C00`. |
+| ADPCM table | 8,800 B, five sectors | pack / sp | Full lookup image copied into the generated fixed tail of both physical Word-RAM banks. |
+| PCM work buffer | 1,536 B per bank | sp | Reconstructed chunk immediately below the variable routing table. |
 | `SYNC_LEAD` | `0x3000`, 12,288 B | sp | Initial write-ahead lead. |
 | startup prefetch request | 30 frames | cfg / pack / sp | Decoded PCM prefix, clamped by wave-RAM capacity and chunk size. |
 | `SYNC_MIN` | `0` | sp | Lower accepted lead. |
@@ -146,6 +146,7 @@ Back-pressure depends on the next sector's destination:
 | APPLY full threshold | 30 KiB | sp | Blocks only control draining. |
 | `FRAME_SECTORS` | 5 useful sectors | pack / sp | Maximum control + payload represented by one routing byte. |
 | `HEADER_SECTORS` | 1 metadata sector | pack / sp | Fixed header sector before BOOT_STAGE and other boot regions. |
+| boot-stage read boundary | after metadata + BOOT_STAGE + DicBuf | sp | Stop before the Main handoff; restart `HEADER.DAT` at the exact first unread sector. |
 | Word-RAM swap completion | DMNA bit 1 | sp | Hardware busy flag is polled until the 1M bank switch completes. |
 
 `FEATURE_FIXED_N` makes header `vsync_n` authoritative. Main displays every N
@@ -421,13 +422,13 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 | `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで36 / 25 / 20 KiB | cfg | 通常上限より上でscheduleが使えるdelivery headroom。 |
 | `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで382 / 397 / 402 KiB | cfg / sim / pack / sp | 通常PrgBufとPREBUFFER上限。422 KiBからcadence reserveを引く。 |
 | `quality_budget_kb(fps)` | `prg_buf_cap_kb` と同じ | cfg / sim | offlineのmovie全体quality accounting容量。物理meterはない。 |
-| `WordBuf0` | 880 patterns、27.5 KiB | sp / ip / sim / pack | 物理bank 0のboot preload sequence。偶数timed frame用。 |
-| `WordBuf1` | 880 patterns、27.5 KiB | sp / ip / sim / pack | 物理bank 1の異なるboot preload sequence。奇数timed frame用。 |
+| `WordBuf0` | buildから導出。6,576-frame H40例では2,048 patterns | sp / ip / sim / pack | frame-0 physical bankのboot preload sequence。開始位置はframe-0 `O_LOADS` envelope直後。 |
+| `WordBuf1` | buildから導出。同じ例では2,944 patterns | sp / ip / sim / pack | 反対bankの異なるboot preload sequence。開始位置はtimed cold/run envelope直後。 |
 | `DicBuf` | 256 patterns、8 KiB | ip / sim / pack | 8-bit indexで再利用するpersistent Main-RAM dictionary。 |
-| routing table | 各Word-RAM bankに16 KiB | sp / pack | frame当たり1 byte、最大16,384 frame。 |
+| routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大16,384 frame。 |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | control blockのcircular queue。 |
 | frame-0 pattern stage | 36 KiB | sp | boot専用PRG領域 `0x71000..0x7A000`。 |
-| boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | bank `+0xA000..+0x10000` のWord-RAM boot image。BODY開始前に未参照resident VRAMを埋められる。 |
+| boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | bank `+0x0000..+0x6000` のtemporary Word-RAM image。Mainが消費した後にframe 0が同じrangeを再利用する。 |
 
 `PrgBuf` が公開名で、`RING_*` はcircular実装を示します。`WordBuf0` と
 `WordBuf1` は異なるsequenceで、duplicate cacheではありません。`DicBuf` entryは
@@ -447,7 +448,7 @@ control/name-table workを消費しますが、同frameのCRAM payloadは不要�
 | `PALTAB_MAX_SEG` | 64 | cfg / ip | palette segment上限。 |
 | PALTAB size | 8 KiB | ip | Main RAM `0xFFB000..0xFFD000`。 |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size。 |
-| stage / palette offset | `+0xA000` / `+0xB000` | sp / ip | Word-RAM boot imageとpalette tableの開始。 |
+| stage / palette offset | `+0x0000` / `+0x1000` | sp / ip | temporary Word-RAM boot imageとpalette tableの開始。 |
 | P0/index1 | 使用可能な最暗RGB333色 | sim / pack / ip | 不透明DEBUG HUD background。 |
 | P0/index15 | 使用可能な最明RGB333色 | sim / pack / ip | DEBUG HUD text。 |
 
@@ -487,8 +488,8 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 | decoded `AUDIO_BYTES` | 15 / 24 / 30 fpsで通常1472 / 920 / 736 | cfg / pack / sp | 実効playback frameごとの偶数decoded sample数。 |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | predictor、step index、reserved byte、packed IMA code。 |
 | `audio_fd` | header offset 58 | cfg / pack / sp | chunk sizeとplayback cadenceから導出するRF5C164 frequency delta。 |
-| ADPCM table | 8,800 B、5 sectors | pack / sp | 両物理Word-RAM bankの `+0x12800` へcopyする全lookup image。 |
-| PCM work buffer | bank当たり1,536 B | sp | `+0x14C00` の再構築chunk。 |
+| ADPCM table | 8,800 B、5 sectors | pack / sp | 両physical Word-RAM bankのgenerated fixed tailへcopyする全lookup image。 |
+| PCM work buffer | bank当たり1,536 B | sp | variable routing table直下の再構築chunk。 |
 | `SYNC_LEAD` | `0x3000`、12,288 B | sp | 初期write-ahead lead。 |
 | startup prefetch request | 30 frames | cfg / pack / sp | wave-RAM容量とchunk sizeでclampするdecoded PCM prefix。 |
 | `SYNC_MIN` | `0` | sp | 許容lead下限。 |
@@ -519,6 +520,7 @@ back-pressureは次sectorの行き先で決まります。
 | APPLY full threshold | 30 KiB | sp | control drainだけを止める。 |
 | `FRAME_SECTORS` | 有効5 sectors | pack / sp | 1 routing byteが表すcontrol + payload上限。 |
 | `HEADER_SECTORS` | metadata 1 sector | pack / sp | BOOT_STAGEなどのboot領域より前にある固定header sector。 |
+| boot-stage read境界 | metadata + BOOT_STAGE + DicBufの直後 | sp | Main handoff前に停止し、正確な最初の未読sectorから `HEADER.DAT` を再開する。 |
 | Word-RAM swap completion | DMNA bit 1 | sp | 1M bank switch完了までhardware busy flagをpollする。 |
 
 `FEATURE_FIXED_N` はheaderの `vsync_n` を正式なcadenceにします。MainはN VBlankごとに

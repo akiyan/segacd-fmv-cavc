@@ -11,6 +11,45 @@ from upgrade_planner import DemandPrediction
 
 
 class PatternSupplyEncodingTests(unittest.TestCase):
+    def test_word_ram_layout_is_sector_routed_and_parity_specific(self):
+        layout = supply.word_ram_layout(
+            frames=6576, cells=40 * 28, cold_cap=180)
+
+        self.assertEqual(layout.routing_bytes, 4 * supply.SECTOR_BYTES)
+        self.assertEqual(
+            layout.routing_offset + layout.routing_bytes,
+            supply.WORD_RAM_BANK_BYTES,
+        )
+        self.assertEqual(layout.wr0_load_bytes, 4 + 1120 * 32)
+        self.assertEqual(layout.wr1_load_bytes, 180 * 36)
+        self.assertEqual(layout.wr0_patterns, 2048)
+        self.assertEqual(layout.wr1_patterns, 2944)
+        self.assertLess(layout.status_offset - layout.wr0_end, 2048)
+        self.assertLess(layout.status_offset - layout.wr1_end, 2048)
+        self.assertEqual(
+            layout.status_offset + supply.STATUS_BYTES,
+            layout.ctrl_scr_offset,
+        )
+        self.assertEqual(
+            layout.ctrl_scr_offset + supply.CTRL_SCR_BYTES,
+            layout.pad_scr_offset,
+        )
+        self.assertEqual(
+            layout.pcm_dec_buf_offset + supply.PCM_DEC_BUF_BYTES,
+            layout.routing_offset,
+        )
+
+    def test_shorter_movie_reclaims_routing_sectors(self):
+        short = supply.word_ram_layout(
+            frames=3998, cells=40 * 28, cold_cap=360)
+        long = supply.word_ram_layout(
+            frames=6576, cells=40 * 28, cold_cap=360)
+
+        self.assertEqual(short.routing_bytes, 2 * supply.SECTOR_BYTES)
+        self.assertEqual(long.routing_bytes, 4 * supply.SECTOR_BYTES)
+        self.assertEqual(short.wr0_patterns - long.wr0_patterns, 128)
+        self.assertEqual(short.wr1_patterns - long.wr1_patterns, 128)
+
     def test_entry_source_round_trip_and_name_mask(self):
         base = (3 << 13) | 0x321
         for source in (supply.SOURCE_PRG, supply.SOURCE_WR, supply.SOURCE_DIC):
@@ -51,7 +90,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             protected_keys=((), (key_b,), (key_a,), ()),
         )
         budget = supply.plan_frame_budgets(
-            prediction, wr_patterns=0, dic_patterns=1)
+            prediction, wr0_patterns=0, dic_patterns=1)
         self.assertEqual(budget.dic_dictionary, (key_a,))
         np.testing.assert_array_equal(budget.dic, [0, 1, 1, 1])
         self.assertEqual(budget.dic_patterns, 1)
@@ -64,7 +103,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             protected_cold=np.array([0, 4, 4, 4]),
         )
         budget = supply.plan_frame_budgets(
-            prediction, wr_patterns=2, dic_patterns=2)
+            prediction, wr0_patterns=2, dic_patterns=2)
 
         # Wr0 can serve only frame 2.  Wr1 water-fills the much larger frame 1
         # before frame 3, then flexible Main continues reducing frame 1.
@@ -74,6 +113,23 @@ class PatternSupplyPlannerTests(unittest.TestCase):
         self.assertEqual(budget.wr1_patterns, 2)
         self.assertEqual(budget.dic_patterns, 2)
 
+    def test_frame_budget_honors_different_parity_capacities(self):
+        prediction = DemandPrediction(
+            exact_bytes=np.array([0, 128, 128, 128, 128]),
+            protected_bytes=np.array([0, 128, 128, 128, 128]),
+            exact_cold=np.array([0, 4, 4, 4, 4]),
+            protected_cold=np.array([0, 4, 4, 4, 4]),
+        )
+        budget = supply.plan_frame_budgets(
+            prediction,
+            wr0_patterns=2,
+            wr1_patterns=5,
+            dic_patterns=0,
+        )
+
+        self.assertEqual(budget.wr0_patterns, 2)
+        self.assertEqual(budget.wr1_patterns, 5)
+
     def test_frame_budget_never_exceeds_predicted_cold(self):
         prediction = DemandPrediction(
             exact_bytes=np.array([0, 34, 68]),
@@ -82,7 +138,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             protected_cold=np.array([0, 1, 0]),
         )
         budget = supply.plan_frame_budgets(
-            prediction, wr_patterns=99, dic_patterns=99)
+            prediction, wr0_patterns=99, dic_patterns=99)
 
         np.testing.assert_array_less(
             budget.total, prediction.exact_cold + 1)
@@ -107,7 +163,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
         )
         budget = supply.plan_frame_budgets(
             prediction,
-            wr_patterns=3,
+            wr0_patterns=3,
             dic_patterns=0,
             prg_supply_patterns=[0, 2, 2, 2, 2, 2],
             prg_capacity_patterns=4,
@@ -125,7 +181,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
         )
         budget = supply.plan_frame_budgets(
             prediction,
-            wr_patterns=3,
+            wr0_patterns=3,
             dic_patterns=0,
             prg_supply_patterns=[0, 2, 2],
             prg_capacity_patterns=4,
@@ -147,7 +203,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             "stream_schedule": {"ring_occupancy": np.array([99, 1, 2])},
         }
         plan = supply.plan_supply(
-            log, per, patterns, enabled=True, wr_patterns=1, dic_patterns=2)
+            log, per, patterns, enabled=True, wr0_patterns=1, dic_patterns=2)
 
         self.assertEqual(plan.sources[0], (supply.SOURCE_PRG,))
         self.assertEqual(plan.sources[1], (supply.SOURCE_DIC, supply.SOURCE_DIC))
@@ -182,7 +238,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             },
         }
         plan = supply.plan_supply(
-            log, per, patterns, enabled=True, wr_patterns=2, dic_patterns=2)
+            log, per, patterns, enabled=True, wr0_patterns=2, dic_patterns=2)
 
         self.assertEqual(
             plan.sources[1],
@@ -221,7 +277,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             },
         }
         plan = supply.plan_supply(
-            log, per, patterns, enabled=True, wr_patterns=0, dic_patterns=2)
+            log, per, patterns, enabled=True, wr0_patterns=0, dic_patterns=2)
         self.assertEqual(plan.dic_patterns, (pattern_a, pattern_b))
         self.assertEqual(plan.dic_indices, ((-1,), (0, 1), (0,)))
         np.testing.assert_array_equal(plan.dic_loads, [0, 2, 1])
@@ -251,7 +307,7 @@ class PatternSupplyPlannerTests(unittest.TestCase):
             [pattern_c, pattern_a, pattern_b],
             transfer_orders=[(), (2, 0, 1)],
             enabled=True,
-            wr_patterns=0,
+            wr0_patterns=0,
             dic_patterns=3,
         )
         self.assertEqual(plan.dic_indices, ((), (0, 1, 2)))

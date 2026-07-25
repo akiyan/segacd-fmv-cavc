@@ -12,7 +12,7 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
 TTRCレイアウト(v16): HEADER.DAT = Header(1sec) + BOOT_STAGE(全区間パレット
-              n_seg×128B + optional boot-VRAM sidecar) + [WR0/WR1/Dic pattern preloads]
+              n_seg×128B + optional boot-VRAM sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + startup audio prefetch(1 sector/frame)
               + frame0(control+patterns) + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
@@ -24,6 +24,7 @@ control block: >H total_len >H frame_seq >H n_upd >H pal
   pal = 区間番号+1(0=切替なし)。実機はMain-RAMのPALTAB表を引く(in-stream CRAM廃止)。
 """
 import argparse
+import dataclasses
 import math
 import pickle
 import struct
@@ -443,7 +444,7 @@ def split_boot_prefetch(log, prefetch_per):
 
 def run_stats(
         per, sources=None, prefetch_per=None, dic_indices=None,
-        transfer_orders=None, boot_sidecar=()):
+        transfer_orders=None, boot_sidecar=(), loads_caps=None):
     """フレーム内cold tile数とplayer cold-run record数を返して表示する。"""
     runs_per_frame = np.zeros(len(per), np.int64)
     colds_per_frame = np.zeros(len(per), np.int64)
@@ -502,12 +503,24 @@ def run_stats(
     # O_LOADS stores four bytes per run and only ordinary Prg patterns inline.
     # Wr/Dic runs point at their persistent preload instead of copying bytes.
     loads_bytes = prg_per_frame * PAT + runs_per_frame * 4
-    O_LOADS_CAP = 0x9800 - 0x84
-    if int(loads_bytes.max()) > O_LOADS_CAP:
-        print(f"  !! loads領域あふれ: 最大{int(loads_bytes.max())}B > {O_LOADS_CAP}B "
-              f"(frame {int(loads_bytes.argmax())})")
-    else:
-        print(f"  loads領域 最大{int(loads_bytes.max())}B / {O_LOADS_CAP}B")
+    if loads_caps is not None:
+        caps = tuple(int(value) for value in loads_caps)
+        if len(caps) != 2:
+            raise ValueError("O_LOADS capacities must contain Wr0 and Wr1")
+        over = np.flatnonzero(
+            loads_bytes > np.asarray(
+                [caps[frame & 1] for frame in range(len(loads_bytes))],
+                np.int64,
+            )
+        )
+        if over.size:
+            frame = int(over[0])
+            raise SystemExit(
+                f"pack: frame {frame} O_LOADS={int(loads_bytes[frame])}B "
+                f"exceeds Wr{frame & 1} capacity {caps[frame & 1]}B")
+        print(
+            f"  loads領域 最大{int(loads_bytes.max())}B / "
+            f"Wr0 {caps[0]}B, Wr1 {caps[1]}B")
     return colds_per_frame, runs_per_frame
 
 
@@ -1045,7 +1058,7 @@ def write_stream(
     """Write the v16 split stream and a combined tooling container.
 
     HEADER.DAT:
-      Header(1sec) | BOOT_STAGE | [ADPCM_TABLE] | [WR0] | [WR1] | [MAIN]
+      Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
                    | STARTUP_AUDIO
                    | FRAME0(control+patterns)
                    | ROUTING(0..N-1,[0]=0,0) | PREBUF1(frame1用RING_CAP)
@@ -1162,9 +1175,10 @@ def write_stream(
     if mode_name not in {"H32", "H40", "MODE4"}:
         raise SystemExit(f"pack: unsupported display mode in decision log: {mode_name!r}")
     _mode = {"H32": 0, "H40": 1, "MODE4": 2}[mode_name]
-    # v13 stages one 24KiB boot image at Word-RAM +0xA000. The palette remains
-    # at +0xB000. Sidecar records occupy three holes that survive frame-0
-    # expansion and the later +0xD000..+0xF000 Dic staging.
+    # The first boot handoff stages one 24 KiB image at the bank front. The
+    # palette starts at +0x1000, and sidecar records occupy the remaining
+    # preserved holes. Main copies this image before Sub reuses the front for
+    # frame output and the parity-specific WordBuf.
     palette_table = b"".join(
         pals_to_bytes_128(p) for p in log["seg_pals"])
     sidecar_patterns = supply_plan.prg_patterns[f0_inline:nl0]
@@ -1267,22 +1281,19 @@ def write_stream(
             len(supply_plan.wr1_patterns),
             len(supply_plan.dic_patterns),
             wr0_sec, wr1_sec, dic_sec,
+            int(log["max_cold"]),
         )
     header = player_constants.stamp_header_sector(header)
-    # Staging at +0xA000 crosses O_HDR (+0xAF80). Restore the exact first
-    # 64-byte copy as part of the immutable stage image; Main reads it after
-    # the final bank handoff.
-    paltab[0x0F80:0x0FC0] = header[:64]
     frame0_blk = (f0_ctrl.ljust(f0_ctrl_sec * SECTOR, b"\0")
                   + f0_pat.ljust(f0_pat_sec * SECTOR, b"\0"))
     adpcm_table_blob = ima_adpcm.full_tables().ljust(
         ADPCM_TABLE_SECTORS * SECTOR, b"\0")
     header_blob = (header
                    + paltab.ljust(paltab_sec * SECTOR, b"\0")
+                   + dic_blob.ljust(dic_sec * SECTOR, b"\0")
                    + adpcm_table_blob
                    + wr0_blob.ljust(wr0_sec * SECTOR, b"\0")
                    + wr1_blob.ljust(wr1_sec * SECTOR, b"\0")
-                   + dic_blob.ljust(dic_sec * SECTOR, b"\0")
                    + audio_preload
                    + frame0_blk
                    + routing_blob
@@ -1455,17 +1466,31 @@ def main():
         raise SystemExit(
             "pack v16 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
+    wordram_layout = pattern_supply.word_ram_layout(
+        len(per), C_CELLS, int(sim_cold))
+    frozen_layout = supply_meta.get("word_ram_layout")
+    if frozen_layout is None:
+        raise SystemExit(
+            "pack v16 requires a decision log with a frozen Word-RAM layout; "
+            "re-run sim with the current encoder")
+    expected_layout = dataclasses.asdict(wordram_layout)
+    if frozen_layout != expected_layout:
+        raise SystemExit(
+            "pack: frozen Word-RAM layout differs from the current layout "
+            "calculation; re-run sim")
     supply_plan = pattern_supply.plan_supply(
         log, per, Plist, prefetch_per=prefetch_per,
         transfer_orders=transfer_orders,
-        enabled=supply_enabled)
-    if int(supply_meta.get("schema_version", 0)) != 2:
+        enabled=supply_enabled,
+        wr0_patterns=wordram_layout.wr0_patterns,
+        wr1_patterns=wordram_layout.wr1_patterns)
+    if int(supply_meta.get("schema_version", 0)) != 3:
         raise SystemExit(
-            "pack v16 requires a current DicBuf decision log; re-run sim")
+            "pack v16 requires a current Word-RAM decision log; re-run sim")
     print(f"  pattern supply: enabled={int(supply_plan.enabled)} "
           f"Prg={len(supply_plan.prg_patterns)} "
-          f"Wr0={len(supply_plan.wr0_patterns)}/{pattern_supply.WORD_BUF_PATTERNS} "
-          f"Wr1={len(supply_plan.wr1_patterns)}/{pattern_supply.WORD_BUF_PATTERNS} "
+          f"Wr0={len(supply_plan.wr0_patterns)}/{wordram_layout.wr0_patterns} "
+          f"Wr1={len(supply_plan.wr1_patterns)}/{wordram_layout.wr1_patterns} "
           f"Dic={len(supply_plan.dic_patterns)}/{pattern_supply.DIC_BUF_PATTERNS}")
     # 不変条件(単一真実源 av_config): 実配信(pack)の1コマ cold が drop-safe 上限を超えたら失敗。
     # sim のモデル cap が pack の連続スロット割当に対して高すぎる兆候(=解析は合うが実機で滑る)。
@@ -1508,7 +1533,11 @@ def main():
             f"{C_CELLS}-pattern O_LOADS path")
     packed_tiles, packed_runs = run_stats(
         per, supply_plan.sources, inline_prefetch_per,
-        supply_plan.dic_indices, transfer_orders, boot_sidecar)
+        supply_plan.dic_indices, transfer_orders, boot_sidecar,
+        loads_caps=(
+            wordram_layout.wr0_offset - pattern_supply.OUTPUT_HEADER_BYTES,
+            wordram_layout.wr1_offset - pattern_supply.OUTPUT_HEADER_BYTES,
+        ))
     if not np.array_equal(packed_tiles, n_load):
         frame = int(np.flatnonzero(packed_tiles != n_load)[0])
         raise SystemExit(

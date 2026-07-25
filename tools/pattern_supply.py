@@ -42,16 +42,134 @@ RUN_V12_INDEX_LOW_SHIFT = 11
 RUN_V12_INDEX_LOW_MASK = 0x3800
 RUN_V12_COUNT_MASK = 0x07FF
 
-# Initial hardware-proof layout.  These are mirrored by movieplay_ip.s,
-# movieplay_sp.s, and check_player_ring.py.
-WORD_BUF_OFFSET = 0x15200
-WORD_BUF_END = 0x1C000
-WORD_BUF_PATTERNS = (WORD_BUF_END - WORD_BUF_OFFSET) // PATTERN_BYTES
+# The specialized player derives its physical 1M Word-RAM map from the packed
+# movie. Both parity banks share the compact fixed tail below, while their
+# output peak and therefore their WordBuf start differ. Frame 0 is always built
+# in Wr0; Wr1 needs only the timed cold/run envelope.
+WORD_RAM_BANK_BYTES = 0x20000
+SECTOR_BYTES = 2048
+OUTPUT_HEADER_BYTES = 4  # O_PALW + O_NLOAD; O_LOADS starts immediately after.
+RUN_DESCRIPTOR_BYTES = 4
+STATUS_BYTES = 0x100
+CTRL_SCR_BYTES = 0x2000
+PAD_SCR_BYTES = 0x0800
+ADPCM_TABLE_BYTES = 8800
+PCM_DEC_BUF_BYTES = 0x0600
 
-DIC_STAGE_OFFSET = 0x0D000
+PALTAB_STAGE_OFFSET = 0x0000
+PALTAB_STAGE_BYTES = 0x6000
+DIC_STAGE_OFFSET = PALTAB_STAGE_OFFSET + PALTAB_STAGE_BYTES
+BOOT_STAGE_END = DIC_STAGE_OFFSET + 0x2000
+
 DIC_BUF_BASE = 0x00FF6600
 DIC_BUF_END = 0x00FF8600
 DIC_BUF_PATTERNS = (DIC_BUF_END - DIC_BUF_BASE) // PATTERN_BYTES
+
+
+def _align_up(value: int, alignment: int) -> int:
+    return (int(value) + int(alignment) - 1) // int(alignment) * int(alignment)
+
+
+@dataclass(frozen=True)
+class WordRamLayout:
+    """One packed movie's complete per-bank Word-RAM allocation."""
+
+    frames: int
+    cells: int
+    cold_cap: int
+    routing_bytes: int
+    routing_offset: int
+    pcm_dec_buf_offset: int
+    adpcm_table_offset: int
+    pad_scr_offset: int
+    ctrl_scr_offset: int
+    status_offset: int
+    wr0_offset: int
+    wr0_end: int
+    wr0_patterns: int
+    wr1_offset: int
+    wr1_end: int
+    wr1_patterns: int
+    wr0_load_bytes: int
+    wr1_load_bytes: int
+
+    @property
+    def routing_copy_longs(self) -> int:
+        return self.routing_bytes // 4
+
+
+def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
+    """Pack the common tail and parity-specific output/WordBuf spans.
+
+    The frame-0 output is one contiguous run covering at most ``cells``
+    patterns. The timed bank reserves the stricter case of one four-byte run
+    descriptor per cold pattern. This makes the allocation safe before the
+    encoder decides the actual source grouping.
+    """
+    frames = int(frames)
+    cells = int(cells)
+    cold_cap = int(cold_cap)
+    if not 0 < frames <= 16384:
+        raise ValueError(f"frame count must be within 1..16384, got {frames}")
+    if cells <= 0:
+        raise ValueError(f"cell count must be positive, got {cells}")
+    if cold_cap < 0:
+        raise ValueError(f"cold cap must be non-negative, got {cold_cap}")
+
+    routing_bytes = _align_up(frames, SECTOR_BYTES)
+    routing_offset = WORD_RAM_BANK_BYTES - routing_bytes
+    pcm_dec_buf_offset = routing_offset - PCM_DEC_BUF_BYTES
+    adpcm_table_offset = pcm_dec_buf_offset - ADPCM_TABLE_BYTES
+    pad_scr_offset = adpcm_table_offset - PAD_SCR_BYTES
+    ctrl_scr_offset = pad_scr_offset - CTRL_SCR_BYTES
+    status_offset = ctrl_scr_offset - STATUS_BYTES
+
+    wr0_load_bytes = RUN_DESCRIPTOR_BYTES + cells * PATTERN_BYTES
+    timed_patterns = cold_cap if cold_cap else cells
+    wr1_load_bytes = timed_patterns * (
+        PATTERN_BYTES + RUN_DESCRIPTOR_BYTES)
+    wr0_offset = _align_up(
+        OUTPUT_HEADER_BYTES + wr0_load_bytes, PATTERN_BYTES)
+    wr1_offset = _align_up(
+        OUTPUT_HEADER_BYTES + wr1_load_bytes, PATTERN_BYTES)
+    if max(wr0_offset, wr1_offset) > status_offset:
+        raise ValueError(
+            "Word-RAM output envelope leaves no WordBuf capacity: "
+            f"Wr0={wr0_offset:#x} Wr1={wr1_offset:#x} "
+            f"tail={status_offset:#x}")
+    if any(offset % PATTERN_BYTES for offset in (
+            routing_offset, pcm_dec_buf_offset, adpcm_table_offset,
+            pad_scr_offset, ctrl_scr_offset, status_offset,
+            wr0_offset, wr1_offset)):
+        raise AssertionError("Word-RAM layout lost 32-byte alignment")
+
+    wr0_patterns = (status_offset - wr0_offset) // SECTOR_BYTES * (
+        SECTOR_BYTES // PATTERN_BYTES)
+    wr1_patterns = (status_offset - wr1_offset) // SECTOR_BYTES * (
+        SECTOR_BYTES // PATTERN_BYTES)
+    wr0_end = wr0_offset + wr0_patterns * PATTERN_BYTES
+    wr1_end = wr1_offset + wr1_patterns * PATTERN_BYTES
+
+    return WordRamLayout(
+        frames=frames,
+        cells=cells,
+        cold_cap=cold_cap,
+        routing_bytes=routing_bytes,
+        routing_offset=routing_offset,
+        pcm_dec_buf_offset=pcm_dec_buf_offset,
+        adpcm_table_offset=adpcm_table_offset,
+        pad_scr_offset=pad_scr_offset,
+        ctrl_scr_offset=ctrl_scr_offset,
+        status_offset=status_offset,
+        wr0_offset=wr0_offset,
+        wr0_end=wr0_end,
+        wr0_patterns=wr0_patterns,
+        wr1_offset=wr1_offset,
+        wr1_end=wr1_end,
+        wr1_patterns=wr1_patterns,
+        wr0_load_bytes=wr0_load_bytes,
+        wr1_load_bytes=wr1_load_bytes,
+    )
 
 
 def pack_pattern_key(key: bytes) -> bytes:
@@ -378,12 +496,13 @@ def plan_frame_budgets(
     prediction,
     *,
     enabled: bool = True,
-    wr_patterns: int = WORD_BUF_PATTERNS,
+    wr0_patterns: int = 0,
+    wr1_patterns: int | None = None,
     dic_patterns: int = DIC_BUF_PATTERNS,
     prg_supply_patterns: int | Sequence[int] | np.ndarray | None = None,
     prg_capacity_patterns: int = 0,
 ) -> FrameSupplyBudget:
-    """Select DicBuf hits, then allocate residual Wr credits.
+    """Select DicBuf hits, then allocate residual parity-specific Wr credits.
 
     Current predictions expose the cold keys for the complete movie. DicBuf is
     selected first as a persistent dictionary. Its hits are removed from the
@@ -407,6 +526,11 @@ def plan_frame_budgets(
         raise ValueError("pattern-supply demand must be non-negative")
     if np.any(protected_cold > exact_cold):
         raise ValueError("protected cold demand exceeds complete exact demand")
+    if wr1_patterns is None:
+        wr1_patterns = wr0_patterns
+    wr_capacities = (int(wr0_patterns), int(wr1_patterns))
+    if any(capacity < 0 for capacity in wr_capacities):
+        raise ValueError("WordBuf capacities must be non-negative")
 
     wr = np.zeros(shape, np.int64)
     dic = np.zeros(shape, np.int64)
@@ -456,7 +580,7 @@ def plan_frame_budgets(
                         frame for frame in range(1, len(exact_bytes))
                         if frame >= pressure_start and frame % 2 == parity
                     ),
-                    wr_patterns,
+                    wr_capacities[parity],
                     residual_exact_bytes,
                     residual_protected_bytes,
                     residual_exact_cold,
@@ -472,7 +596,8 @@ def plan_frame_budgets(
             _allocate_credits(
                 wr, available, allocated,
                 range(2 if parity == 0 else 1, len(exact_bytes), 2),
-                wr_patterns, residual_exact_bytes, residual_protected_bytes,
+                wr_capacities[parity],
+                residual_exact_bytes, residual_protected_bytes,
                 residual_exact_cold, residual_protected_cold)
         return FrameSupplyBudget(
             wr=wr, dic=dic, dic_dictionary=dictionary)
@@ -496,7 +621,7 @@ def plan_frame_budgets(
                     frame for frame in range(1, len(exact_bytes))
                     if frame >= pressure_start and frame % 2 == parity
                 ),
-                wr_patterns,
+                wr_capacities[parity],
                 exact_bytes,
                 protected_bytes,
                 exact_cold,
@@ -511,16 +636,16 @@ def plan_frame_budgets(
         _allocate_credits(
             wr, available, allocated,
             range(2 if parity == 0 else 1, len(exact_bytes), 2),
-            wr_patterns, exact_bytes, protected_bytes,
+            wr_capacities[parity], exact_bytes, protected_bytes,
             exact_cold, protected_cold)
     _allocate_credits(
         dic, available, allocated, range(1, len(exact_bytes)),
         dic_patterns, exact_bytes, protected_bytes,
         exact_cold, protected_cold)
 
-    if int(wr[::2].sum()) > int(wr_patterns):
+    if int(wr[::2].sum()) > wr_capacities[0]:
         raise AssertionError("Wr0 preload planner exceeded capacity")
-    if int(wr[1::2].sum()) > int(wr_patterns):
+    if int(wr[1::2].sum()) > wr_capacities[1]:
         raise AssertionError("Wr1 preload planner exceeded capacity")
     if int(dic.sum()) > int(dic_patterns):
         raise AssertionError("DicBuf preload planner exceeded capacity")
@@ -568,7 +693,7 @@ def _frozen_sources(
     frozen = log.get("pattern_supply")
     if frozen is None:
         return None
-    if int(frozen.get("schema_version", 0)) not in (1, 2):
+    if int(frozen.get("schema_version", 0)) not in (1, 2, 3):
         raise ValueError(
             f"unsupported frozen pattern-supply schema: "
             f"{frozen.get('schema_version')!r}")
@@ -605,7 +730,8 @@ def plan_supply(
     prefetch_per: Sequence[Sequence[tuple]] | None = None,
     transfer_orders: Sequence[Sequence[int]] | None = None,
     enabled: bool = True,
-    wr_patterns: int = WORD_BUF_PATTERNS,
+    wr0_patterns: int = 0,
+    wr1_patterns: int | None = None,
     dic_patterns: int = DIC_BUF_PATTERNS,
 ) -> SupplyPlan:
     """Materialize cold patterns into their frozen physical sources.
@@ -616,6 +742,11 @@ def plan_supply(
     always emitted in chronological consumption order.
     """
     frame_count = len(per)
+    if wr1_patterns is None:
+        wr1_patterns = wr0_patterns
+    wr_capacities = (int(wr0_patterns), int(wr1_patterns))
+    if any(capacity < 0 for capacity in wr_capacities):
+        raise ValueError("WordBuf capacities must be non-negative")
     if prefetch_per is None:
         prefetch_per = tuple(() for _ in per)
     if len(prefetch_per) != frame_count:
@@ -654,7 +785,7 @@ def plan_supply(
     elif enabled:
         ranked = _frame_risk(log, frame_count)
         dic_left = int(dic_patterns)
-        wr_left = [int(wr_patterns), int(wr_patterns)]
+        wr_left = [wr_capacities[0], wr_capacities[1]]
 
         # Legacy DicBuf can serve either parity, so reserve it for the globally riskiest
         # complete runs before the parity-constrained Word-RAM passes.
@@ -740,7 +871,9 @@ def plan_supply(
             if bool(item[1]):
                 consume_pattern(frame, None, SOURCE_PRG)
 
-    if len(wr0) > wr_patterns or len(wr1) > wr_patterns or len(dic) > dic_patterns:
+    if (len(wr0) > wr_capacities[0]
+            or len(wr1) > wr_capacities[1]
+            or len(dic) > dic_patterns):
         raise AssertionError("pattern supply planner exceeded a physical preload capacity")
     occurrence_count = (
         len(prg) + len(wr0) + len(wr1) + int(dic_loads.sum()))

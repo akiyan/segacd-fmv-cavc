@@ -106,7 +106,11 @@
 
 /* --- TTRC v16 packed-routing/audio contract (checked by tools/check_player_ring.py) --- */
 .equ ROUTING_VERSION,       16
+.ifdef PLAYER_SPECIALIZED
+.equ ROUTING_BYTES,         PC_ROUTING_BYTES
+.else
 .equ ROUTING_BYTES,         16384
+.endif
 .equ ROUTING_MAX_FRAMES,    16384
 .equ ROUTING_SECTOR_BYTES,  2048
 .equ ROUTING_SECTOR_SHIFT_A,8
@@ -123,7 +127,11 @@
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
 .equ SHADOW_UPDATE_LIST_BIT, 15
 .equ SHADOW_UPDATE_COUNT_MASK, 0x7FFF
+.ifdef PLAYER_SPECIALIZED
+.equ ROUTING_COPY_LONGS,    PC_ROUTING_COPY_LONGS
+.else
 .equ ROUTING_COPY_LONGS,    4096
+.endif
 .equ ROUTING_BANK_COPIES,   2
 
 /* --- PRG-RAM レイアウト(program 0x6000〜, <0x1000) --- */
@@ -142,10 +150,26 @@
 .equ APPLY_END,   APPLY_BASE+APPLY_SIZE   /* 0x7F800 */
 .equ ROUTING_TMP, 0x0007A000        /* boot限定。最大frame0 staging直後の未使用APPLY 16KB */
 
-/* --- Word-RAM スクラッチ(SPバンク内, 毎フレーム再利用=スワップ影響なし) --- */
-.equ CTRL_SCR,    0x000D0000        /* control block linearization (<=4900B) */
-.equ PAD_SCR,     0x000D2000        /* pad セクタ捨て場 */
-.equ ADPCM_TABLE, 0x000D2800        /* owned 1M bank +0x12800: full IMA table, both banks */
+/* --- Word-RAM compact tail (same offsets in both physical banks) --- */
+.ifdef PLAYER_SPECIALIZED
+.equ CTRL_SCR,    SUB_BANK_1M+PC_CTRL_SCR_OFFSET
+.equ PAD_SCR,     SUB_BANK_1M+PC_PAD_SCR_OFFSET
+.equ ADPCM_TABLE, SUB_BANK_1M+PC_ADPCM_TABLE_OFFSET
+.equ PCM_DEC_BUF, SUB_BANK_1M+PC_PCM_DEC_BUF_OFFSET
+.equ WORD_BUF0,   SUB_BANK_1M+PC_WR0_OFFSET
+.equ WORD_BUF1,   SUB_BANK_1M+PC_WR1_OFFSET
+.equ ROUTING,     SUB_BANK_1M+PC_ROUTING_OFFSET
+.equ O_STATUS,    SUB_BANK_1M+PC_STATUS_OFFSET
+.else
+.equ CTRL_SCR,    0x000D0000
+.equ PAD_SCR,     0x000D2000
+.equ ADPCM_TABLE, 0x000D2800
+.equ PCM_DEC_BUF, 0x000D4C00
+.equ WORD_BUF0,   0x000D5200
+.equ WORD_BUF1,   0x000D5200
+.equ ROUTING,     0x000DC000
+.equ O_STATUS,    SUB_BANK_1M+0xAF00
+.endif
 .equ ADPCM_INDICES, ADPCM_TABLE     /* 89*16 u16 new-index*32 = 2848B */
 .equ ADPCM_DELTAS, ADPCM_TABLE+2848 /* 89*16 s32 signed delta = 5696B */
 .equ ADPCM_LUT, ADPCM_TABLE+8544    /* offset-high -> RF5C164 sign-magnitude = 256B */
@@ -153,35 +177,28 @@
 .equ ADPCM_TABLE_LONGS, ADPCM_TABLE_BYTES/4
 .equ ADPCM_TABLE_SECTORS, 5
 .equ ADPCM_BANK_COPIES, 2
-.equ PCM_DEC_BUF, 0x000D4C00        /* +0x14C00: decoded PCM, max N4=1472B */
-.equ WORD_BUF,    0x000D5200        /* owned physical bank +0x15200..+0x1C000: 880 patterns */
-.equ WORD_BUF_PATTERNS, 880
-.equ ROUTING,     0x000DC000        /* 所有中の1M Word-RAM bank末尾16KB。bootで両bankに同じ
-                                       v7+ 1-byte tableを複製し、drain/display parityの不一致を吸収。 */
 
 /* --- Word-RAM 出力(MDが読む) ---
-   フル画面H40(最大1120セル)対応: loads は最大 1120*32B+ランヘッダ ≈ 36.5KB。
-   O_LOADS を 0x84..0x9800(約38.8KB) に拡大(MD側と一致必須)。upds=1120*4B。 */
-.equ O_PALW,   SUB_BANK_1M+0x0000   /* v3: 区間番号+1(0=切替なし)。MDはMain-RAMのPALTAB表を引く */
-.equ O_CRAM,   SUB_BANK_1M+0x0002   /* 予約(v3でin-stream CRAM廃止。offsetは互換のため空けたまま) */
-.equ O_NLOAD,  SUB_BANK_1M+0x0082
-.equ O_LOADS,  SUB_BANK_1M+0x0084
-.equ O_NUPD,   SUB_BANK_1M+0x9800
-.equ O_UPDS,   SUB_BANK_1M+0x9802
-.equ O_SLIP,   SUB_BANK_1M+0xAF00   /* slip_count(=再シーク回復回数=グリッチ) */
-.equ O_DSY,    SUB_BANK_1M+0xAF7E   /* desync_count(同期マーカー不一致=フォールバック) */
-.equ O_CTRLWAIT,SUB_BANK_1M+0xAF18  /* DEBUG: current-control blocking sector pumps */
-.equ O_BODYWAIT,SUB_BANK_1M+0xAF1A  /* DEBUG: prior BODY payload/pad blocking pumps */
-.equ O_AUDIOLEFT,SUB_BANK_1M+0xAF1C /* DEBUG: ADPCM decode stopwatch, raw 30.72us ticks */
-.equ O_RESYNC, SUB_BANK_1M+0xAF20   /* 計測: 音声re-sync回数(リード下限/上限逸脱で書込ジャンプ=乱れの元) */
-.equ O_LEAD,   SUB_BANK_1M+0xAF22   /* 計測: 現コマの音声リード(write-play, バイト)。SYNC_MINに近づく=枯渇 */
-.equ O_HDR,    SUB_BANK_1M+0xAF80   /* ヘッダ先頭64Bの写し(MDがmode/tcols/trows/pool/baseを読む) */
-.equ PALTAB_STAGE_OFF, 0xA000       /* v13 boot stage starts before the persistent palette */
-.equ PALTAB_OFF, 0xB000             /* palette table itself; ip.s must match */
-.equ PALTAB_STAGE_BYTES, 0x6000     /* +0xA000..+0x10000 temporary boot image */
+   O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
+   starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
+.equ O_PALW,   SUB_BANK_1M+0x0000
+.equ O_NLOAD,  SUB_BANK_1M+0x0002
+.equ O_LOADS,  SUB_BANK_1M+0x0004
+.equ O_SLIP,   O_STATUS+0x00
+.equ O_DSY,    O_STATUS+0x7E
+.equ O_CTRLWAIT,O_STATUS+0x18
+.equ O_BODYWAIT,O_STATUS+0x1A
+.equ O_AUDIOLEFT,O_STATUS+0x1C
+.equ O_RESYNC, O_STATUS+0x20
+.equ O_LEAD,   O_STATUS+0x22
+.equ O_HDR,    O_STATUS+0x80
+.equ PALTAB_STAGE_OFF, 0x0000
+.equ PALTAB_OFF, 0x1000
+.equ PALTAB_STAGE_BYTES, 0x6000
 .equ O_PALTAB_STAGE, SUB_BANK_1M+PALTAB_STAGE_OFF
 .equ O_PALTAB, SUB_BANK_1M+PALTAB_OFF
-.equ DIC_STAGE, SUB_BANK_1M+0xD000 /* frame0 bank: DicBuf boot handoff, max 256 patterns */
+.equ DIC_STAGE_OFF, 0x6000
+.equ DIC_STAGE, SUB_BANK_1M+DIC_STAGE_OFF
 .equ DIC_STAGE_PATTERNS, 256
 
 /* --- RF5C164 output reconstructed from ADPCM --- */
@@ -216,6 +233,7 @@
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
+.equ STAT_BOOT_STAGE, 0x8001		/* palette/Dic stage ready for one-time Main copy */
 .equ STAT_BOOT_VRAM, 0x8002		/* frame-0 bank ready; BODY waits for built/displayed ack */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは15秒待って CMD_STREAM 再送) */
@@ -307,7 +325,7 @@ stream_start:
 	move.l	header_total, d1
 	bsr	issue_file_readn		/* complete startup file */
 	/* ヘッダ1secをSTAGEへ取り込み、マジック "TTRC" を検証(MOVIE.md) */
-	move.w	#HEADER_SECTORS, d0
+	moveq	#HEADER_SECTORS, d0
 	lea	PAD_SCR, a0
 	bsr	drain_lin
 	cmpi.l	#0x54545243, (PAD_SCR).l	/* "TTRC" */
@@ -437,18 +455,54 @@ pm_set:
 1:
 	move.w	(a0)+, (a1)+
 	dbra	d1, 1b
-	/* v13 boot stage(ヘッダ直後, paltab_sec) → Word-RAM +A000。
-	   MainはパレットをMain-RAM表へ、任意のsidecarをVRAMへ一度コピー。 */
-	moveq	#0, d0
-	PC_MOVE_W h_paltab_sec, PC_PALTAB_SEC, d0
+	/* The boot stage and DicBuf are handed to Main before frame 0 exists. Main
+	   copies them to their persistent Main-RAM/VRAM homes and returns this bank,
+	   allowing the same front-of-bank bytes to become O_LOADS and WordBuf. */
+	.ifdef PLAYER_SPECIALIZED
+	moveq	#PC_PALTAB_SEC, d0
+	.else
+	move.w	h_paltab_sec, d0
 	beq	1f
+	.endif
 	lea	(O_PALTAB_STAGE).l, a0
 	bsr	drain_lin_staged		/* CDC_TRN直行を避けSTAGE経由(スリップ防止) */
 1:
-	/* ADPCM full lookup tables follow the v13 boot stage. Stage one immutable 8,800B
+.ifdef INCLUDE_PATTERN_SUPPLY
+.if PC_DIC_SECTORS > 0
+	moveq	#PC_DIC_SECTORS, d0
+	lea	DIC_STAGE, a0
+	bsr	drain_lin_staged
+.endif
+.endif
+	/* This handoff is an intentional HEADER read boundary. Stop the finite
+	   boot read before Main owns the bank; no arriving sector is allowed to
+	   turn the copy interval into an unexpected slip. */
+	BIOSCALL BIOS_CDC_STOP
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+	move.w	#STAT_BOOT_STAGE, (COMSTAT0).l
+1:
+	tst.w	(COMCMD1).l
+	beq.s	1b
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+	clr.w	(COMSTAT0).l
+	/* Restart at the first unread HEADER sector. reseek_readn deliberately
+	   preserves the original file anchor used by exact MSF recovery. */
+	.ifdef PLAYER_SPECIALIZED
+	moveq	#HEADER_SECTORS+PC_PALTAB_SEC+PC_DIC_SECTORS, d0
+	.else
+	moveq	#HEADER_SECTORS, d0
+	add.w	h_paltab_sec, d0
+	.endif
+	add.l	header_lba, d0
+	move.l	stream_remaining, d1
+	bsr	reseek_readn
+
+	/* ADPCM full lookup tables follow the boot stage. Stage one immutable 8,800B
 	   image in boot-only PRG RAM, then duplicate it into the same offset of both
 	   physical 1M banks.  Two toggles return to the frame-0/PALTAB bank. */
-	move.w	#ADPCM_TABLE_SECTORS, d0
+	moveq	#ADPCM_TABLE_SECTORS, d0
 	lea	ROUTING_TMP, a0
 	bsr	drain_lin_staged
 	moveq	#ADPCM_BANK_COPIES-1, d1
@@ -463,26 +517,26 @@ adpcm_table_copy:
 	bsr	swap_settle
 	dbra	d1, adpcm_table_bank
 adpcm_table_done:
-	/* v12 pattern supply follows the ADPCM table. Wr0 is the
-	   physical frame-0 bank, Wr1 is the other bank, and DicBuf is staged in
-	   Wr0 for the Main CPU to copy once after the first handoff.  The two
-	   toggles restore the original frame-0 bank phase. */
+	/* Wr0 is the physical frame-0 bank and Wr1 is the other bank. Their
+	   generated starts and sector-rounded capacities differ. Two toggles
+	   restore the frame-0 bank phase. */
 .ifdef INCLUDE_PATTERN_SUPPLY
-	move.w	#PC_WR0_SECTORS, d0
-	lea	WORD_BUF, a0
-	bsr	drain_lin_staged
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	move.w	#PC_WR1_SECTORS, d0
-	lea	WORD_BUF, a0
-	bsr	drain_lin_staged
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	move.w	#PC_DIC_SECTORS, d0
-	lea	DIC_STAGE, a0
+.if PC_WR0_SECTORS > 0
+	moveq	#PC_WR0_SECTORS, d0
+	lea	WORD_BUF0, a0
 	bsr	drain_lin_staged
 .endif
-	/* v5 STARTUP_AUDIO follows PALTAB. Each sector starts with exactly one
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+.if PC_WR1_SECTORS > 0
+	moveq	#PC_WR1_SECTORS, d0
+	lea	WORD_BUF1, a0
+	bsr	drain_lin_staged
+.endif
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+.endif
+	/* STARTUP_AUDIO follows the pattern preloads. Each sector starts with exactly one
 	   h_audio_bytes chunk, so no cross-sector staging is needed. Current packs
 	   queue the source prefix here and put future chunks in live controls, keeping
 	   this reserve for the whole movie instead of consuming it during startup. */
@@ -558,7 +612,7 @@ rt_validate:
 	bhi	bad_header
 	dbra	d7, rt_validate
 	/* HEADER.DAT is exhausted, so a boot-only copy cannot delay its continuous
-	   drain. Duplicate the complete 16KB routing reservation into both physical
+	   drain. Duplicate the sector-sized routing reservation into both physical
 	   1M Word-RAM banks. drain_frame may run ahead of frame_idx, so splitting the
 	   table by frame parity would select the wrong bank. Two toggles return to
 	   the original frame-0/PALTAB bank before expansion. */
@@ -735,14 +789,7 @@ dump_ring_head:
 	swap	d0
 	move.w	desync_count, d0
 	move.l	d0, 16(a3)			/* [4]=drain_frame|desync_count */
-	/* パレット: pal0[0]=黒, pal0[15]=白(2色でクリア表示) */
-	move.w	#1, (O_PALW).l
-	lea	(O_CRAM).l, a1
-	move.w	#64-1, d0
-1:
-	clr.w	(a1)+
-	dbra	d0, 1b
-	move.w	#0x0EEE, (O_CRAM+30).l		/* pal0 index15 = 白 */
+	clr.w	(O_PALW).l			/* keep the active boot-loaded palette */
 	/* O_LOADS: slot0=黒(0x0000), slot1=白(0xFFFF) */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
@@ -755,8 +802,11 @@ dump_ring_head:
 1:
 	move.w	#0xFFFF, (a1)+
 	dbra	d0, 1b
-	/* O_UPDS: 全1120セル。row v(0..4)のcol b(0..31)= value[v] bit(31-b)。他は黒。 */
-	lea	(O_UPDS).l, a2
+	/* The diagnostic uses the live list-form control reader. CTRL_SCR is
+	   disposable while this build is frozen, unlike the removed O_UPDS area. */
+	move.w	#0x8000+1120, (CTRL_SCR+4).l
+	clr.w	(CTRL_SCR+6).l
+	lea	(CTRL_SCR+8).l, a2
 	moveq	#0, d6				/* cell c */
 uh_lp:
 	moveq	#0, d0
@@ -784,7 +834,6 @@ uh_put:
 	cmp.w	#1120, d6
 	blo	uh_lp
 	move.w	#2, (O_NLOAD).l
-	move.w	#1120, (O_NUPD).l
 	movem.l	(sp)+, d0-d7/a0-a6
 	rts
 /* ISO診断: ring_head から 1120 パターンを VRAM slot 0.. へ生ロードし、cell c→slot c で
@@ -792,26 +841,7 @@ uh_put:
    全面ノイズなら 0xC000 のリング内容が壊れている。 */
 dump_pats:
 	movem.l	d0-d7/a0-a6, -(sp)
-	/* グレースケール ramp を CRAM pal0 に(色ではなく生インデックス構造を見るため) */
-	move.w	#1, (O_PALW).l
-	lea	(O_CRAM).l, a1
-	moveq	#0, d1
-gp_lp:
-	move.w	d1, d2
-	lsr.w	#1, d2				/* L = i>>1 (0..7) */
-	move.w	d2, d3
-	add.w	d3, d3				/* L<<1 (R) */
-	move.w	d2, d4
-	lsl.w	#5, d4				/* L<<5 (G) */
-	or.w	d4, d3
-	move.w	d2, d4
-	lsl.w	#8, d4
-	add.w	d4, d4				/* L<<9 (B) */
-	or.w	d4, d3
-	move.w	d3, (a1)+
-	addq.w	#1, d1
-	cmp.w	#64, d1
-	blo	gp_lp
+	clr.w	(O_PALW).l			/* keep the active boot-loaded palette */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
 	move.w	#1120, (a1)+			/* count=1120 */
@@ -824,7 +854,9 @@ gp_lp:
 	movea.l	#RING_BASE, a4
 2:
 	dbra	d0, 1b
-	lea	(O_UPDS).l, a2
+	move.w	#0x8000+1120, (CTRL_SCR+4).l
+	clr.w	(CTRL_SCR+6).l
+	lea	(CTRL_SCR+8).l, a2
 	moveq	#0, d6
 3:
 	move.w	d6, (a2)+			/* cell */
@@ -835,7 +867,6 @@ gp_lp:
 	cmp.w	#1120, d6
 	blo	3b
 	move.w	#1, (O_NLOAD).l
-	move.w	#1120, (O_NUPD).l
 	movem.l	(sp)+, d0-d7/a0-a6
 	rts
 dsv_vals:
@@ -1241,8 +1272,8 @@ pf_pump:
 	bls.s	pf_ready
 .ifdef DEBUG
 	addq.w	#1, pf_ctrl_wait
-.endif
 	bra.s	pf_need_pump
+.endif
 pf_body_blocked:
 .ifdef DEBUG
 	addq.w	#1, pf_body_wait
@@ -1286,7 +1317,6 @@ dsd_w:
 1:
 .endif
 	move.w	#0, (O_NLOAD).l			/* このコマは更新破棄=前コマ維持 */
-	move.w	#0, (O_NUPD).l
 	bsr	pump_poll_core
 	rts
 
@@ -1640,7 +1670,6 @@ ef_finalize:
 .endif
 ef_store:
 	move.w	d4, (O_NLOAD).l
-	move.w	d5, (O_NUPD).l
 	move.w	slip_count, (O_SLIP).l	/* 滑り(=再シーク回復)回数をMDへ=グリッチマーカー */
 	move.w	desync_count, (O_DSY).l	/* desync検知回数をMDへ(再シーク回復が効けば0のまま) */
 	move.w	resync_count, (O_RESYNC).l	/* 計測: 音声re-sync回数をMDへ */

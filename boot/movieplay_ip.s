@@ -33,6 +33,7 @@
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
+.equ STAT_BOOT_STAGE, 0x8001		/* palette/Dic staging bank is available */
 .equ STAT_BOOT_VRAM, 0x8002		/* frame-0 bank ready; BODY waits for built/displayed ack */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
@@ -54,10 +55,7 @@
 .equ MAIN_CODEGEN_HANDLER_MAX, 70	/* mask FF: guarded before writing */
 .equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4900
 .equ MAIN_CODEGEN_BLITTER_MAX, 7296	/* H40 40x28, NT0+NT1 */
-.equ WORD_BUF_OFF,       0x15200		/* same offset in physical Wr0/Wr1 banks */
-.equ WORD_BUF_END,       0x1C000
-.equ WORD_BUF_PATTERNS,  880
-.equ DIC_STAGE_OFF,      0xD000		/* frame0 Word-RAM handoff staging for DicBuf */
+.equ DIC_STAGE_OFF,      0x6000		/* copied before frame-0 output reuses this area */
 
 /* Exact 68000 words emitted by init_main_codegen.  Keep synchronized with
    harness/main_codegen/verify_handlers.py. */
@@ -86,11 +84,11 @@
 /* CRAM pre-load: 全区間パレット表。boot時にWord-RAM(PALTAB_OFF, frame0バンク)から一度だけ
    コピーし、以降の区間切替はO_PALWの区間番号+1でこの表を引く(ストリーム到着に依存しない)。
    容量はav_config.PALTAB_MAX_SEGと一致必須(check_player_ring.pyがビルド時検証)。 */
-.equ PALTAB_OFF, 0xB000			/* Word-RAM内ステージ位置(sp.sと一致必須) */
+.equ PALTAB_OFF, 0x1000			/* Word-RAM内ステージ位置(sp.sと一致必須) */
 .equ PALTAB_MAX_SEG, 64			/* Main-RAM表の容量(区間数)。64*128B=8KB */
-.equ PALTAB_STAGE_OFF, 0xA000
+.equ PALTAB_STAGE_OFF, 0x0000
 .equ PALTAB_STAGE_BYTES, 0x6000
-.equ BOOT_VRAM_DIR_OFF, 0xAFC0
+.equ BOOT_VRAM_DIR_OFF, PALTAB_STAGE_OFF+0x0FC0
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
 .equ PALTAB_RAM, 0x00FFB000		/* 表本体 0xFFB000..0xFFD000; high BSS follows */
 /* 1VBLANKで安全に転送できる語数はモード別(md_vbudget)。実測(dmabench)に基づき保守的に。
@@ -117,8 +115,21 @@
 
 .ifdef PLAYER_SPECIALIZED
 	.include "player_constants.inc"
+.equ CTRL_SCR_OFF, PC_CTRL_SCR_OFFSET
+.equ STATUS_OFF, PC_STATUS_OFFSET
+.equ WR0_OFF, PC_WR0_OFFSET
+.equ WR0_END, PC_WR0_END
+.equ WR1_OFF, PC_WR1_OFFSET
+.equ WR1_END, PC_WR1_END
 .equ PACE_FIXED_ARM_TICKS, PC_VSYNC_N*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS
 .equ PACE_FIXED_HUD_TICKS, PC_VSYNC_N*512
+.else
+.equ CTRL_SCR_OFF, 0x10000
+.equ STATUS_OFF, 0x0AF00
+.equ WR0_OFF, 0x15200
+.equ WR0_END, 0x1C000
+.equ WR1_OFF, 0x15200
+.equ WR1_END, 0x1C000
 .endif
 
 .ifdef HUD_HEX_TABLE
@@ -284,7 +295,7 @@ ip_entry:
 
 	/* frame0準備完了=バンクにヘッダ写し(O_HDR)がある。mode/tcols/trows/pool/base を読み
 	   モード依存のVDP設定と実行時変数を確定する(汎用化: H32/H40, mode4は将来) */
-	lea	(PROBE_BANK+0xAF80), a0
+	lea	(PROBE_BANK+STATUS_OFF+0x80), a0
 .ifndef PLAYER_SPECIALIZED
 	move.w	8(a0), md_tcols
 	move.w	10(a0), md_trows
@@ -373,42 +384,12 @@ ip_entry:
 	move.w	d2, md_prg_buf_cap_patterns
 .endif
 .ifdef MAIN_CODEGEN
-	/* Generate once, before playback.  A failed range/size proof leaves
+	/* Generate once, before playback. A failed range/size proof leaves
 	   md_codegen=0 and the per-bit reference path remains active. */
 	bsr	init_main_codegen
 .endif
-	/* CRAM pre-load: PALTAB(全区間パレット)をWord-RAM(frame0バンク)からMain-RAM表へ
-	   一度だけコピー。n_seg=O_HDR+20。以降の区間切替はこの表を引くだけ(bf_flip)。 */
-	PC_MOVE_W 20(a0), PC_NSEG, d1		/* n_seg */
-.ifndef PLAYER_SPECIALIZED
-	cmp.w	#PALTAB_MAX_SEG, d1		/* 壊れたヘッダ対策: 表容量にクランプ */
-	bls	1f
-	move.w	#PALTAB_MAX_SEG, d1
-1:
-	move.w	d1, md_nseg
-.endif
-	lsl.w	#6, d1				/* n_seg*64語(=128B) */
-	beq	2f
-	subq.w	#1, d1
-	lea	(PROBE_BANK+PALTAB_OFF).l, a1
-	lea	PALTAB_RAM, a2
-1:
-	move.w	(a1)+, (a2)+
-	dbra	d1, 1b
-2:
-	/* v12 DicBuf is staged beside PALTAB in the frame0 Word-RAM bank. Copy it
-	   once into the fixed Main-RAM gap after codegen; Wr0/Wr1 remain in their
-	   physical banks and are read directly after each handoff. */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0008)
-.if PC_DIC_PATTERNS > 0
-	lea	(PROBE_BANK+DIC_STAGE_OFF).l, a1
-	lea	DIC_BUF, a2
-	move.w	#PC_DIC_PATTERNS*8-1, d1
-1:
-	move.l	(a1)+, (a2)+
-	dbra	d1, 1b
-.endif
 	bsr	reset_pattern_supply
 .endif
 .endif
@@ -506,8 +487,8 @@ movie_end_md:
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0008)
 reset_pattern_supply:
-	move.l	#PROBE_BANK+WORD_BUF_OFF, wr_ptr0
-	move.l	#PROBE_BANK+WORD_BUF_OFF, wr_ptr1
+	move.l	#PROBE_BANK+WR0_OFF, wr_ptr0
+	move.l	#PROBE_BANK+WR1_OFF, wr_ptr1
 	rts
 .endif
 .endif
@@ -700,7 +681,7 @@ build_frame:
 .endif
 	/* Pass1: パターンコピー無し。(dst.w, len.w, src.l)のラン表だけ作る。
 	   src は Word-RAM 内のパターン先頭。Pass2は長runをDMA+先頭補修、短runをCPU直書きする。 */
-	lea	(PROBE_BANK+0x82), a0		/* n_load @ +0x82, loads @ +0x84 */
+	lea	(PROBE_BANK+0x02), a0		/* n_load @ +2, loads @ +4 */
 	move.w	(a0)+, d7			/* n_load 合計タイル数 */
 	lea	RUN_TABLE, a2
 	moveq	#0, d4				/* run count */
@@ -775,7 +756,13 @@ bf_stage_preload:
 	movea.l	(a1,d3.w), a3
 	move.l	a3, d5
 	add.l	d2, d5
-	cmpi.l	#PROBE_BANK+WORD_BUF_END, d5
+	tst.w	d3
+	bne.s	1f
+	cmpi.l	#PROBE_BANK+WR0_END, d5
+	bra.s	2f
+1:
+	cmpi.l	#PROBE_BANK+WR1_END, d5
+2:
 	bhi	bf_stage_done			/* corrupt cache count: do not walk into routing */
 	move.l	d5, (a1,d3.w)
 	bsr	bf_emit_src_wr
@@ -829,7 +816,7 @@ bf_upd:
 	/* Read bitmap+entries directly from the linear control block in the swapped
 	   Word-RAM bank.  The Sub already walks them to build cold runs; rewriting
 	   every (cell,entry) pair was duplicate work on the bottleneck CPU. */
-	lea	(PROBE_BANK+0x10000+4), a0	/* skip total_len + frame_seq */
+	lea	(PROBE_BANK+CTRL_SCR_OFF+4), a0	/* skip total_len + frame_seq */
 	move.w	(a0)+, d7			/* bit15=list format, low15=n_upd */
 	move.w	d7, d6			/* preserve format tag */
 	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
@@ -1232,7 +1219,7 @@ bf_doflip:
 bf_after_flip:
 .ifndef DEBUG
 	/* Release build has no Sxx HUD, so retain the existing red slip indicator. */
-	move.w	(PROBE_BANK+0xAF00).l, d0
+	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d0
 	beq	1f
 	move.l	#0xC0000000, (VDP_CTRL).l
 	move.w	#0x000E, (VDP_DATA).l
@@ -1632,6 +1619,8 @@ cmd_wait_startup:
 	move.w	#0xFFFF, d5			/* last displayed remaining count */
 1:
 	move.w	(GA_COMSTAT0).l, d0
+	cmp.w	#STAT_BOOT_STAGE, d0
+	beq.s	6f
 	cmp.w	#STAT_BOOT_VRAM, d0
 	beq.s	8f
 	cmp.w	#STAT_READY, d0
@@ -1653,8 +1642,15 @@ cmd_wait_startup:
 	   hammering the gate-array registers in an unbounded Main-CPU loop. */
 	bsr	wait_vblank
 	bra	1b
+6:
+	bsr	consume_boot_stage
+	move.w	#1, (GA_COMCMD1).l
+6:
+	tst.w	(GA_COMSTAT0).l
+	bne.s	6b
+	clr.w	(GA_COMCMD1).l
+	bra	1b
 8:
-	bsr	load_boot_vram_sidecar
 	move.w	#1, body_start_pending
 	rts					/* keep CMD_STREAM asserted; Sub stays before BODY */
 3:
@@ -1668,11 +1664,49 @@ cmd_wait_startup:
 	rts
 .endif
 
+consume_boot_stage:
+	movem.l	d0-d7/a0-a6, -(sp)
+	lea	(PROBE_BANK+STATUS_OFF+0x80).l, a0
+	PC_MOVE_W 20(a0), PC_NSEG, d1
+.ifndef PLAYER_SPECIALIZED
+	cmp.w	#PALTAB_MAX_SEG, d1
+	bls.s	1f
+	move.w	#PALTAB_MAX_SEG, d1
+1:
+	move.w	d1, md_nseg
+.endif
+	lsl.w	#6, d1				/* n_seg * 64 palette words */
+	beq.s	2f
+	subq.w	#1, d1
+	lea	(PROBE_BANK+PALTAB_OFF).l, a1
+	lea	PALTAB_RAM, a2
+1:
+	move.w	(a1)+, (a2)+
+	dbra	d1, 1b
+2:
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0008)
+.if PC_DIC_PATTERNS > 0
+	lea	(PROBE_BANK+DIC_STAGE_OFF).l, a1
+	lea	DIC_BUF, a2
+	move.w	#PC_DIC_PATTERNS*8-1, d1
+1:
+	move.l	(a1)+, (a2)+
+	dbra	d1, 1b
+.endif
+.endif
+.endif
+	bsr	load_boot_vram_sidecar
+	movem.l	(sp)+, d0-d7/a0-a6
+	rts
+
 cmd_wait_ready:
 	clr.w	body_start_pending
 	move.w	d0, (GA_COMCMD0).l
 1:
 	move.w	(GA_COMSTAT0).l, d0
+	cmp.w	#STAT_BOOT_STAGE, d0
+	beq.s	4f
 	cmp.w	#STAT_BOOT_VRAM, d0
 	beq.s	3f
 	cmp.w	#STAT_READY, d0
@@ -1683,8 +1717,15 @@ cmd_wait_ready:
 	tst.w	(GA_COMSTAT0).l
 	bne	2b
 	rts
+4:
+	bsr	consume_boot_stage
+	move.w	#1, (GA_COMCMD1).l
+4:
+	tst.w	(GA_COMSTAT0).l
+	bne.s	4b
+	clr.w	(GA_COMCMD1).l
+	bra	1b
 3:
-	bsr	load_boot_vram_sidecar
 	move.w	#1, body_start_pending
 	rts					/* build/display frame 0 before acknowledging BODY */
 
@@ -1708,14 +1749,14 @@ arm_body_after_frame0:
 	clr.w	body_start_pending
 3:
 	rts
-/* v13 boot-stage directory at +0xAFC0:
+/* Boot-stage directory at stage+0x0FC0:
      "BVRM", count_A.w, count_B.w, count_C.w
    Records are [zero-based physical_slot.w, packed_pattern[32]] in three holes
-   that survive frame-0 expansion and Dic staging: +A000..AF00,
-   palette_end..D000, and +F000..10000. */
+   around the directory and palette: +0000..0F00,
+   palette_end..3000, and +5000..6000. */
 load_boot_vram_sidecar:
 	movem.l	d0-d7/a0-a2, -(sp)
-	lea	(PROBE_BANK+0xAF80).l, a0
+	lea	(PROBE_BANK+STATUS_OFF+0x80).l, a0
 	btst	#FEATURE_BOOT_VRAM_SIDECAR_BIT, 63(a0)
 	beq	9f
 	lea	(PROBE_BANK+BOOT_VRAM_DIR_OFF).l, a2
@@ -1752,7 +1793,7 @@ load_boot_vram_sidecar:
 	bls.s	3f
 	move.w	#0x1000/34, d7
 3:
-	lea	(PROBE_BANK+0xF000).l, a1
+	lea	(PROBE_BANK+PALTAB_STAGE_OFF+0x5000).l, a1
 	bsr	load_boot_vram_records
 9:
 	movem.l	(sp)+, d0-d7/a0-a2
@@ -1846,21 +1887,21 @@ prepare_dbg:
 	move.w	dbg_seg, d4
 	DBG_PUT2
 	/* slip/reseek count, low byte */
-	move.w	(PROBE_BANK+0xAF00).l, d4
+	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d4
 	DBG_PUT2
 	/* desync count, low byte */
-	move.w	(PROBE_BANK+0xAF7E).l, d4
+	move.w	(PROBE_BANK+STATUS_OFF+0x7E).l, d4
 	DBG_PUT2
 	/* audio re-sync count, low byte */
-	move.w	(PROBE_BANK+0xAF20).l, d4
+	move.w	(PROBE_BANK+STATUS_OFF+0x20).l, d4
 	DBG_PUT2
 	/* current audio lead high byte (256-byte units) */
-	move.w	(PROBE_BANK+0xAF22).l, d4
+	move.w	(PROBE_BANK+STATUS_OFF+0x22).l, d4
 	lsr.w	#8, d4
 	DBG_PUT2
 	/* total blocking CD pumps (current control + older BODY slot) */
-	move.w	(PROBE_BANK+0xAF18).l, d4
-	add.w	(PROBE_BANK+0xAF1A).l, d4
+	move.w	(PROBE_BANK+STATUS_OFF+0x18).l, d4
+	add.w	(PROBE_BANK+STATUS_OFF+0x1A).l, d4
 	DBG_PUT2
 	/* Main's CMD_SWAP wait for Sub completion, in approximate scanlines */
 	move.w	sub_wait_lines, d4
@@ -1869,7 +1910,7 @@ prepare_dbg:
 	move.w	frame_vblank_waits, d4
 	DBG_PUT2
 	/* Sub ADPCM decode time in 4*30.72us units (zero for PCM builds). */
-	move.w	(PROBE_BANK+0xAF1C).l, d4
+	move.w	(PROBE_BANK+STATUS_OFF+0x1C).l, d4
 	lsr.w	#2, d4
 	DBG_PUT2
 	/* Keep one common layout for every display mode. */

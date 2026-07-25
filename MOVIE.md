@@ -38,13 +38,13 @@ HEADER.DAT
 +--------------------------------------------------+
 | BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + optional VRAM sidecar
 +--------------------------------------------------+
+| DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
++--------------------------------------------------+
 | ADPCM_TABLE (5 sectors)                          |  8,800 B lookup image
 +--------------------------------------------------+
 | WR0_PRELOAD (wr0_sec sectors)                    |  WordBuf0 patterns
 +--------------------------------------------------+
 | WR1_PRELOAD (wr1_sec sectors)                    |  WordBuf1 patterns
-+--------------------------------------------------+
-| DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
 +--------------------------------------------------+
 | STARTUP_AUDIO (audio_preload_sec sectors)        |  one decoded chunk per sector
 +--------------------------------------------------+
@@ -63,21 +63,26 @@ BODY.DAT
 +--------------------------------------------------+
 ```
 
-The Sub CPU drains all of `HEADER.DAT` and writes STARTUP_AUDIO to wave RAM
-while PCM is stopped. It expands frame 0 and hands the completed Word-RAM bank
-to Main while `BODY.DAT` is still stopped. Main builds and displays frame 0,
-then acknowledges BODY start. Sub starts `BODY.DAT`, pre-drains frame 1, and
-only then begins timed handoffs. PCM starts with the first timed handoff.
+Sub first stages BOOT_STAGE and DicBuf, hands that bank to Main, and takes it
+back after Main copies the persistent palette, dictionary, and optional VRAM
+sidecar. This handoff is an intentional `HEADER.DAT` read boundary: Sub stops
+the current read before giving the bank away and restarts the remaining
+sectors at the exact next LBA after taking it back. Sub then installs the ADPCM
+and WordBuf preloads, writes STARTUP_AUDIO while PCM is stopped, expands frame
+0, and hands the completed bank to Main while `BODY.DAT` remains stopped. Main
+builds and displays frame 0, then acknowledges BODY start. Sub starts
+`BODY.DAT`, pre-drains frame 1, and only then begins timed handoffs. PCM starts
+with the first timed handoff.
 
 Frame 0 has no timed delivery budget. Its visible name table uses exact target
 patterns only. Remaining resident VRAM slots may receive future patterns
 through the frame-0 cold suffix and the boot VRAM sidecar. Analysis reports
 frame-0 Cold, Pre, DMA, Run, and Band as zero because they describe timed work.
 
-The routing table is staged in the not-yet-active APPLY ring and copied into
-the final 16 KiB of both physical 1M Word-RAM banks. The two copies are required
-because the Sub-owned bank follows the display handoff while delivery may run
-ahead.
+The routing table is staged in the not-yet-active APPLY ring and copied into a
+sector-rounded allocation at the end of both physical 1M Word-RAM banks. Its
+resident size is `routing_sec * 2048`. The two copies are required because the
+Sub-owned bank follows the display handoff while delivery may run ahead.
 
 Frame 0 patterns use the fixed 36 KiB boot-only staging area at PRG RAM
 `0x71000..0x7A000`, which overlaps space that is not yet serving its timed
@@ -156,22 +161,24 @@ Unknown feature bits are rejected.
 
 ### PSUP extension
 
-PSUP is `struct ">4s8H"`.
+PSUP is `struct ">4s9H"`.
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 196 | 4 | magic | `"PSUP"` |
-| 200 | 2 | version | exactly `2` |
+| 200 | 2 | version | exactly `3` |
 | 202 | 2 | reserved | zero |
-| 204 | 2 | wr0_patterns | WordBuf0 count, at most 880 |
-| 206 | 2 | wr1_patterns | WordBuf1 count, at most 880 |
+| 204 | 2 | wr0_patterns | WordBuf0 count, at most the generated Wr0 capacity |
+| 206 | 2 | wr1_patterns | WordBuf1 count, at most the generated Wr1 capacity |
 | 208 | 2 | dic_patterns | DicBuf count, at most 256 |
 | 210 | 2 | wr0_sectors | WR0_PRELOAD sectors |
 | 212 | 2 | wr1_sectors | WR1_PRELOAD sectors |
 | 214 | 2 | dic_sectors | DIC_PRELOAD sectors |
+| 216 | 2 | cold_cap | timed cold-pattern limit used to derive the Word-RAM map |
 
 Each sector count must equal `ceil(patterns * 32 / 2048)`. Generated player
-constants freeze all six values.
+constants freeze the preload values, routing allocation, compact-tail offsets,
+and parity-specific WordBuf starts, ends, and capacities.
 
 The 128-byte CRAM block contains four palette lines of 16 Genesis colour words
 (`0000BBB0GGG0RRR0`). Entry 0 of each line is transparent. Of the 60 usable
@@ -180,26 +187,29 @@ line 0/index 15 before quantisation. Only their positions change.
 
 ## Boot stage
 
-BOOT_STAGE is 24 KiB and is copied to Word-RAM bank offset `+0xA000`. All
-palette segments are stored consecutively at `+0xB000`, 128 bytes each. Main
+BOOT_STAGE is 24 KiB and is copied to Word-RAM bank offset `+0x0000`. All
+palette segments are stored consecutively at `+0x1000`, 128 bytes each. Main
 copies them once to the 8 KiB PALTAB at `0xFFB000..0xFFD000`. The capacity is
 64 segments. A timed palette switch reads PALTAB through the control block's
 `pal` field, so CRAM data does not depend on same-frame CD delivery.
 
-When feature bit 7 is set, a directory at `+0xAFC0` contains `"BVRM"` and three
+When feature bit 7 is set, a directory at `+0x0FC0` contains `"BVRM"` and three
 big-endian `u16` record counts. Each record is `u16 physical_slot` followed by
 one 32-byte pattern. Records occupy these preserved holes:
 
-- `+0xA000..+0xAF00`
-- the unused palette-table tail through `+0xD000`
-- `+0xF000..+0x10000`
+- `+0x0000..+0x0F00`
+- the unused palette-table tail through `+0x3000`
+- `+0x5000..+0x6000`
 
-Main writes the records directly to unreferenced resident VRAM slots before Sub
-starts BODY. The same sequence runs on movie restart.
+DicBuf is staged at `+0x6000..+0x7FFF`. Main copies the palette, DicBuf, and
+sidecar records before returning the bank to Sub. Frame 0 and WordBuf may then
+reuse these temporary ranges. `HEADER.DAT` is stopped at this handoff and
+resumed from the exact first unread sector after the bank returns. The same
+sequence runs on movie restart.
 
 ## ADPCM table
 
-Five sectors follow BOOT_STAGE. The first 8,800 bytes are immutable lookup data
+Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup data
 and the remaining 1,440 bytes are zero.
 
 | Offset | Size | Contents |
@@ -208,19 +218,24 @@ and the remaining 1,440 bytes are zero.
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
 
-Sub copies exactly 2,200 longs to Word-RAM offset `+0x12800` in both physical
-banks. The decoded PCM buffer is bank-local at `+0x14C00`.
+Sub copies exactly 2,200 longs to the generated fixed-tail offset in both
+physical banks. The bank-local decoded PCM buffer sits immediately below the
+variable routing allocation.
 
 ## Pattern preload regions
 
-WR0_PRELOAD, WR1_PRELOAD, and DIC_PRELOAD follow the ADPCM table in that order.
-Each contains 32-byte patterns and zero padding to its declared sector boundary.
+WR0_PRELOAD and WR1_PRELOAD follow the ADPCM table. DIC_PRELOAD precedes it so
+Main can consume all temporary front-of-bank data in the first boot handoff.
+Each preload contains 32-byte patterns and zero padding to its declared sector
+boundary.
 
-WordBuf0 and WordBuf1 each hold at most 880 different patterns at physical-bank
-offset `+0x15200`. Even timed frames consume WordBuf0 and odd timed frames
-consume WordBuf1. Their sequences advance monotonically and are never refilled.
+WordBuf0 and WordBuf1 have generated, parity-specific starts and capacities.
+Wr0 starts after the frame-0 `O_LOADS` envelope; Wr1 starts after the timed
+cold/run envelope. Both capacities are rounded down to complete preload
+sectors. Even timed frames consume WordBuf0 and odd timed frames consume
+WordBuf1. Their sequences advance monotonically and are never refilled.
 
-DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0xD000`
+DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0x6000`
 and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
 8-bit index.
 
@@ -246,7 +261,8 @@ The byte is `(total_sec << 3) | n_ctrl_sec`; `n_pay_sec = total_sec -
 n_ctrl_sec`. The player requires
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` and
 `routing_sec = ceil(nfr / 2048)`. Frame 0's entry and unused tail bytes are
-zero. The 16 KiB resident copy supports at most 16,384 frames.
+zero. The resident copy uses exactly `routing_sec` sectors and supports at most
+16,384 frames.
 
 Control and payload are continuous streams split at sector boundaries. One
 control sector may finish multiple future blocks, and payload normally
@@ -418,13 +434,13 @@ HEADER.DAT
 +--------------------------------------------------+
 | BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + optional VRAM sidecar
 +--------------------------------------------------+
+| DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
++--------------------------------------------------+
 | ADPCM_TABLE (5 sectors)                          |  8,800 B lookup image
 +--------------------------------------------------+
 | WR0_PRELOAD (wr0_sec sectors)                    |  WordBuf0 patterns
 +--------------------------------------------------+
 | WR1_PRELOAD (wr1_sec sectors)                    |  WordBuf1 patterns
-+--------------------------------------------------+
-| DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
 +--------------------------------------------------+
 | STARTUP_AUDIO (audio_preload_sec sectors)        |  one decoded chunk per sector
 +--------------------------------------------------+
@@ -443,20 +459,24 @@ BODY.DAT
 +--------------------------------------------------+
 ```
 
-Sub CPUはPCM停止中に `HEADER.DAT` 全体を読み、STARTUP_AUDIOをwave RAMへ書きます。
-`BODY.DAT` を止めたままframe 0を展開し、完成したWord-RAM bankをMainへ渡します。
-Mainがframe 0を構築・表示してBODY開始を返答すると、Subは `BODY.DAT` を開始して
-frame 1を先に読み切り、その後に時間制約のあるhandoffへ入ります。PCMは最初の
-timed handoffで始まります。
+Subは最初にBOOT_STAGEとDicBufをstageし、そのbankをMainへ渡します。Mainがpersistent
+palette、dictionary、任意のVRAM sidecarをcopyすると、Subはbankを取り戻します。この
+handoffは意図した `HEADER.DAT` read境界です。Subはbankを渡す前にreadを停止し、bankを
+取り戻した後に正確な次LBAから残りのsectorを再開します。続いてADPCMとWordBuf preloadを
+配置し、PCM停止中にSTARTUP_AUDIOをwave RAMへ書き、frame 0を展開します。完成したbankを
+Mainへ渡す間も `BODY.DAT` は停止したままです。Mainがframe 0を構築・表示してBODY開始を
+返答すると、Subは `BODY.DAT` を開始してframe 1を先に読み切り、その後に時間制約のある
+handoffへ入ります。PCMは最初のtimed handoffで始まります。
 
 frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
 patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
 boot VRAM sidecarを使って将来patternを置けます。frame 0のCold、Pre、DMA、Run、
 Bandはtimed workではないため解析では0とします。
 
-routing tableは未使用のAPPLY ringへ一時配置し、両方の物理1M Word-RAM bankの
-末尾16 KiBへコピーします。表示handoffに応じてSub所有bankが変わり、deliveryが
-先行し得るため、両bankに同一copyが必要です。
+routing tableは未使用のAPPLY ringへ一時配置し、両方の物理1M Word-RAM bank末尾の
+sector丸めallocationへcopyします。Resident sizeは `routing_sec * 2048` です。表示
+handoffに応じてSub所有bankが変わり、deliveryが先行し得るため、両bankに同一copyが
+必要です。
 
 frame 0 patternはPRG RAM `0x71000..0x7A000` の固定36 KiB boot-only staging
 領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。frame 0
@@ -533,22 +553,24 @@ player signatureは同じheader sectorから生成する `player_constants.inc` 
 
 ### PSUP extension
 
-PSUPは `struct ">4s8H"` です。
+PSUPは `struct ">4s9H"` です。
 
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 196 | 4 | magic | `"PSUP"` |
-| 200 | 2 | version | 必ず `2` |
+| 200 | 2 | version | 必ず `3` |
 | 202 | 2 | reserved | zero |
-| 204 | 2 | wr0_patterns | WordBuf0数、最大880 |
-| 206 | 2 | wr1_patterns | WordBuf1数、最大880 |
+| 204 | 2 | wr0_patterns | WordBuf0数、generated Wr0 capacity以下 |
+| 206 | 2 | wr1_patterns | WordBuf1数、generated Wr1 capacity以下 |
 | 208 | 2 | dic_patterns | DicBuf数、最大256 |
 | 210 | 2 | wr0_sectors | WR0_PRELOAD sector数 |
 | 212 | 2 | wr1_sectors | WR1_PRELOAD sector数 |
 | 214 | 2 | dic_sectors | DIC_PRELOAD sector数 |
+| 216 | 2 | cold_cap | Word-RAM map導出に使うtimed cold-pattern上限 |
 
 各sector数は `ceil(patterns * 32 / 2048)` と一致する必要があります。生成する
-player constantsが6値すべてを固定します。
+player constantsがpreload値、routing allocation、compact-tail offset、parity別WordBufの
+開始・終了・容量を固定します。
 
 128-byte CRAM blockは、16個のGenesis colour word
 （`0000BBB0GGG0RRR0`）を持つpalette line 4本です。各lineのentry 0は透明です。
@@ -557,26 +579,28 @@ player constantsが6値すべてを固定します。
 
 ## Boot stage
 
-BOOT_STAGEは24 KiBで、Word-RAM bank offset `+0xA000` へcopyします。全palette
-segmentは `+0xB000` から128 byteずつ連続配置します。Mainは起動時に1回だけ
+BOOT_STAGEは24 KiBで、Word-RAM bank offset `+0x0000` へcopyします。全palette
+segmentは `+0x1000` から128 byteずつ連続配置します。Mainは起動時に1回だけ
 8 KiBのPALTAB（`0xFFB000..0xFFD000`）へcopyします。上限は64 segmentです。
 timed palette switchはcontrol blockの `pal` でPALTABを参照するため、CRAM dataは
 同じframeのCD deliveryに依存しません。
 
-feature bit 7がsetなら、`+0xAFC0` のdirectoryに `"BVRM"` と3個のbig-endian
+feature bit 7がsetなら、`+0x0FC0` のdirectoryに `"BVRM"` と3個のbig-endian
 `u16` record countがあります。各recordは `u16 physical_slot` と32-byte pattern
 です。recordは次の保存領域に配置します。
 
-- `+0xA000..+0xAF00`
-- palette tableの未使用末尾から `+0xD000`
-- `+0xF000..+0x10000`
+- `+0x0000..+0x0F00`
+- palette tableの未使用末尾から `+0x3000`
+- `+0x5000..+0x6000`
 
-SubがBODYを開始する前に、Mainがrecordを未参照のresident VRAM slotへ直接書きます。
-movie restartでも同じ手順を実行します。
+DicBufは `+0x6000..+0x7FFF` にstageします。Mainはpalette、DicBuf、sidecar recordを
+copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemporary rangeを
+再利用できます。このhandoffで `HEADER.DAT` を停止し、bank返却後に最初の未読sector
+から正確に再開します。movie restartでも同じ手順を実行します。
 
 ## ADPCM table
 
-BOOT_STAGEの直後に5 sector置きます。先頭8,800 byteは不変のlookup data、残り
+DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup data、残り
 1,440 byteはzeroです。
 
 | Offset | Size | 内容 |
@@ -585,19 +609,21 @@ BOOT_STAGEの直後に5 sector置きます。先頭8,800 byteは不変のlookup 
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
 
-Subは両方の物理bankのWord-RAM offset `+0x12800` へ2,200 longずつcopyします。
-decoded PCM bufferは各bankの `+0x14C00` にあります。
+Subは両方の物理bankのgenerated fixed-tail offsetへ2,200 longずつcopyします。
+Bank-local decoded PCM bufferはvariable routing allocationの直下にあります。
 
 ## Pattern preload領域
 
-ADPCM tableの後にWR0_PRELOAD、WR1_PRELOAD、DIC_PRELOADの順で置きます。各領域は
-32-byte patternを持ち、宣言したsector境界までzero padします。
+ADPCM tableの後にWR0_PRELOADとWR1_PRELOADを置きます。DIC_PRELOADは最初のboot
+handoffでfront-of-bankのtemporary dataをすべてMainが消費できるようADPCMより前に
+置きます。各preloadは32-byte patternを持ち、宣言したsector境界までzero padします。
 
-WordBuf0とWordBuf1は、それぞれ物理bank offset `+0x15200` に最大880個の異なる
-patternを持ちます。偶数timed frameはWordBuf0、奇数timed frameはWordBuf1を
-消費します。sequenceは単調に進み、補充しません。
+WordBuf0とWordBuf1はgenerated parity別startとcapacityを持ちます。Wr0はframe-0
+`O_LOADS` envelopeの直後、Wr1はtimed cold/run envelopeの直後から始まります。
+両capacityとも完全なpreload sectorへ切り下げます。偶数timed frameはWordBuf0、
+奇数timed frameはWordBuf1を消費します。sequenceは単調に進み、補充しません。
 
-DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0xD000` に一時配置し、
+DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0x6000` に一時配置し、
 Main RAM `0xFF6600..0xFF8600` へ起動時に1回copyします。controlは8-bit indexで
 entryを参照します。
 
@@ -622,7 +648,8 @@ byte値は `(total_sec << 3) | n_ctrl_sec` で、
 `n_pay_sec = total_sec - n_ctrl_sec` です。playerは
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` と
 `routing_sec = ceil(nfr / 2048)` を要求します。frame 0のentryと末尾の未使用byteは
-zeroです。16 KiBのresident copyには最大16,384 frameが入ります。
+zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大16,384 frameに
+対応します。
 
 controlとpayloadはsector境界で分割した連続streamです。1個のcontrol sectorが複数の
 将来blockを完成させることがあり、payloadは通常、後のframeで使うpatternを先読み

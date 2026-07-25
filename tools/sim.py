@@ -31,6 +31,7 @@ import os
 import sys
 import time
 import math
+import dataclasses
 from collections import defaultdict
 from pathlib import Path
 
@@ -1176,6 +1177,8 @@ def main():
     _t = _mark("Extract", _t)
     frames = sorted(master_dir.glob("*.png"))
     n = len(frames)
+    wordram_layout = pattern_supply.word_ram_layout(
+        n, C_CELLS, MAX_COLD)
     body_fresh = stream_schedule.body_fresh_byte_supply(
         n,
         FPS,
@@ -1542,6 +1545,8 @@ def main():
         supply_budget = pattern_supply.plan_frame_budgets(
             demand_prediction,
             enabled=PATTERN_SUPPLY_ON,
+            wr0_patterns=wordram_layout.wr0_patterns,
+            wr1_patterns=wordram_layout.wr1_patterns,
             prg_supply_patterns=predicted_prg_supply_patterns,
             prg_capacity_patterns=(
                 PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
@@ -1749,8 +1754,8 @@ def main():
         "pattern supply plan: "
         f"enabled={int(PATTERN_SUPPLY_ON)} "
         f"PrgPressure=f{supply_budget.prg_pressure_start} "
-        f"Wr0={supply_budget.wr0_patterns}/{pattern_supply.WORD_BUF_PATTERNS} "
-        f"Wr1={supply_budget.wr1_patterns}/{pattern_supply.WORD_BUF_PATTERNS} "
+        f"Wr0={supply_budget.wr0_patterns}/{wordram_layout.wr0_patterns} "
+        f"Wr1={supply_budget.wr1_patterns}/{wordram_layout.wr1_patterns} "
         f"Dic={supply_budget.dic_patterns}/{pattern_supply.DIC_BUF_PATTERNS} "
         f"hits={int(supply_budget.dic.sum())} "
         f"frames={int(np.count_nonzero(supply_budget.total))}",
@@ -3415,8 +3420,8 @@ def main():
             prg_normal_capacity=PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES,
             prg_jitter_headroom=(
                 PRG_JITTER_HEADROOM_KB * 1024 // PATTERN_BYTES),
-            wr0_capacity=pattern_supply.WORD_BUF_PATTERNS,
-            wr1_capacity=pattern_supply.WORD_BUF_PATTERNS,
+            wr0_capacity=wordram_layout.wr0_patterns,
+            wr1_capacity=wordram_layout.wr1_patterns,
             dic_capacity=pattern_supply.DIC_BUF_PATTERNS,
             prg_loads=prg_loads,
             wr0_loads=wr0_loads,
@@ -3568,7 +3573,7 @@ def main():
                 "rows": dec_category_rows,
             },
             "pattern_supply": {
-                "schema_version": 2,
+                "schema_version": 3,
                 "enabled": bool(PATTERN_SUPPLY_ON),
                 "policy": "prg-pressure-waterfill",
                 "prg_pressure_start_frame": int(
@@ -3585,10 +3590,11 @@ def main():
                 "wr1_loads": wr1_loads.astype(np.uint16),
                 "dic_loads": dic_loads.astype(np.uint16),
                 "capacities": {
-                    "wr0": pattern_supply.WORD_BUF_PATTERNS,
-                    "wr1": pattern_supply.WORD_BUF_PATTERNS,
+                    "wr0": wordram_layout.wr0_patterns,
+                    "wr1": wordram_layout.wr1_patterns,
                     "dic": pattern_supply.DIC_BUF_PATTERNS,
                 },
+                "word_ram_layout": dataclasses.asdict(wordram_layout),
             },
             "physical_budget": {
                 "schema_version": 3,
