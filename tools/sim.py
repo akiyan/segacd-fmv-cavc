@@ -3344,6 +3344,7 @@ def main():
         f"(useful BODY / physical CD read time; HEADER/frame0/pad excluded; "
         f"CD1x={CD_RATE})",
         (f"shadow_update_lists={int(shadow_list_flags.sum())}/{len(shadow_list_flags)} "
+         f"safety_rejected={len(shadow_plan['safety_rejected_frames'])} "
          f"main_saved_avg="
          f"{sum(cost.saved_cycles for cost, chosen in zip(shadow_plan['costs'], shadow_list_flags) if chosen) / max(1, len(shadow_list_flags)):.1f}cycles/frame "
          f"control_delta={int((control_lengths - legacy_lengths).sum())}B "

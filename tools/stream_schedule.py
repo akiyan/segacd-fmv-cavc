@@ -296,15 +296,43 @@ def select_shadow_update_lists(
     target_ring = int(baseline["ring_min"])
     target_ready = int(baseline["ready_min"])
 
+    def preserving_schedule(flags):
+        try:
+            candidate_lengths, candidate_schedule = run_schedule(flags)
+        except ScheduleError:
+            return None
+        if (not candidate_schedule["feasible"]
+                or int(candidate_schedule["ring_min"]) < target_ring
+                or int(candidate_schedule["ready_min"]) < target_ready):
+            return None
+        return candidate_lengths, candidate_schedule
+
     selected = np.asarray([
         bool(eligible[index] and cost.added_bytes <= 0)
         for index, cost in enumerate(costs)
     ], np.bool_)
-    lengths, chosen_schedule = run_schedule(selected)
-    if (not chosen_schedule["feasible"]
-            or int(chosen_schedule["ring_min"]) < target_ring
-            or int(chosen_schedule["ready_min"]) < target_ready):
-        raise AssertionError("zero-cost shadow lists unexpectedly reduced schedule margins")
+    safety_rejected = []
+    candidate = preserving_schedule(selected)
+    if candidate is None:
+        # A shorter control stream can move cumulative sector boundaries.  In
+        # a rate-shaped stream that may remove the one slot where a future Prg
+        # sector had enough ring space, so byte shrinkage alone is not a
+        # physical-safety proof.  Restore the least valuable list candidates
+        # until the exact baseline-or-better schedule is recovered.
+        rollback_order = sorted(
+            np.flatnonzero(selected),
+            key=lambda index: (costs[int(index)].saved_cycles, int(index)),
+        )
+        for index in rollback_order:
+            selected[int(index)] = False
+            safety_rejected.append(int(index))
+            candidate = preserving_schedule(selected)
+            if candidate is not None:
+                break
+    if candidate is None:
+        raise AssertionError(
+            "shadow-list safety rollback failed to recover baseline schedule")
+    lengths, chosen_schedule = candidate
 
     from fractions import Fraction
     groups = {}
@@ -320,10 +348,9 @@ def select_shadow_update_lists(
         for ratio in sorted(groups, reverse=True):
             trial = selected.copy()
             trial[groups[ratio]] = True
-            trial_lengths, trial_schedule = run_schedule(trial)
-            if (trial_schedule["feasible"]
-                    and int(trial_schedule["ring_min"]) >= target_ring
-                    and int(trial_schedule["ready_min"]) >= target_ready):
+            trial_candidate = preserving_schedule(trial)
+            if trial_candidate is not None:
+                trial_lengths, trial_schedule = trial_candidate
                 selected = trial
                 lengths = trial_lengths
                 chosen_schedule = trial_schedule
@@ -347,6 +374,7 @@ def select_shadow_update_lists(
         "rejected_denominator": (
             int(rejected_ratio.denominator) if rejected_ratio is not None else 1),
         "control_growth_enabled": bool(allow_control_growth),
+        "safety_rejected_frames": tuple(safety_rejected),
     }
 
 

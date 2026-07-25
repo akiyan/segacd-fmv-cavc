@@ -5,6 +5,7 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 
@@ -56,6 +57,34 @@ class ControlLengthTests(unittest.TestCase):
             cost.added_bytes <= 0
             for cost, selected in zip(plan["costs"], plan["selected"], strict=True)
             if selected))
+
+    def test_shadow_list_selection_rolls_back_unsafe_byte_shrink(self) -> None:
+        cells = [[], [0], [1]]
+        updates = np.array([len(frame) for frame in cells], np.int64)
+        runs = np.zeros(3, np.int64)
+        legacy = schedule.control_block_lengths(
+            updates, runs, cells=1120, audio_frame_bytes=16)
+
+        def fake_schedule(_loads, lengths, **_kwargs):
+            if int(np.asarray(lengths, np.int64).sum()) < int(legacy.sum()):
+                raise schedule.ScheduleError(
+                    "shorter control route moved a required payload sector")
+            return {"feasible": True, "ring_min": 64, "ready_min": 64}
+
+        with patch.object(
+                schedule, "schedule_payload_ring",
+                side_effect=fake_schedule):
+            plan = schedule.select_shadow_update_lists(
+                cells, runs, np.zeros(3, np.int64),
+                cells=1120, fps=15, ring_capacity_patterns=128,
+                prebuffer_capacity_patterns=64,
+                frame_sectors=5, audio_frame_bytes=16, fill=True)
+
+        self.assertEqual(plan["selected"].tolist(), [False, False, False])
+        self.assertEqual(plan["safety_rejected_frames"], (1, 2))
+        self.assertEqual(
+            plan["block_lengths"].tolist(),
+            plan["legacy_block_lengths"].tolist())
 
     def test_lengths_match_the_packed_layout_formula(self) -> None:
         lengths = schedule.control_block_lengths(
