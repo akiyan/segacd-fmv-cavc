@@ -300,7 +300,7 @@ remain exact; the Raw/Prg split across the prebuffer boundary and BODY slots is
 a visualization because the discarded sub-frame ordering was not logged.
 
 For TTRC v16, the control contribution includes whichever shadow-update
-representation was selected for that frame: the legacy bitmap plus name
+representation was selected for that frame: the bitmap plus name
 entries, or the completed offset/entry list. The analysis does not add a
 separate meter for this internal representation; its exact byte cost is already
 included in the dim control portion of `Band`.
@@ -678,7 +678,7 @@ Physical delivery traceはtotal payloadを正確に持ちますが、1 frame内�
 残りをphysical BODY slotへ対応付けます。Total payloadとinput countは正確ですが、
 prebuffer境界・slot間のRaw/Prg splitはvisualizationです。
 
-TTRC v16のcontrolには、そのframeで選んだshadow-update表現、つまりlegacy bitmap +
+TTRC v16のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
 name entryまたはcompleted offset/entry listのbyte costを含みます。独立meterは作らず、
 dim control部分へ含めます。
 
