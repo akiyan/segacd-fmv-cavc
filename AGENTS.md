@@ -165,6 +165,10 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     its field order, widths, timing units, rendering path, and OCR workflow in
     sync with `boot/movieplay_ip.s`, `tools/read_frameno.py`, and the HUD
     harnesses.
+  - [`PLAYER.md`](PLAYER.md) - the live Main/Sub player memory maps, per-frame
+    CPU handoff, allocation safety rules, and qualification requirements. Keep
+    its addresses and limits in sync with `tools/av_config.py`,
+    `tools/check_player_ring.py`, and `boot/movieplay_*.s`.
   - [`REMOVED.md`](REMOVED.md) - the archive for removed feature designs,
     dependencies, and implementation notes needed for a possible clean
     reimplementation. It is not a description of the active pipeline.

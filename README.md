@@ -109,7 +109,7 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
 - [`MOVIE.md`](MOVIE.md): exact TTRC v16 `HEADER.DAT` / `BODY.DAT` format.
 - [`BUEFFERING.md`](BUEFFERING.md): physical pattern supplies and whole-movie
   quality planning.
-- [`STREAMING.md`](STREAMING.md): live Main/Sub memory maps and headroom.
+- [`PLAYER.md`](PLAYER.md): live Main/Sub player memory maps and headroom.
 - [`ANALYSIS.md`](ANALYSIS.md): analysis video and TSV reference.
 - [`HUD.md`](HUD.md): DEBUG HUD layout, units, gate, and OCR workflow.
 - [`ADPCM.md`](ADPCM.md): supported audio format and Sub-CPU decoder.
@@ -401,7 +401,7 @@ timed-work valueとgraph maximumから除外します。
 - [`CONFIG.md`](CONFIG.md): profile schema、共通設定、throttle、容量。
 - [`MOVIE.md`](MOVIE.md): 正確なTTRC v16 `HEADER.DAT` / `BODY.DAT` format。
 - [`BUEFFERING.md`](BUEFFERING.md): 物理pattern供給とmovie全体quality planning。
-- [`STREAMING.md`](STREAMING.md): live Main/Sub memory mapとheadroom。
+- [`PLAYER.md`](PLAYER.md): live Main/Sub player memory mapとheadroom。
 - [`ANALYSIS.md`](ANALYSIS.md): analysis videoとTSVのreference。
 - [`HUD.md`](HUD.md): DEBUG HUD layout、unit、gate、OCR workflow。
 - [`ADPCM.md`](ADPCM.md): 対応audio formatとSub-CPU decoder。
