@@ -219,8 +219,10 @@ and the remaining 1,440 bytes are zero.
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
 
 Sub copies exactly 2,200 longs to the generated fixed-tail offset in both
-physical banks. The bank-local decoded PCM buffer sits immediately below the
-variable routing allocation.
+physical banks. The decoded PCM buffer is Sub-owned PRG-RAM at
+`0x08000..0x085FF`. The generated Word-RAM tail keeps an equally sized
+unallocated guard immediately below the variable routing allocation so
+player-only A/B builds retain identical preload capacities and stream bytes.
 
 ## Pattern preload regions
 
@@ -309,9 +311,10 @@ before the current frame consumes its patterns.
 ## Prebuffer
 
 PREBUFFER contains the first `prebuf_pat` Prg patterns for frames 1 onward.
-It is loaded before playback and uses the normal PrgBuf ceiling: 382 KiB at
-15 fps, 397 KiB at 24 fps, and 402 KiB at 30 fps. The corresponding scheduled
-delivery ceilings are 418, 422, and 422 KiB.
+It is loaded before playback. Both PREBUFFER and the exact scheduled-delivery
+ceiling use 382 KiB at 15 fps, 397 KiB at 24 fps, and 402 KiB at 30 fps. The
+remaining 40/25/20 KiB to the 422 KiB observation boundary is reserved for
+live sector-arrival variation.
 
 ## BODY frame slot
 
@@ -383,7 +386,7 @@ without same-frame name updates.
 
 Audio is always checkpointed IMA ADPCM. Each chunk begins with `s16 predictor`,
 `u8 step_index`, and a reserved zero byte, followed by one low-nibble-first code
-per sample. Sub decodes exactly `audio_bytes` samples into its bank-local
+per sample. Sub decodes exactly `audio_bytes` samples into its PRG-RAM work
 buffer.
 
 ## Player reconstruction
@@ -610,7 +613,9 @@ DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
 
 Subは両方の物理bankのgenerated fixed-tail offsetへ2,200 longずつcopyします。
-Bank-local decoded PCM bufferはvariable routing allocationの直下にあります。
+Decoded PCM bufferはSub所有PRG-RAM `0x08000..0x085FF`にあります。Generated
+Word-RAM tailはvariable routing allocation直下に同じ大きさの未割当guardを保持し、
+player-only A/B buildのpreload容量とstream byteを同一にします。
 
 ## Pattern preload領域
 
@@ -693,8 +698,9 @@ patternを消費する前に届き得るため、schedulerは消費前のPrgBuf 
 ## Prebuffer
 
 PREBUFFERはframe 1以降で最初に使う `prebuf_pat` 個のPrg patternを持ちます。playback
-前に読み込み、通常PrgBuf上限に制限します。15 fpsで382 KiB、24 fpsで397 KiB、
-30 fpsで402 KiBです。対応するscheduled delivery上限は418、422、422 KiBです。
+前に読み込みます。PREBUFFERと正確なscheduled-delivery上限は15 fpsで382 KiB、
+24 fpsで397 KiB、30 fpsで402 KiBです。422 KiB観測境界までの40/25/20 KiBは
+liveのsector到着変動専用です。
 
 ## BODY frame slot
 
@@ -763,7 +769,7 @@ Dic runはslotとdictionary indexの両方が連続しなければ分割しま�
 
 audioは常にcheckpointed IMA ADPCMです。chunk先頭に `s16 predictor`、
 `u8 step_index`、reserved zero byteを置き、sampleごとにlow-nibble-first codeを
-続けます。Subはbank-local bufferへ正確に `audio_bytes` sampleをdecodeします。
+続けます。SubはPRG-RAM work bufferへ正確に `audio_bytes` sampleをdecodeします。
 
 ## Playerでの再構築
 

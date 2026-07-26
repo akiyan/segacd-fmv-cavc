@@ -41,7 +41,7 @@ The preview WAV is timed at one decoded chunk per source-video frame; the
 physical player uses the header's RF5C164 frequency delta and the actual NTSC
 playback cadence.
 
-## Full lookup tables in both 1M Word-RAM banks
+## Word-RAM lookup tables and PRG-RAM output buffer
 
 The decoder uses one 8,800-byte full table image:
 
@@ -57,10 +57,13 @@ copies the second physical bank, then swaps back. The same addresses are valid
 after every later frame handoff, so timed playback performs no table copy and
 no bank-dependent pointer adjustment.
 
-The decoded output buffer starts at bank offset `+0x14C00`. It reserves 1,536
-bytes per bank, enough for the supported low-rate chunk maximum. The build
-check proves that the table, buffer, control scratch, and resident routing
-copies do not overlap.
+The live decoded output buffer occupies Sub PRG-RAM
+`0x08000..0x085FF`. Its 1,536 bytes hold the supported low-rate chunk maximum.
+The generated Word-RAM layout keeps an equally sized unallocated guard below
+the routing table so a player-only A/B uses identical WordBuf capacities and
+stream bytes. The guard is not feature memory. The build check proves that the
+PRG buffer, tables, control scratch, WordBuf, and resident routing copies do
+not overlap.
 
 ## Sub-CPU hot path
 
@@ -77,8 +80,9 @@ The low-rate decoder therefore performs a non-blocking CDC poll at most every
 512 packed bytes. Higher-rate specialized builds omit this polling counter and
 call from the decode loop.
 
-No codec state is carried in PRG-RAM. A malformed step index is clamped to 88,
-and the fixed chunk size bounds every table and output-buffer access.
+No inter-frame codec state is carried in PRG-RAM; the decoded output buffer is
+overwritten for every chunk. A malformed step index is clamped to 88, and the
+fixed chunk size bounds every table and output-buffer access.
 
 The DEBUG `Axx` HUD field measures the decode phase, including an opportunistic
 CDC pump on low-rate profiles. One displayed unit is four 30.72 microsecond
@@ -133,7 +137,7 @@ mux済み音声には、cleanなsigned-16 source WAVではなく、RF5C164の8-b
 時間で作られます。物理playerはheaderのRF5C164 frequency deltaと実際のNTSC playback
 cadenceを使います。
 
-## 両方の1M Word-RAM bankに置くfull lookup table
+## Word-RAM lookup tableとPRG-RAM output buffer
 
 Decoderは8,800-byteのfull table imageを1つ使います。
 
@@ -148,9 +152,11 @@ Word-RAM offset `+0x12800`へcopyしてbankをswapし、2つ目のphysical bank�
 元へswapします。その後の各frame handoffでも同じaddressが有効なので、時刻指定再生中の
 table copyやbank依存のpointer補正はありません。
 
-Decode済みoutput bufferはbank offset `+0x14C00`から始まります。各bankに1,536 byteを
-予約し、対応するlow-rate chunkの最大値を収容します。Build checkは、table、buffer、
-control scratch、resident routing copyが重ならないことを証明します。
+Liveのdecode済みoutput bufferはSub PRG-RAM `0x08000..0x085FF`を使います。1,536 byteで
+対応するlow-rate chunkの最大値を収容します。Generated Word-RAM layoutはrouting table
+直下に同じ大きさの未割当guardを保持するため、player-only A/BでもWordBuf容量とstream
+byteが同一です。このguardはfeature memoryではありません。Build checkはPRG buffer、
+table、control scratch、WordBuf、resident routing copyが重ならないことを証明します。
 
 ## Sub-CPU hot path
 
@@ -166,8 +172,9 @@ control scratch、resident routing copyが重ならないことを証明しま�
 Low-rate decoderは、packed data 512 byteごとを上限にnon-blocking CDC pollを行います。
 高rate向けspecialized buildは、このpolling counterとdecode loopからのcallを省きます。
 
-Codec stateはPRG-RAMに保持しません。不正なstep indexは88へclampし、固定chunk sizeに
-よって全table accessとoutput-buffer accessを範囲内に保ちます。
+Frame間codec stateはPRG-RAMに保持せず、decode済みoutput bufferはchunkごとに
+上書きします。不正なstep indexは88へclampし、固定chunk sizeによって全table accessと
+output-buffer accessを範囲内に保ちます。
 
 DEBUG HUDの`Axx` fieldは、low-rate profileでのopportunistic CDC pumpを含むdecode phaseを
 計測します。表示1 unitはMega-CD stopwatchの30.72 microsecond tick 4個分、約0.1229 ms

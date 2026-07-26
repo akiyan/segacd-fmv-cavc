@@ -54,6 +54,9 @@ STATUS_BYTES = 0x100
 CTRL_SCR_BYTES = 0x2000
 PAD_SCR_BYTES = 0x0800
 ADPCM_TABLE_BYTES = 8800
+# Keep this 1.5 KiB Word-RAM gap in the generated layout so player-only A/B
+# builds use identical WordBuf capacities and streams. The live decoded PCM
+# scratch is Sub PRG-RAM; tools/check_player_ring.py proves both sizes match.
 PCM_DEC_BUF_BYTES = 0x0600
 
 PALTAB_STAGE_OFFSET = 0x0000

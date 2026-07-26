@@ -245,8 +245,8 @@ PRG_PRELOAD_PATH = os.environ.get("CBRSIM_PRG_PRELOAD", "")
 # Whole-movie quality budget: easy frames retain virtual bytes and demanding
 # frames spend them.  This is encoder accounting, not a fifth physical buffer.
 # Its ceiling matches the normal fps-specific PrgBuf capacity. The exact
-# physical delivery proof separately owns the larger scheduled ceiling and may
-# use only its cadence-specific headroom above this normal capacity.
+# physical delivery proof uses that same scheduled ceiling; the interval above
+# it is reserved for live sector-arrival variation and is not encoder Supply.
 QUALITY_BUDGET_ON = True
 PRG_BUF_CAP_KB = av_config.prg_buf_cap_kb(FPS)
 PRG_DELIVERY_CAP_KB = av_config.scheduled_delivery_cap_kb(FPS)
