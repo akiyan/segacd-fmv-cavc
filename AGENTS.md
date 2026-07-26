@@ -444,13 +444,15 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
 - Use emulator-synchronized A/V output for verification.
 - After every full DEBUG recording, render the complete first-loop HUD TSV with
   `.agents/skills/hudline/scripts/render_hudline.py`, inspect and show the PNG,
-  and publish it to a public Gist. Preserve the image, its layout JSON, and Gist
-  receipt next to the recording. The HUD gate has `PASS`, `WARNING`, and
-  `FAIL` results. `C` is diagnostic only and never changes the gate result;
-  report its minimum, mean, median, and maximum together with the same `A`
-  statistics. Publish failed gates too as diagnostic evidence, but do not
-  proceed to analysis/playback uploads after `FAIL`. `/hudline` keeps the same
-  frame-axis geometry as `/timeline` for future `/mixline` composition.
+  and publish it to a public Gist. Require the matching `/timeline` from the
+  exact sim decision log, then immediately render, inspect, show, and publicly
+  publish `/mixline`. Generate and publish the timeline first when it is
+  absent. Preserve all three images, their layout JSON files, and Gist receipts
+  next to the recording. The HUD gate has `PASS`, `WARNING`, and `FAIL`
+  results. `C` is diagnostic only and never changes the gate result; report its
+  minimum, mean, median, and maximum together with the same `A` statistics.
+  Publish failed gates and their mixlines too as diagnostic evidence, but do
+  not proceed to analysis/playback uploads after `FAIL`.
 - Extract visual-check stills with `tools/extract_verification_frames.sh`. It
   creates a never-reused directory and a source-hashed manifest for each
   invocation, then builds the montage from that invocation's explicit frame
