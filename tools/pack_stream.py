@@ -41,6 +41,7 @@ import player_constants
 import pattern_supply
 import physical_budget
 import shadow_updates
+import sp_extension
 import stream_schedule
 import ttrc_routing
 from encode_config import load_profile
@@ -1054,7 +1055,7 @@ def _decode_control_chunk(chunk):
 
 def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
-        boot_sidecar=()):
+        boot_sidecar=(), sp_extension_bytes=b""):
     """Write the v16 split stream and a combined tooling container.
 
     HEADER.DAT:
@@ -1286,8 +1287,10 @@ def write_stream(
     header = player_constants.stamp_header_sector(header)
     frame0_blk = (f0_ctrl.ljust(f0_ctrl_sec * SECTOR, b"\0")
                   + f0_pat.ljust(f0_pat_sec * SECTOR, b"\0"))
-    adpcm_table_blob = ima_adpcm.full_tables().ljust(
-        ADPCM_TABLE_SECTORS * SECTOR, b"\0")
+    adpcm_table_blob = sp_extension.adpcm_preload_image(
+        ima_adpcm.full_tables(), sp_extension_bytes, SECTOR)
+    if len(adpcm_table_blob) != ADPCM_TABLE_SECTORS * SECTOR:
+        raise AssertionError("ADPCM table/extension preload size changed")
     header_blob = (header
                    + paltab.ljust(paltab_sec * SECTOR, b"\0")
                    + dic_blob.ljust(dic_sec * SECTOR, b"\0")
@@ -1404,10 +1407,18 @@ def main():
                     help="スロット割当: contig=フレーム内cold連番(MD大DMA向け, 既定) / lru=旧方式")
     ap.add_argument("--output", default="")
     ap.add_argument("--audio", default="")
+    ap.add_argument(
+        "--sp-extension", required=True, type=Path,
+        help="linked Sub extension embedded in ADPCM preload padding")
     ap.add_argument("--verify", action="store_true")
     ap.add_argument("--compare", default="")
     ap.add_argument("--no-write", action="store_true")
     args = ap.parse_args()
+    sp_extension_bytes = args.sp_extension.read_bytes()
+    extension_values = sp_extension.metadata(sp_extension_bytes)
+    print(
+        f"  Sub extension preload: {extension_values.size}B "
+        f"crc32=0x{extension_values.crc32:08X}")
 
     profile = None
     if args.config:
@@ -1741,7 +1752,8 @@ def main():
     if not args.no_write:
         write_stream(
             output, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
-            boot_sidecar=boot_sidecar)
+            boot_sidecar=boot_sidecar,
+            sp_extension_bytes=sp_extension_bytes)
 
 
 if __name__ == "__main__":

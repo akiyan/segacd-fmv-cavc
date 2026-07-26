@@ -7,7 +7,7 @@ has an fps-derived normal prebuffer ceiling plus a physical delivery ceiling,
 and the player holds the real sectors. Historically each side had its own
 capacity knob:
 
-* player  ``.equ RING_SIZE``       = 428 KB   (the physical buffer)
+* player  ``.equ RING_SIZE``       = 424 KB   (the physical buffer)
 * pack    normal prebuffer ceiling  = fps-derived
 * sim     quality budget             = 440 KB   (*larger than PrgBuf!*)
 
@@ -32,23 +32,43 @@ import os
 import sys
 from dataclasses import dataclass
 
-# Marker tests prove this PRG-RAM interval remains owned by the Sub program
-# during continuous CD reads. The live decoded-PCM scratch uses its first
-# 1.5 KiB; the remaining 4.5 KiB stays unassigned.
+# The outer boot image occupies the first 32 KiB of the data track.  Its Sub
+# source remains at disc offset 0x7000 and the resident image remains limited
+# to 4 KiB at Sub PRG 0x6000.  Extra position-fixed code is carried in the
+# unused padding after the 8,800-byte ADPCM table image inside its existing
+# five HEADER.DAT sectors, then copied to the unused timed-ring tail.
+BOOT_IMAGE_BYTES = 0x00008000
+SUB_BOOT_SOURCE_BASE = 0x00007000
+SUB_BOOT_BASE_BYTES = 0x00001000
+SUB_BOOT_EXTENSION_LOAD_BASE = 0x0007D260
+
+# Marker tests prove this PRG-RAM interval remains writable by the Sub program
+# during continuous CD reads. It holds per-frame decoded-PCM scratch; persistent
+# hot ADPCM tables instead reserve the first 4 KiB of the proven timed ring.
 SUB_PRG_SAFE_BASE = 0x00008000
 SUB_PRG_SAFE_END = 0x00009800
 PCM_DEC_BUF_BASE = SUB_PRG_SAFE_BASE
 PCM_DEC_BUF_BYTES = 0x00000600
 PCM_DEC_BUF_END = PCM_DEC_BUF_BASE + PCM_DEC_BUF_BYTES
+ADPCM_INDEX_TABLE_BASE = 0x0000C000
+ADPCM_INDEX_TABLE_BYTES = 0x00000B20
+ADPCM_INDEX_TABLE_END = ADPCM_INDEX_TABLE_BASE + ADPCM_INDEX_TABLE_BYTES
+ADPCM_OUTPUT_LUT_BASE = ADPCM_INDEX_TABLE_END
+ADPCM_OUTPUT_LUT_BYTES = 0x00000100
+ADPCM_OUTPUT_LUT_END = ADPCM_OUTPUT_LUT_BASE + ADPCM_OUTPUT_LUT_BYTES
+SUB_BOOT_EXTENSION_EXEC_BASE = 0x00076800
+SUB_BOOT_EXTENSION_MAX_BYTES = 0x000005A0
 
 assert SUB_PRG_SAFE_BASE <= PCM_DEC_BUF_BASE
 assert PCM_DEC_BUF_END <= SUB_PRG_SAFE_END
+assert ADPCM_INDEX_TABLE_END == ADPCM_OUTPUT_LUT_BASE
+assert ADPCM_OUTPUT_LUT_END <= 0x0000D000
+assert SUB_BOOT_SOURCE_BASE + SUB_BOOT_BASE_BYTES <= BOOT_IMAGE_BYTES
 
 # Physical PRG-RAM ring in the player. MUST equal boot/movieplay_sp.s
-# `.equ RING_SIZE` (0x6B000 = 428 KB). Build-time assertion enforces it.
-# Routing now lives in both Word-RAM banks, so the physical PrgBuf ring can occupy the
-# complete safe PRG range from 0x0C000 up to APPLY_BASE at 0x77000.
-RING_SIZE_KB = 428
+# `.equ RING_SIZE` (0x6A000 = 424 KB). Build-time assertion enforces it.
+# The first 4 KiB of the former ring holds persistent hot ADPCM tables.
+RING_SIZE_KB = 424
 
 # Keep the physical overflow guard distinct from delivery-jitter headroom. The
 # player throttles its CD pump at RING_SIZE-4KB (back-pressure). The encoder's

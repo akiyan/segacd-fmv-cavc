@@ -34,21 +34,21 @@ memory.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
-| `RING_SIZE` / `RING_SIZE_KB` | 428 KiB (`0x6B000`) | sp / cfg | Physical PRG-RAM ring backing `PrgBuf`, from `0x0C000` to `APPLY_BASE`. |
+| `RING_SIZE` / `RING_SIZE_KB` | 424 KiB (`0x6A000`) | sp / cfg | Physical PRG-RAM ring backing `PrgBuf`, from `0x0D000` to `APPLY_BASE`; the preceding 4 KiB holds hot ADPCM tables. |
 | `RING_PHYSICAL_GUARD_KB` | 4 KiB | cfg | Gap between pump back-pressure and the physical ring end. |
-| `BACKPRESSURE_KB` | 424 KiB | cfg / sp | Payload draining stops at this occupancy. |
+| `BACKPRESSURE_KB` | 420 KiB | cfg / sp | Payload draining stops at this occupancy. |
 | `RING_DELIVERY_GUARD_KB` | 2 KiB | cfg | One-sector observation boundary below back-pressure; it is not encoder Supply. |
-| `scheduled_delivery_cap_kb(fps)` | 382 / 397 / 402 KiB at 15 / 24 / 30 fps | cfg / sim / pack | Hard scheduled occupancy ceiling; equal to the normal PrgBuf ceiling so live jitter remains unspent. |
+| `scheduled_delivery_cap_kb(fps)` | 378 / 393 / 398 KiB at 15 / 24 / 30 fps | cfg / sim / pack | Hard scheduled occupancy ceiling; equal to the normal PrgBuf ceiling so live jitter remains unspent. |
 | `cadence_jitter_reserve_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | `ceil(20 * 30 / fps)` reserve used to derive the normal ceiling. |
-| `ring_jitter_headroom_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | Runtime-only arrival headroom from the scheduled ceiling to the 422 KiB observation boundary. |
-| `prg_buf_cap_kb(fps)` | 382 / 397 / 402 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf, PREBUFFER, and scheduled Supply ceiling: 422 KiB minus the cadence reserve. |
+| `ring_jitter_headroom_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | Runtime-only arrival headroom from the scheduled ceiling to the 418 KiB observation boundary. |
+| `prg_buf_cap_kb(fps)` | 378 / 393 / 398 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf, PREBUFFER, and scheduled Supply ceiling: 418 KiB minus the cadence reserve. |
 | `quality_budget_kb(fps)` | same as `prg_buf_cap_kb` | cfg / sim | Offline whole-movie quality-accounting capacity. It has no physical meter. |
 | `WordBuf0` | build-derived; 2,048 patterns in the 6,576-frame H40 example | sp / ip / sim / pack | Boot-preloaded sequence in the frame-0 physical bank; its start follows the frame-0 `O_LOADS` envelope. |
 | `WordBuf1` | build-derived; 2,944 patterns in the same example | sp / ip / sim / pack | Different boot-preloaded sequence in the other bank; its start follows the timed cold/run envelope. |
 | `DicBuf` | 256 patterns, 8 KiB | ip / sim / pack | Persistent Main-RAM dictionary, reusable by 8-bit index. |
 | routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 16,384 frames. |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | Circular control-block queue. |
-| frame-0 pattern stage | 36 KiB | sp | Boot-only PRG area `0x71000..0x7A000`. |
+| frame-0 pattern stage | 36 KiB | sp | Boot-only PRG area `0x72000..0x7B000`. |
 | boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | Temporary Word-RAM image at bank `+0x0000..+0x6000`; Main consumes it before frame 0 reuses the range. |
 
 `PrgBuf` is the public object; `RING_*` names describe its circular
@@ -113,8 +113,9 @@ chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 | decoded `AUDIO_BYTES` | normally 1472 / 920 / 736 at 15 / 24 / 30 fps | cfg / pack / sp | Even decoded samples per effective playback frame. |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | Predictor, step index, reserved byte, and packed IMA codes. |
 | `audio_fd` | header offset 58 | cfg / pack / sp | RF5C164 frequency delta derived from chunk size and playback cadence. |
-| ADPCM table | 8,800 B, five sectors | pack / sp | Full lookup image copied into the generated fixed tail of both physical Word-RAM banks. |
+| ADPCM table image | 8,800 B in five sectors | pack / sp | Unchanged lookup bytes: next-index at Sub PRG `0x0C000`, output LUT at `0x0CB20`, signed deltas in both Word-RAM banks; existing sector padding carries the extension. |
 | PCM work buffer | 1,536 B at Sub PRG `0x08000..0x085FF` | sp | Reconstructed chunk; the generated Word-RAM tail keeps an equally sized non-allocatable A/B guard. |
+| Sub preload extension | 88 B, executed once at Sub PRG `0x76800` | make / pack / sp | Position-fixed ADPCM table-copy routine stored after the 8,800-byte table in existing five-sector padding, staged at `0x7D260`, then moved to the unused timed-ring tail; size/address/hash checked before assembly. |
 | `SYNC_LEAD` | `0x3000`, 12,288 B | sp | Initial write-ahead lead. |
 | startup prefetch request | 30 frames | cfg / pack / sp | Decoded PCM prefix, clamped by wave-RAM capacity and chunk size. |
 | `SYNC_MIN` | `0` | sp | Lower accepted lead. |
@@ -141,7 +142,7 @@ Back-pressure depends on the next sector's destination:
 | low-rate pump interval | every 64 entries or four run descriptors | sp | CDC service during expansion at 20 fps or below. |
 | high-rate pump interval | one end poll for a non-empty descriptor frame | sp | Specialized 24–30 fps path. |
 | `CMD_SWAP` priority | handshake before opportunistic pump | sp | A pending display handoff takes priority over future-data work. |
-| payload full threshold | 424 KiB | sp | Blocks only payload draining. |
+| payload full threshold | 420 KiB | sp | Blocks only payload draining. |
 | APPLY full threshold | 30 KiB | sp | Blocks only control draining. |
 | `FRAME_SECTORS` | 5 useful sectors | pack / sp | Maximum control + payload represented by one routing byte. |
 | `HEADER_SECTORS` | 1 metadata sector | pack / sp | Fixed header sector before BOOT_STAGE and other boot regions. |
@@ -196,9 +197,9 @@ control and Prg payload independently to physical sectors, reserves every CRAM
 switch and run descriptor, and computes both a Prg ceiling and a control-byte
 ceiling for the current frame.
 
-The prefix ledger and exact delivery schedule use the normal 382/397/402 KiB
+The prefix ledger and exact delivery schedule use the normal 378/393/398 KiB
 PrgBuf capacity at 15/24/30 fps. The corresponding 40/25/20 KiB interval up to
-the 422 KiB observation boundary is runtime-only sector-arrival headroom, not
+the 418 KiB observation boundary is runtime-only sector-arrival headroom, not
 encoder Supply. Every BODY prefix must fit the five-useful-sector route
 accumulated to that point under this capacity. Sim applies the constraint
 before image decisions, freezes the resulting proof, and packer requires exact
@@ -357,8 +358,12 @@ the four physical supplies are fixed behavior.
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
 
 Specialized builds compare the CRC-32 header signature before playback. The
-Sub linker enforces a 4,096-byte boot-code limit. Startup shows four hexadecimal
-digits containing safe PrgBuf preload KiB; a failure shows `BADx`.
+resident Sub linker output remains limited to 4,096 bytes, and the BIOS boot
+image carries only that resident module. The checked extension occupies
+otherwise-unused padding after the ADPCM lookup data in HEADER.DAT; startup
+copies it from the five-sector stage to the unused timed-ring tail. Startup
+shows four hexadecimal digits containing safe PrgBuf
+preload KiB; a failure shows `BADx`.
 
 ## DEBUG HUD limits
 
@@ -412,21 +417,21 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
-| `RING_SIZE` / `RING_SIZE_KB` | 428 KiB (`0x6B000`) | sp / cfg | `0x0C000` から `APPLY_BASE` までのPrgBuf物理PRG-RAM ring。 |
+| `RING_SIZE` / `RING_SIZE_KB` | 424 KiB (`0x6A000`) | sp / cfg | `0x0D000` から `APPLY_BASE` までのPrgBuf物理PRG-RAM ring。直前4 KiBはhot ADPCM table。 |
 | `RING_PHYSICAL_GUARD_KB` | 4 KiB | cfg | pump back-pressureと物理ring末尾の間隔。 |
-| `BACKPRESSURE_KB` | 424 KiB | cfg / sp | このoccupancyでpayload drainを止める。 |
+| `BACKPRESSURE_KB` | 420 KiB | cfg / sp | このoccupancyでpayload drainを止める。 |
 | `RING_DELIVERY_GUARD_KB` | 2 KiB | cfg | back-pressureより1 sector手前の観測境界。encoder Supplyではない。 |
-| `scheduled_delivery_cap_kb(fps)` | 15 / 24 / 30 fpsで382 / 397 / 402 KiB | cfg / sim / pack | schedule上のhard occupancy上限。live jitterを未使用で残すため通常PrgBuf上限と同じ。 |
+| `scheduled_delivery_cap_kb(fps)` | 15 / 24 / 30 fpsで378 / 393 / 398 KiB | cfg / sim / pack | schedule上のhard occupancy上限。live jitterを未使用で残すため通常PrgBuf上限と同じ。 |
 | `cadence_jitter_reserve_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | 通常上限の導出に使う `ceil(20 * 30 / fps)` reserve。 |
-| `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | scheduled上限から422 KiB観測境界までのruntime専用到着headroom。 |
-| `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで382 / 397 / 402 KiB | cfg / sim / pack / sp | 通常PrgBuf、PREBUFFER、scheduled Supply上限。422 KiBからcadence reserveを引く。 |
+| `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | scheduled上限から418 KiB観測境界までのruntime専用到着headroom。 |
+| `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで378 / 393 / 398 KiB | cfg / sim / pack / sp | 通常PrgBuf、PREBUFFER、scheduled Supply上限。418 KiBからcadence reserveを引く。 |
 | `quality_budget_kb(fps)` | `prg_buf_cap_kb` と同じ | cfg / sim | offlineのmovie全体quality accounting容量。物理meterはない。 |
 | `WordBuf0` | buildから導出。6,576-frame H40例では2,048 patterns | sp / ip / sim / pack | frame-0 physical bankのboot preload sequence。開始位置はframe-0 `O_LOADS` envelope直後。 |
 | `WordBuf1` | buildから導出。同じ例では2,944 patterns | sp / ip / sim / pack | 反対bankの異なるboot preload sequence。開始位置はtimed cold/run envelope直後。 |
 | `DicBuf` | 256 patterns、8 KiB | ip / sim / pack | 8-bit indexで再利用するpersistent Main-RAM dictionary。 |
 | routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大16,384 frame。 |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | control blockのcircular queue。 |
-| frame-0 pattern stage | 36 KiB | sp | boot専用PRG領域 `0x71000..0x7A000`。 |
+| frame-0 pattern stage | 36 KiB | sp | boot専用PRG領域 `0x72000..0x7B000`。 |
 | boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | bank `+0x0000..+0x6000` のtemporary Word-RAM image。Mainが消費した後にframe 0が同じrangeを再利用する。 |
 
 `PrgBuf` が公開名で、`RING_*` はcircular実装を示します。`WordBuf0` と
@@ -487,8 +492,9 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 | decoded `AUDIO_BYTES` | 15 / 24 / 30 fpsで通常1472 / 920 / 736 | cfg / pack / sp | 実効playback frameごとの偶数decoded sample数。 |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | predictor、step index、reserved byte、packed IMA code。 |
 | `audio_fd` | header offset 58 | cfg / pack / sp | chunk sizeとplayback cadenceから導出するRF5C164 frequency delta。 |
-| ADPCM table | 8,800 B、5 sectors | pack / sp | 両physical Word-RAM bankのgenerated fixed tailへcopyする全lookup image。 |
+| ADPCM table image | 5 sectors内の8,800 B | pack / sp | 変更しないlookup byte。next-indexはSub PRG `0x0C000`、output LUTは`0x0CB20`、signed deltaは両Word-RAM bank。既存sector paddingにextensionを置く。 |
 | PCM work buffer | Sub PRG `0x08000..0x085FF`の1,536 B | sp | 再構築chunk。Generated Word-RAM tailは同じ大きさの割当不可A/B guardを保持。 |
+| Sub preload extension | Sub PRG `0x76800`で一度実行する88 B | make / pack / sp | Position-fixed ADPCM table-copy routine。8,800-byte table直後の既存5-sector paddingへ置き、`0x7D260`へstageしてから未使用timed-ring tailへ移す。assemble前にsize/address/hashを検査。 |
 | `SYNC_LEAD` | `0x3000`、12,288 B | sp | 初期write-ahead lead。 |
 | startup prefetch request | 30 frames | cfg / pack / sp | wave-RAM容量とchunk sizeでclampするdecoded PCM prefix。 |
 | `SYNC_MIN` | `0` | sp | 許容lead下限。 |
@@ -515,7 +521,7 @@ back-pressureは次sectorの行き先で決まります。
 | low-rate pump interval | 64 entriesまたは4 run descriptorsごと | sp | 20 fps以下の展開中CDC service。 |
 | high-rate pump interval | non-empty descriptor frame末尾に1回 | sp | specialized 24〜30 fps path。 |
 | `CMD_SWAP` priority | opportunistic pumpよりhandshake優先 | sp | pending display handoffを将来data workより先に処理する。 |
-| payload full threshold | 424 KiB | sp | payload drainだけを止める。 |
+| payload full threshold | 420 KiB | sp | payload drainだけを止める。 |
 | APPLY full threshold | 30 KiB | sp | control drainだけを止める。 |
 | `FRAME_SECTORS` | 有効5 sectors | pack / sp | 1 routing byteが表すcontrol + payload上限。 |
 | `HEADER_SECTORS` | metadata 1 sector | pack / sp | BOOT_STAGEなどのboot領域より前にある固定header sector。 |
@@ -567,7 +573,7 @@ switchとrun descriptorを予約し、current frameのPrg ceilingとcontrol-byte
 計算します。
 
 prefix ledgerと正確なdelivery scheduleは、15/24/30 fpsで通常PrgBuf容量
-382/397/402 KiBを使います。422 KiB観測境界までの40/25/20 KiBはruntime専用の
+378/393/398 KiBを使います。418 KiB観測境界までの40/25/20 KiBはruntime専用の
 sector到着headroomで、encoder Supplyではありません。各BODY prefixはこの容量の下で、
 その時点までに累積した有効5-sector routeへ収まらなければなりません。simは画像決定前に
 制約を適用してproofを固定し、packerがscheduleの完全一致を要求します。
@@ -715,9 +721,11 @@ segmented palette、Near、boot prefetch、4つの物理供給は固定behavior�
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
 
-specialized buildはplayback前にCRC-32 header signatureを比較します。Sub linkerは
-4,096-byte boot-code上限を強制します。startupは安全に受信済みのPrgBuf preload KiBを
-4桁hexで表示し、failureは `BADx` を表示します。
+specialized buildはplayback前にCRC-32 header signatureを比較します。Resident Subの
+linker outputは4,096 byte以内を維持し、BIOS boot imageはそのresident moduleだけを
+持ちます。検査済みextensionはHEADER.DAT内のADPCM lookup data直後にある未使用padding
+へ配置し、startupが5-sector stageから未使用timed-ring tailへcopyします。startupは安全に受信済みのPrgBuf preload
+KiBを4桁hexで表示し、failureは`BADx`を表示します。
 
 ## DEBUG HUD limit
 

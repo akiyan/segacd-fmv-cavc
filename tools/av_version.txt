@@ -11,6 +11,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e138/p94: Preload the 88-byte ADPCM table-copy extension in the existing
+#        five-sector table padding and execute it from the unused timed-ring
+#        tail. Keep signed deltas in both physical Word-RAM banks, reserve the
+#        former first 4 KiB of PrgBuf for persistent next-index/output tables,
+#        and move the ring/boot scratches up by 4 KiB. Physical PrgBuf becomes
+#        424 KiB; resolution, fps, cold cap, lookup bytes, and generated
+#        Word-RAM capacities remain unchanged.
 #   p93: Move the live 1,536-byte decoded PCM scratch from each physical
 #        Word-RAM bank to marker-verified Sub PRG-RAM at 0x8000. Keep the
 #        generated Word-RAM reserve and all stream decisions unchanged for an
@@ -835,5 +842,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260726
-e=137
-p=93
+e=138
+p=94

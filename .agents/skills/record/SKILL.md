@@ -271,9 +271,9 @@ Check the raw MKV and reports before trusting a capture:
    report its distribution and correlate it with actual playback failures.
    The M limit permits all display fields available to one content frame. The
    `J` limit is derived from the stream's generated
-   normal PrgBuf ceiling: normal/jitter is 382/40 KiB at 15fps,
-   397/25 KiB at 24fps, and 402/20 KiB at 30fps. A value above `28`, `19`, or
-   `14` respectively means sector-granular occupancy crossed the 422 KiB
+   normal PrgBuf ceiling: normal/jitter is 378/40 KiB at 15fps,
+   393/25 KiB at 24fps, and 398/20 KiB at 30fps. A value above `28`, `19`, or
+   `14` respectively means sector-granular occupancy crossed the 418 KiB
    scheduled-delivery ceiling and entered its 2 KiB back-pressure guard or the
    separate 4 KiB physical guard; report this explicitly, but a value at or below the
    cadence-specific passing limit does not by itself require another

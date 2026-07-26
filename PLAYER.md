@@ -9,7 +9,7 @@ The conservative answer is:
 
 | Domain | Unconditional fixed space | Conditional space |
 |---|---:|---:|
-| Sub PRG-RAM | 4.50 KiB | 0 bytes in the 4 KiB Sub boot slot |
+| Sub PRG-RAM | 1.379 KiB | 0 bytes in the 4 KiB resident Sub base image |
 | each physical Word-RAM bank | 0 B | sector-rounding guard below the fixed tail; not allocatable |
 | Main RAM | 2.627 KiB | generated-code and RUN_TABLE tails only with profile-specific assertions |
 | Main CPU | 0 guaranteed cycles | measured profile evidence is not a reusable allowance |
@@ -42,41 +42,52 @@ back-pressure, and overflow guard stay fixed, while the normal PrgBuf and
 scheduled Supply ceiling follow the content cadence:
 
 ```text
-normal PrgBuf KiB = 422 - cadence reserve KiB
+normal PrgBuf KiB = 418 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
 These values come from `cadence_jitter_reserve_kb()`, `prg_buf_cap_kb()`, and
 `scheduled_delivery_cap_kb()` in `tools/av_config.py`; this document does not
 define an independent capacity. The exact schedule stops at the normal ceiling:
-382 KiB at 15 fps, 397 KiB at 24 fps, and 402 KiB at 30 fps. The remaining
-40/25/20 KiB up to the 422 KiB observation boundary is reserved for live
+378 KiB at 15 fps, 393 KiB at 24 fps, and 398 KiB at 30 fps. The remaining
+40/25/20 KiB up to the 418 KiB observation boundary is reserved for live
 sector-arrival variation and is not encoder Supply.
 
 | Address | Size | Owner | New feature use |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | No |
-| `0x06000..0x06FFF` | 4.00 KiB | specialized Sub boot image slot | No |
+| `0x06000..0x06FFF` | 4.00 KiB | resident specialized Sub base image | No |
 | `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratch and BIOS-unsafe streaming range | No |
 | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer | No |
-| `0x08600..0x097FF` | **4.50 KiB** | unassigned, marker-verified safe range | **Yes, after adding an overlap check** |
+| `0x08600..0x097FF` | **4.50 KiB** | unassigned marker-verified scratch range; not persistent across startup reads | **Yes, for rewritten scratch only** |
 | `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads | No |
-| `0x0C000..0x707FF` | 402.00 KiB | normal PrgBuf capacity at 30 fps | No |
+| `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table | No |
+| `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table | No |
+| `0x0CC20..0x0CFFF` | **992 B** | unused tail of the reserved hot-table page | **Yes, after an overlap check** |
+| `0x0D000..0x707FF` | 398.00 KiB | normal PrgBuf capacity at 30 fps | No |
 | `0x70800..0x757FF` | 20.00 KiB | delivery-jitter headroom at 30 fps | No |
 | `0x75800..0x75FFF` | 2.00 KiB | observation guard before pump back-pressure | No |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard | No |
+| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; `0x76800..0x76857` temporarily executes the HEADER-preloaded extension | No |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | No |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | No |
 | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top | No |
 
-The physical PrgBuf ring is 428 KiB. At 30 fps its normal and scheduled cap is
-below the 422 KiB observation boundary by a 20 KiB cadence reserve. At 15 fps
-the normal and scheduled cap is 382 KiB, leaving 40 KiB for live jitter. Pump
-back-pressure begins at 424 KiB, and the remaining 4 KiB is a separate
+The BIOS boot source remains at disc offset `0x07000` and contains only the
+4 KiB resident Sub module loaded at PRG `0x06000`. The packer places the exact
+hash-bound extension after the 8,800-byte ADPCM table in its existing
+five-sector padding. Sub stages that image at `0x7B000`, copies the extension
+from `0x7D260` to the unused timed-ring tail at `0x76800`, and runs it once.
+Frame-0 staging may then overwrite both temporary locations. The persistent
+hot tables occupy the 4 KiB page immediately before PrgBuf.
+
+The physical PrgBuf ring is 424 KiB. At 30 fps its normal and scheduled cap is
+below the 418 KiB observation boundary by a 20 KiB cadence reserve. At 15 fps
+the normal and scheduled cap is 378 KiB, leaving 40 KiB for live jitter. Pump
+back-pressure begins at 420 KiB, and the remaining 4 KiB is a separate
 overflow guard. None of these differences is feature memory.
 
 During boot only, frame-0 pattern staging uses
-`0x71000..0x79FFF`. It may overlap the timed ring tail and APPLY because those
+`0x72000..0x7AFFF`. It may overlap the timed ring tail and APPLY because those
 owners are inactive in that phase; it does not change the timed 30 fps map.
 
 The APPLY queue also retains deliberate back-pressure headroom. Its unused
@@ -96,7 +107,7 @@ fixed tail is packed immediately below routing:
 |---|---:|---|
 | bank end | variable, sector-rounded | resident routing table |
 | below routing | 1,536 B | unallocated A/B-stable guard; not feature memory |
-| next | 8,800 B | full ADPCM lookup tables |
+| next | 8,800 B | A/B-stable ADPCM reservation; only the 5,696-byte signed-delta portion is populated |
 | next | 2,048 B | CD-sector stage / pad discard |
 | next | 8,192 B | linear control scratch |
 | next | 256 B | DEBUG counters and copied header |
@@ -200,8 +211,8 @@ Use low-risk space in this order:
    guard.
 2. Use generated-code or RUN_TABLE tails only with profile-specific end
    symbols and bounds.
-3. Use PRG `0x08600..0x097FF` only after adding it to
-   `tools/check_player_ring.py`.
+3. Use PRG `0x08600..0x097FF` only for scratch that is rewritten after startup,
+   and only after adding it to `tools/check_player_ring.py`.
 
 Never allocate from payload jitter, PrgBuf overflow, APPLY back-pressure,
 stack, VBlank, DMA safety reserves, or WordBuf sector-rounding guards.
@@ -224,7 +235,9 @@ Use the managed Python environment and an explicit profile:
 
 ```sh
 tools/python.sh tools/check_player_ring.py \
-  --constants out/PROFILE/player_constants.inc
+  --constants out/PROFILE/player_constants.inc \
+  --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
+  --extension-constants tmp/PROFILE/build/sp_extension.inc
 make movieplay CONFIG=configs/PROFILE.toml \
   DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
 
@@ -249,7 +262,7 @@ before revising any elapsed-time or memory-headroom claim.
 
 | Domain | 無条件に固定利用できる領域 | 条件付き領域 |
 |---|---:|---:|
-| Sub PRG-RAM | 4.50 KiB | 4 KiB Sub boot slot内の余り0 byte |
+| Sub PRG-RAM | 1.379 KiB | 4 KiB resident Sub base image内の余り0 byte |
 | 各physical Word-RAM bank | 0 B | fixed tail直下のsector丸めguard。割り当て不可 |
 | Main RAM | 2.627 KiB | generated-codeとRUN_TABLEのtailはprofile固有assert付きのみ |
 | Main CPU | 保証cycle 0 | Profile実測は再利用可能なallowanceではない |
@@ -278,38 +291,48 @@ overflow guardは固定ですが、normal PrgBufとscheduled Supply上限は
 content cadenceに応じて動きます。
 
 ```text
-normal PrgBuf KiB = 422 - cadence reserve KiB
+normal PrgBuf KiB = 418 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
 数値は `tools/av_config.py` の `cadence_jitter_reserve_kb()`、
 `prg_buf_cap_kb()`、`scheduled_delivery_cap_kb()` から得ます。この文書では独立した
-容量を定義しません。正確なscheduleは通常上限、つまり15 fpsで382 KiB、24 fpsで
-397 KiB、30 fpsで402 KiBに止めます。422 KiB観測境界までの40/25/20 KiBはliveの
+容量を定義しません。正確なscheduleは通常上限、つまり15 fpsで378 KiB、24 fpsで
+393 KiB、30 fpsで398 KiBに止めます。418 KiB観測境界までの40/25/20 KiBはliveの
 sector到着変動専用で、encoder Supplyではありません。
 
 | Address | Size | Owner | New featureでの利用 |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | 不可 |
-| `0x06000..0x06FFF` | 4.00 KiB | specialized Sub boot image slot | 不可 |
+| `0x06000..0x06FFF` | 4.00 KiB | resident specialized Sub base image | 不可 |
 | `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratchとBIOS-unsafe streaming range | 不可 |
 | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer | 不可 |
-| `0x08600..0x097FF` | **4.50 KiB** | 未割当でmarker検証済みのsafe range | **overlap check追加後に利用可** |
+| `0x08600..0x097FF` | **4.50 KiB** | 未割当のmarker検証済みscratch range。startup readを越える永続保持は不可 | **毎回書き直すscratchのみ利用可** |
 | `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 | 不可 |
-| `0x0C000..0x707FF` | 402.00 KiB | 30 fpsのnormal PrgBuf capacity | 不可 |
+| `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table | 不可 |
+| `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table | 不可 |
+| `0x0CC20..0x0CFFF` | **992 B** | hot-table予約pageの未使用tail | **overlap check追加後に利用可** |
+| `0x0D000..0x707FF` | 398.00 KiB | 30 fpsのnormal PrgBuf capacity | 不可 |
 | `0x70800..0x757FF` | 20.00 KiB | 30 fpsのdelivery-jitter headroom | 不可 |
 | `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard | 不可 |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard | 不可 |
+| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。`0x76800..0x76857`はHEADER-preloaded extensionを一時実行 | 不可 |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | 不可 |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | 不可 |
 | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 | 不可 |
 
-Physical PrgBuf ringは428 KiBです。30 fpsではnormal・scheduled capが20 KiBのcadence
-reserve分だけ422 KiB観測境界より小さくなります。15 fpsのnormal・scheduled capは
-382 KiBで、live jitter用に40 KiBを残します。Pump back-pressureは424 KiBで始まり、
+BIOS boot sourceはdisc offset `0x07000`のままで、PRG `0x06000`へloadする4 KiB
+resident Sub moduleだけを持ちます。Packerはhashで固定したextensionを8,800-byte
+ADPCM table直後の既存5-sector paddingへ配置します。Subはそのimageを`0x7B000`へ
+stageし、extensionを`0x7D260`から未使用timed-ring tailの`0x76800`へcopyして一度だけ
+実行します。その後はframe-0 stagingが両temporary locationを上書きできます。
+Persistent hot tableはPrgBuf直前の4 KiB pageを使います。
+
+Physical PrgBuf ringは424 KiBです。30 fpsではnormal・scheduled capが20 KiBのcadence
+reserve分だけ418 KiB観測境界より小さくなります。15 fpsのnormal・scheduled capは
+378 KiBで、live jitter用に40 KiBを残します。Pump back-pressureは420 KiBで始まり、
 残る4 KiBは別のoverflow guardです。これらの差分はfeature memoryではありません。
 
-boot中だけ、frame-0 pattern stagingは `0x71000..0x79FFF` を使います。そのphaseでは
+boot中だけ、frame-0 pattern stagingは `0x72000..0x7AFFF` を使います。そのphaseでは
 timed ring tailとAPPLYのownerがinactiveなので重複できます。timed 30 fps mapは
 変わりません。
 
@@ -329,7 +352,7 @@ bank末尾に `ceil(frames / 2048) * 2048` byteを使います。Fixed tailはro
 |---|---:|---|
 | bank末尾 | 可変、sector丸め | resident routing table |
 | routing直下 | 1,536 B | 未割当のA/B-stable guard。feature memoryではない |
-| 次 | 8,800 B | full ADPCM lookup table |
+| 次 | 8,800 B | A/B-stable ADPCM予約。実際に配置するのは5,696-byte signed-delta部分だけ |
 | 次 | 2,048 B | CD-sector stage / pad discard |
 | 次 | 8,192 B | linear control scratch |
 | 次 | 256 B | DEBUG counterとcopied header |
@@ -427,7 +450,8 @@ RF5C164 write、BIOS call、CDC poll、bank settle、shared-memory waitがある
 1. Main-only stateにはMain RAM `0xFFF07E..0xFFFAFF`を使い、stack guardを残します。
 2. Generated-codeまたはRUN_TABLE tailは、profile固有のend symbolとbound付きでだけ
    使います。
-3. PRG `0x08600..0x097FF`は`tools/check_player_ring.py`へ追加した後に使います。
+3. PRG `0x08600..0x097FF`はstartup後に書き直すscratchだけに使い、
+   `tools/check_player_ring.py`へ追加した後に使います。
 
 Payload jitter、PrgBuf overflow、APPLY back-pressure、stack、VBlank、DMAの
 safety reserve、WordBufのsector丸めguardからは割り当てません。
@@ -449,7 +473,9 @@ Managed Python環境と明示的なprofileを使います。
 
 ```sh
 tools/python.sh tools/check_player_ring.py \
-  --constants out/PROFILE/player_constants.inc
+  --constants out/PROFILE/player_constants.inc \
+  --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
+  --extension-constants tmp/PROFILE/build/sp_extension.inc
 make movieplay CONFIG=configs/PROFILE.toml \
   DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
 

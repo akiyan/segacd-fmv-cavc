@@ -18,8 +18,10 @@ TOOLS = ROOT / "tools"
 sys.path.insert(0, str(TOOLS))
 
 import av_config  # noqa: E402
+import ima_adpcm  # noqa: E402
 import pattern_supply  # noqa: E402
 import player_constants  # noqa: E402
+import sp_extension  # noqa: E402
 import ttrc_routing  # noqa: E402
 
 
@@ -106,6 +108,7 @@ class Build:
     ip_bin: int
     sp_text: int
     sp_bin: int
+    sp_extension_bin: int
 
 
 def run(command: list[str]) -> str:
@@ -126,6 +129,72 @@ def text_size(size: Path, obj: Path) -> int:
         if len(fields) >= 2 and fields[0] == ".text":
             return int(fields[1])
     raise AssertionError(f"no .text size in {obj}")
+
+
+def symbol_address(objdump: Path, obj: Path, name: str) -> int:
+    pattern = re.compile(
+        rf"^([0-9a-f]+)\s+\w+\s+\.\w+\s+[0-9a-f]+\s+{re.escape(name)}$",
+        re.MULTILINE,
+    )
+    match = pattern.search(run([str(objdump), "-t", str(obj)]))
+    if not match:
+        raise AssertionError(f"{obj}: missing symbol {name}")
+    return int(match.group(1), 16)
+
+
+def verify_boot_image(
+    case_dir: Path, *, assembler: Path, objcopy: Path, objdump: Path,
+) -> None:
+    """Prove the 4 KiB BIOS module and HEADER-preloaded extension split."""
+    ip = (case_dir / "ip-specialized.bin").read_bytes()
+    sp = (case_dir / "sp-specialized.bin").read_bytes()
+    extension = (case_dir / "sp-ext-specialized.bin").read_bytes()
+    (case_dir / "movieplay_ip.bin").write_bytes(ip)
+    (case_dir / "movieplay_sp.bin").write_bytes(sp)
+    (case_dir / "movieplay_sp_ext.bin").write_bytes(extension)
+    boot_obj = case_dir / "movieplay_boot.out"
+    boot_bin = case_dir / "movieplay_boot.bin"
+    run([
+        str(assembler), "-m68000", "--register-prefix-optional", "--bitwise-or",
+        "-I", str(case_dir), "-I", str(ROOT / "boot"),
+        str(ROOT / "boot/movieplay_boot.s"), "-o", str(boot_obj),
+    ])
+    run([str(objcopy), "-O", "binary", str(boot_obj), str(boot_bin)])
+    boot = boot_bin.read_bytes()
+    if len(boot) != av_config.BOOT_IMAGE_BYTES:
+        raise AssertionError(
+            f"boot image is {len(boot)} bytes, expected "
+            f"{av_config.BOOT_IMAGE_BYTES}")
+    symbols = {
+        name: symbol_address(objdump, boot_obj, name)
+        for name in ("SP_Addr", "SP_Size", "SPStart", "SPEnd")
+    }
+    if struct.unpack_from(">L", boot, symbols["SP_Addr"])[0] != (
+            av_config.SUB_BOOT_SOURCE_BASE):
+        raise AssertionError("boot header SP source is not 0x7000")
+    if struct.unpack_from(">L", boot, symbols["SP_Size"])[0] != len(sp):
+        raise AssertionError("boot header SP size is not the resident base only")
+    if symbols["SPStart"] != av_config.SUB_BOOT_SOURCE_BASE:
+        raise AssertionError("resident Sub source does not start at 0x7000")
+    if symbols["SPEnd"] != symbols["SPStart"] + len(sp):
+        raise AssertionError("resident Sub source end is inconsistent")
+    if boot[symbols["SPStart"]:symbols["SPStart"] + len(sp)] != sp:
+        raise AssertionError("boot image resident Sub bytes differ")
+    preload = sp_extension.adpcm_preload_image(
+        ima_adpcm.full_tables(), extension)
+    if preload[
+            ima_adpcm.FULL_TABLE_BYTES:
+            ima_adpcm.FULL_TABLE_BYTES + len(extension)
+    ] != extension:
+        raise AssertionError("HEADER preload Sub extension bytes differ")
+    module_bytes = struct.unpack_from(">L", sp, 20)[0]
+    if not (
+            0 < module_bytes <= len(sp)
+            and len(sp) - module_bytes < 16
+            and not any(sp[module_bytes:])):
+        raise AssertionError(
+            f"Sub module header covers {module_bytes} bytes, resident linked "
+            f"base is {len(sp)} bytes")
 
 
 def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
@@ -328,6 +397,26 @@ def build_case(
     fixed = ["--defsym", "PLAYER_SPECIALIZED=1"] if specialized else []
     includes = ["-I", str(case_dir), "-I", str(ROOT / "boot")]
 
+    sp_extension_obj = case_dir / f"sp-ext-{tag}.o"
+    sp_extension_bin = case_dir / f"sp-ext-{tag}.bin"
+    run(common[:4] + fixed + includes + [
+        str(ROOT / "boot/movieplay_sp_ext.s"),
+        "-o", str(sp_extension_obj),
+    ])
+    run([
+        str(linker), "-nostdlib", "--oformat", "binary",
+        "-T", str(ROOT / "cfg/sp_ext.ld"),
+        "-o", str(sp_extension_bin), str(sp_extension_obj),
+    ])
+    extension_constants = case_dir / "sp_extension.inc"
+    sp_extension.generate(sp_extension_bin, extension_constants)
+    run([
+        sys.executable, str(TOOLS / "check_player_ring.py"),
+        "--constants", str(case_dir / "player_constants.inc"),
+        "--extension", str(sp_extension_bin),
+        "--extension-constants", str(extension_constants),
+    ])
+
     ip_obj = case_dir / f"ip-{tag}.o"
     ip_bin = case_dir / f"ip-{tag}.bin"
     run(common + [
@@ -362,6 +451,7 @@ def build_case(
         ip_bin=ip_bin.stat().st_size,
         sp_text=text_size(size, sp_obj),
         sp_bin=sp_bin.stat().st_size,
+        sp_extension_bin=sp_extension_bin.stat().st_size,
     )
 
 
@@ -370,6 +460,7 @@ def main() -> None:
     linker = find_tool("m68k-elf-ld")
     size = find_tool("m68k-elf-size")
     objdump = find_tool("m68k-elf-objdump")
+    objcopy = find_tool("m68k-elf-objcopy")
     tmp_root = ROOT / "tmp"
     tmp_root.mkdir(exist_ok=True)
 
@@ -392,6 +483,8 @@ def main() -> None:
             specialized = build_case(
                 case, case_dir, specialized=True,
                 assembler=assembler, linker=linker, size=size, objdump=objdump)
+            verify_boot_image(
+                case_dir, assembler=assembler, objcopy=objcopy, objdump=objdump)
 
             for label, build in (("generic", generic), ("specialized", specialized)):
                 if build.ip_bin > 18688:
@@ -400,6 +493,10 @@ def main() -> None:
                 if label == "specialized" and build.sp_bin > 4096:
                     raise AssertionError(
                         f"{case.name}: {label} SP is {build.sp_bin} bytes")
+                if build.sp_extension_bin > av_config.SUB_BOOT_EXTENSION_MAX_BYTES:
+                    raise AssertionError(
+                        f"{case.name}: {label} SP extension is "
+                        f"{build.sp_extension_bin} bytes")
 
             sp_bytes = (case_dir / "sp-specialized.bin").read_bytes()
             if struct.pack(">L", constants.signature) not in sp_bytes:
@@ -413,7 +510,8 @@ def main() -> None:
                 f"{generic.ip_bin:4}->{specialized.ip_bin:4}B "
                 f"(text {generic.ip_text:4}->{specialized.ip_text:4})   "
                 f"{generic.sp_bin:4}->{specialized.sp_bin:4}B "
-                f"(text {generic.sp_text:4}->{specialized.sp_text:4})")
+                f"(text {generic.sp_text:4}->{specialized.sp_text:4}) "
+                f"ext {generic.sp_extension_bin}->{specialized.sp_extension_bin}B")
 
     print("player constant build matrix: OK")
 

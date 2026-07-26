@@ -66,6 +66,8 @@ IPStart:
 	.incbin "movieplay_ip.bin"
 IPEnd:
 
+	/* The BIOS boot module remains a single 4 KiB resident image. Extra Sub
+	   code is preloaded later from HEADER.DAT, not appended here. */
 	.org 0x7000
 SPStart:
 	.incbin "movieplay_sp.bin"

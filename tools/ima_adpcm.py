@@ -40,6 +40,12 @@ FULL_INDEX_BYTES = 89 * 16 * 2
 FULL_DELTA_BYTES = 89 * 16 * 4
 OUTPUT_LUT_BYTES = 256
 FULL_TABLE_BYTES = FULL_INDEX_BYTES + FULL_DELTA_BYTES + OUTPUT_LUT_BYTES
+FULL_TABLE_SHA256 = (
+    "9a61d6d928953b3d6cee167b7561793ff511865f8dd02cbcd93bca7e028e6170")
+HOT_TABLE_SHA256 = (
+    "7375be7e36f906062a722bb81e0853ceedb7c59a73ad280099cff41b3b33b88f")
+DELTA_TABLE_SHA256 = (
+    "e5e66543e9db4949daf63012d1a1632d37376f5ea317e5151ea4d266c2d59e5c")
 
 
 @dataclass(frozen=True)
@@ -255,6 +261,27 @@ def full_tables() -> bytes:
         raise AssertionError(
             f"full IMA table is {len(blob)} bytes, expected {FULL_TABLE_BYTES}")
     return blob
+
+
+def split_tables(blob: bytes | None = None) -> tuple[bytes, bytes, bytes]:
+    """Return index, signed-delta, and output tables from the disc image."""
+    source = full_tables() if blob is None else bytes(blob)
+    if len(source) != FULL_TABLE_BYTES:
+        raise ValueError(
+            f"full IMA table is {len(source)} bytes, expected {FULL_TABLE_BYTES}")
+    delta_start = FULL_INDEX_BYTES
+    lut_start = delta_start + FULL_DELTA_BYTES
+    return (
+        source[:delta_start],
+        source[delta_start:lut_start],
+        source[lut_start:],
+    )
+
+
+def hot_tables(blob: bytes | None = None) -> bytes:
+    """Return the next-index and output tables copied to Sub PRG-RAM."""
+    indices, _deltas, output = split_tables(blob)
+    return indices + output
 
 
 def _selftest() -> None:
