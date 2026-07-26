@@ -2,17 +2,17 @@
 """Extract per-frame Pass2/CD workload from a packed TTRC stream.
 
 For every timed frame this emits the quantities that bound the fixed
-two-VBlank cadence at 30 fps: cell updates, physical pattern loads by
-source (Prg/Wr/Dic), cold-run descriptor structure (count, lengths,
-short runs), the Main-CPU Pass2 word total, the palette-switch flag,
-and the CD slot schedule (control/payload sectors, rate lead).
+VBlank cadence: cell updates, physical pattern loads by source
+(Prg/Wr/Dic), cold-run descriptor structure (count, lengths, short
+runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
+CD slot schedule (control/payload sectors, rate lead).
 
-Supports TTRC v10 (legacy entries) and v12 (indexed Dic runs, optional
-completed shadow lists).  The cold-run suffix is located from the block
-tail by solving `n_runs` (the suffix is `[u16 n_runs][n_runs x 4]` at
-the very end of the block) and validated against the update entries;
-the low byte of `n_runs` can additionally be cross-checked against the
-DEBUG HUD `N` column of a recording of the same stream.
+Supports the current TTRC v16 stream, including PSUP v3 variable Word-RAM
+preload capacities.  The fixed per-frame audio size from HEADER.DAT
+locates the cold-run suffix (`[u16 n_runs][n_runs x 4]`), which is
+validated against the update entries.  The low byte of `n_runs` can
+additionally be cross-checked against the DEBUG HUD `N` column of a
+recording of the same stream.
 
 Usage:
   tools/python.sh harness/cold_cap_model/extract_frames.py \
@@ -28,15 +28,21 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+
+import av_config  # noqa: E402
+import ima_adpcm  # noqa: E402
+import player_constants  # noqa: E402
+
 SECTOR = 2048
 ROUTING_TOTAL_MAX = 5
 FEATURE_COLD_RUNS = 0x0001
-FEATURE_FIXED_N2 = 0x0002
+FEATURE_FIXED_N = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
 ADPCM_TABLE_SECTORS = 5
-PATTERN_SUPPLY_OFFSET = 196
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 WORDS_PER_PATTERN = 16
@@ -75,11 +81,16 @@ def die(msg: str) -> None:
 def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
     if version < 10 or not features & FEATURE_PATTERN_SUPPLY:
         return 0
-    values = struct.unpack_from(">4s8H", header, PATTERN_SUPPLY_OFFSET)
+    values = player_constants.PATTERN_SUPPLY_STRUCT.unpack_from(
+        header, player_constants.PATTERN_SUPPLY_OFFSET)
     magic, supply_version, reserved = values[:3]
-    if magic != b"PSUP" or supply_version not in (1, 2) or reserved:
+    if (magic != player_constants.PATTERN_SUPPLY_MAGIC
+            or supply_version not in (
+                1, 2, player_constants.PATTERN_SUPPLY_VERSION)
+            or reserved):
         die(f"invalid pattern-supply extension: {values!r}")
-    return sum(values[-3:])
+    wr0_sec, wr1_sec, dic_sec = values[6:9]
+    return wr0_sec + wr1_sec + dic_sec
 
 
 def decode_routes(routing: bytes, nframes: int) -> list[tuple[int, int]]:
@@ -115,39 +126,6 @@ def decode_run_words(raw: bytes, pos: int, k: int, pool: int,
     return runs
 
 
-def parse_runs_tail(raw: bytes, seq: int, pool: int, updates_end: int,
-                    cold_entries: int | None,
-                    check_count: bool) -> tuple[list, int]:
-    """Solve the cold-run suffix from the block tail.
-
-    Returns (runs, audio_span) where audio_span is the byte distance from
-    the end of the updates region to the start of the suffix (fixed
-    per-frame audio chunk plus its optional pad byte).  Used only for
-    frames whose legacy entries pin the load count; positional parsing
-    with a known audio_span handles the rest.
-    """
-    total_len = len(raw)
-    candidates = []
-    for k in range(0, (total_len - updates_end - 2) // 4 + 1):
-        pos = total_len - 2 - 4 * k
-        if pos < updates_end:
-            break
-        if struct.unpack_from(">H", raw, pos)[0] != k:
-            continue
-        runs = decode_run_words(raw, pos + 2, k, pool, seq)
-        if runs is None:
-            continue
-        if check_count and cold_entries is not None \
-                and sum(r[1] for r in runs) != cold_entries:
-            continue
-        candidates.append((k, runs, pos - updates_end))
-    if len(candidates) != 1:
-        die(f"frame {seq}: cold-run suffix not unique "
-            f"(candidates {[c[0] for c in candidates]})")
-    k, runs, audio_span = candidates[0]
-    return runs, audio_span
-
-
 def parse_runs_at(raw: bytes, seq: int, pool: int,
                   suffix_pos: int) -> list[tuple[int, int, int, int]]:
     """Decode the suffix at a known position and require an exact fit."""
@@ -162,7 +140,7 @@ def parse_runs_at(raw: bytes, seq: int, pool: int,
 
 
 def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
-                features: int, audio_span: int | None) -> tuple[FrameRow, int]:
+                features: int, audio_control_bytes: int) -> FrameRow:
     total_len, packed_seq, raw_count = struct.unpack_from(">HHH", raw)
     if total_len != len(raw):
         die(f"frame {seq}: total_len {total_len} != {len(raw)}")
@@ -185,16 +163,17 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
         cold_entries = sum(1 for e in entries if e & 0x8000)
         pos = entries_pos + n_upd * 2
 
-    check_count = (not use_list
-                   and not features & FEATURE_VRAM_RAW_PREFETCH)
-    if audio_span is None:
-        if not check_count:
-            die(f"frame {seq}: cannot solve audio span on a list/prefetch "
-                f"frame; a legacy frame must come first")
-        runs, audio_span = parse_runs_tail(
-            raw, seq, pool, pos, cold_entries, check_count)
-    else:
-        runs = parse_runs_at(raw, seq, pool, pos + audio_span)
+    suffix_pos = pos + audio_control_bytes
+    if suffix_pos & 1:
+        if suffix_pos >= len(raw) or raw[suffix_pos] != 0:
+            die(f"frame {seq}: cold-run alignment pad is missing or nonzero")
+        suffix_pos += 1
+    runs = parse_runs_at(raw, seq, pool, suffix_pos)
+
+    if (not use_list
+            and not features & FEATURE_VRAM_RAW_PREFETCH
+            and sum(r[1] for r in runs) != cold_entries):
+        die(f"frame {seq}: run loads disagree with {cold_entries} cold entries")
 
     loads = [0, 0, 0]
     short_runs = 0
@@ -216,7 +195,7 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
         control_bytes=total_len, n_ctrl_sec=0, n_pay_sec=0,
         slot_sec=0, rated_sec=0, lead_sec=0,
     )
-    return row, audio_span
+    return row
 
 
 def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
@@ -232,6 +211,8 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     prebuf_sec = struct.unpack_from(">L", header, 30)[0]
     f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", header, 40)
     vsync_n = struct.unpack_from(">H", header, 52)[0]
+    audio_samples = struct.unpack_from(">H", header, 54)[0]
+    audio_control_bytes = ima_adpcm.encoded_bytes(audio_samples)
     fps = struct.unpack_from(">H", header, 56)[0] or 15
     audio_preload_sec = struct.unpack_from(">H", header, 60)[0]
     features = struct.unpack_from(">H", header, 62)[0]
@@ -243,18 +224,18 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     frame0_offset = (
         1 + paltab_sec + table_sec + supply_sec + audio_preload_sec) * SECTOR
     frame0_len = struct.unpack_from(">H", header, frame0_offset)[0]
-    row0, audio_span = parse_frame(
+    row0 = parse_frame(
         header[frame0_offset:frame0_offset + frame0_len], 0, cells, pool,
-        features, None)
+        features, audio_control_bytes)
     rows_out = [row0]
 
     routing_offset = frame0_offset + (f0_ctrl_sec + f0_pat_sec) * SECTOR
     routes = decode_routes(
         header[routing_offset:routing_offset + routing_sec * SECTOR], nfr)
 
-    if not (version >= 8 and features & FEATURE_FIXED_N2):
-        die("only fixed-N2 v8+ rate accumulation is supported")
-    rate_numerator, rate_modulus = 1001, 400
+    if not (version >= 8 and features & FEATURE_FIXED_N):
+        die("only fixed-N v8+ rate accumulation is supported")
+    rate_numerator, rate_modulus = av_config.fixed_cd_sector_rate(vsync_n)
 
     accumulator = 0
     lead = 0
@@ -282,11 +263,9 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         block_len = struct.unpack_from(">H", control_stream, control_pos)[0]
         if block_len < 8 or block_len & 1:
             die(f"frame {seq}: invalid control length {block_len}")
-        row, span = parse_frame(
+        row = parse_frame(
             bytes(control_stream[control_pos:control_pos + block_len]),
-            seq, cells, pool, features, audio_span)
-        if span != audio_span:
-            die(f"frame {seq}: audio span drifted {audio_span} -> {span}")
+            seq, cells, pool, features, audio_control_bytes)
         (row.n_pay_sec, row.n_ctrl_sec, row.slot_sec, row.rated_sec,
          row.lead_sec) = schedule[seq]
         rows_out.append(row)
