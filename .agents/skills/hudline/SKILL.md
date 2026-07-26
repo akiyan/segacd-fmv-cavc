@@ -1,6 +1,6 @@
 ---
 name: hudline
-description: Render, inspect, and publicly publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON, then require the matching codec timeline and publicly publish their combined mixline. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A fields need frame-by-frame visual comparison.
+description: Render, inspect, and publicly publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON, then require the matching codec timeline and publicly publish their combined mixline. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A/Q fields need frame-by-frame visual comparison.
 ---
 
 # Playback HUD Timeline
@@ -64,7 +64,7 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
 
    Show the resulting Markdown table in the response. It must include
    hexadecimal `F`, every gate-overage value/limit, derived `VBLANK`, and
-   every HUD value available in the TSV (`P/S/D/R/L/C/W/M/A/U/N/J/V/O/E`).
+   every HUD value available in the TSV (`P/S/D/R/L/C/W/M/A/U/N/J/Q/V/O/E`).
    For per-frame `M`, include every over-limit frame and label it `FAIL`.
    `C` is diagnostic and must never create an over-limit event or alter the
    gate status. For cumulative `S/D/R`
@@ -110,7 +110,7 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   recorder's terminal hold, not playback cadence. For 24 fps, retain the
   measured row but defer its normal-line and warning rule until its 2/3 cadence
   is specified.
-- Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J` and `V/O/E` when
+- Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J` and `Q/V/O/E` when
   present. `F` is the x-axis. Do not allocate a separate `P` row: palette is
   represented by the `Pxx` switch labels and vertical boundaries on the shared
   horizontal axis.
@@ -121,11 +121,12 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   HUD metric. Put `C` first among the diagnostic rows and do not draw a gate
   line for it.
 - Follow with the remaining diagnostic, player-state, Sub, Main, and phase
-  rows. Preserve HUD units instead of normalizing each recording to its
+  rows. Render `Q` as two derived rows when present: nonnegative minimum
+  balance and positive underflow debt. Preserve HUD units instead of normalizing each recording to its
   observed peak. Every HUD vertical axis shows only its maximum label; omit
   all midpoint and zero labels.
 - Preserve the established per-metric colors for normal playback values:
-  C yellow, M orange, J and W purple, L blue, A pink, U cyan, N orange, and
+  C yellow, M orange, J, Q, and W purple, L blue, A pink, U cyan, N orange, and
   the corresponding established colors for V/O/E. Only override that metric
   color when the individual sample is `WARNING` or `FAIL`; use yellow for a
   warning and red for a failure. `C` always keeps its diagnostic color because
@@ -154,6 +155,10 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   normal, while every other value is a warning. This rule is deliberately not
   generalized to 24 fps yet.
 - `J` is a cumulative PrgBuf excess high-water mark, not current occupancy.
+- `Q` is the signed minimum logical PrgBuf balance reached during one frame in
+  exact 32-byte patterns. Raw values `8000` through `FFFF` are negative; render
+  their magnitude as underflow debt instead of treating them as a high positive
+  occupancy. `Q` is diagnostic and never changes the upload gate.
 - When a gate fails, never report only the maximum. Include the over-limit
   table from `report_overages.py` so the exact workload and phase values at
   each gate event are preserved. Keep VBLANK warnings aggregate-only.

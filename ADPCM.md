@@ -61,10 +61,15 @@ two Word-RAM copies keep one stable delta address across every bank handoff.
 
 The live decoded output buffer occupies Sub PRG-RAM
 `0x08000..0x085FF`. Its 1,536 bytes hold the supported low-rate chunk maximum.
-The current 88-byte table-copy routine is staged at
-`0x7D260..0x7D2B7` after the lookup data, copied once to the unused timed-ring
-tail at `0x76800..0x76857`, and executed before frame-0 staging may overwrite
-it. The BIOS boot module remains the resident 4 KiB image only. The persistent
+The current 176-byte boot-only extension is staged at
+`0x7D260..0x7D30F` after the lookup data. Its qualified 88-byte ADPCM entry is
+copied to the unused timed-ring tail at `0x76800..0x76857` and executed before
+the routing preload. For a routing table of 8 KiB or less, the fixed second
+entry remains beyond the staged routing bytes and executes in place at
+`0x7D2B8` after prebuffer completes. Longer-route builds copy the complete
+extension first and execute the second entry at `0x76858`. That entry validates
+and duplicates the routing table in both Word-RAM banks. The BIOS boot module
+remains the resident 4 KiB image only. The persistent
 hot tables occupy the 4 KiB page
 immediately before the 424 KiB physical PrgBuf ring. The resident
 Sub image stays within 4 KiB. The generated Word-RAM layout retains the complete
@@ -165,10 +170,13 @@ Sub CPUが5 sectorをPRG-RAMへstageし、next-index tableを`0x0C000..0x0CB1F`�
 generated offsetへcopyするため、bank handoff後も同じdelta addressを使えます。
 
 Liveのdecode済みoutput bufferはSub PRG-RAM `0x08000..0x085FF`を使います。1,536 byteで
-対応するlow-rate chunkの最大値を収容します。現在88-byteのtable-copy routineは
-lookup data直後の`0x7D260..0x7D2B7`へstageし、未使用timed-ring tailの
-`0x76800..0x76857`へcopyして、frame-0 stagingが上書き可能になる前に一度だけ
-実行します。BIOS boot moduleはresident 4 KiB imageだけを維持します。Persistent hot tableは424 KiBの
+対応するlow-rate chunkの最大値を収容します。現在176-byteのboot-only extensionは
+lookup data直後の`0x7D260..0x7D30F`へstageします。Qualified済み88-byte ADPCM入口だけを
+未使用timed-ring tailの`0x76800..0x76857`へcopyし、routing preload前に実行します。
+Routing tableが8 KiB以下なら、固定第2入口はstaged routingの後ろに残るため、
+prebuffer完了後に`0x7D2B8`でそのまま実行します。長いroutingのbuildだけはextension
+全体を先にcopyし、第2入口を`0x76858`で実行します。この入口がrouting tableを
+validateして両Word-RAM bankへ複製します。BIOS boot moduleはresident 4 KiB imageだけを維持します。Persistent hot tableは424 KiBの
 physical PrgBuf ring直前にある4 KiB pageを使います。Resident Sub imageは4 KiB以内のままです。Generated Word-RAM
 layoutは8,800-byteのtable予約全体と1,536-byteのPCM guardを保持するため、player-only
 A/BでもWordBuf容量とstream byteが同一です。

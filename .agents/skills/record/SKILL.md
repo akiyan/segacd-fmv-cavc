@@ -255,8 +255,10 @@ Check the raw MKV and reports before trusting a capture:
    the recording for downstream tools.
 
    Add `--flip-fields` for a specialized H40 DEBUG build so its appended
-   `V/O/E` phase fields are preserved in the TSV. They are diagnostic and do
-   not change the five-field upload gate.
+   `Q/V/O/E` fields are preserved in the TSV. `Q` is the raw signed 16-bit
+   per-frame minimum streamed-PrgBuf balance in exact 32-byte patterns:
+   `0000` means truly empty and `FFFF` means one pattern of underflow. All four
+   appended fields are diagnostic and do not change the five-field upload gate.
 
    The profile is mandatory and positional because the M/J limits follow the
    packed player's cadence. The gate result is `PASS`, `WARNING`, or `FAIL`.
@@ -269,21 +271,23 @@ Check the raw MKV and reports before trusting a capture:
    - every cadence: `S/D/R=00`; `J<=2D` at 15fps, `J<=1E` at 24fps,
      or `J<=19` at 30fps.
 
-   `C` is diagnostic only. It has no limit and never changes the gate status;
-   report its distribution and correlate it with actual playback failures.
+   `C` and `Q` are diagnostic only. They have no limits and never change the gate status;
+   report the C distribution and Q minimum, and correlate them with actual
+   playback failures.
    The M limit permits all display fields available to one content frame. The
    `J` limit is derived from the stream's generated
    normal PrgBuf ceiling: normal/jitter is 378/40 KiB at 15fps,
    393/25 KiB at 24fps, and 398/20 KiB at 30fps. A value above `28`, `19`, or
    `14` respectively means sector-granular occupancy crossed the 418 KiB
-   scheduled-delivery ceiling and entered its 2 KiB back-pressure guard or the
+   delivery observation boundary and entered its 2 KiB back-pressure guard or the
    separate 4 KiB physical guard; report this explicitly, but a value at or below the
    cadence-specific passing limit does not by itself require another
    confirmation or fail the recording.
    Do not waive, hand-edit, or reuse a gate JSON from another recording.
 
    On every result, report the minimum, mean, median, and maximum of `C` and
-   `A` across the timed first loop, excluding frame 0. The analyzer must store
+   `A` across the timed first loop, excluding frame 0. When `Q` is present,
+   also report its signed logical minimum and peak underflow debt. The analyzer must store
    these statistics in the gate JSON so `hudline` can validate and preserve
    them. On PASS or WARNING, also report all five gate maxima and the
    diagnostic C maximum. A standalone `record` request ends with the
@@ -308,7 +312,8 @@ sound is clean or free of audible clicks only after listening to the final file.
 ## Required upload HUD gate and optional diagnostics
 
 The standard capture already builds DEBUG. The HUD omits category glyphs and
-uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` order in H32 and H40. Parse
+uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` order in H32 and H40. A
+specialized H40 build appends `Q/V/O/E` for a 40-cell row. Parse
 the complete first loop whenever the capture can be uploaded; for a local-only
 recording, full OCR remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
@@ -324,13 +329,17 @@ OUTDIR="$PWD/videos" tools/run_headless.sh out/PROFILE.cue \
 ```
 
 Confirm the contiguous top-row Plane A HUD is visible before a long OCR scan.
-Both modes use `xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx`. `F` and `U`
-contain four hexadecimal digits; every other value contains two. Read the
+The common row uses `xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx`. `F` and `U`
+contain four hexadecimal digits; every other common value contains two. In
+the extended H40 row, `Q` also contains four hexadecimal digits and `V/O/E`
+contain two each. Read the
 requested counters over the complete loop. `U` is the Main pattern-transfer
 time in 30.72 us Mega-CD stopwatch ticks, `N` is the packed cold-run count's low
 byte, and `J` is the sticky ceil-KiB streamed PrgBuf excess above the
-fps-derived normal ceiling. A `PASS` or `WARNING` `S/D/R/M/J` gate JSON is the
-required handoff condition; `C/A` remain recorded diagnostics. When the
+fps-derived normal ceiling. `Q` is a signed exact-pattern balance: values with
+the high bit set are negative underflow, not a large positive occupancy. A
+`PASS` or `WARNING` `S/D/R/M/J` gate JSON is the required handoff condition;
+`C/A/Q` remain recorded diagnostics. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
 trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and

@@ -21,6 +21,10 @@
 .equ ADPCM_DELTA_LONGS,       ADPCM_DELTA_BYTES/4
 .equ ADPCM_OUTPUT_LUT_LONGS,  ADPCM_OUTPUT_LUT_BYTES/4
 .equ ADPCM_BANK_COPIES,       2
+.equ ROUTING_CTRL_MASK,       0x0007
+.equ ROUTING_TOTAL_SHIFT,     3
+.equ ROUTING_MAX_ENTRY,       0x002D
+.equ ROUTING_BANK_COPIES,     2
 
 .text
 .global adpcm_boot_copy
@@ -57,6 +61,55 @@ adpcm_boot_copy:
 	btst	#1, (MEMMODE+1).l
 	bne.s	1b
 	dbra	d1, 2b
+	rts
+
+/* Fixed second entry at extension base + 0x58.  For routes up to 8 KiB it
+   executes in place after prebuffer; longer-route builds copy the complete
+   extension to its ring-tail execution address before routing is staged.
+
+   Validate ROUTING_TMP's d7-entry packed route, then copy d5 longs to a1 in
+   both physical Word-RAM banks. Return d0=0 on success or d0=1 on invalid
+   input. The two bank toggles restore the caller's original bank phase. */
+.org 0x0058
+.global routing_prepare
+routing_prepare:
+	lea	ROUTING_TMP, a0
+	movea.l	a0, a2
+	movea.l	a1, a3
+	tst.b	(a0)
+	bne.s	routing_invalid
+	subq.w	#1, d7
+1:
+	moveq	#0, d0
+	move.b	(a0)+, d0
+	cmpi.b	#ROUTING_MAX_ENTRY, d0
+	bhi.s	routing_invalid
+	move.w	d0, d2
+	andi.w	#ROUTING_CTRL_MASK, d0
+	lsr.w	#ROUTING_TOTAL_SHIFT, d2
+	cmp.w	d2, d0
+	bhi.s	routing_invalid
+	dbra	d7, 1b
+
+	moveq	#ROUTING_BANK_COPIES-1, d1
+2:
+	movea.l	a2, a0
+	movea.l	a3, a1
+	move.w	d5, d0
+	subq.w	#1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	bchg	#0, (MEMMODE+1).l
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	dbra	d1, 2b
+	moveq	#0, d0
+	rts
+
+routing_invalid:
+	moveq	#1, d0
 	rts
 
 	.align 4

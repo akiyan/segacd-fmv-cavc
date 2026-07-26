@@ -24,6 +24,10 @@ IP = ROOT / "boot/movieplay_ip.s"
 BOOT = ROOT / "boot/movieplay_boot.s"
 SP_EXT_LD = ROOT / "cfg/sp_ext.ld"
 MAKEFILE = ROOT / "Makefile"
+QUALIFIED_ADPCM_BOOT_COPY_BYTES = 0x58
+QUALIFIED_ADPCM_BOOT_COPY_SHA256 = (
+    "bdc2ae6b75cf3fce945cf695aa6c0e1088591aa3d9fad5c2a9041aa79d440257"
+)
 sp_text = SP.read_text()
 sp_ext_text = SP_EXT.read_text()
 ip_text = IP.read_text()
@@ -77,6 +81,14 @@ if extension_include_values != extension_values:
     sys.exit(
         "check_player_ring: Sub extension constants do not match the linked "
         "binary size/hash/address contract")
+qualified_adpcm_entry = extension_bytes[:QUALIFIED_ADPCM_BOOT_COPY_BYTES]
+if (
+    len(qualified_adpcm_entry) != QUALIFIED_ADPCM_BOOT_COPY_BYTES
+    or hashlib.sha256(qualified_adpcm_entry).hexdigest()
+    != QUALIFIED_ADPCM_BOOT_COPY_SHA256
+):
+    sys.exit(
+        "check_player_ring: the qualified 88-byte ADPCM boot entry changed")
 
 
 def pc(name: str) -> int:
@@ -170,8 +182,8 @@ require(
 )
 require(
     sp_text,
-    r"^\s*move\.w\s+#ROUTING_COPY_LONGS-1,\s*d0\s*$",
-    "named routing MOVE.L copy length",
+    r"^\s*move\.w\s+#ROUTING_COPY_LONGS,\s*d5\s*$",
+    "named routing extension-copy length",
 )
 require(
     sp_text,
@@ -437,14 +449,28 @@ if re.search(
         boot_text, re.MULTILINE):
     sys.exit("check_player_ring: Sub extension must not be BIOS boot-loaded")
 for token in (
+        ".equ ADPCM_BOOT_COPY_BYTES, 0x0058",
+        ".equ ADPCM_BOOT_COPY_LONGS, ADPCM_BOOT_COPY_BYTES/4",
+        ".equ ROUTING_EXTENSION_IN_STAGE, 1",
         "lea\tSP_EXTENSION_LOAD_BASE, a0",
         "lea\tSP_EXTENSION_EXEC_BASE, a1",
+        "move.w\t#ADPCM_BOOT_COPY_LONGS-1, d0",
         "move.w\t#SP_EXTENSION_LONGS-1, d0",
         "lea\tADPCM_DELTAS, a2",
         "jsr\tADPCM_BOOT_COPY",
+        "jsr\t(SP_EXTENSION_LOAD_BASE+ADPCM_BOOT_COPY_BYTES).l",
+        "jsr\t(SP_EXTENSION_EXEC_BASE+ADPCM_BOOT_COPY_BYTES).l",
 ):
     if token not in sp_text:
         sys.exit(f"check_player_ring: Sub extension path is missing {token!r}")
+if pc("ROUTING_SEC") <= 4:
+    staged_extension_start = (
+        routing_tmp + ima_adpcm.FULL_TABLE_BYTES + 0x58)
+    routing_end = routing_tmp + pc("ROUTING_SEC") * ttrc_routing.SECTOR_BYTES
+    if routing_end > staged_extension_start:
+        sys.exit(
+            "check_player_ring: staged routing reaches the live extension "
+            "entry")
 require(
     sp_ext_ld_text,
     rf"^\s*\.text\s+0x{av_config.SUB_BOOT_EXTENSION_EXEC_BASE:06X}\s*:",
@@ -463,9 +489,19 @@ for token in (
         "lea\tROUTING_TMP+ADPCM_DELTA_OFFSET, a0",
         "movea.l\ta2, a1",
         "moveq\t#ADPCM_BANK_COPIES-1, d1",
+        ".org 0x0058",
+        ".global routing_prepare",
+        "routing_prepare:",
+        "movea.l\ta0, a2",
+        "move.w\td5, d0",
+        "moveq\t#ROUTING_BANK_COPIES-1, d1",
 ):
     if token not in sp_ext_text:
-        sys.exit(f"check_player_ring: ADPCM boot copy is missing {token!r}")
+        sys.exit(f"check_player_ring: Sub boot extension is missing {token!r}")
+if "rt_validate:" in sp_text or "rt_copy:" in sp_text:
+    sys.exit(
+        "check_player_ring: boot-only routing preparation returned to the "
+        "resident Sub image")
 require(
     make_text,
     rf'if \[ "\$\$bytes" -gt {av_config.SUB_BOOT_BASE_BYTES} \]; then',

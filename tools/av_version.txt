@@ -11,6 +11,16 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p95: Add H40 DEBUG Q, the signed per-frame minimum logical PrgBuf balance
+#        in exact 32-byte patterns. Move boot-only routing validation and
+#        two-bank duplication into the existing HEADER-preloaded Sub extension
+#        (now 176 bytes) so the resident Sub base remains within 4 KiB. The
+#        qualified 88-byte ADPCM entry remains byte-identical. Up-to-8-KiB
+#        routing leaves the second entry intact at staged address 0x7D2B8 and
+#        runs it only after prebuffer; longer routes use the copied 0x76858
+#        entry. The proven startup read path before prebuffer remains unchanged.
+#        Resolution, fps, cold cap, image settings, stream decisions, and
+#        simulated output remain unchanged.
 #   e138/p94: Preload the 88-byte ADPCM table-copy extension in the existing
 #        five-sector table padding and execute it from the unused timed-ring
 #        tail. Keep signed deltas in both physical Word-RAM banks, reserve the
@@ -843,4 +853,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260726
 e=138
-p=94
+p=95

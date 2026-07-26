@@ -207,6 +207,36 @@ class HudUploadGateTests(unittest.TestCase):
                 parsed = list(csv.DictReader(handle, delimiter="\t"))
             self.assertEqual(parsed[0]["frame"], "0")
 
+    def test_h40_q_is_preserved_and_decoded_as_signed_patterns(self):
+        rows = groups(2)
+        for row, raw in zip(rows, (0x0001, 0xFFFD), strict=True):
+            row.values.update({
+                "P": 0,
+                "L": 0,
+                "W": 0,
+                "A": 0,
+                "Q": raw,
+            })
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hud.tsv"
+            analyze.write_tsv(path, rows, [])
+            with path.open(encoding="utf-8", newline="") as handle:
+                parsed = list(csv.DictReader(handle, delimiter="\t"))
+        self.assertEqual(parsed[0]["prgbuf_min_patterns_raw16"], "1")
+        self.assertEqual(parsed[0]["prgbuf_min_patterns_signed"], "1")
+        self.assertEqual(parsed[0]["prgbuf_underflow_patterns"], "0")
+        self.assertEqual(parsed[1]["prgbuf_min_patterns_raw16"], "65533")
+        self.assertEqual(parsed[1]["prgbuf_min_patterns_signed"], "-3")
+        self.assertEqual(parsed[1]["prgbuf_underflow_patterns"], "3")
+        result = self.evaluate(rows, 2)
+        self.assertEqual(result["diagnostic_fields"], ["C", "A", "Q"])
+        self.assertEqual(result["prgbuf_minimum_patterns"], -3)
+        self.assertEqual(result["prgbuf_underflow_peak_patterns"], 3)
+        self.assertEqual(
+            result["maxima"],
+            {field: 0 for field in "SDRCMJ"},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -51,6 +51,7 @@ HUD_COLUMNS = (
     ("U", "main_pattern_ticks", 4),
     ("N", "cold_runs_low8", 2),
     ("J", "prgbuf_jitter_peak_kib", 2),
+    ("Q", "prgbuf_min_patterns_raw16", 4),
     ("V", "flip_vcounter", 2),
     ("O", "flip_interval_excess_ticks", 2),
     ("E", "pass2_entry_q4", 2),
@@ -334,6 +335,15 @@ def render_markdown(
     )
     summary.append(format_c_statistics(c_statistics(rows)))
     summary.append(format_a_statistics(a_statistics(rows)))
+    if "prgbuf_min_patterns_signed" in fields:
+        q_minimum = min(
+            as_int(row, "prgbuf_min_patterns_signed")
+            for row in rows[1:]
+        )
+        summary.append(
+            f"Q logical minimum (timed first loop): {q_minimum} patterns; "
+            f"underflow peak={max(0, -q_minimum)} patterns."
+        )
     summary.append(
         "C is diagnostic only and does not affect the HUD gate status."
     )

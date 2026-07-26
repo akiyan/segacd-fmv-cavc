@@ -126,9 +126,12 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray], l
     for key in fields:
         if key in {"loop", "frame", "frame_hex", "lead_hex", "r_transition"}:
             continue
+        texts = [row[key].strip() for row in rows]
+        if not any(texts):
+            continue
         try:
             arrays[key] = np.asarray(
-                [parse_value(key, row[key]) for row in rows], np.float64)
+                [parse_value(key, value) for value in texts], np.float64)
         except ValueError:
             continue
     return rows, arrays, fields
@@ -248,6 +251,24 @@ def validate(
                     f"gate {field} {key} {recorded[key]} != "
                     f"TSV value {expected[key]}"
                 )
+    q_values = data.get("prgbuf_min_patterns_signed")
+    gate_has_q = "Q" in gate.get("diagnostic_fields", ())
+    if q_values is not None:
+        q_minimum = int(q_values[1:].min())
+        q_underflow_peak = max(0, -q_minimum)
+        for key, expected in (
+            ("prgbuf_minimum_patterns", q_minimum),
+            ("prgbuf_underflow_peak_patterns", q_underflow_peak),
+        ):
+            if key not in gate:
+                raise SystemExit(f"gate JSON lacks {key}")
+            if int(gate[key]) != expected:
+                raise SystemExit(
+                    f"gate {key} {gate[key]} != TSV value {expected}")
+        if not gate_has_q:
+            raise SystemExit("gate diagnostic_fields omit available Q")
+    elif gate_has_q:
+        raise SystemExit("gate declares Q but HUD TSV has no Q column")
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -360,9 +381,30 @@ def row_specs(
                     timed_max("prgbuf_jitter_peak_kib"),
                     float(gate.get("jitter_headroom_kib", 0))),
                 style.COL_PRG, "J"),
+    ]
+    if "prgbuf_min_patterns_signed" in data:
+        rows.append(
+            RowSpec(
+                "prgbuf_min_patterns_signed",
+                "Q  PRG MIN",
+                "signed 32-byte patterns/frame",
+                av_config.RING_SIZE_KB * 1024 / 32,
+                style.COL_PRG,
+            )
+        )
+    if "prgbuf_underflow_patterns" in data:
+        rows.append(
+            RowSpec(
+                "prgbuf_underflow_patterns",
+                "Q- PRG UNDERFLOW",
+                "32-byte pattern debt/frame",
+                max(1, timed_max("prgbuf_underflow_patterns")),
+                FAIL,
+            )
+        )
+    rows.extend([
         RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
-                max(1, timed_max("cd_wait")),
-                WARN),
+                max(1, timed_max("cd_wait")), WARN),
         RowSpec("lead_256b", "L  AUDIO LEAD", "256-byte units", lead_max,
                 (82, 153, 232)),
         RowSpec("sub_wait_lines", "W  SUB HANDOFF", "approx. scanlines", 255,
@@ -373,7 +415,7 @@ def row_specs(
                 (81, 202, 211)),
         RowSpec("cold_runs_low8", "N  COLD RUNS", "runs, low byte", 255,
                 style.COL_RUN, eight_bit_scale=True, show_zero=False),
-    ]
+    ])
     optional = (
         ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",
          (124, 193, 113)),
@@ -650,6 +692,12 @@ def main() -> None:
     sample_count = data.get("sample_count", np.ones(frames))[1:]
     c_stats = c_statistics(data)
     a_stats = a_statistics(data)
+    q_values = data.get("prgbuf_min_patterns_signed")
+    q_minimum = (
+        int(q_values[1:].min())
+        if q_values is not None and len(q_values) > 1 else None
+    )
+    q_underflow_peak = max(0, -q_minimum) if q_minimum is not None else None
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -777,6 +825,8 @@ def main() -> None:
         "diagnostic_maxima": {"C": maxima["C"]},
         "c_statistics": c_stats,
         "a_statistics": a_stats,
+        "prgbuf_minimum_patterns": q_minimum,
+        "prgbuf_underflow_peak_patterns": q_underflow_peak,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,

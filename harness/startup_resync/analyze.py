@@ -5,7 +5,9 @@ The player renders values only in one fixed 30-cell order in both modes:
 
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
-The corresponding keys are F/P/S/D/R/L/C/W/M/A/U/N/J in the TSV and report.
+The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Specialized H40
+DEBUG builds append Q/V/O/E; Q is the signed minimum logical PrgBuf balance
+observed during that frame, in exact 32-byte patterns.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -352,6 +354,20 @@ def a_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
     return field_statistics(groups, "A")
 
 
+def signed_q(raw: int) -> int:
+    """Decode the four-digit Q field as a signed 16-bit pattern balance."""
+    return raw - 0x10000 if raw & 0x8000 else raw
+
+
+def prgbuf_minimum(groups: list[FrameGroup]) -> int | None:
+    values = [
+        signed_q(group.values["Q"])
+        for group in timed_first_loop(groups)
+        if "Q" in group.values
+    ]
+    return min(values) if values else None
+
+
 def format_field_statistics(
     field: str,
     result: dict[str, int | float],
@@ -379,12 +395,14 @@ def _fmt(group: FrameGroup) -> str:
     v = group.values
     transfer = f" U{v['U']:04X} N{v['N']:02X}" if "U" in v else ""
     jitter = f" J{v['J']:02X}" if "J" in v else ""
+    prgbuf = f" Q{v['Q']:04X}" if "Q" in v else ""
     return (
         f"loop={group.loop} t={group.time_first:8.3f}s "
         f"cap={group.capture_first:5d}-{group.capture_last:<5d} "
         f"F{v['F']:04X} P{v['P']:02X} S{v['S']:02X} D{v['D']:02X} "
         f"R{v['R']:02X} L{v['L']:02X} C{v['C']:02X} W{v['W']:02X} "
-        f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter} n={group.sample_count} "
+        f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf} "
+        f"n={group.sample_count} "
         f"conf={group.confidence:.3f}"
     )
 
@@ -408,6 +426,13 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
             f"J high-water: {peak:02X} ({peak} KiB ceil) first at "
             f"F{peak_group.values['F']:04X} ({peak_group.values['F']}), "
             f"updates={updates}"
+        )
+    minimum = prgbuf_minimum(groups)
+    if minimum is not None:
+        print(
+            f"Q logical minimum: {minimum} patterns "
+            f"({minimum * 32} bytes); "
+            f"underflow peak={max(0, -minimum)} patterns"
         )
     for number, index in enumerate(transitions, 1):
         previous = groups[index - 1]
@@ -437,6 +462,8 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "desync", "resync", "lead_256b", "lead_hex", "cd_wait", "sub_wait_lines",
         "main_vblank_wait", "sub_adpcm_decode_units", "main_pattern_ticks",
         "main_pattern_ms", "cold_runs_low8", "prgbuf_jitter_peak_kib",
+        "prgbuf_min_patterns_raw16", "prgbuf_min_patterns_signed",
+        "prgbuf_underflow_patterns",
         "flip_vcounter", "flip_interval_excess_ticks", "pass2_entry_q4",
         "r_transition", "prev_frame",
         "prev_lead_256b", "next_frame", "next_lead_256b",
@@ -451,6 +478,10 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         writer.writeheader()
         for index, group in enumerate(groups):
             values = group.values
+            prg_min_raw = values.get("Q")
+            prg_min_signed = (
+                signed_q(prg_min_raw) if prg_min_raw is not None else None
+            )
             changed = index in transition_set
             previous = groups[index - 1] if changed else None
             following = groups[index + 1] if changed and index + 1 < len(groups) else None
@@ -480,6 +511,16 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 ),
                 "cold_runs_low8": values.get("N", ""),
                 "prgbuf_jitter_peak_kib": values.get("J", ""),
+                "prgbuf_min_patterns_raw16": (
+                    prg_min_raw if prg_min_raw is not None else ""
+                ),
+                "prgbuf_min_patterns_signed": (
+                    prg_min_signed if prg_min_signed is not None else ""
+                ),
+                "prgbuf_underflow_patterns": (
+                    max(0, -prg_min_signed)
+                    if prg_min_signed is not None else ""
+                ),
                 "flip_vcounter": (
                     f"{values['V']:02X}" if "V" in values else ""
                 ),
@@ -602,7 +643,9 @@ def evaluate_upload_gate(
         "content_fps": float(content_fps),
         "cadence": cadence,
         "gate_fields": list(gate_fields),
-        "diagnostic_fields": ["C", "A"],
+        "diagnostic_fields": [
+            "C", "A", *(["Q"] if "Q" in first_loop[0].values else [])
+        ],
         "maxima": maxima,
         "c_statistics": c_statistics(groups),
         "a_statistics": a_statistics(groups),
@@ -618,6 +661,10 @@ def evaluate_upload_gate(
         "warnings": warnings,
         "failures": failures,
     }
+    minimum = prgbuf_minimum(groups)
+    if minimum is not None:
+        result["prgbuf_minimum_patterns"] = minimum
+        result["prgbuf_underflow_peak_patterns"] = max(0, -minimum)
     if profile is not None:
         result["profile"] = str(profile.path.resolve())
         result["profile_sha256"] = profile.sha256
@@ -637,6 +684,11 @@ def write_gate_json(path: Path, result: dict) -> None:
         f"{result['expected_frames']}  cadence={result['cadence']} "
         f"fps={result['content_fps']:g}"
     )
+    if "prgbuf_minimum_patterns" in result:
+        print(
+            f"  Q diagnostic min={result['prgbuf_minimum_patterns']} patterns "
+            f"underflow_peak={result['prgbuf_underflow_peak_patterns']} patterns"
+        )
     for failure in result["failures"]:
         print(f"  gate failure: {failure}")
     for warning in result["warnings"]:
@@ -676,7 +728,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--flip-fields", action="store_true",
-        help="parse the 34-cell H40 layout with the V/O flip-phase fields "
+        help="parse the 40-cell H40 layout with signed Q PrgBuf and V/O/E "
+             "flip-phase fields "
              "(HUD_FLIP_FIELDS DEBUG builds only)",
     )
     parser.add_argument(

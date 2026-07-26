@@ -46,6 +46,17 @@
 .endif
 .endif
 
+.ifdef DEBUG
+.ifdef PLAYER_SPECIALIZED
+.if PC_MODE == 1
+.equ DEBUG_PRGBUF_Q, 1
+.if PC_PUMP_MASK == 0x03FF
+.equ DEBUG_PRGMIN_DIRECT, 1
+.endif
+.endif
+.endif
+.endif
+
 .macro PC_MOVE_W runtime, constant, dest
 .ifdef PLAYER_SPECIALIZED
 	move.w	#\constant, \dest
@@ -152,6 +163,8 @@
 .equ ADPCM_LUT_BYTES,   0x00000100
 .equ ADPCM_LUT_END,     0x0000CC20
 .equ ADPCM_BOOT_COPY,   0x00076800
+.equ ADPCM_BOOT_COPY_BYTES, 0x0058
+.equ ADPCM_BOOT_COPY_LONGS, ADPCM_BOOT_COPY_BYTES/4
 .if PCM_DEC_BUF < SUB_PRG_SAFE_BASE
 .error "PCM_DEC_BUF begins below the marker-verified Sub PRG range"
 .endif
@@ -218,6 +231,16 @@
 .if SP_EXTENSION_BYTES > ADPCM_TABLE_SECTORS*0x800-ADPCM_TABLE_BYTES
 .error "Sub extension exceeds the existing ADPCM sector padding"
 .endif
+.if SP_EXTENSION_BYTES < ADPCM_BOOT_COPY_BYTES
+.error "Sub extension does not contain the complete qualified ADPCM entry"
+.endif
+.ifdef PLAYER_SPECIALIZED
+.if PC_ROUTING_SEC <= 4
+/* Up to 8 KiB of routing ends at ROUTING_TMP+0x2000.  The extension begins at
+   ROUTING_TMP+8,800, leaving its second entry intact until prebuffer completes. */
+.equ ROUTING_EXTENSION_IN_STAGE, 1
+.endif
+.endif
 
 /* --- Word-RAM 出力(MDが読む) ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
@@ -232,6 +255,7 @@
 .equ O_AUDIOLEFT,O_STATUS+0x1C
 .equ O_RESYNC, O_STATUS+0x20
 .equ O_LEAD,   O_STATUS+0x22
+.equ O_PRGMIN, O_STATUS+0x24
 .equ O_HDR,    O_STATUS+0x80
 .equ PALTAB_STAGE_OFF, 0x0000
 .equ PALTAB_OFF, 0x1000
@@ -542,14 +566,20 @@ pm_set:
 	bsr	reseek_readn
 
 	/* The five-sector image holds the unchanged 8,800-byte ADPCM tables,
-	   followed by the checked one-shot extension in existing sector padding.
-	   Copy the code to the still-unused timed-ring tail before executing it. */
+	   followed by the checked boot extension in existing sector padding.
+	   Keep the qualified 88-byte ADPCM copy byte-for-byte identical.  A route
+	   longer than 8 KiB can overwrite the staged second entry, so only that
+	   uncommon build copies the complete extension before routing is loaded. */
 	moveq	#ADPCM_TABLE_SECTORS, d0
 	lea	ROUTING_TMP, a0
 	bsr	drain_lin_staged
 	lea	SP_EXTENSION_LOAD_BASE, a0
 	lea	SP_EXTENSION_EXEC_BASE, a1
+.ifdef ROUTING_EXTENSION_IN_STAGE
+	move.w	#ADPCM_BOOT_COPY_LONGS-1, d0
+.else
 	move.w	#SP_EXTENSION_LONGS-1, d0
+.endif
 1:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
@@ -630,41 +660,20 @@ pb_lp:
 	move.w	d7, (COMSTAT1).l		/* boot UI: remaining PrgBuf preload sectors */
 	bne	pb_lp
 pb_done:
-	/* Validate every v7+ route once before it can steer BODY sectors. Values above
-	   0x2D cover reserved bits or total 6/7; the second comparison rejects
-	   n_ctrl > total. Frame 0 must have the single zero entry. */
-	lea	ROUTING_TMP, a0
-	tst.b	(a0)
-	bne	bad_header
-	PC_MOVE_W h_frames, PC_FRAMES, d7
-	subq.w	#1, d7
-rt_validate:
-	moveq	#0, d0
-	move.b	(a0)+, d0
-	cmpi.b	#ROUTING_MAX_ENTRY, d0
-	bhi	bad_header
-	move.w	d0, d2
-	andi.w	#ROUTING_CTRL_MASK, d0		/* n_ctrl */
-	lsr.w	#ROUTING_TOTAL_SHIFT, d2	/* total (reserved bits already proved zero) */
-	cmp.w	d2, d0
-	bhi	bad_header
-	dbra	d7, rt_validate
 	/* HEADER.DAT is exhausted, so a boot-only copy cannot delay its continuous
-	   drain. Duplicate the sector-sized routing reservation into both physical
-	   1M Word-RAM banks. drain_frame may run ahead of frame_idx, so splitting the
-	   table by frame parity would select the wrong bank. Two toggles return to
-	   the original frame-0/PALTAB bank before expansion. */
-	moveq	#ROUTING_BANK_COPIES-1, d1
-rt_bank:
-	lea	ROUTING_TMP, a0
+	   drain. Validate every packed route and duplicate the sector-sized routing
+	   reservation into both physical 1M Word-RAM banks. This boot-only work runs
+	   from the HEADER-preloaded extension, leaving resident space for Q. */
 	lea	ROUTING, a1
-	move.w	#ROUTING_COPY_LONGS-1, d0
-rt_copy:
-	move.l	(a0)+, (a1)+
-	dbra	d0, rt_copy
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	dbra	d1, rt_bank
+	PC_MOVE_W h_frames, PC_FRAMES, d7
+	move.w	#ROUTING_COPY_LONGS, d5
+.ifdef ROUTING_EXTENSION_IN_STAGE
+	jsr	(SP_EXTENSION_LOAD_BASE+ADPCM_BOOT_COPY_BYTES).l
+.else
+	jsr	(SP_EXTENSION_EXEC_BASE+ADPCM_BOOT_COPY_BYTES).l
+.endif
+	tst.w	d0
+	bne	bad_header
 	/* Prepare the steady-state queues and expand frame 0 before starting the
 	   independent timed BODY.DAT read. ROUTING_TMP is now free for APPLY. */
 	move.l	#APPLY_BASE, apply_tail
@@ -691,6 +700,12 @@ rt_copy:
 	beq.s	1b
 	/* Start one continuous read at BODY.DAT's actual ISO extent.  Rebase slip
 	   recovery there because HEADER.DAT and BODY.DAT need not be adjacent. */
+.ifdef DEBUG_PRGBUF_Q
+	/* Frame 0 used boot-only pattern storage. Reset the signed timed balance
+	   immediately before the first BODY payload can append to it. */
+	PC_MOVE_W h_prebuf_pat+2, PC_PREBUF_PAT, d0
+	move.w	d0, ring_level
+.endif
 	move.w	#1, drain_frame
 .ifdef PLAYER_SPECIALIZED
 .if PC_FRAMES < 2
@@ -1160,6 +1175,9 @@ p1_ring:
 	movea.l	#RING_BASE, a0
 1:
 	move.l	a0, ring_tail
+.ifdef DEBUG_PRGBUF_Q
+	addi.w	#64, ring_level		/* one 2 KiB payload sector = 64 patterns */
+.endif
 .ifdef DEBUG
 	/* Only a payload append can raise occupancy. Keep the exact sticky
 	   high-water in 32-byte patterns in dedicated COMSTAT2; Main converts
@@ -1235,6 +1253,20 @@ pump_poll:
 pump_poll_after_pop:
 	tst.w	f0_expand
 	bne.s	1f
+.ifdef DEBUG_PRGBUF_Q
+	/* Pop accounting is updated by each Prg run, but compare only at the
+	   existing refill boundary. This preserves the pre-refill minimum without
+	   adding a compare to every descriptor in the Sub hot loop. */
+.ifdef DEBUG_PRGMIN_DIRECT
+	move.w	ring_level, (O_PRGMIN).l
+.else
+	move.w	ring_level, d0
+	cmp.w	ring_frame_min, d0
+	bge.s	2f
+	move.w	d0, ring_frame_min
+2:
+.endif
+.endif
 	move.l	a4, ring_head
 1:
 	bra.s	pump_poll
@@ -1295,6 +1327,13 @@ process_frame:
 .ifdef DEBUG
 	clr.w	pf_ctrl_wait
 	clr.w	pf_body_wait
+.ifdef DEBUG_PRGBUF_Q
+.ifdef DEBUG_PRGMIN_DIRECT
+	move.w	ring_level, (O_PRGMIN).l
+.else
+	move.w	ring_level, ring_frame_min
+.endif
+.endif
 .endif
 pf_pump:
 	move.w	frame_idx, d0			/* pump1_core may trash d0; reload each pass */
@@ -1594,6 +1633,12 @@ ef_run:
 	add.w	d3, d4
 	tst.w	d0
 	bne	ef_run_next			/* Wr/Dic: Main DMA reads the persistent preload directly */
+.ifdef DEBUG_PRGBUF_Q
+	/* Charge the complete Prg run before its bytes are copied.  Unlike the
+	   modulo head/tail distance, this signed balance preserves an underflow
+	   as negative debt until later payload sectors repay it. */
+	sub.w	d3, ring_level
+.endif
 	subq.w	#1, d3
 ef_run_pattern:
 	/* Do not include postincrement base a4 in the MOVEM register list.  On
@@ -1707,6 +1752,20 @@ ef_finalize:
 1:
 .endif
 ef_store:
+.ifdef DEBUG_PRGBUF_Q
+.ifndef INCLUDE_PATTERN_SUPPLY
+	/* Canonical v16 streams use run descriptors above.  Retain a final-balance
+	   diagnostic for legacy builds without that suffix. */
+	tst.w	f0_expand
+	bne.s	8f
+	sub.w	d4, ring_level
+	move.w	ring_level, d0
+	cmp.w	ring_frame_min, d0
+	bge.s	8f
+	move.w	d0, ring_frame_min
+8:
+.endif
+.endif
 	move.w	d4, (O_NLOAD).l
 	move.w	slip_count, (O_SLIP).l	/* 滑り(=再シーク回復)回数をMDへ=グリッチマーカー */
 	move.w	desync_count, (O_DSY).l	/* desync検知回数をMDへ(再シーク回復が効けば0のまま) */
@@ -1715,6 +1774,11 @@ ef_store:
 .ifdef DEBUG
 	move.w	pf_ctrl_wait, (O_CTRLWAIT).l
 	move.w	pf_body_wait, (O_BODYWAIT).l
+.ifdef DEBUG_PRGBUF_Q
+.ifndef DEBUG_PRGMIN_DIRECT
+	move.w	ring_frame_min, (O_PRGMIN).l
+.endif
+.endif
 .endif
 	tst.w	f0_expand
 	bne.s	1f
@@ -2280,6 +2344,14 @@ pf_ctrl_wait:
 	.word	0				/* current-frame control wait pumps */
 pf_body_wait:
 	.word	0				/* prior BODY frame wait pumps */
+.ifdef DEBUG_PRGBUF_Q
+ring_level:
+	.word	0				/* signed logical PrgBuf balance in 32-byte patterns */
+.ifndef DEBUG_PRGMIN_DIRECT
+ring_frame_min:
+	.word	0				/* signed minimum balance observed during this frame */
+.endif
+.endif
 .endif
 
 sp_end:

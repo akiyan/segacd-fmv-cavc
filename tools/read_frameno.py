@@ -8,6 +8,8 @@ HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値�
 16進2桁、U は16進4桁。U はMain pattern転送時間（Mega-CD stopwatchの
 30.72 us tick）、N はcold-run数の下位byte、J はfps由来の通常PrgBuf上限を超えた
 streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
+H40 DEBUG は Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
+最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
 各8x8セルの上段バーコードを直接4-bitとして読み、下段の小型hex字形とのNCCで
 信頼度を確認する。ネイティブ録画の原点(0,0)は即時判定し、位置がずれた画像だけ
 先頭4桁で原点を探索する。
@@ -50,12 +52,16 @@ HUD_FIELD_DIGITS = (     # 値のみ。field間の空けはない
     ("J", 2),
 )
 HUD_H40_FIELD_DIGITS = HUD_FIELD_DIGITS
-# H40 DEBUG builds with HUD_FLIP_FIELDS append three flip-phase fields:
+# H40 DEBUG builds with HUD_FLIP_FIELDS append one exact signed PrgBuf
+# diagnostic, then three flip-phase fields:
+# Q = per-frame minimum logical PrgBuf balance in 32-byte patterns. It is a
+#     four-digit signed 16-bit value (0000 empty, FFFF one-pattern underflow).
 # V = V-counter at the previous accepted flip, O = that flip's interval
 # excess over 1024 stopwatch ticks (nominal N2 interval ~1086; clamped FF),
 # E = this frame's Pass2 entry delay since the previous flip in 4-tick
 # units (clamped FF).
 HUD_H40_FLIP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
+    ("Q", 4),
     ("V", 2),
     ("O", 2),
     ("E", 2),
