@@ -149,6 +149,21 @@ class BodyDeliveryRateTests(unittest.TestCase):
 
 
 class PayloadRingScheduleTests(unittest.TestCase):
+    def test_repaid_rate_debt_is_not_a_feasible_fixed_cadence_route(
+            self) -> None:
+        result = schedule.schedule_payload_ring(
+            [0, 0, 0, 0],
+            [0, 5000, 0, 0],
+            fps=30,
+            ring_capacity_patterns=64,
+            prebuffer_capacity_patterns=64,
+            frame_sectors=5,
+            fill=True,
+        )
+        self.assertEqual(result["rate_lead_peak"], 1)
+        self.assertEqual(result["rate_lead_end"], 0)
+        self.assertFalse(result["feasible"])
+
     def test_useful_body_trace_excludes_header_and_all_padding(self) -> None:
         result = schedule.schedule_payload_ring(
             [64, 64, 64, 1],

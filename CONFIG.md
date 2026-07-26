@@ -200,10 +200,11 @@ ceiling for the current frame.
 The prefix ledger and exact delivery schedule use the normal 378/393/398 KiB
 PrgBuf capacity at 15/24/30 fps. The corresponding 40/25/20 KiB interval up to
 the 418 KiB observation boundary is runtime-only sector-arrival headroom, not
-encoder Supply. Every BODY prefix must fit the five-useful-sector route
-accumulated to that point under this capacity. Sim applies the constraint
-before image decisions, freezes the resulting proof, and packer requires exact
-schedule equality.
+encoder Supply. Every BODY prefix must fit both the five-useful-sector route
+and the fps-derived cumulative CD-1x time available at that point. The exact
+finite-PrgBuf route must keep `rate_lead_peak` at zero; later pad cannot repay
+elapsed display delay. Sim applies the constraint before image decisions,
+freezes the resulting proof, and packer requires exact schedule equality.
 
 `buffer_remaining.npz` schema 7 stores:
 
@@ -579,8 +580,10 @@ switchとrun descriptorを予約し、current frameのPrg ceilingとcontrol-byte
 prefix ledgerと正確なdelivery scheduleは、15/24/30 fpsで通常PrgBuf容量
 378/393/398 KiBを使います。418 KiB観測境界までの40/25/20 KiBはruntime専用の
 sector到着headroomで、encoder Supplyではありません。各BODY prefixはこの容量の下で、
-その時点までに累積した有効5-sector routeへ収まらなければなりません。simは画像決定前に
-制約を適用してproofを固定し、packerがscheduleの完全一致を要求します。
+有効5-sector routeと、その時点までにfpsから導出した累積CD-1x時間の両方へ収まる必要が
+あります。有限PrgBufを含む正確なrouteは `rate_lead_peak` をzeroに保ち、後のpadで
+経過済み表示遅延を返済することは認めません。simは画像決定前に制約を適用してproofを
+固定し、packerがscheduleの完全一致を要求します。
 
 `buffer_remaining.npz` schema 7は次を保存します。
 

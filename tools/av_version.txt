@@ -11,6 +11,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e139: Make fixed-cadence CD time a construction constraint rather than a
+#         whole-movie average. Every online control/Prg prefix now fits both
+#         the routing-byte useful-sector ceiling and the fps-derived cumulative
+#         CD-1x allowance, and the exact finite-PrgBuf route must keep
+#         rate_lead_peak at zero. A heavy slot can no longer borrow time from
+#         later light slots, because elapsed display delay is irreversible and
+#         otherwise becomes producer lead into the finite APPLY queue.
 #   p96: Add the opt-in H40 DEBUG SUB_POLL_GAP_DIAG player. It replaces Q
 #        with G, the maximum time spent outside the Sub CDC pump between
 #        service opportunities in 30.72 us stopwatch ticks, while retaining
@@ -863,5 +870,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260726
-e=138
+e=139
 p=96

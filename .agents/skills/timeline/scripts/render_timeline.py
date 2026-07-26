@@ -309,7 +309,7 @@ def prg_cap_summary(measured_cap: int) -> str:
     """Describe the fixed cold cap and construction-time physical planning."""
     return (
         f"Cold cap fixed at {measured_cap}; Prg limits come from the one-pass "
-        "shared-sector prefix ledger before each frame; no reactive feedback")
+        "cadence-sector prefix ledger before each frame; exact rate lead stays zero")
 
 
 def true_run_lengths(mask: np.ndarray) -> np.ndarray:

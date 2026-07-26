@@ -309,10 +309,14 @@ ratedelta = acc // fps_int
 acc %= fps_int
 ```
 
-`lead` increases by `fsec - ratedelta`. A necessary burst may exceed that
-slot's fresh allowance; later light slots omit pad until the lead is repaid.
-The packer fills unused rate allowance with future payload while PrgBuf space
-and all deadlines permit it.
+`lead` increases by `fsec - ratedelta`. The accumulator is shared with the
+player, but a qualified fixed-cadence stream keeps its peak at zero. A slot
+cannot exceed its fresh allowance because the resulting elapsed display delay
+cannot be recovered by a later light slot. Before image decisions, the encoder
+limits every control/Prg prefix by both cumulative CD-1x time and the
+routing-byte ceiling. The exact finite-PrgBuf schedule repeats the proof. The
+packer fills same-slot unused allowance with future payload only while PrgBuf
+space and all deadlines permit it.
 
 The pump applies back-pressure according to the next sector's destination:
 APPLY space for control, PrgBuf space for payload, and no buffer check for pad.
@@ -708,9 +712,12 @@ ratedelta = acc // fps_int
 acc %= fps_int
 ```
 
-`lead` は `fsec - ratedelta` だけ増えます。必要なburstはそのslotの新規allowanceを
-超えられますが、後の軽いslotがpadを省いてleadを返済します。packerはPrgBuf空きと
-全deadlineが許す範囲で未使用rate allowanceを将来payloadに置き換えます。
+`lead` は `fsec - ratedelta` だけ増えます。このaccumulatorはplayerと共有しますが、
+認定済みfixed-cadence streamではpeakをzeroに保ちます。slotが新規allowanceを超えると
+経過済みの表示遅延になり、後の軽いslotでは取り戻せないためです。encoderは画像決定前に、
+control/Prgの全prefixを累積CD-1x時間とrouting-byte上限の両方で制限し、有限PrgBufを
+含む正確なscheduleでも同じproofを繰り返します。packerはPrgBuf空きと全deadlineが
+許す範囲で、同じslot内の未使用allowanceだけを将来payloadに置き換えます。
 
 pumpのback-pressureは次sectorの行き先ごとに適用します。controlならAPPLY空き、
 payloadならPrgBuf空き、padならbuffer checkなしです。payloadはcurrent frameが
