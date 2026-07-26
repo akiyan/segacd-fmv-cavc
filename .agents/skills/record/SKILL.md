@@ -22,7 +22,9 @@ Use this skill to:
   proceed to `compilation` or another upload step, while preserving `C/A` as
   diagnostics;
 - render the complete HUD TSV through the `hudline` skill, show it inline, and
-  publish the PNG to a public Gist after every full recording;
+  publish the PNG to a public Gist after every full recording, then require the
+  matching codec timeline and render, show, and publicly publish the combined
+  `mixline`;
 - return the raw lossless MKV, sidecars, and verification preview.
 
 Do not apply upload PAR/upscaling, create YouTube metadata, or upload here. Pass the verified
@@ -292,10 +294,13 @@ Check the raw MKV and reports before trusting a capture:
 8. Immediately invoke the `hudline` skill with this exact HUD TSV, gate JSON,
    profile, and recording identity. Render and inspect the full first-loop PNG,
    show it inline, and publish it to a public Gist even when the gate fails.
-   Preserve the PNG, its layout receipt, and Gist receipt next to the recording.
-   A `FAIL` still stops compilation and uploads after its diagnostic image has
-   been published. Under `$run`, `PASS` and `WARNING` continue without another
-   approval pause.
+   Require the matching timeline from the exact sim decision log, generating
+   and publicly publishing it first when absent. Immediately invoke `mixline`,
+   inspect and show the aligned combined PNG, and publish it to a public Gist.
+   Preserve the timeline, hudline, and mixline PNGs, layout receipts, and Gist
+   receipts next to the recording. A `FAIL` still stops compilation and uploads
+   after both diagnostic images have been published. Under `$run`, `PASS` and
+   `WARNING` continue without another approval pause.
 
 Structural audio presence is not a substitute for listening. Claim that the
 sound is clean or free of audible clicks only after listening to the final file.
@@ -328,8 +333,8 @@ fps-derived normal ceiling. A `PASS` or `WARNING` `S/D/R/M/J` gate JSON is the
 required handoff condition; `C/A` remain recorded diagnostics. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
-trim or chapter point. The matching `hudline` PNG and public-Gist receipt are
-required recording sidecars.
+trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and
+public-Gist receipts are required recording sidecars.
 
 ## Existing recordings and smoke tests
 
@@ -374,5 +379,5 @@ path, requested/max frame count, wall time, and speed. When the run requalifies
 the fast path, additionally report the exact-comparison JSON/pass state and
 repeat-run result. For an upload-capable capture, report the HUD gate JSON,
 complete-loop frame count, `S/D/R/M/J` gate maxima, the diagnostic C maximum,
-`C/A` minimum, mean, median, and maximum, gate state, hudline PNG, and the
-public Gist/raw image URLs.
+`C/A` minimum, mean, median, and maximum, gate state, hudline and mixline PNGs,
+and both public Gist/raw image URLs.

@@ -1,13 +1,13 @@
 ---
 name: hudline
-description: Render, inspect, and publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A fields need frame-by-frame visual comparison.
+description: Render, inspect, and publicly publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON, then require the matching codec timeline and publicly publish their combined mixline. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A fields need frame-by-frame visual comparison.
 ---
 
 # Playback HUD Timeline
 
 Create one deterministic full-recording diagnostic image after the complete HUD
-OCR pass. Keep the image frame-aligned with `/timeline` so a future `/mixline`
-can combine both without resampling.
+OCR pass. Keep the image frame-aligned with `/timeline`, then immediately use
+`/mixline` to combine both without resampling.
 
 ## Workflow
 
@@ -83,6 +83,13 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
    PNG URL. Do this after every completed recording, whether the gate passes or
    fails. Public Gist publication is authorized only when the user requested
    this workflow.
+7. Require the matching `/timeline` PNG and layout receipt from the exact sim
+   decision log used to build the recording. If they are absent, generate and
+   publicly publish that timeline first. Immediately invoke `/mixline`, inspect
+   the aligned combined PNG, show it inline, and publish it to a public Gist.
+   Preserve the timeline, hudline, and mixline layout/Gist receipts. This is
+   mandatory for every hudline, including `FAIL` and incomplete-loop evidence;
+   do not finish the workflow with only the hudline.
 
 ## Image contract
 
@@ -131,7 +138,7 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   the compact row height. Keep the unit subheading at 13 px.
 - `/mixline` consumes this image and its layout receipt directly. Any hudline
   row-height, scale, or colour change must therefore appear automatically in
-  the next mixline without a second hard-coded layout.
+  the immediately generated mixline without a second hard-coded layout.
 - Write a `<output>.json` layout receipt containing the input hashes, frame
   mapping, row geometry, fixed scales, gate limits, `C/A` minimum, mean,
   median, and maximum, and recording identity. `/mixline` should consume this
