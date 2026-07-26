@@ -41,7 +41,9 @@ Report the Gist page, raw PNG URL, and clickable local image path.
 
 - Consolidate both source titles and run specifications into one header at the
   top. Show `S/D/R/M/J` as gate maxima/limits and show C separately as a
-  diagnostic maximum. Do not retain two full, repetitive headers.
+  diagnostic maximum. When present, also show G's diagnostic maximum and the
+  B APPLY-back-pressure frame count. The full G/B/K rows remain in the
+  pixel-preserved hudline body. Do not retain two full, repetitive headers.
 - Preserve both source graph bodies pixel-for-pixel. Crop the duplicated
   headers. Also crop `/timeline` immediately after its final data row so its
   horizontal ticks and lower explanation are omitted; `/hudline` owns the one

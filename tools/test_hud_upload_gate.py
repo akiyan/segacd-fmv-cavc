@@ -237,6 +237,63 @@ class HudUploadGateTests(unittest.TestCase):
             {field: 0 for field in "SDRCMJ"},
         )
 
+    def test_h40_sub_poll_gap_is_preserved_as_diagnostic_ticks(self):
+        rows = groups(3)
+        for row, gap, slip, msf_gap in zip(
+            rows,
+            (0x0FFF, 0x8000 | 120, 240),
+            (0, 3, 5),
+            (0, 2, 4),
+            strict=True,
+        ):
+            row.values.update({
+                "P": 0,
+                "S": slip,
+                "L": 0,
+                "W": 0,
+                "A": 0,
+                "G": gap,
+                "K": msf_gap,
+            })
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hud.tsv"
+            analyze.write_tsv(path, rows, [])
+            with path.open(encoding="utf-8", newline="") as handle:
+                parsed = list(csv.DictReader(handle, delimiter="\t"))
+        self.assertEqual(parsed[1]["sub_poll_gap_ticks"], "120")
+        self.assertEqual(parsed[1]["sub_poll_gap_ms"], "3.68640")
+        self.assertEqual(parsed[1]["sub_poll_gap_raw16"], str(0x8000 | 120))
+        self.assertEqual(parsed[1]["apply_guard_blocked"], "1")
+        self.assertEqual(parsed[1]["slip_msf_gap_count"], "2")
+        self.assertEqual(parsed[1]["slip_trn_retry_count"], "1")
+        rows[1].values["S"] = 1
+        rows[1].values["K"] = 255
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hud.tsv"
+            analyze.write_tsv(path, rows, [])
+            with path.open(encoding="utf-8", newline="") as handle:
+                wrapped = list(csv.DictReader(handle, delimiter="\t"))
+        self.assertEqual(wrapped[1]["slip_trn_retry_count"], "2")
+        for row in rows:
+            row.values["S"] = 0
+            row.values["K"] = 0
+        result = self.evaluate(rows, 3)
+        self.assertEqual(
+            result["diagnostic_fields"], ["C", "A", "G", "B", "K"]
+        )
+        self.assertEqual(result["apply_guard_blocked_frames"], 1)
+        self.assertEqual(
+            result["sub_poll_gap_statistics"],
+            {
+                "minimum": 120,
+                "mean": 180.0,
+                "median": 180.0,
+                "maximum": 240,
+                "sample_count": 2,
+            },
+        )
+        self.assertEqual(result["status"], "PASS")
+
 
 if __name__ == "__main__":
     unittest.main()

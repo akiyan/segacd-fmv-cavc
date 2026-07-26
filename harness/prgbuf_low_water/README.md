@@ -5,6 +5,9 @@ This harness separates two similarly shaped but different measurements:
 - Timeline `status_prg` is the packer's modeled end-of-frame PrgBuf occupancy.
 - H40 DEBUG HUD `Q` is the player's live signed minimum logical balance reached
   during that frame, in exact 32-byte patterns.
+- H40 `SUB_POLL_GAP_DIAG` HUD `G` measures the longest interval outside a Sub
+  CDC pump opportunity; `B` proves APPLY control-queue back-pressure rejected
+  a pump, and `K` identifies the MSF-gap subset of `S`.
 
 The timeline can look like zero on its fixed whole-movie scale while still
 holding a small positive amount. Only `Q=0000` proves that the live logical
@@ -25,13 +28,15 @@ rejected without changing playback scheduling or image-quality settings.
 
 ## Usage
 
-Analyze the timed part of H40 Bad Apple while excluding the terminal drain:
+Analyze the timed part of H40 Bad Apple while excluding the terminal drain.
+For a `G/K/O/E` recording, include the expected 30 fps cadence:
 
 ```sh
 tools/python.sh harness/prgbuf_low_water/analyze.py \
   logs/TIMELINE_timeline.tsv logs/HUD_hud.tsv \
   --evaluation-end-frame 6422 \
   --low-patterns 256 \
+  --normal-vblanks 2 \
   --ranges-tsv tmp/bad-apple-h40/prgbuf_low_ranges.tsv \
   --events-tsv tmp/bad-apple-h40/prgbuf_slip_events.tsv
 ```
@@ -40,7 +45,11 @@ The range table reports each modeled low-water interval and the next cumulative
 `S` / `R` transition. The event table preserves the model and live `Q` values
 at every transition. The console summary separately reports every contiguous
 live-`Q` low-water interval and the distance from its end to the next `S`
-transition. Both file outputs are UTF-8 TSV.
+transition. When G/B/K columns are present, it also reports G statistics,
+every B frame, the B-to-next-S distance, the MSF/TRN cause totals, and extra
+capture scanouts accumulated in each low-water range. The event TSV preserves
+those cause fields at every `S`/`R` transition. Both file outputs are UTF-8
+TSV.
 
 Run the focused tests with:
 

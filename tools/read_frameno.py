@@ -10,6 +10,10 @@ HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値�
 streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
 H40 DEBUG は Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
 最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
+SUB_POLL_GAP_DIAG buildは同じ幅でG/K/O/Eを出す。Gはframe内でSub CDC
+pump外にいた最大時間を30.72 us stopwatch tick単位で示し、KはMSF連番gapから
+再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureがcontrol sector
+pumpを拒否したframeを示すB markerである。
 各8x8セルの上段バーコードを直接4-bitとして読み、下段の小型hex字形とのNCCで
 信頼度を確認する。ネイティブ録画の原点(0,0)は即時判定し、位置がずれた画像だけ
 先頭4桁で原点を探索する。
@@ -66,6 +70,12 @@ HUD_H40_FLIP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
     ("O", 2),
     ("E", 2),
 )
+HUD_H40_POLL_GAP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
+    ("G", 4),
+    ("K", 2),
+    ("O", 2),
+    ("E", 2),
+)
 
 
 def _make_layout(field_digits):
@@ -83,6 +93,12 @@ HUD_H40_LAYOUT, HUD_H40_CELLS = _make_layout(HUD_H40_FIELD_DIGITS)
 HUD_H40_FIELDS = tuple(name for name, _col, _digits in HUD_H40_LAYOUT)
 HUD_H40_FLIP_LAYOUT, HUD_H40_FLIP_CELLS = _make_layout(HUD_H40_FLIP_FIELD_DIGITS)
 HUD_H40_FLIP_FIELDS = tuple(name for name, _col, _digits in HUD_H40_FLIP_LAYOUT)
+HUD_H40_POLL_GAP_LAYOUT, HUD_H40_POLL_GAP_CELLS = _make_layout(
+    HUD_H40_POLL_GAP_FIELD_DIGITS
+)
+HUD_H40_POLL_GAP_FIELDS = tuple(
+    name for name, _col, _digits in HUD_H40_POLL_GAP_LAYOUT
+)
 H40_NATIVE_WIDTH = 320
 
 

@@ -44,6 +44,40 @@ class AnalyzeTest(unittest.TestCase):
             ],
         )
 
+    def test_poll_gap_backpressure_and_scanout_diagnostics(self) -> None:
+        hud = {
+            10: ANALYZE.HudRow(
+                10, 0, 0, None, None,
+                capture_first=100,
+                poll_gap_ticks=275,
+                apply_guard_blocked=1,
+                msf_gap_count=0,
+                trn_retry_count=0,
+            ),
+            11: ANALYZE.HudRow(
+                11, 1, 0, None, None,
+                capture_first=103,
+                poll_gap_ticks=280,
+                apply_guard_blocked=0,
+                msf_gap_count=1,
+                trn_retry_count=0,
+            ),
+            12: ANALYZE.HudRow(
+                12, 1, 0, None, None,
+                capture_first=105,
+                poll_gap_ticks=276,
+                apply_guard_blocked=0,
+                msf_gap_count=1,
+                trn_retry_count=0,
+            ),
+        }
+        self.assertEqual([10], ANALYZE.apply_block_frames(hud))
+        self.assertEqual(10, ANALYZE.prior_frame([10], 11))
+        self.assertEqual(
+            1,
+            ANALYZE.interval_extra_scanouts(hud, 10, 11, 2),
+        )
+
     def test_tsv_writers_use_tabs(self) -> None:
         timeline = [
             ANALYZE.TimelineRow(1, 200),
@@ -64,6 +98,7 @@ class AnalyzeTest(unittest.TestCase):
         self.assertIn("\t", ranges_text.splitlines()[0])
         self.assertIn("\t", events_text.splitlines()[0])
         self.assertIn("\t-2\t2", events_text)
+        self.assertIn("prior_apply_block_frame", events_text.splitlines()[0])
 
 
 if __name__ == "__main__":

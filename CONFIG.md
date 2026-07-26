@@ -356,6 +356,7 @@ the four physical supplies are fixed behavior.
 | `DMA_RUN_FASTPATH` | 1 | CPU-copy one/two-tile runs and DMA longer runs. Zero selects all-DMA diagnosis. |
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
+| `SUB_POLL_GAP_DIAG` | 0 | H40 DEBUG only: replace `Q/V` with `G/K` to measure the longest interval outside the Sub CDC pump, APPLY back-pressure, and MSF-gap recovery cause. Release and ordinary DEBUG players are unchanged. |
 
 Specialized builds compare the CRC-32 header signature before playback. The
 resident Sub linker output remains limited to 4,096 bytes, and the BIOS boot
@@ -723,6 +724,7 @@ segmented palette、Near、boot prefetch、4つの物理供給は固定behavior�
 | `DMA_RUN_FASTPATH` | 1 | 1〜2 tile runをCPU、長いrunをDMAで転送する。zeroは診断用all-DMA。 |
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
+| `SUB_POLL_GAP_DIAG` | 0 | H40 DEBUG専用。`Q/V`を`G/K`へ置き換え、Sub CDC pump外の最長interval、APPLY back-pressure、MSF-gap recovery原因を測る。Releaseと通常DEBUG playerは変わらない。 |
 
 specialized buildはplayback前にCRC-32 header signatureを比較します。Resident Subの
 linker outputは4,096 byte以内を維持し、BIOS boot imageはそのresident moduleだけを

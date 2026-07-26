@@ -259,6 +259,11 @@ Check the raw MKV and reports before trusting a capture:
    per-frame minimum streamed-PrgBuf balance in exact 32-byte patterns:
    `0000` means truly empty and `FFFF` means one pattern of underflow. All four
    appended fields are diagnostic and do not change the five-field upload gate.
+   For an H40 `SUB_POLL_GAP_DIAG=1` build, use `--poll-gap-fields` instead.
+   It preserves `G/K/O/E`, decodes `G` low 12 bits as the longest interval
+   outside the Sub CDC pump in 30.72 us ticks, separates `G` bit 15 as the
+   per-frame APPLY back-pressure marker `B`, and records `K` as the cumulative
+   MSF-gap recovery count. The two layout options are mutually exclusive.
 
    The profile is mandatory and positional because the M/J limits follow the
    packed player's cadence. The gate result is `PASS`, `WARNING`, or `FAIL`.
@@ -271,8 +276,10 @@ Check the raw MKV and reports before trusting a capture:
    - every cadence: `S/D/R=00`; `J<=2D` at 15fps, `J<=1E` at 24fps,
      or `J<=19` at 30fps.
 
-   `C` and `Q` are diagnostic only. They have no limits and never change the gate status;
-   report the C distribution and Q minimum, and correlate them with actual
+   `C`, `Q`, `G`, `B`, and `K` are diagnostic only. They have no limits and
+   never change the gate status. Report the C distribution and Q minimum when
+   available. For the pump layout, report the G distribution, B frame count,
+   and `(S-K) & 0xFF` CDC_TRN retry-exhaustion count, and correlate them with actual
    playback failures.
    The M limit permits all display fields available to one content frame. The
    `J` limit is derived from the stream's generated
@@ -289,7 +296,8 @@ Check the raw MKV and reports before trusting a capture:
    `A` across the timed first loop, excluding frame 0. When `Q` is present,
    also report its signed logical minimum and peak underflow debt. The analyzer must store
    these statistics in the gate JSON so `hudline` can validate and preserve
-   them. On PASS or WARNING, also report all five gate maxima and the
+   them. When `G` is present, also report and preserve its minimum, mean,
+   median, and maximum after separating `B`. On PASS or WARNING, also report all five gate maxima and the
    diagnostic C maximum. A standalone `record` request ends with the
    verified recording because it did not authorize publication. Under `$run`,
    the existing upload authorization is sufficient; continue without asking
@@ -313,7 +321,8 @@ sound is clean or free of audible clicks only after listening to the final file.
 
 The standard capture already builds DEBUG. The HUD omits category glyphs and
 uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` order in H32 and H40. A
-specialized H40 build appends `Q/V/O/E` for a 40-cell row. Parse
+specialized H40 build appends `Q/V/O/E` for a 40-cell row; the opt-in
+`SUB_POLL_GAP_DIAG=1` layout uses `G/K/O/E` instead. Parse
 the complete first loop whenever the capture can be uploaded; for a local-only
 recording, full OCR remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
@@ -388,5 +397,6 @@ path, requested/max frame count, wall time, and speed. When the run requalifies
 the fast path, additionally report the exact-comparison JSON/pass state and
 repeat-run result. For an upload-capable capture, report the HUD gate JSON,
 complete-loop frame count, `S/D/R/M/J` gate maxima, the diagnostic C maximum,
-`C/A` minimum, mean, median, and maximum, gate state, hudline and mixline PNGs,
+`C/A` minimum, mean, median, and maximum, plus G statistics and B/K cause
+counts when present, gate state, hudline and mixline PNGs,
 and both public Gist/raw image URLs.

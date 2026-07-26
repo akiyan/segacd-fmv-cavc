@@ -7,7 +7,11 @@ The player renders values only in one fixed 30-cell order in both modes:
 
 The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Specialized H40
 DEBUG builds append Q/V/O/E; Q is the signed minimum logical PrgBuf balance
-observed during that frame, in exact 32-byte patterns.
+observed during that frame, in exact 32-byte patterns. SUB_POLL_GAP_DIAG builds
+append G/K/O/E instead; G is the maximum time spent outside the Sub CDC pump
+between service opportunities in 30.72 us stopwatch ticks, and K is the
+cumulative MSF sequence-gap recovery count. G bit 15 is a packed per-frame B
+marker showing that APPLY back-pressure rejected a control-sector pump.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -123,19 +127,28 @@ def iter_samples(
     confidence: float,
     crop_x: int,
     flip_fields: bool = False,
+    poll_gap_fields: bool = False,
 ) -> Iterable[Sample]:
     # Only the top-left HUD area is sent through the pipe.  Decoding still sees
     # every source frame, while pipe traffic stays small even for an upscaled MP4.
     available_width = probe.width - crop_x
     layout = read_frameno.hud_layout_for_width(available_width)
+    if flip_fields and poll_gap_fields:
+        raise SystemExit("--flip-fields and --poll-gap-fields are mutually exclusive")
     if flip_fields:
         if layout is not read_frameno.HUD_H40_LAYOUT:
             raise SystemExit("--flip-fields requires a native H40 recording")
         layout = read_frameno.HUD_H40_FLIP_LAYOUT
+    elif poll_gap_fields:
+        if layout is not read_frameno.HUD_H40_LAYOUT:
+            raise SystemExit("--poll-gap-fields requires a native H40 recording")
+        layout = read_frameno.HUD_H40_POLL_GAP_LAYOUT
     fields = tuple(name for name, _col, _digits in layout)
     hud_cells = (
         read_frameno.HUD_H40_FLIP_CELLS
         if layout is read_frameno.HUD_H40_FLIP_LAYOUT
+        else read_frameno.HUD_H40_POLL_GAP_CELLS
+        if layout is read_frameno.HUD_H40_POLL_GAP_LAYOUT
         else read_frameno.HUD_H40_CELLS
         if layout is read_frameno.HUD_H40_LAYOUT
         else read_frameno.HUD_CELLS
@@ -354,6 +367,39 @@ def a_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
     return field_statistics(groups, "A")
 
 
+def g_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
+    """Summarize maximum time outside the Sub CDC pump, excluding B."""
+    values = [
+        group.values["G"] & 0x0FFF
+        for group in timed_first_loop(groups)
+        if "G" in group.values
+    ]
+    if not values:
+        return {
+            "minimum": 0,
+            "mean": 0.0,
+            "median": 0.0,
+            "maximum": 0,
+            "sample_count": 0,
+        }
+    return {
+        "minimum": min(values),
+        "mean": statistics.fmean(values),
+        "median": statistics.median(values),
+        "maximum": max(values),
+        "sample_count": len(values),
+    }
+
+
+def apply_guard_blocked_frames(groups: list[FrameGroup]) -> int:
+    """Count timed frames whose packed G field records APPLY back-pressure."""
+    return sum(
+        bool(group.values["G"] & 0x8000)
+        for group in timed_first_loop(groups)
+        if "G" in group.values
+    )
+
+
 def signed_q(raw: int) -> int:
     """Decode the four-digit Q field as a signed 16-bit pattern balance."""
     return raw - 0x10000 if raw & 0x8000 else raw
@@ -396,12 +442,18 @@ def _fmt(group: FrameGroup) -> str:
     transfer = f" U{v['U']:04X} N{v['N']:02X}" if "U" in v else ""
     jitter = f" J{v['J']:02X}" if "J" in v else ""
     prgbuf = f" Q{v['Q']:04X}" if "Q" in v else ""
+    poll_gap = (
+        f" G{v['G'] & 0x0FFF:04X} B{int(bool(v['G'] & 0x8000)):02X}"
+        if "G" in v else ""
+    )
+    msf_gap = f" K{v['K']:02X}" if "K" in v else ""
     return (
         f"loop={group.loop} t={group.time_first:8.3f}s "
         f"cap={group.capture_first:5d}-{group.capture_last:<5d} "
         f"F{v['F']:04X} P{v['P']:02X} S{v['S']:02X} D{v['D']:02X} "
         f"R{v['R']:02X} L{v['L']:02X} C{v['C']:02X} W{v['W']:02X} "
-        f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf} "
+        f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf}"
+        f"{poll_gap}{msf_gap} "
         f"n={group.sample_count} "
         f"conf={group.confidence:.3f}"
     )
@@ -414,6 +466,12 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
     print(f"last:  {_fmt(groups[-1])}")
     print(format_c_statistics(c_statistics(groups)))
     print(format_a_statistics(a_statistics(groups)))
+    if "G" in groups[0].values:
+        print(format_field_statistics("G", g_statistics(groups)))
+        print(
+            "B APPLY back-pressure frames "
+            f"(timed first loop): {apply_guard_blocked_frames(groups)}"
+        )
     print(f"R transitions: {len(transitions)}")
     if "J" in groups[0].values:
         peak = max(group.values["J"] for group in groups)
@@ -464,6 +522,9 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "main_pattern_ms", "cold_runs_low8", "prgbuf_jitter_peak_kib",
         "prgbuf_min_patterns_raw16", "prgbuf_min_patterns_signed",
         "prgbuf_underflow_patterns",
+        "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
+        "apply_guard_blocked",
+        "slip_msf_gap_count", "slip_trn_retry_count",
         "flip_vcounter", "flip_interval_excess_ticks", "pass2_entry_q4",
         "r_transition", "prev_frame",
         "prev_lead_256b", "next_frame", "next_lead_256b",
@@ -481,6 +542,10 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
             prg_min_raw = values.get("Q")
             prg_min_signed = (
                 signed_q(prg_min_raw) if prg_min_raw is not None else None
+            )
+            poll_gap_raw = values.get("G")
+            poll_gap_ticks = (
+                poll_gap_raw & 0x0FFF if poll_gap_raw is not None else None
             )
             changed = index in transition_set
             previous = groups[index - 1] if changed else None
@@ -520,6 +585,25 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "prgbuf_underflow_patterns": (
                     max(0, -prg_min_signed)
                     if prg_min_signed is not None else ""
+                ),
+                "sub_poll_gap_raw16": (
+                    poll_gap_raw if poll_gap_raw is not None else ""
+                ),
+                "sub_poll_gap_ticks": (
+                    poll_gap_ticks if poll_gap_ticks is not None else ""
+                ),
+                "sub_poll_gap_ms": (
+                    f"{poll_gap_ticks * 0.03072:.5f}"
+                    if poll_gap_ticks is not None else ""
+                ),
+                "apply_guard_blocked": (
+                    int(bool(poll_gap_raw & 0x8000))
+                    if poll_gap_raw is not None else ""
+                ),
+                "slip_msf_gap_count": values.get("K", ""),
+                "slip_trn_retry_count": (
+                    (values["S"] - values["K"]) & 0xFF
+                    if "K" in values else ""
                 ),
                 "flip_vcounter": (
                     f"{values['V']:02X}" if "V" in values else ""
@@ -644,7 +728,11 @@ def evaluate_upload_gate(
         "cadence": cadence,
         "gate_fields": list(gate_fields),
         "diagnostic_fields": [
-            "C", "A", *(["Q"] if "Q" in first_loop[0].values else [])
+            "C", "A",
+            *(["Q"] if "Q" in first_loop[0].values else []),
+            *(["G"] if "G" in first_loop[0].values else []),
+            *(["B"] if "G" in first_loop[0].values else []),
+            *(["K"] if "K" in first_loop[0].values else []),
         ],
         "maxima": maxima,
         "c_statistics": c_statistics(groups),
@@ -665,6 +753,9 @@ def evaluate_upload_gate(
     if minimum is not None:
         result["prgbuf_minimum_patterns"] = minimum
         result["prgbuf_underflow_peak_patterns"] = max(0, -minimum)
+    if "G" in first_loop[0].values:
+        result["sub_poll_gap_statistics"] = g_statistics(groups)
+        result["apply_guard_blocked_frames"] = apply_guard_blocked_frames(groups)
     if profile is not None:
         result["profile"] = str(profile.path.resolve())
         result["profile_sha256"] = profile.sha256
@@ -688,6 +779,17 @@ def write_gate_json(path: Path, result: dict) -> None:
         print(
             f"  Q diagnostic min={result['prgbuf_minimum_patterns']} patterns "
             f"underflow_peak={result['prgbuf_underflow_peak_patterns']} patterns"
+        )
+    if "sub_poll_gap_statistics" in result:
+        print(
+            "  "
+            + format_field_statistics(
+                "G", result["sub_poll_gap_statistics"]
+            )
+        )
+        print(
+            "  B APPLY back-pressure frames "
+            f"(timed first loop): {result['apply_guard_blocked_frames']}"
         )
     for failure in result["failures"]:
         print(f"  gate failure: {failure}")
@@ -733,6 +835,14 @@ def parse_args() -> argparse.Namespace:
              "(HUD_FLIP_FIELDS DEBUG builds only)",
     )
     parser.add_argument(
+        "--poll-gap-fields", action="store_true",
+        help="parse the 40-cell H40 G/K/O/E diagnostic layout; G is the "
+             "maximum time outside the Sub CDC pump in exact 30.72 us ticks; "
+             "G bit 15 carries B, a per-frame APPLY back-pressure marker; "
+             "K is the cumulative MSF-gap recovery count "
+             "(SUB_POLL_GAP_DIAG builds only)",
+    )
+    parser.add_argument(
         "--max-gap", type=int, default=3,
         help="maximum capture-frame gap inside one F group (default: 3)",
     )
@@ -758,6 +868,8 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must be at least 1")
     if args.context < 0:
         parser.error("--context must not be negative")
+    if args.flip_fields and args.poll_gap_fields:
+        parser.error("--flip-fields and --poll-gap-fields are mutually exclusive")
     if args.gate_json and not args.expected_frames:
         parser.error("--gate-json requires --expected-frames")
     if args.gate_json and args.profile is None:
@@ -784,7 +896,7 @@ def main() -> int:
     )
     raw_groups = group_samples(
         iter_samples(args.recording, probe, args.confidence, args.crop_x,
-                     args.flip_fields),
+                     args.flip_fields, args.poll_gap_fields),
         args.max_gap,
     )
     groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)

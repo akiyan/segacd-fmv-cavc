@@ -49,11 +49,21 @@
 .ifdef DEBUG
 .ifdef PLAYER_SPECIALIZED
 .if PC_MODE == 1
+.ifdef SUB_POLL_GAP_DIAG
+.equ DEBUG_SUB_POLL_GAP, 1
+.else
 .equ DEBUG_PRGBUF_Q, 1
 .if PC_PUMP_MASK == 0x03FF
 .equ DEBUG_PRGMIN_DIRECT, 1
 .endif
 .endif
+.endif
+.endif
+.endif
+
+.ifdef SUB_POLL_GAP_DIAG
+.ifndef DEBUG_SUB_POLL_GAP
+.error "SUB_POLL_GAP_DIAG requires a specialized H40 DEBUG build"
 .endif
 .endif
 
@@ -113,6 +123,9 @@
 .equ COMSTAT1,    SUB_GA_BASE+0x0022
 .equ COMSTAT2,    SUB_GA_BASE+0x0024
 .equ GA_STOPWATCH,SUB_GA_BASE+0x000C    /* 12-bit, 30.72us/tick */
+/* The 68000 absolute-word form sign-extends 0x800C to the same 24-bit bus
+   address and saves two bytes in the opt-in 4 KiB diagnostic image. */
+.equ GA_STOPWATCH_ABS_W,GA_STOPWATCH-0x01000000
 
 .equ SUB_BANK_1M, 0x000C0000
 
@@ -255,7 +268,11 @@
 .equ O_AUDIOLEFT,O_STATUS+0x1C
 .equ O_RESYNC, O_STATUS+0x20
 .equ O_LEAD,   O_STATUS+0x22
+.ifdef DEBUG_SUB_POLL_GAP
+.equ O_PUMPGAP,O_STATUS+0x24
+.else
 .equ O_PRGMIN, O_STATUS+0x24
+.endif
 .equ O_HDR,    O_STATUS+0x80
 .equ PALTAB_STAGE_OFF, 0x0000
 .equ PALTAB_OFF, 0x1000
@@ -1003,7 +1020,11 @@ drain1:
 	bcs	4f
 	subq.w	#1, d6
 	bne	3b
+.ifdef DEBUG_SUB_POLL_GAP
+	addq.b	#1, (slip_count+1).w		/* total S only; do not carry into K */
+.else
 	addq.w	#1, slip_count			/* 回復: このセクタは失われた */
+.endif
 	BIOSCALL BIOS_CDC_ACK
 	movea.l	dr_dest, a0
 	bra	drain1
@@ -1037,7 +1058,17 @@ d1_check:
 	   落ちると parse がズレて永久desync(F273フリーズ実測)。かつ再シークの CDC_STOP は CDC を
 	   リセットして後続の連鎖滑りを抑える(全payload-skipにすると滑り数が 38→59 に増える実測)。
 	   Absolute LBA = read_lba + (d2 - base_msf), remaining = read_total - offset. */
+.ifdef DEBUG_SUB_POLL_GAP
+	/* Diagnostic packing: low byte remains the total S count; high byte K
+	   counts only MSF sequence gaps.  A TRN retry exhaustion increments only
+	   the low byte at the earlier recovery site. */
+	/* Increment the two packed byte counters independently so an S wrap
+	   cannot carry into K. */
+	addq.b	#1, (slip_count).w
+	addq.b	#1, (slip_count+1).w
+.else
 	addq.w	#1, slip_count
+.endif
 	move.l	d2, d0
 	sub.l	base_msf, d0			/* ファイル相対セクタ */
 	move.l	read_total, d1
@@ -1212,6 +1243,12 @@ p1_adv:
 	clr.w	drain_k
 	addq.w	#1, drain_frame
 p1_ret:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* Exclude all time spent in CDC_STAT/READ/TRN, stage copy, and slip
+	   recovery from the next outside-pump interval. */
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (poll_last_tick).w
+.endif
 	rts
 
 /* Copy the 2 KB CDC stage to PRG RAM. Six 48-byte MOVEM transfers per loop
@@ -1272,6 +1309,19 @@ pump_poll_after_pop:
 	bra.s	pump_poll
 
 pump_poll_core:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* Time spent outside the CDC pump: from the end of the previous
+	   pump/service call to this poll entry.  pump1_core refreshes the origin
+	   again after a blocking transfer or recovery, so G does not mistake the
+	   recovery itself for the delay that caused it. */
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	sub.w	poll_last_tick, d0
+	andi.w	#0x0FFF, d0
+	cmp.w	poll_max_gap, d0
+	bls.s	9f
+	move.w	d0, (poll_max_gap).w
+9:
+.endif
 	move.w	drain_frame, d0
 	beq.s	pp_done				/* v2: frame0展開中は drain_frame=0。ここで pump すると
 						   routing[0]=0 によりframe1の実セクタをpad扱いで捨て、
@@ -1312,13 +1362,30 @@ pp_apply_space:
 	add.l	#APPLY_SIZE, d0
 2:
 	cmp.l	#APPLY_SIZE-0x1000, d0
+.ifdef DEBUG_SUB_POLL_GAP
+	bcc.s	pp_apply_blocked
+.else
 	bcc.s	pp_done
+.endif
 pp_cdc:
 	/* CDCにセクタ準備できてる? (CDC_STAT: キャリー=未準備) */
 	BIOSCALL BIOS_CDC_STAT
 	bcs.s	pp_done
 	bsr	pump1_core
+.ifdef DEBUG_SUB_POLL_GAP
+	bra.s	pp_done
+pp_apply_blocked:
+	/* pf_ctrl_wait's low byte is C. Its otherwise-unused high-byte sign bit
+	   carries the sticky per-frame B marker without disturbing G updates. */
+	tas	(pf_ctrl_wait).w
+.endif
 pp_done:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* Start the next outside-pump interval only after all guard and CDC
+	   polling work in this call has finished. */
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (poll_last_tick).w
+.endif
 	rts
 
 /* 1フレーム: BODY先頭側の control sector が揃うまでポンプ → control取り出し
@@ -1327,6 +1394,11 @@ process_frame:
 .ifdef DEBUG
 	clr.w	pf_ctrl_wait
 	clr.w	pf_body_wait
+.ifdef DEBUG_SUB_POLL_GAP
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (poll_last_tick).w
+	clr.w	(poll_max_gap).w
+.endif
 .ifdef DEBUG_PRGBUF_Q
 .ifdef DEBUG_PRGMIN_DIRECT
 	move.w	ring_level, (O_PRGMIN).l
@@ -1774,6 +1846,9 @@ ef_store:
 .ifdef DEBUG
 	move.w	pf_ctrl_wait, (O_CTRLWAIT).l
 	move.w	pf_body_wait, (O_BODYWAIT).l
+.ifdef DEBUG_SUB_POLL_GAP
+	move.w	poll_max_gap, (O_PUMPGAP).l
+.endif
 .ifdef DEBUG_PRGBUF_Q
 .ifndef DEBUG_PRGMIN_DIRECT
 	move.w	ring_frame_min, (O_PRGMIN).l
@@ -2344,6 +2419,12 @@ pf_ctrl_wait:
 	.word	0				/* current-frame control wait pumps */
 pf_body_wait:
 	.word	0				/* prior BODY frame wait pumps */
+.ifdef DEBUG_SUB_POLL_GAP
+poll_last_tick:
+	.word	0				/* stopwatch tick at previous poll entry or pump return */
+poll_max_gap:
+	.word	0				/* maximum outside-pump gap in 30.72 us ticks */
+.endif
 .ifdef DEBUG_PRGBUF_Q
 ring_level:
 	.word	0				/* signed logical PrgBuf balance in 32-byte patterns */
