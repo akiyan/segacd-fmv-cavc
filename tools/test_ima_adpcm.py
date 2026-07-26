@@ -1,3 +1,5 @@
+import hashlib
+import struct
 import unittest
 
 import numpy as np
@@ -48,6 +50,55 @@ class ImaAdpcmTest(unittest.TestCase):
                      ima_adpcm.FULL_INDEX_BYTES + ima_adpcm.FULL_DELTA_BYTES]),
             5696)
         self.assertEqual(blob[-256:], ima_adpcm.output_lut())
+
+    def test_split_table_hashes_are_explicit_build_contracts(self):
+        blob = ima_adpcm.full_tables()
+        indices, deltas, output = ima_adpcm.split_tables(blob)
+        self.assertEqual(
+            hashlib.sha256(blob).hexdigest(),
+            ima_adpcm.FULL_TABLE_SHA256)
+        self.assertEqual(
+            hashlib.sha256(indices + output).hexdigest(),
+            ima_adpcm.HOT_TABLE_SHA256)
+        self.assertEqual(
+            hashlib.sha256(deltas).hexdigest(),
+            ima_adpcm.DELTA_TABLE_SHA256)
+        self.assertEqual(ima_adpcm.hot_tables(blob), indices + output)
+
+    def test_prg_hot_word_delta_split_is_sample_exact(self):
+        def table_decode(chunk: bytes, sample_count: int) -> bytes:
+            predictor, index, reserved = ima_adpcm.CHECKPOINT.unpack_from(chunk)
+            self.assertEqual(reserved, 0)
+            indices, deltas, output = ima_adpcm.split_tables()
+            predictor_offset = predictor + 0x8000
+            row_offset = index * 32
+            decoded = bytearray()
+            for packed in chunk[ima_adpcm.CHECKPOINT_BYTES:]:
+                for code in (packed & 0x0F, packed >> 4):
+                    index_offset = row_offset + code * 2
+                    next_row = struct.unpack_from(
+                        ">H", indices, index_offset)[0]
+                    delta_offset = index_offset * 2
+                    predictor_offset += struct.unpack_from(
+                        ">l", deltas, delta_offset)[0]
+                    predictor_offset = max(
+                        0, min(0xFFFF, predictor_offset))
+                    decoded.append(output[predictor_offset >> 8])
+                    row_offset = next_row
+                    if len(decoded) == sample_count:
+                        return bytes(decoded)
+            return bytes(decoded)
+
+        rng = np.random.default_rng(20260726)
+        for samples in (736, 1472):
+            pcm = rng.integers(
+                -32768, 32768, size=samples, dtype=np.int16)
+            chunk, _state = ima_adpcm.encode_chunk(pcm)
+            reference, _state = ima_adpcm.decode_chunk(chunk, samples)
+            self.assertEqual(
+                table_decode(chunk, samples),
+                ima_adpcm.pcm16_to_sign_magnitude(reference),
+            )
 
     def test_sign_magnitude_avoids_stop_marker(self):
         pcm = np.array([-32768, -32512, -32256, -256, 0, 256, 32512], np.int16)

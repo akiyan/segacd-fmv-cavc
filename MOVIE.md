@@ -85,7 +85,7 @@ resident size is `routing_sec * 2048`. The two copies are required because the
 Sub-owned bank follows the display handoff while delivery may run ahead.
 
 Frame 0 patterns use the fixed 36 KiB boot-only staging area at PRG RAM
-`0x71000..0x7A000`, which overlaps space that is not yet serving its timed
+`0x72000..0x7B000`, which overlaps space that is not yet serving its timed
 purpose. BODY does not start until frame 0 has been expanded, so this area is
 independent of the timed PrgBuf and its jitter reserve.
 
@@ -209,20 +209,25 @@ sequence runs on movie restart.
 
 ## ADPCM table
 
-Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup data
-and the remaining 1,440 bytes are zero.
+Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup
+data. The current 88-byte position-fixed Sub extension follows in existing
+padding, and the remaining 1,352 bytes are zero.
 
 | Offset | Size | Contents |
 |---:|---:|---|
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
+| 8,800 | 88 B | one-shot Sub table-copy extension |
+| 8,888 | 1,352 B | zero padding |
 
-Sub copies exactly 2,200 longs to the generated fixed-tail offset in both
+Sub keeps the disc bytes unchanged. It copies the 2,848-byte next-index table
+to PRG-RAM `0x0C000`, the 256-byte output table to `0x0CB20`, and the
+5,696-byte signed-delta table to its generated fixed-tail offset in both
 physical banks. The decoded PCM buffer is Sub-owned PRG-RAM at
-`0x08000..0x085FF`. The generated Word-RAM tail keeps an equally sized
-unallocated guard immediately below the variable routing allocation so
-player-only A/B builds retain identical preload capacities and stream bytes.
+`0x08000..0x085FF`. The generated Word-RAM tail retains the complete table and
+PCM reservations, including the unused index/output holes, so player-only A/B
+builds retain identical preload capacities and stream bytes.
 
 ## Pattern preload regions
 
@@ -312,8 +317,8 @@ before the current frame consumes its patterns.
 
 PREBUFFER contains the first `prebuf_pat` Prg patterns for frames 1 onward.
 It is loaded before playback. Both PREBUFFER and the exact scheduled-delivery
-ceiling use 382 KiB at 15 fps, 397 KiB at 24 fps, and 402 KiB at 30 fps. The
-remaining 40/25/20 KiB to the 422 KiB observation boundary is reserved for
+ceiling use 378 KiB at 15 fps, 393 KiB at 24 fps, and 398 KiB at 30 fps. The
+remaining 40/25/20 KiB to the 418 KiB observation boundary is reserved for
 live sector-arrival variation.
 
 ## BODY frame slot
@@ -481,7 +486,7 @@ sector丸めallocationへcopyします。Resident sizeは `routing_sec * 2048` �
 handoffに応じてSub所有bankが変わり、deliveryが先行し得るため、両bankに同一copyが
 必要です。
 
-frame 0 patternはPRG RAM `0x71000..0x7A000` の固定36 KiB boot-only staging
+frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
 領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。frame 0
 展開完了までBODYを開始しないため、timed PrgBufとそのjitter reserveから独立しています。
 
@@ -603,19 +608,24 @@ copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemp
 
 ## ADPCM table
 
-DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup data、残り
-1,440 byteはzeroです。
+DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup dataです。
+現在88-byteのposition-fixed Sub extensionを既存paddingへ続け、残り1,352 byteは
+zeroです。
 
 | Offset | Size | 内容 |
 |---:|---:|---|
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
+| 8,800 | 88 B | one-shot Sub table-copy extension |
+| 8,888 | 1,352 B | zero padding |
 
-Subは両方の物理bankのgenerated fixed-tail offsetへ2,200 longずつcopyします。
-Decoded PCM bufferはSub所有PRG-RAM `0x08000..0x085FF`にあります。Generated
-Word-RAM tailはvariable routing allocation直下に同じ大きさの未割当guardを保持し、
-player-only A/B buildのpreload容量とstream byteを同一にします。
+Subはdisc byteを変更せず、2,848-byte next-index tableをPRG-RAM `0x0C000`、
+256-byte output tableを`0x0CB20`、5,696-byte signed-delta tableを両physical
+bankのgenerated fixed-tail offsetへcopyします。Decoded PCM bufferはSub所有PRG-RAM
+`0x08000..0x085FF`にあります。Generated Word-RAM tailは未使用のindex/output holeを
+含むtable全体とPCMの予約を保持するため、player-only A/B buildのpreload容量とstream
+byteを同一にします。
 
 ## Pattern preload領域
 
@@ -698,8 +708,8 @@ patternを消費する前に届き得るため、schedulerは消費前のPrgBuf 
 ## Prebuffer
 
 PREBUFFERはframe 1以降で最初に使う `prebuf_pat` 個のPrg patternを持ちます。playback
-前に読み込みます。PREBUFFERと正確なscheduled-delivery上限は15 fpsで382 KiB、
-24 fpsで397 KiB、30 fpsで402 KiBです。422 KiB観測境界までの40/25/20 KiBは
+前に読み込みます。PREBUFFERと正確なscheduled-delivery上限は15 fpsで378 KiB、
+24 fpsで393 KiB、30 fpsで398 KiBです。418 KiB観測境界までの40/25/20 KiBは
 liveのsector到着変動専用です。
 
 ## BODY frame slot

@@ -38,6 +38,9 @@ MOVIEPLAY_DISC := $(MOVIEPLAY_TMP_DIR)/disc
 MOVIEPLAY_ISO := $(OUT_DIR)/$(CONFIG_STEM).iso
 MOVIEPLAY_CUE := $(OUT_DIR)/$(CONFIG_STEM).cue
 PLAYER_CONSTANTS := $(MOVIEPLAY_STREAM_DIR)/player_constants.inc
+SP_EXTENSION_OBJ := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.o
+SP_EXTENSION_BIN := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.bin
+SP_EXTENSION_CONSTANTS := $(MOVIEPLAY_BUILD_DIR)/sp_extension.inc
 
 MARSDEV ?= $(HOME)/toolchains/mars
 M68K_PREFIX ?= $(MARSDEV)/m68k-elf/bin/m68k-elf-
@@ -208,13 +211,14 @@ movieplay: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 # profile, or decision log.  Pack from the authenticated current decisions on
 # every build, removing the complete old set first so a failed pack cannot fall
 # through to a stale disc.
-moviepack: check-tools | movieplay-setup
+moviepack: check-tools $(SP_EXTENSION_BIN) | movieplay-setup
 	@rm -f $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT \
 		$(MOVIEPLAY_STREAM_DIR)/BODY.DAT \
 		$(MOVIEPLAY_STREAM_DIR)/MOVIE.DAT \
 		$(MOVIEPLAY_STREAM_DIR)/palettes.bin \
 		$(PLAYER_CONSTANTS)
-	$(PYTHON) tools/pack_stream.py --config "$(CONFIG)" --verify
+	$(PYTHON) tools/pack_stream.py --config "$(CONFIG)" \
+		--sp-extension "$(SP_EXTENSION_BIN)" --verify
 
 $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT: moviepack
 	@test -f $@
@@ -240,8 +244,17 @@ movieplay-force:
 $(PLAYER_CONSTANTS): $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT tools/player_constants.py tools/ttrc_routing.py tools/ima_adpcm.py | movieplay-setup
 	$(PYTHON) tools/player_constants.py $< --output $@
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(BOOT_DIR)/security.bin $(MOVIEPLAY_STREAM_DIR)/palettes.bin $(PLAYER_CONSTANTS) $(BOOT_DIR)/dbgfont.bin tools/av_config.py tools/ttrc_routing.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
-	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS)
+$(SP_EXTENSION_OBJ): $(BOOT_DIR)/movieplay_sp_ext.s $(CFG_DIR)/sp_ext.ld tools/av_config.py tools/ima_adpcm.py movieplay-force | movieplay-setup
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $< -o $@
+
+$(SP_EXTENSION_BIN): $(SP_EXTENSION_OBJ)
+	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp_ext.ld -o $@ $<
+
+$(SP_EXTENSION_CONSTANTS): $(SP_EXTENSION_BIN) tools/sp_extension.py tools/av_config.py | movieplay-setup
+	$(PYTHON) tools/sp_extension.py $< --output $@
+
+$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(BOOT_DIR)/security.bin $(MOVIEPLAY_STREAM_DIR)/palettes.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(BOOT_DIR)/dbgfont.bin tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
 	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
@@ -256,15 +269,15 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 			exit 1; \
 		fi
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
-	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
+$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $<
 	@bytes=$$(wc -c < $@); \
 		if [ "$$bytes" -gt 4096 ]; then \
-			echo "ERROR: $@ is $$bytes bytes; the Sega CD boot SP area is limited to 4096 bytes" >&2; \
+			echo "ERROR: $@ is $$bytes bytes; the resident Sub base image is limited to 4096 bytes" >&2; \
 			rm -f $@; \
 			exit 1; \
 		fi
@@ -272,6 +285,12 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin $(BOOT_DIR)/movieplay_boot.s
 	$(AS) $(ASFLAGS) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $(BOOT_DIR)/movieplay_boot.s -o $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out
 	$(OBJCOPY) -O binary $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out $@
+	@bytes=$$(wc -c < $@); \
+		if [ "$$bytes" -ne 32768 ]; then \
+			echo "ERROR: $@ is $$bytes bytes; the complete boot image must be 32768 bytes" >&2; \
+			rm -f $@; \
+			exit 1; \
+		fi
 
 $(MOVIEPLAY_ISO): $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT | movieplay-setup
 	@mkdir -p $(MOVIEPLAY_DISC)

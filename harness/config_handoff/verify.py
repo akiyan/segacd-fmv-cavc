@@ -44,10 +44,13 @@ def digest(path: Path) -> str:
     return h.hexdigest()
 
 
-def run_pack(decision: Path, output: Path, env: dict[str, str]) -> None:
+def run_pack(
+        decision: Path, output: Path, extension: Path,
+        env: dict[str, str]) -> None:
     command = [
         sys.executable, str(TOOLS / "pack_stream.py"),
         "--dec-log", str(decision), "--output", str(output),
+        "--sp-extension", str(extension),
     ]
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
@@ -124,10 +127,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("decision", type=Path,
                         help="an existing decision log, preferably a 30fps/full-height one")
+    parser.add_argument(
+        "--sp-extension", required=True, type=Path,
+        help="linked movieplay_sp_ext.bin to embed in the packed preload")
     args = parser.parse_args()
     decision = args.decision.resolve()
     if not decision.exists():
         raise SystemExit(f"not found: {decision}")
+    extension = args.sp_extension.resolve()
+    if not extension.exists():
+        raise SystemExit(f"not found: {extension}")
     check_profiles()
     check_cold_caps()
 
@@ -136,8 +145,10 @@ def main() -> None:
     polluted.update(POLLUTED)
     with tempfile.TemporaryDirectory(prefix="config-handoff-") as td:
         temp = Path(td)
-        run_pack(decision, temp / "clean" / "MOVIE.DAT", clean)
-        run_pack(decision, temp / "polluted" / "MOVIE.DAT", polluted)
+        run_pack(
+            decision, temp / "clean" / "MOVIE.DAT", extension, clean)
+        run_pack(
+            decision, temp / "polluted" / "MOVIE.DAT", extension, polluted)
         for name in ARTIFACTS:
             clean_hash = digest(temp / "clean" / name)
             polluted_hash = digest(temp / "polluted" / name)

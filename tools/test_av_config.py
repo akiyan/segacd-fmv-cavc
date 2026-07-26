@@ -10,26 +10,36 @@ import av_config
 
 
 class RingGeometryTests(unittest.TestCase):
-    def test_pcm_decode_buffer_uses_only_marker_verified_prg(self) -> None:
+    def test_sub_boot_and_adpcm_hot_data_use_only_verified_prg(self) -> None:
+        self.assertEqual(av_config.BOOT_IMAGE_BYTES, 0x08000)
+        self.assertEqual(av_config.SUB_BOOT_SOURCE_BASE, 0x07000)
+        self.assertEqual(av_config.SUB_BOOT_BASE_BYTES, 0x01000)
+        self.assertEqual(av_config.SUB_BOOT_EXTENSION_LOAD_BASE, 0x7D260)
         self.assertEqual(av_config.SUB_PRG_SAFE_BASE, 0x08000)
         self.assertEqual(av_config.SUB_PRG_SAFE_END, 0x09800)
         self.assertEqual(av_config.PCM_DEC_BUF_BASE, 0x08000)
         self.assertEqual(av_config.PCM_DEC_BUF_BYTES, 0x0600)
         self.assertEqual(av_config.PCM_DEC_BUF_END, 0x08600)
-        self.assertLessEqual(
-            av_config.PCM_DEC_BUF_END, av_config.SUB_PRG_SAFE_END)
+        self.assertEqual(av_config.ADPCM_INDEX_TABLE_BASE, 0x0C000)
+        self.assertEqual(av_config.ADPCM_INDEX_TABLE_BYTES, 0x0B20)
+        self.assertEqual(av_config.ADPCM_INDEX_TABLE_END, 0x0CB20)
+        self.assertEqual(av_config.ADPCM_OUTPUT_LUT_BASE, 0x0CB20)
+        self.assertEqual(av_config.ADPCM_OUTPUT_LUT_BYTES, 0x0100)
+        self.assertEqual(av_config.ADPCM_OUTPUT_LUT_END, 0x0CC20)
+        self.assertEqual(av_config.SUB_BOOT_EXTENSION_EXEC_BASE, 0x76800)
+        self.assertEqual(av_config.SUB_BOOT_EXTENSION_MAX_BYTES, 0x05A0)
 
     def test_full_reclaimed_ring_geometry(self) -> None:
-        self.assertEqual(av_config.RING_SIZE_KB, 428)
+        self.assertEqual(av_config.RING_SIZE_KB, 424)
         self.assertEqual(av_config.RING_PHYSICAL_GUARD_KB, 4)
         self.assertEqual(av_config.RING_DELIVERY_GUARD_KB, 2)
         self.assertEqual(av_config.RING_JITTER_HEADROOM_KB, 20)
         self.assertEqual(av_config.FRAME0_PATTERN_STAGING_KB, 36)
-        self.assertEqual(av_config.RING_CAP_KB, 402)
-        self.assertEqual(av_config.PRG_BUF_CAP_KB, 402)
-        self.assertEqual(av_config.QUALITY_BUDGET_KB, 402)
-        self.assertEqual(av_config.BACKPRESSURE_KB, 424)
-        self.assertEqual(av_config.DELIVERY_CAP_KB, 422)
+        self.assertEqual(av_config.RING_CAP_KB, 398)
+        self.assertEqual(av_config.PRG_BUF_CAP_KB, 398)
+        self.assertEqual(av_config.QUALITY_BUDGET_KB, 398)
+        self.assertEqual(av_config.BACKPRESSURE_KB, 420)
+        self.assertEqual(av_config.DELIVERY_CAP_KB, 418)
         self.assertEqual(
             av_config.DELIVERY_CAP_KB - av_config.RING_CAP_KB, 20)
 
@@ -37,13 +47,13 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.cadence_jitter_reserve_kb(30), 20)
         self.assertEqual(av_config.cadence_jitter_reserve_kb(24), 25)
         self.assertEqual(av_config.cadence_jitter_reserve_kb(15), 40)
-        self.assertEqual(av_config.prg_buf_cap_kb(30), 402)
-        self.assertEqual(av_config.prg_buf_cap_kb(24), 397)
-        self.assertEqual(av_config.prg_buf_cap_kb(15), 382)
+        self.assertEqual(av_config.prg_buf_cap_kb(30), 398)
+        self.assertEqual(av_config.prg_buf_cap_kb(24), 393)
+        self.assertEqual(av_config.prg_buf_cap_kb(15), 378)
         expected = {
-            15: (382, 40),
-            24: (397, 25),
-            30: (402, 20),
+            15: (378, 40),
+            24: (393, 25),
+            30: (398, 20),
         }
         for fps, (delivery_kb, headroom_kb) in expected.items():
             self.assertEqual(
@@ -62,7 +72,7 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(
             av_config.cadence_jitter_reserve_kb(24_000 / 1001), 25)
         self.assertEqual(
-            av_config.scheduled_delivery_cap_kb(15_000 / 1001), 382)
+            av_config.scheduled_delivery_cap_kb(15_000 / 1001), 378)
 
     def test_fixed_encoder_and_pack_resources(self) -> None:
         self.assertEqual(av_config.VRAM_PATTERN_BASE_TILE, 1)

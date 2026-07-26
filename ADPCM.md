@@ -41,7 +41,7 @@ The preview WAV is timed at one decoded chunk per source-video frame; the
 physical player uses the header's RF5C164 frequency delta and the actual NTSC
 playback cadence.
 
-## Word-RAM lookup tables and PRG-RAM output buffer
+## Split PRG-RAM and Word-RAM lookup tables
 
 The decoder uses one 8,800-byte full table image:
 
@@ -51,26 +51,37 @@ The decoder uses one 8,800-byte full table image:
 | signed delta | 5,696 B | 89 x 16 precomputed signed 32-bit predictor deltas |
 | output conversion | 256 B | reconstructed predictor high byte to RF5C164 byte |
 
-The image is stored once on disc after the boot stage. At boot the Sub CPU
-stages it in PRG-RAM, copies it to Word-RAM offset `+0x12800`, swaps banks,
-copies the second physical bank, then swaps back. The same addresses are valid
-after every later frame handoff, so timed playback performs no table copy and
-no bank-dependent pointer adjustment.
+The image remains stored once on disc after the boot stage. The packer places
+the one-shot Sub extension in the otherwise-unused padding after those 8,800
+bytes, without adding a sector. At boot the Sub CPU stages the five sectors in
+PRG-RAM. It copies the next-index table to
+`0x0C000..0x0CB1F`, the output table to `0x0CB20..0x0CC1F`, and only the signed
+deltas to their original generated Word-RAM offset in both physical banks. The
+two Word-RAM copies keep one stable delta address across every bank handoff.
 
 The live decoded output buffer occupies Sub PRG-RAM
 `0x08000..0x085FF`. Its 1,536 bytes hold the supported low-rate chunk maximum.
-The generated Word-RAM layout keeps an equally sized unallocated guard below
-the routing table so a player-only A/B uses identical WordBuf capacities and
-stream bytes. The guard is not feature memory. The build check proves that the
-PRG buffer, tables, control scratch, WordBuf, and resident routing copies do
-not overlap.
+The current 88-byte table-copy routine is staged at
+`0x7D260..0x7D2B7` after the lookup data, copied once to the unused timed-ring
+tail at `0x76800..0x76857`, and executed before frame-0 staging may overwrite
+it. The BIOS boot module remains the resident 4 KiB image only. The persistent
+hot tables occupy the 4 KiB page
+immediately before the 424 KiB physical PrgBuf ring. The resident
+Sub image stays within 4 KiB. The generated Word-RAM layout retains the complete
+8,800-byte table reservation and the 1,536-byte PCM guard, so player-only A/B
+builds keep identical WordBuf capacities and stream bytes.
+
+The build checks bind the full, hot, and delta table SHA-256 values; the
+extension size, CRC-32, preload and execute addresses; its fit in the existing
+five-sector padding; the 4 KiB resident BIOS module; and every PRG/Word-RAM
+overlap. These reservations are not feature memory.
 
 ## Sub-CPU hot path
 
 Once the current control block is linear in Word RAM, the player:
 
 1. loads the checkpoint;
-2. decodes the two inlined nibbles of each packed byte through the full tables;
+2. reads next-index values from Sub PRG-RAM and signed deltas from Word RAM;
 3. converts each reconstructed sample through the output lookup table;
 4. sends the decoded buffer through the batched RF5C164 writer; and
 5. continues with bitmap and cold-pattern expansion.
@@ -137,7 +148,7 @@ mux済み音声には、cleanなsigned-16 source WAVではなく、RF5C164の8-b
 時間で作られます。物理playerはheaderのRF5C164 frequency deltaと実際のNTSC playback
 cadenceを使います。
 
-## Word-RAM lookup tableとPRG-RAM output buffer
+## PRG-RAMとWord-RAMへ分割したlookup table
 
 Decoderは8,800-byteのfull table imageを1つ使います。
 
@@ -147,23 +158,31 @@ Decoderは8,800-byteのfull table imageを1つ使います。
 | signed delta | 5,696 B | 89 x 16の事前計算済みsigned 32-bit predictor delta |
 | output conversion | 256 B | 復元predictorのhigh byteからRF5C164 byteへの変換 |
 
-Imageはboot stageの後にdisc上へ1つ格納します。Boot時にSub CPUがPRG-RAMへstageし、
-Word-RAM offset `+0x12800`へcopyしてbankをswapし、2つ目のphysical bankへcopyした後、
-元へswapします。その後の各frame handoffでも同じaddressが有効なので、時刻指定再生中の
-table copyやbank依存のpointer補正はありません。
+Imageはboot stageの後にdisc上へ1つ格納したままです。Packerは8,800 byteの後にある
+未使用paddingへone-shot Sub extensionを配置し、sectorは追加しません。Boot時に
+Sub CPUが5 sectorをPRG-RAMへstageし、next-index tableを`0x0C000..0x0CB1F`、output tableを
+`0x0CB20..0x0CC1F`へcopyします。Signed deltaだけは両physical Word-RAM bankの元の
+generated offsetへcopyするため、bank handoff後も同じdelta addressを使えます。
 
 Liveのdecode済みoutput bufferはSub PRG-RAM `0x08000..0x085FF`を使います。1,536 byteで
-対応するlow-rate chunkの最大値を収容します。Generated Word-RAM layoutはrouting table
-直下に同じ大きさの未割当guardを保持するため、player-only A/BでもWordBuf容量とstream
-byteが同一です。このguardはfeature memoryではありません。Build checkはPRG buffer、
-table、control scratch、WordBuf、resident routing copyが重ならないことを証明します。
+対応するlow-rate chunkの最大値を収容します。現在88-byteのtable-copy routineは
+lookup data直後の`0x7D260..0x7D2B7`へstageし、未使用timed-ring tailの
+`0x76800..0x76857`へcopyして、frame-0 stagingが上書き可能になる前に一度だけ
+実行します。BIOS boot moduleはresident 4 KiB imageだけを維持します。Persistent hot tableは424 KiBの
+physical PrgBuf ring直前にある4 KiB pageを使います。Resident Sub imageは4 KiB以内のままです。Generated Word-RAM
+layoutは8,800-byteのtable予約全体と1,536-byteのPCM guardを保持するため、player-only
+A/BでもWordBuf容量とstream byteが同一です。
+
+Build checkはfull・hot・delta tableのSHA-256、extensionのsize・CRC-32・load/execute
+address、既存5-sector paddingへの収容、4 KiB resident BIOS module、全PRG/Word-RAM overlapを固定します。
+これらの予約はfeature memoryではありません。
 
 ## Sub-CPU hot path
 
 現在のcontrol blockがWord RAM上でlinearになった後、playerは次を行います。
 
 1. checkpointを読み込みます。
-2. packed byteごとに2つのnibbleをinline展開し、full tableでdecodeします。
+2. next-indexをSub PRG-RAM、signed deltaをWord RAMから読んでdecodeします。
 3. 復元した各sampleをoutput lookup tableで変換します。
 4. decode済みbufferをbatched RF5C164 writerへ送ります。
 5. bitmapとcold-patternの展開を続けます。

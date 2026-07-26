@@ -9,7 +9,10 @@ specialized DEBUG players.
 For every case it requires:
 
 - specialized IP and SP binaries do not grow relative to the generic build;
-- the specialized SP binary stays within the 4,096-byte boot area;
+- the specialized resident SP binary stays within 4,096 bytes;
+- the extension is linked into the boot-only timed-ring tail, its generated
+  size/hash/address contract matches, and its bytes fit after the 8,800-byte
+  ADPCM table inside the existing five-sector HEADER preload;
 - the specialized SP contains the exact HEADER signature immediate and the
   `0xBAD1` mismatch diagnostic;
 - Main's specialized flip branches stay inside their local regions, and the

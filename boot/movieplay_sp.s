@@ -29,6 +29,7 @@
 .equ INCLUDE_PATTERN_SUPPLY, 1
 .endif
 .endif
+	.include "sp_extension.inc"
 
 /* The packed cold-run parser is used by every unified pattern-supply stream
    and by the dense 24/30fps cadence.  A legacy lower-rate plain-Prg diagnostic
@@ -134,32 +135,56 @@
 .endif
 .equ ROUTING_BANK_COPIES,   2
 
-/* --- PRG-RAM レイアウト(program 0x6000〜, <0x1000) --- */
-/* 0x6800-0x8000 は連続読み中にBIOSが踏む(実証)。0x8000-0x9800は安全(マーカー実証)。 */
+/* --- PRG-RAM layout --- */
+/* The resident image remains within 0x6000..0x6FFF. Extra one-shot code is
+   carried in existing HEADER preload padding and copied to the timed-ring tail
+   before frame-0 scratch reuses that range. */
 .equ ISO_BUF,     0x00007000        /* ISO初期化用(streaming前のみ・BIOS領域を一時利用) */
 .equ SUB_PRG_SAFE_BASE, 0x00008000
 .equ SUB_PRG_SAFE_END,  0x00009800
 .equ PCM_DEC_BUF,       0x00008000  /* Sub専用decoded PCM scratch。Word-RAM DMAと競合させない */
 .equ PCM_DEC_BUF_BYTES, 0x00000600
 .equ PCM_DEC_BUF_END,   0x00008600
+.equ ADPCM_INDICES,     0x0000C000  /* 89*16 u16 new-index*32 */
+.equ ADPCM_INDEX_BYTES, 0x00000B20
+.equ ADPCM_INDICES_END, 0x0000CB20
+.equ ADPCM_LUT,         0x0000CB20  /* offset-high -> RF5C164 sign-magnitude */
+.equ ADPCM_LUT_BYTES,   0x00000100
+.equ ADPCM_LUT_END,     0x0000CC20
+.equ ADPCM_BOOT_COPY,   0x00076800
 .if PCM_DEC_BUF < SUB_PRG_SAFE_BASE
 .error "PCM_DEC_BUF begins below the marker-verified Sub PRG range"
 .endif
 .if PCM_DEC_BUF_END > SUB_PRG_SAFE_END
 .error "PCM_DEC_BUF exceeds the marker-verified Sub PRG range"
 .endif
+.if ADPCM_INDICES_END != ADPCM_LUT
+.error "ADPCM output LUT does not follow the index table"
+.endif
+.if ADPCM_LUT_END > 0x0000D000
+.error "hot ADPCM tables exceed their reserved PrgBuf page"
+.endif
+.if SP_EXTENSION_EXEC_BASE != ADPCM_BOOT_COPY
+.error "loaded Sub extension address differs from ADPCM_BOOT_COPY"
+.endif
+.if SP_EXTENSION_EXEC_BASE+SP_EXTENSION_BYTES > 0x00077000
+.error "loaded Sub extension exceeds the boot-time PrgBuf tail"
+.endif
 .equ SP_STACK,    0x0007FF00        /* スタック最上位(apply端0x7F800の上, 1.8KB) */
-/* 0x9800-0xC000は連続読み中にBIOSが踏む(回収を試みたら化けた)。RINGは0xC000から。 */
-.equ RING_BASE,   0x0000C000
-.equ RING_SIZE,   0x0006B000        /* 428KB。APPLY直前までの物理上限。fps別jitterはpackで予約 */
+/* 0x9800-0xC000は連続読み中にBIOSが踏む。0xC000の4KBはhot table、RINGは0xD000から。 */
+.equ RING_BASE,   0x0000D000
+.equ RING_SIZE,   0x0006A000        /* 424KB。先頭4KBはhot ADPCM table。fps別jitterはpackで予約 */
 .equ RING_END,    RING_BASE+RING_SIZE     /* 0x77000 = APPLY_BASE */
+.if SP_EXTENSION_EXEC_BASE+SP_EXTENSION_BYTES > RING_END
+.error "boot-time Sub extension exceeds PrgBuf"
+.endif
 .equ RING_PATTERNS, RING_SIZE/32
-.equ F0PAT_TMP,   0x00071000        /* boot限定: H40最大1120 patterns=36KBを固定scratchから
+.equ F0PAT_TMP,   0x00072000        /* boot限定: H40最大1120 patterns=36KBを固定scratchから
                                        未使用APPLY先頭まで連続配置し、BODY前に展開する。 */
 .equ APPLY_BASE,  0x00077000
 .equ APPLY_SIZE,  0x00008800        /* 34KB(16KBは頭詰まり→滑りを実測。42KB→34KBはrouting移設分) */
 .equ APPLY_END,   APPLY_BASE+APPLY_SIZE   /* 0x7F800 */
-.equ ROUTING_TMP, 0x0007A000        /* boot限定。最大frame0 staging直後の未使用APPLY 16KB */
+.equ ROUTING_TMP, 0x0007B000        /* boot限定。最大frame0 staging直後の未使用APPLY 16KB */
 
 /* --- Word-RAM compact tail (same offsets in both physical banks) --- */
 .ifdef PLAYER_SPECIALIZED
@@ -179,15 +204,20 @@
 .equ ROUTING,     0x000DC000
 .equ O_STATUS,    SUB_BANK_1M+0xAF00
 .endif
-/* PC_PCM_DEC_BUF_OFFSET / generic +0x14C00 remains an unused A/B-stable
-   Word-RAM layout reserve. Timed decode and wave output use Sub PRG above. */
-.equ ADPCM_INDICES, ADPCM_TABLE     /* 89*16 u16 new-index*32 = 2848B */
+/* PC_PCM_DEC_BUF_OFFSET / generic +0x14C00 and the index/LUT portions of
+   ADPCM_TABLE remain unused A/B-stable Word-RAM reserves. Timed decode uses
+   only the signed deltas from Word RAM; the other hot data is Sub PRG above. */
 .equ ADPCM_DELTAS, ADPCM_TABLE+2848 /* 89*16 s32 signed delta = 5696B */
-.equ ADPCM_LUT, ADPCM_TABLE+8544    /* offset-high -> RF5C164 sign-magnitude = 256B */
 .equ ADPCM_TABLE_BYTES, 8800
-.equ ADPCM_TABLE_LONGS, ADPCM_TABLE_BYTES/4
+.equ ADPCM_DELTA_BYTES, 5696
 .equ ADPCM_TABLE_SECTORS, 5
 .equ ADPCM_BANK_COPIES, 2
+.if SP_EXTENSION_LOAD_BASE != ROUTING_TMP+ADPCM_TABLE_BYTES
+.error "Sub extension preload must follow the ADPCM table image"
+.endif
+.if SP_EXTENSION_BYTES > ADPCM_TABLE_SECTORS*0x800-ADPCM_TABLE_BYTES
+.error "Sub extension exceeds the existing ADPCM sector padding"
+.endif
 
 /* --- Word-RAM 出力(MDが読む) ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
@@ -262,6 +292,7 @@ sp_header:
 	.word	0x0100
 	.word	0
 	.long	0
+	/* BIOS module ownership covers only this resident base image. */
 	.long	sp_end-sp_header
 	.long	sp_jmptbl-sp_header
 	.long	0
@@ -510,24 +541,20 @@ pm_set:
 	move.l	stream_remaining, d1
 	bsr	reseek_readn
 
-	/* ADPCM full lookup tables follow the boot stage. Stage one immutable 8,800B
-	   image in boot-only PRG RAM, then duplicate it into the same offset of both
-	   physical 1M banks.  Two toggles return to the frame-0/PALTAB bank. */
+	/* The five-sector image holds the unchanged 8,800-byte ADPCM tables,
+	   followed by the checked one-shot extension in existing sector padding.
+	   Copy the code to the still-unused timed-ring tail before executing it. */
 	moveq	#ADPCM_TABLE_SECTORS, d0
 	lea	ROUTING_TMP, a0
 	bsr	drain_lin_staged
-	moveq	#ADPCM_BANK_COPIES-1, d1
-adpcm_table_bank:
-	lea	ROUTING_TMP, a0
-	lea	ADPCM_TABLE, a1
-	move.w	#ADPCM_TABLE_LONGS-1, d0
-adpcm_table_copy:
+	lea	SP_EXTENSION_LOAD_BASE, a0
+	lea	SP_EXTENSION_EXEC_BASE, a1
+	move.w	#SP_EXTENSION_LONGS-1, d0
+1:
 	move.l	(a0)+, (a1)+
-	dbra	d0, adpcm_table_copy
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	dbra	d1, adpcm_table_bank
-adpcm_table_done:
+	dbra	d0, 1b
+	lea	ADPCM_DELTAS, a2
+	jsr	ADPCM_BOOT_COPY
 	/* Wr0 is the physical frame-0 bank and Wr1 is the other bank. Their
 	   generated starts and sector-rounded capacities differ. Two toggles
 	   restore the frame-0 bank phase. */
@@ -645,7 +672,7 @@ rt_copy:
 	clr.w	drain_k
 	/* Expand frame 0 entirely from its boot-only PRG pattern block. The ring tail is
 	   placed after the exact prebuffer payload, excluding sector padding. */
-	move.l	#RING_BASE, ring_head		/* pump_pollのocc計算用(0xC000)。frame0のpopはf0_pat_addr */
+	move.l	#RING_BASE, ring_head		/* pump_pollのocc計算用(0xD000)。frame0のpopはf0_pat_addr */
 	PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d0
 	lsl.l	#5, d0
 	add.l	#RING_BASE, d0
@@ -710,7 +737,7 @@ stream_armed:
 .equ ISO_HOLD_F0, 0			/* ISO診断: frame0 表示直後に静止(frame0単体の健全性確認) */
 .if ISO_HOLD_F0
 f0h1:
-	bsr	dump_pats			/* 毎周 PREBUF1[0..] を O_LOADS へ(pumpしない=0xC000 pristine維持) */
+	bsr	dump_pats			/* 毎周 PREBUF1[0..] を O_LOADS へ(pumpしない=0xD000 pristine維持) */
 f0hw:
 	cmp.w	#CMD_SWAP, (COMCMD0).l
 	bne	f0hw
@@ -1425,7 +1452,7 @@ ef_bm:
 	bne.s	ef_list_audio
 	/* v16 aligns the 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
-	   runtime branch or code-size cost to the full 4 KiB Sub image. */
+	   runtime branch or code-size cost to the resident 4 KiB Sub base image. */
 .ifdef PLAYER_SPECIALIZED
 	move.w	#((PC_BMBYTES+1)&0xFFFE), d0
 	adda.w	d0, a0				/* entries */
@@ -1472,7 +1499,7 @@ ef_audio_positioned:
 	movea.l	ring_head, a4			/* pop ptr(PRG読み) */
 	tst.w	f0_expand
 	beq	ef_ring_count
-	movea.l	f0_pat_addr, a4			/* frame0: popはboot専用PRG一時領域から(ring_headは0xC000維持) */
+	movea.l	f0_pat_addr, a4			/* frame0: popはboot専用PRG一時領域から(ring_headは0xD000維持) */
 	moveq	#-1, d6				/* frame0 patterns are contiguous and never wrap */
 	bra	ef_count_ready
 ef_ring_count:
@@ -1691,7 +1718,7 @@ ef_store:
 .endif
 	tst.w	f0_expand
 	bne.s	1f
-	move.l	a4, ring_head			/* frame0はring_head書き戻さない(0xC000維持=frame1がPREBUF1から) */
+	move.l	a4, ring_head			/* frame0はring_head書き戻さない(0xD000維持=frame1がPREBUF1から) */
 1:
 	rts
 
@@ -1870,10 +1897,10 @@ pcm_on:
 	move.b	#0xFE, (PCM_ONOFF).l
 	rts
 
-/* Decode one checkpointed IMA chunk from a0 to PCM_DEC_BUF.  The full table is
-   resident at the same offset of both physical 1M banks, so no pointer or state
-   changes are required after a swap.  Each checkpoint records the continuous
-   movie state; no decoder state is carried in PRG RAM. */
+/* Decode one checkpointed IMA chunk from a0 to PCM_DEC_BUF. Signed deltas stay
+   at the same offset in both physical 1M banks, while next-index/output tables
+   are Sub-owned PRG-RAM. Each checkpoint records the continuous movie state;
+   no decoder state is carried between frames. */
 decode_adpcm_chunk:
 	movem.l	d0-d7/a0-a4, -(sp)
 	move.w	(a0)+, d6			/* checkpoint predictor (signed) */
