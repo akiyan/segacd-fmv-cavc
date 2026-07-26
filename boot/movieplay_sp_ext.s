@@ -3,15 +3,17 @@
  *
  * The packer stores these bytes in the unused padding after the 8,800-byte
  * ADPCM table. The resident base copies them from the five-sector HEADER stage
- * to the unused timed-ring tail. This routine runs once; frame-0 staging may
- * overwrite its bytes after it returns. a2 supplies the profile-specific
- * Word-RAM signed-delta destination.
+ * to the unused timed-ring tail. These entries run only during boot; frame-0
+ * staging may overwrite their bytes after they return. a2 supplies the
+ * profile-specific Word-RAM signed-delta destination.
  */
 
 .equ MEMMODE,                 0x00FF8002
 .equ ROUTING_TMP,             0x0007B000
 .equ ADPCM_INDEX_TABLE,       0x0000C000
 .equ ADPCM_OUTPUT_LUT,        0x0000CB20
+.equ RING_BASE,               0x0000D000
+.equ APPLY_BASE,              0x00077000
 .equ ADPCM_INDEX_BYTES,       2848
 .equ ADPCM_DELTA_BYTES,       5696
 .equ ADPCM_OUTPUT_LUT_BYTES,  256
@@ -68,8 +70,12 @@ adpcm_boot_copy:
    extension to its ring-tail execution address before routing is staged.
 
    Validate ROUTING_TMP's d7-entry packed route, then copy d5 longs to a1 in
-   both physical Word-RAM banks. Return d0=0 on success or d0=1 on invalid
-   input. The two bank toggles restore the caller's original bank phase. */
+   both physical Word-RAM banks. On success, d6 supplies the exact prebuffer
+   pattern count, a4 points at the contiguous ring/apply/frame state, and a5
+   points at drain_k/write_ptr/f0_expand. Initialize that boot-only state here
+   so the fixed-cadence resident image keeps its complete DEBUG path inside
+   4 KiB. Return d0=0 on success or d0=1 on invalid input. The two bank toggles
+   restore the caller's original bank phase. */
 .org 0x0058
 .global routing_prepare
 routing_prepare:
@@ -105,6 +111,19 @@ routing_prepare:
 	btst	#1, (MEMMODE+1).l
 	bne.s	1b
 	dbra	d1, 2b
+
+	/* ring_head, ring_tail, apply_tail, apply_cur and frame_idx are contiguous
+	   in the resident image. drain_k, write_ptr and f0_expand form the second
+	   checked group. These values are needed only once before frame 0 expands. */
+	move.l	#RING_BASE, (a4)+
+	lsl.l	#5, d6
+	add.l	#RING_BASE, d6
+	move.l	d6, (a4)+
+	move.l	#APPLY_BASE, (a4)+
+	move.l	#APPLY_BASE, (a4)+
+	move.w	#1, (a4)
+	clr.w	(a5)
+	move.w	#1, 4(a5)
 	moveq	#0, d0
 	rts
 

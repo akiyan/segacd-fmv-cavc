@@ -67,7 +67,7 @@ sector-arrival variation and is not encoder Supply.
 | `0x0D000..0x707FF` | 398.00 KiB | normal PrgBuf capacity at 30 fps | No |
 | `0x70800..0x757FF` | 20.00 KiB | delivery-jitter headroom at 30 fps | No |
 | `0x75800..0x75FFF` | 2.00 KiB | observation guard before pump back-pressure | No |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; `0x76800..0x76857` executes the qualified ADPCM entry, and longer-route builds may use through `0x768AF` | No |
+| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; `0x76800..0x76857` executes the qualified ADPCM entry, and longer-route builds may use through `0x768D7` | No |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | No |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | No |
 | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top | No |
@@ -80,7 +80,7 @@ from `0x7D260` in two ways: its qualified first 88 bytes run from the unused
 timed-ring tail at `0x76800`; when routing is at most 8 KiB, the second entry
 runs in place at `0x7D2B8` after prebuffer, while longer-route builds copy the
 complete extension first. These boot-only entries install ADPCM tables and
-prepare routing.
+prepare routing and the initial ring/APPLY/frame state.
 Frame-0 staging may then overwrite both temporary locations. The persistent
 hot tables occupy the 4 KiB page immediately before PrgBuf.
 
@@ -319,7 +319,7 @@ sector到着変動専用で、encoder Supplyではありません。
 | `0x0D000..0x707FF` | 398.00 KiB | 30 fpsのnormal PrgBuf capacity | 不可 |
 | `0x70800..0x757FF` | 20.00 KiB | 30 fpsのdelivery-jitter headroom | 不可 |
 | `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard | 不可 |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。`0x76800..0x76857`でqualified済みADPCM入口を実行し、長いroutingのbuildは`0x768AF`まで使用可能 | 不可 |
+| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。`0x76800..0x76857`でqualified済みADPCM入口を実行し、長いroutingのbuildは`0x768D7`まで使用可能 | 不可 |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | 不可 |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | 不可 |
 | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 | 不可 |
@@ -329,8 +329,8 @@ resident Sub moduleだけを持ちます。Packerはhashで固定したextension
 ADPCM table直後の既存5-sector paddingへ配置します。Subはそのimageを`0x7B000`へ
 stageします。Qualified済み先頭88 byteは未使用timed-ring tailの`0x76800`で実行します。
 routingが8 KiB以下なら第2入口をprebuffer後に`0x7D2B8`でそのまま実行し、長いroutingの
-buildはextension全体を先にcopyします。これらのboot-only入口がADPCM installとrouting
-prepareを行います。その後はframe-0 stagingが
+buildはextension全体を先にcopyします。これらのboot-only入口がADPCM install、
+routing prepare、初期ring/APPLY/frame state設定を行います。その後はframe-0 stagingが
 両temporary locationを上書きできます。
 Persistent hot tableはPrgBuf直前の4 KiB pageを使います。
 

@@ -210,21 +210,21 @@ sequence runs on movie restart.
 ## ADPCM table
 
 Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup
-data. The current 176-byte position-fixed Sub boot extension follows in
-existing padding, and the remaining 1,264 bytes are zero.
+data. The current 216-byte position-fixed Sub boot extension follows in
+existing padding, and the remaining 1,224 bytes are zero.
 
 | Offset | Size | Contents |
 |---:|---:|---|
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
-| 8,800 | 176 B | boot-only Sub ADPCM-install and routing-prepare extension |
-| 8,976 | 1,264 B | zero padding |
+| 8,800 | 216 B | boot-only Sub ADPCM-install, routing-prepare, and queue-initialization extension |
+| 9,016 | 1,224 B | zero padding |
 
 The first 88 extension bytes are copied to `0x76800` and run before routing is
 staged. With a routing preload of at most 8 KiB, the second entry remains
 outside the routing bytes and runs in place at staged address `0x7D2B8` after
-prebuffer completes. Longer-route builds copy all 176 bytes first and run that
+prebuffer completes. Longer-route builds copy all 216 bytes first and run that
 entry at `0x76858`.
 
 Sub keeps the disc bytes unchanged. It copies the 2,848-byte next-index table
@@ -619,7 +619,7 @@ copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemp
 ## ADPCM table
 
 DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup dataです。
-現在176-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り1,264 byteは
+現在216-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り1,224 byteは
 zeroです。
 
 | Offset | Size | 内容 |
@@ -627,12 +627,12 @@ zeroです。
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
-| 8,800 | 176 B | boot-only Sub ADPCM-install・routing-prepare extension |
-| 8,976 | 1,264 B | zero padding |
+| 8,800 | 216 B | boot-only Sub ADPCM-install・routing-prepare・queue-initialization extension |
+| 9,016 | 1,224 B | zero padding |
 
 extensionの先頭88 byteを`0x76800`へcopyし、routingをstageする前に実行します。
 routing preloadが8 KiB以下なら、第2入口はrouting byteの外側に残るため、prebuffer
-完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に176
+完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に216
 byte全体をcopyし、第2入口を`0x76858`で実行します。
 
 Subはdisc byteを変更せず、2,848-byte next-index tableをPRG-RAM `0x0C000`、

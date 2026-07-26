@@ -684,6 +684,9 @@ pb_done:
 	lea	ROUTING, a1
 	PC_MOVE_W h_frames, PC_FRAMES, d7
 	move.w	#ROUTING_COPY_LONGS, d5
+	PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d6
+	lea	ring_head, a4
+	lea	drain_k, a5
 .ifdef ROUTING_EXTENSION_IN_STAGE
 	jsr	(SP_EXTENSION_LOAD_BASE+ADPCM_BOOT_COPY_BYTES).l
 .else
@@ -691,20 +694,9 @@ pb_done:
 .endif
 	tst.w	d0
 	bne	bad_header
-	/* Prepare the steady-state queues and expand frame 0 before starting the
-	   independent timed BODY.DAT read. ROUTING_TMP is now free for APPLY. */
-	move.l	#APPLY_BASE, apply_tail
-	move.l	#APPLY_BASE, apply_cur
-	clr.w	drain_k
-	/* Expand frame 0 entirely from its boot-only PRG pattern block. The ring tail is
-	   placed after the exact prebuffer payload, excluding sector padding. */
-	move.l	#RING_BASE, ring_head		/* pump_pollのocc計算用(0xD000)。frame0のpopはf0_pat_addr */
-	PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d0
-	lsl.l	#5, d0
-	add.l	#RING_BASE, d0
-	move.l	d0, ring_tail			/* 0x63800 = PREBUF1末尾 = streaming tail */
-	move.w	#1, f0_expand
-	move.w	#1, frame_idx			/* frame0処理済み(旧playerと同じframe_idx=1) */
+	/* The extension prepared the steady-state queues and exact ring tail.
+	   ROUTING_TMP is now free for APPLY; expand frame 0 from its boot-only
+	   pattern block before starting the independent timed BODY.DAT read. */
 	bsr	expand_frame
 	clr.w	f0_expand
 	/* Hand the complete frame-0 bank to Main before BODY.DAT starts.  Main
@@ -2406,6 +2398,24 @@ write_ptr:
 	.word	0
 f0_expand:
 	.word	0				/* !=0: frame0 cold pop is contiguous boot storage, not streaming ring */
+.if ring_tail-ring_head != 4
+.error "Sub extension ring state layout changed"
+.endif
+.if apply_tail-ring_head != 8
+.error "Sub extension APPLY tail layout changed"
+.endif
+.if apply_cur-ring_head != 12
+.error "Sub extension APPLY cursor layout changed"
+.endif
+.if frame_idx-ring_head != 16
+.error "Sub extension frame index layout changed"
+.endif
+.if write_ptr-drain_k != 2
+.error "Sub extension write pointer layout changed"
+.endif
+.if f0_expand-drain_k != 4
+.error "Sub extension frame-0 flag layout changed"
+.endif
 pcm_running:
 	.word	0				/* 0=play headを読まずboot-time append, 1=live sync */
 desync_count:

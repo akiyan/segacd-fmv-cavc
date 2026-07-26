@@ -18,6 +18,13 @@
 #         rate_lead_peak at zero. A heavy slot can no longer borrow time from
 #         later light slots, because elapsed display delay is irreversible and
 #         otherwise becomes producer lead into the finite APPLY queue.
+#   p97: Move boot-only ring, APPLY and frame-0 queue initialization into the
+#        existing HEADER-preloaded Sub extension, which grows from 176 to 216
+#        bytes while remaining inside the ADPCM sector padding. The H40/15fps
+#        G diagnostic resident image is now 4,080 bytes and fits the BIOS
+#        4 KiB load limit. PrgBuf capacity, timed player work, resolution, fps,
+#        cold cap, image settings, stream decisions and simulated output stay
+#        unchanged.
 #   p96: Add the opt-in H40 DEBUG SUB_POLL_GAP_DIAG player. It replaces Q
 #        with G, the maximum time spent outside the Sub CDC pump between
 #        service opportunities in 30.72 us stopwatch ticks, while retaining
@@ -871,4 +878,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260726
 e=139
-p=96
+p=97

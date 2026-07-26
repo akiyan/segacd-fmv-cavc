@@ -457,6 +457,9 @@ for token in (
         "move.w\t#ADPCM_BOOT_COPY_LONGS-1, d0",
         "move.w\t#SP_EXTENSION_LONGS-1, d0",
         "lea\tADPCM_DELTAS, a2",
+        "PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d6",
+        "lea\tring_head, a4",
+        "lea\tdrain_k, a5",
         "jsr\tADPCM_BOOT_COPY",
         "jsr\t(SP_EXTENSION_LOAD_BASE+ADPCM_BOOT_COPY_BYTES).l",
         "jsr\t(SP_EXTENSION_EXEC_BASE+ADPCM_BOOT_COPY_BYTES).l",
@@ -495,6 +498,9 @@ for token in (
         "movea.l\ta0, a2",
         "move.w\td5, d0",
         "moveq\t#ROUTING_BANK_COPIES-1, d1",
+        "move.l\t#RING_BASE, (a4)+",
+        "move.l\t#APPLY_BASE, (a4)+",
+        "move.w\t#1, 4(a5)",
 ):
     if token not in sp_ext_text:
         sys.exit(f"check_player_ring: Sub boot extension is missing {token!r}")
