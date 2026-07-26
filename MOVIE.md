@@ -210,16 +210,22 @@ sequence runs on movie restart.
 ## ADPCM table
 
 Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup
-data. The current 88-byte position-fixed Sub extension follows in existing
-padding, and the remaining 1,352 bytes are zero.
+data. The current 216-byte position-fixed Sub boot extension follows in
+existing padding, and the remaining 1,224 bytes are zero.
 
 | Offset | Size | Contents |
 |---:|---:|---|
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
-| 8,800 | 88 B | one-shot Sub table-copy extension |
-| 8,888 | 1,352 B | zero padding |
+| 8,800 | 216 B | boot-only Sub ADPCM-install, routing-prepare, and queue-initialization extension |
+| 9,016 | 1,224 B | zero padding |
+
+The first 88 extension bytes are copied to `0x76800` and run before routing is
+staged. With a routing preload of at most 8 KiB, the second entry remains
+outside the routing bytes and runs in place at staged address `0x7D2B8` after
+prebuffer completes. Longer-route builds copy all 216 bytes first and run that
+entry at `0x76858`.
 
 Sub keeps the disc bytes unchanged. It copies the 2,848-byte next-index table
 to PRG-RAM `0x0C000`, the 256-byte output table to `0x0CB20`, and the
@@ -303,10 +309,14 @@ ratedelta = acc // fps_int
 acc %= fps_int
 ```
 
-`lead` increases by `fsec - ratedelta`. A necessary burst may exceed that
-slot's fresh allowance; later light slots omit pad until the lead is repaid.
-The packer fills unused rate allowance with future payload while PrgBuf space
-and all deadlines permit it.
+`lead` increases by `fsec - ratedelta`. The accumulator is shared with the
+player, but a qualified fixed-cadence stream keeps its peak at zero. A slot
+cannot exceed its fresh allowance because the resulting elapsed display delay
+cannot be recovered by a later light slot. Before image decisions, the encoder
+limits every control/Prg prefix by both cumulative CD-1x time and the
+routing-byte ceiling. The exact finite-PrgBuf schedule repeats the proof. The
+packer fills same-slot unused allowance with future payload only while PrgBuf
+space and all deadlines permit it.
 
 The pump applies back-pressure according to the next sector's destination:
 APPLY space for control, PrgBuf space for payload, and no buffer check for pad.
@@ -609,7 +619,7 @@ copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemp
 ## ADPCM table
 
 DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup dataです。
-現在88-byteのposition-fixed Sub extensionを既存paddingへ続け、残り1,352 byteは
+現在216-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り1,224 byteは
 zeroです。
 
 | Offset | Size | 内容 |
@@ -617,8 +627,13 @@ zeroです。
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
-| 8,800 | 88 B | one-shot Sub table-copy extension |
-| 8,888 | 1,352 B | zero padding |
+| 8,800 | 216 B | boot-only Sub ADPCM-install・routing-prepare・queue-initialization extension |
+| 9,016 | 1,224 B | zero padding |
+
+extensionの先頭88 byteを`0x76800`へcopyし、routingをstageする前に実行します。
+routing preloadが8 KiB以下なら、第2入口はrouting byteの外側に残るため、prebuffer
+完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に216
+byte全体をcopyし、第2入口を`0x76858`で実行します。
 
 Subはdisc byteを変更せず、2,848-byte next-index tableをPRG-RAM `0x0C000`、
 256-byte output tableを`0x0CB20`、5,696-byte signed-delta tableを両physical
@@ -697,9 +712,12 @@ ratedelta = acc // fps_int
 acc %= fps_int
 ```
 
-`lead` は `fsec - ratedelta` だけ増えます。必要なburstはそのslotの新規allowanceを
-超えられますが、後の軽いslotがpadを省いてleadを返済します。packerはPrgBuf空きと
-全deadlineが許す範囲で未使用rate allowanceを将来payloadに置き換えます。
+`lead` は `fsec - ratedelta` だけ増えます。このaccumulatorはplayerと共有しますが、
+認定済みfixed-cadence streamではpeakをzeroに保ちます。slotが新規allowanceを超えると
+経過済みの表示遅延になり、後の軽いslotでは取り戻せないためです。encoderは画像決定前に、
+control/Prgの全prefixを累積CD-1x時間とrouting-byte上限の両方で制限し、有限PrgBufを
+含む正確なscheduleでも同じproofを繰り返します。packerはPrgBuf空きと全deadlineが
+許す範囲で、同じslot内の未使用allowanceだけを将来payloadに置き換えます。
 
 pumpのback-pressureは次sectorの行き先ごとに適用します。controlならAPPLY空き、
 payloadならPrgBuf空き、padならbuffer checkなしです。payloadはcurrent frameが

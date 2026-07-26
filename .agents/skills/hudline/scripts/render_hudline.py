@@ -126,9 +126,12 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray], l
     for key in fields:
         if key in {"loop", "frame", "frame_hex", "lead_hex", "r_transition"}:
             continue
+        texts = [row[key].strip() for row in rows]
+        if not any(texts):
+            continue
         try:
             arrays[key] = np.asarray(
-                [parse_value(key, row[key]) for row in rows], np.float64)
+                [parse_value(key, value) for value in texts], np.float64)
         except ValueError:
             continue
     return rows, arrays, fields
@@ -190,6 +193,10 @@ def a_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
     return field_statistics(data, "sub_adpcm_decode_units")
 
 
+def g_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
+    return field_statistics(data, "sub_poll_gap_ticks")
+
+
 def validate(
     tsv_path: Path,
     gate_path: Path,
@@ -248,6 +255,61 @@ def validate(
                     f"gate {field} {key} {recorded[key]} != "
                     f"TSV value {expected[key]}"
                 )
+    q_values = data.get("prgbuf_min_patterns_signed")
+    gate_has_q = "Q" in gate.get("diagnostic_fields", ())
+    if q_values is not None:
+        q_minimum = int(q_values[1:].min())
+        q_underflow_peak = max(0, -q_minimum)
+        for key, expected in (
+            ("prgbuf_minimum_patterns", q_minimum),
+            ("prgbuf_underflow_peak_patterns", q_underflow_peak),
+        ):
+            if key not in gate:
+                raise SystemExit(f"gate JSON lacks {key}")
+            if int(gate[key]) != expected:
+                raise SystemExit(
+                    f"gate {key} {gate[key]} != TSV value {expected}")
+        if not gate_has_q:
+            raise SystemExit("gate diagnostic_fields omit available Q")
+    elif gate_has_q:
+        raise SystemExit("gate declares Q but HUD TSV has no Q column")
+    g_values = data.get("sub_poll_gap_ticks")
+    gate_has_g = "G" in gate.get("diagnostic_fields", ())
+    if g_values is not None:
+        expected = g_statistics(data)
+        recorded = gate.get("sub_poll_gap_statistics")
+        if recorded is None:
+            raise SystemExit("gate JSON lacks sub_poll_gap_statistics")
+        for key in ("minimum", "maximum", "sample_count"):
+            if int(recorded[key]) != int(expected[key]):
+                raise SystemExit(
+                    f"gate G {key} {recorded[key]} != TSV value {expected[key]}")
+        for key in ("mean", "median"):
+            if not math.isclose(
+                float(recorded[key]), float(expected[key]), abs_tol=1e-12
+            ):
+                raise SystemExit(
+                    f"gate G {key} {recorded[key]} != TSV value {expected[key]}")
+        if not gate_has_g:
+            raise SystemExit("gate diagnostic_fields omit available G")
+    elif gate_has_g:
+        raise SystemExit("gate declares G but HUD TSV has no G column")
+    b_values = data.get("apply_guard_blocked")
+    gate_has_b = "B" in gate.get("diagnostic_fields", ())
+    if b_values is not None:
+        expected_count = int(np.count_nonzero(b_values[1:]))
+        recorded_count = gate.get("apply_guard_blocked_frames")
+        if recorded_count is None:
+            raise SystemExit("gate JSON lacks apply_guard_blocked_frames")
+        if int(recorded_count) != expected_count:
+            raise SystemExit(
+                "gate B frame count "
+                f"{recorded_count} != TSV value {expected_count}"
+            )
+        if not gate_has_b:
+            raise SystemExit("gate diagnostic_fields omit available B")
+    elif gate_has_b:
+        raise SystemExit("gate declares B but HUD TSV has no B column")
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -360,9 +422,64 @@ def row_specs(
                     timed_max("prgbuf_jitter_peak_kib"),
                     float(gate.get("jitter_headroom_kib", 0))),
                 style.COL_PRG, "J"),
+    ]
+    if "prgbuf_min_patterns_signed" in data:
+        rows.append(
+            RowSpec(
+                "prgbuf_min_patterns_signed",
+                "Q  PRG MIN",
+                "signed 32-byte patterns/frame",
+                av_config.RING_SIZE_KB * 1024 / 32,
+                style.COL_PRG,
+            )
+        )
+    if "prgbuf_underflow_patterns" in data:
+        rows.append(
+            RowSpec(
+                "prgbuf_underflow_patterns",
+                "Q- PRG UNDERFLOW",
+                "32-byte pattern debt/frame",
+                max(1, timed_max("prgbuf_underflow_patterns")),
+                FAIL,
+            )
+        )
+    if "sub_poll_gap_ticks" in data:
+        frame_ticks = math.ceil(
+            1000.0 / float(gate["content_fps"]) / 0.03072
+        )
+        rows.append(
+            RowSpec(
+                "sub_poll_gap_ticks",
+                "G  SUB PUMP GAP",
+                "30.72 us ticks",
+                max(frame_ticks, timed_max("sub_poll_gap_ticks")),
+                (176, 112, 224),
+            )
+        )
+    if "slip_msf_gap_count" in data:
+        rows.append(
+            RowSpec(
+                "slip_msf_gap_count",
+                "K  MSF GAP",
+                "cumulative recoveries",
+                max(1, timed_max("slip_msf_gap_count")),
+                (208, 142, 94),
+            )
+        )
+    if "apply_guard_blocked" in data:
+        rows.append(
+            RowSpec(
+                "apply_guard_blocked",
+                "B  APPLY BLOCK",
+                "control back-pressure/frame",
+                1,
+                WARN,
+                show_zero=False,
+            )
+        )
+    rows.extend([
         RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
-                max(1, timed_max("cd_wait")),
-                WARN),
+                max(1, timed_max("cd_wait")), WARN),
         RowSpec("lead_256b", "L  AUDIO LEAD", "256-byte units", lead_max,
                 (82, 153, 232)),
         RowSpec("sub_wait_lines", "W  SUB HANDOFF", "approx. scanlines", 255,
@@ -373,7 +490,7 @@ def row_specs(
                 (81, 202, 211)),
         RowSpec("cold_runs_low8", "N  COLD RUNS", "runs, low byte", 255,
                 style.COL_RUN, eight_bit_scale=True, show_zero=False),
-    ]
+    ])
     optional = (
         ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",
          (124, 193, 113)),
@@ -650,11 +767,40 @@ def main() -> None:
     sample_count = data.get("sample_count", np.ones(frames))[1:]
     c_stats = c_statistics(data)
     a_stats = a_statistics(data)
+    g_stats = (
+        g_statistics(data) if "sub_poll_gap_ticks" in data else None
+    )
+    apply_guard_frames = (
+        int(np.count_nonzero(data["apply_guard_blocked"][1:]))
+        if "apply_guard_blocked" in data else None
+    )
+    q_values = data.get("prgbuf_min_patterns_signed")
+    q_minimum = (
+        int(q_values[1:].min())
+        if q_values is not None and len(q_values) > 1 else None
+    )
+    q_underflow_peak = max(0, -q_minimum) if q_minimum is not None else None
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
         if display_vblank_expected is not None
         else "VBlank warning rule deferred, "
+    )
+    g_stats_text = (
+        f"G min/mean/median/max "
+        f"{int(g_stats['minimum'])}/{float(g_stats['mean']):.3f}/"
+        f"{float(g_stats['median']):g}/{int(g_stats['maximum'])}; "
+        if g_stats is not None else ""
+    )
+    apply_guard_text = (
+        f"B APPLY block {apply_guard_frames} frames; "
+        if apply_guard_frames is not None else ""
+    )
+    phase_note = (
+        "G is the maximum Sub pump-opportunity interval; "
+        "O on frame F describes the flip for F-1; "
+        if g_stats is not None
+        else "V/O on frame F describe the flip for F-1; "
     )
     draw.text((24, 16), title, fill=TEXT, font=font(36))
     draw.text((width - 24, 18), state, fill=state_color, font=font(34), anchor="ra")
@@ -686,6 +832,7 @@ def main() -> None:
             f"A min/mean/median/max "
             f"{int(a_stats['minimum'])}/{float(a_stats['mean']):.3f}/"
             f"{float(a_stats['median']):g}/{int(a_stats['maximum'])}; "
+            f"{g_stats_text}{apply_guard_text}"
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
             f"{int(finite_display_vblanks.max())}; "
@@ -711,7 +858,7 @@ def main() -> None:
         (
             "Frame 0 is untimed boot staging: every metric, scale and gate excludes it. "
             "VBLANK is derived from consecutive F capture starts; the terminal hold is also excluded. "
-            "F is the x-axis. V/O on frame F describe the flip for F-1; "
+            f"F is the x-axis. {phase_note}"
             "E belongs to F. Orange lines are gate limits; J also shows the yellow normal jitter interval."
         ),
         fill=DIM,
@@ -774,9 +921,23 @@ def main() -> None:
             for key in ("S", "D", "R", "M", "J")
         },
         "gate_limits": limits,
-        "diagnostic_maxima": {"C": maxima["C"]},
+        "diagnostic_maxima": {
+            "C": maxima["C"],
+            **(
+                {"G": int(g_stats["maximum"])}
+                if g_stats is not None else {}
+            ),
+            **(
+                {"B": int(data["apply_guard_blocked"][1:].max(initial=0))}
+                if "apply_guard_blocked" in data else {}
+            ),
+        },
         "c_statistics": c_stats,
         "a_statistics": a_stats,
+        "sub_poll_gap_statistics": g_stats,
+        "apply_guard_blocked_frames": apply_guard_frames,
+        "prgbuf_minimum_patterns": q_minimum,
+        "prgbuf_underflow_peak_patterns": q_underflow_peak,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,

@@ -436,8 +436,9 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   not a per-frame cold cap papering over it. Keep `pack_stream.py`'s
   `RING_CAP_KB` tied to the player's real `RING_SIZE` minus that margin. Shape
   useful payload to the CD-1x allowance (replace rate padding while space is
-  available), and exceed that allowance only when the future-deadline proof
-  requires a burst; the following light frames repay the temporary lead.
+  available), and require every exact finite-buffer route to keep rate lead at
+  zero. A later light frame cannot repay display time already lost to a heavy
+  slot.
 
 ## Recording Rules
 

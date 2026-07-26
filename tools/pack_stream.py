@@ -1325,20 +1325,12 @@ def write_stream(
     pc = Bpat * PAT; cc = 0
     fsec_schedule = sc["fsec"]
     with body_path.open("wb") as f:
-        # v4 レートマッチpadding: 各frameを「CD 1x が1コマ時間に届けるセクタ数」までpaddingする。
-        # CD 1x = 75セクタ/秒。FEATURE_FIXED_N時はvsync_n由来、その他は75/fps_int。
-        # この整数割り当てを累積器で出し、fsec=max(実データ, レート割当)として「ディスク
-        # 読み速度=表示速度」になり、paddingを外したv4で起きた過剰配送→バッファ溢れ→CDCスリップ
-        # を根絶する。padセクタはプレイヤが読んで捨てる(累積器で同期)。
-        # レートマッチpadding(有界累積器 sec_acc/lead)。1コマのCD 1xセクタ配分ratedeltaを
-        # 累積器で整数化(固定N4→1001/200, 24fps→75/24, 固定N2→1001/400)。
-        # lead = CD 1x予定より
-        # 先行しているセクタ数(≥0)。重いコマ(実データ超過)は lead を増やし、後続の軽いコマは pad を
-        # lead ぶん減らして吸収する。fsec = max(実データ, ratedelta - lead)。総ディスク量が CD 1x 相当
-        # 指定された実効表示rateに収束し、過剰配送(→バッファ溢れ→CDCスリップ)も過小配送も起きない。
-        # プレイヤ(sp.s pump1)と同一の整数演算=ディスク上のフレーム境界が完全一致。
-        # schedule() has already applied that accumulator while choosing useful
-        # payload in place of padding, so write the proven result directly.
+        # Rate-match every frame to its exact CD-1x cadence allowance. The
+        # player retains the same bounded lead accumulator, but construction
+        # requires rate_lead_peak=0: a heavy slot's elapsed display delay
+        # cannot be undone by omitting pad in a later light slot. schedule()
+        # has already filled only same-slot spare allowance with useful
+        # payload, so write the proven control/payload/pad route directly.
         fsec_list = []
         for i in range(nfr):
             if f0_header and i == 0:
@@ -1596,7 +1588,7 @@ def main():
     if frozen_physical_budget:
         physical_budget_schema = int(
             frozen_physical_budget.get("schema_version", 0))
-        if physical_budget_schema not in (1, 2, 3):
+        if physical_budget_schema not in (1, 2, 3, 4):
             raise SystemExit(
                 "pack: unsupported physical-budget schema "
                 f"{frozen_physical_budget.get('schema_version')!r}")
@@ -1657,6 +1649,7 @@ def main():
                 actual_block_lengths,
                 prebuffer_capacity_patterns=RING_CAP_PAT,
                 frame_sectors=FRAME_SECTORS,
+                fps=FPS if physical_budget_schema >= 4 else None,
             )
             frozen_prg = np.asarray(
                 frozen_physical_budget.get("realized_prg_patterns", ()),
@@ -1691,7 +1684,7 @@ def main():
                 raise SystemExit(
                     "pack: shared-sector realized cold trace differs from sim")
             print(
-                "  shared-sector prefix照合: control/payload deadlines exact")
+                "  cadence-sector prefix照合: control/payload deadlines exact")
     sc = schedule(
         per,
         supply_plan.prg_loads,
@@ -1713,7 +1706,8 @@ def main():
         verify_sim_stream_schedule(log, sc)
     st = ("OK" if sc["feasible"] else
           f"INFEASIBLE(over {sc['over']} under {sc.get('under',0)} "
-          f"rate_lead_end {sc.get('rate_lead_end', 0)})")
+          f"rate_lead_peak/end {sc.get('rate_lead_peak', 0)}/"
+          f"{sc.get('rate_lead_end', 0)})")
     Pb = sum(len(b) for b in blocks)
     under = sc.get("under", 0)
     evaluation_end = int(sc.get("evaluation_end_frame", len(per)))
@@ -1744,7 +1738,8 @@ def main():
             "pack: refusing to write an infeasible BODY schedule "
             f"(over={sc['over']} under={sc.get('under', 0)} "
             f"ready_min={sc['ready_min']} ctrl_min={sc['ctrl_min']} "
-            f"rate_lead_end={sc.get('rate_lead_end', 0)})")
+            f"rate_lead_peak/end={sc.get('rate_lead_peak', 0)}/"
+            f"{sc.get('rate_lead_end', 0)})")
     if args.verify:
         decode_verify(log, per, blocks, supply_plan, sc, compare_dir=compare or None,
                       sample_dir=Path(output).parent / "decoded",

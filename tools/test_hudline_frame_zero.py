@@ -111,6 +111,22 @@ class HudlineFrameZeroTests(unittest.TestCase):
         }
         self.assertEqual(report.gate_overage_events(rows, gate), {})
 
+    def test_blank_optional_schema_columns_are_not_available_fields(self):
+        rows = [
+            {
+                "prgbuf_min_patterns_signed": "",
+                "sub_poll_gap_ticks": "",
+            },
+            {
+                "prgbuf_min_patterns_signed": "",
+                "sub_poll_gap_ticks": "276",
+            },
+        ]
+        self.assertFalse(
+            report.has_values(rows, "prgbuf_min_patterns_signed")
+        )
+        self.assertTrue(report.has_values(rows, "sub_poll_gap_ticks"))
+
 
 if __name__ == "__main__":
     unittest.main()

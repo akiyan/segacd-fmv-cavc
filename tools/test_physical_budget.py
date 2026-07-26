@@ -238,6 +238,36 @@ class PhysicalBudgetPlanTests(unittest.TestCase):
                 frame_sectors=5,
             )
 
+    def test_shared_sector_prefix_rejects_work_beyond_cd_cadence(
+            self) -> None:
+        with self.assertRaisesRegex(
+                stream_schedule.ScheduleError, "shared BODY prefix"):
+            physical_budget.verify_shared_sector_prefix(
+                [0, 0, 0],
+                [0, 4097, 0],
+                prebuffer_capacity_patterns=64,
+                frame_sectors=5,
+                fps=30,
+            )
+
+    def test_shared_sector_planner_uses_fps_cadence_before_encoding(
+            self) -> None:
+        planner = physical_budget.SharedSectorPlanner(
+            3,
+            max_prg_patterns=480,
+            max_cold_patterns=480,
+            prebuffer_capacity_patterns=640,
+            frame_sectors=5,
+            fps=30,
+        )
+        planner.begin_frame(0)
+        planner.commit_frame(
+            0, prg_patterns=0, cold_patterns=0,
+            control_block_bytes=0)
+        frame1 = planner.begin_frame(1)
+        self.assertEqual(frame1.cumulative_useful_sectors, 2)
+        self.assertEqual(frame1.control_block_bytes, 4096)
+
     def test_shared_sector_plan_freezes_realized_one_pass_trace(self) -> None:
         planner = physical_budget.SharedSectorPlanner(
             4,

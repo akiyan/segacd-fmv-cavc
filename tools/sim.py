@@ -1654,11 +1654,11 @@ def main():
         fill=av_config.PACK_FORWARD_FILL,
     )
     print(
-        "physical budget: one-pass shared-sector prefix ledger; "
+        "physical budget: one-pass cadence-sector prefix ledger; "
         f"Prg desired={int(predicted_prg_demand.sum())} patterns; "
         f"per-frame Prg/cold cap={MAX_COLD}; "
         f"timed route={ttrc_routing.FRAME_SECTORS} useful sectors/slot; "
-        "exact control savings fund the following frame before its decisions",
+        "every exact prefix also stays within cumulative CD-1x time",
         flush=True,
     )
 
@@ -3099,9 +3099,10 @@ def main():
         prebuffer_capacity_patterns=(
             PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
         frame_sectors=ttrc_routing.FRAME_SECTORS,
+        fps=FPS,
     )
     print(
-        "physical budget final: shared-sector prefix exact; "
+        "physical budget final: route/cadence prefixes exact; "
         f"Prg actual={int(physical_budget_plan.realized_prg_patterns.sum())} "
         f"patterns; control="
         f"{int(physical_budget_plan.realized_control_block_bytes.sum())}B; "
@@ -3237,6 +3238,7 @@ def main():
             prebuffer_capacity_patterns=(
                 PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
             frame_sectors=ttrc_routing.FRAME_SECTORS,
+            fps=FPS,
         )
         physical_schedule = (
             shadow_plan["schedule"] if shadow_plan is not None
@@ -3263,7 +3265,9 @@ def main():
             f"(over={physical_schedule['over']} under={physical_schedule['under']} "
             f"ready_min={physical_schedule['ready_min']} "
             f"ctrl_min={physical_schedule['ctrl_min']} "
-            f"rate_lead_end={physical_schedule['rate_lead_end']})")
+            f"rate_lead_peak/end="
+            f"{physical_schedule['rate_lead_peak']}/"
+            f"{physical_schedule['rate_lead_end']})")
     prg_remaining = np.asarray(
         physical_schedule["ring_occupancy"], np.int64)
     quality_budget_remaining = np.asarray(quality_budget_log, np.int64)
@@ -3304,9 +3308,10 @@ def main():
         f"identity_run_control_reservation="
         f"{stream_schedule.RUN_DESCRIPTOR_BYTES}B/cold while selecting; "
         "exact run bytes are finalized in-frame",
-        "physical_delivery_plan=one-pass shared-sector prefix ledger; "
+        "physical_delivery_plan=one-pass cadence-sector prefix ledger; "
         "exact control savings become the following frame's Prg limit before "
-        "that frame makes image decisions; pack repeats the frozen prefix proof",
+        "that frame makes image decisions; every exact route keeps CD-rate "
+        "lead at zero; pack repeats the frozen proof",
         f"PrgBuf_geometry=normal {PRG_BUF_CAP_KB}KiB + "
         f"jitter {PRG_JITTER_HEADROOM_KB}KiB = "
         f"delivery {PRG_DELIVERY_CAP_KB}KiB; "
@@ -3597,8 +3602,8 @@ def main():
                 "word_ram_layout": dataclasses.asdict(wordram_layout),
             },
             "physical_budget": {
-                "schema_version": 3,
-                "policy": "online-shared-sector-prefix",
+                "schema_version": 4,
+                "policy": "online-cadence-sector-prefix",
                 "planning_passes": int(
                     physical_budget_plan.planning_passes),
                 "desired_prg_patterns": np.asarray(

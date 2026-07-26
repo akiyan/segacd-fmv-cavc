@@ -28,6 +28,15 @@ Build the profile with DEBUG enabled:
 make disc CONFIG=configs/PROFILE.toml DEBUG=1
 ```
 
+For the opt-in H40 Sub-pump diagnostic, build:
+
+```sh
+make disc CONFIG=configs/PROFILE.toml DEBUG=1 SUB_POLL_GAP_DIAG=1
+```
+
+That layout replaces `Q/V` with `G/K`, retains `O/E`, and keeps the same
+40-cell row. It is excluded from release and ordinary DEBUG builds.
+
 `tools/record_movie.sh` uses a DEBUG disc by default. Release builds omit the
 HUD and use a slip-triggered CRAM0 red indicator. DEBUG builds keep the HUD
 colours stable and expose slips through `S`.
@@ -47,10 +56,13 @@ The fixed interpretation order is:
 F / P / S / D / R / L / C / W / M / A / U / N / J
 ```
 
-H32 and H40 use the same layout. Every digit occupies one 8x8 cell.
-H40 DEBUG builds additionally append three flip-phase fields, extending the
-order to `... / J / V / O / E` (36 cells). H32 keeps the 30-cell layout —
-its 32-cell row has no room for the extension.
+H32 and H40 use the same common layout. Every digit occupies one 8x8 cell.
+H40 DEBUG builds additionally append the four-digit signed PrgBuf minimum `Q`
+and three flip-phase fields, extending the order to
+`... / J / Q / V / O / E` (40 cells). H32 keeps the 30-cell layout; its
+32-cell row has no room for the extension. An H40 `SUB_POLL_GAP_DIAG=1`
+build uses `... / J / G / K / O / E`: `G/K` replace `Q/V` without changing
+the width.
 
 | Field | Cell columns | Native pixel range | Digits |
 |---|---:|---:|---:|
@@ -67,13 +79,13 @@ its 32-cell row has no room for the extension.
 | `U` | 22-25 | x=176-207 | 4 |
 | `N` | 26-27 | x=208-223 | 2 |
 | `J` | 28-29 | x=224-239 | 2 |
-| `V` (H40 only) | 30-31 | x=240-255 | 2 |
-| `O` (H40 only) | 32-33 | x=256-271 | 2 |
-| `E` (H40 only) | 34-35 | x=272-287 | 2 |
+| `Q` or `G` (H40 only) | 30-33 | x=240-271 | 4 |
+| `V` or `K` (H40 only) | 34-35 | x=272-287 | 2 |
+| `O` (H40 only) | 36-37 | x=288-303 | 2 |
+| `E` (H40 only) | 38-39 | x=304-319 | 2 |
 
 The common part covers 30 cells or 240 pixels. H32's rightmost 2 cells
-remain movie-visible; H40 covers 36 cells, leaving its rightmost 4 cells
-movie-visible.
+remain movie-visible; the extended H40 HUD covers all 40 cells.
 
 The HUD always occupies row 0 of the native 256x224 or 320x224 raster. It can
 cover active picture content; it is not repositioned around letterboxing.
@@ -87,10 +99,9 @@ fails when `M>03`. Delivery-paced content may use all display fields in one
 content frame; 24 fps fails when `M>03`. The largest passing `J` is
 normal-ceiling-to-physical-end minus one
 KiB: `2D` at 15fps, `1E` at 24fps, and `19` at 30fps. Values above the normal
-jitter interval (`24`, `19`, or `14` respectively) show that
-sector-granular occupancy crossed the cadence's scheduled-delivery ceiling
-(418 KiB at 15 fps; 422 KiB at 24/30 fps) and entered the reserve left outside
-the schedule.
+jitter interval (`28`, `19`, or `14` respectively) show that
+sector-granular occupancy crossed the shared 418 KiB delivery observation
+boundary and entered the final physical guard left outside the schedule.
 Report the value, but a `J` within the cadence-specific passing limit does not
 by itself require another confirmation or fail the recording. `C` has no gate
 threshold and never changes the gate result; it remains a diagnostic measure
@@ -100,7 +111,9 @@ publication, continue without requesting another approval merely because the
 gate ran.
 For every gate result, the analyzer and `/hudline` report the minimum, mean,
 median, and maximum of both `C` and `A` across the timed first loop and preserve
-them in the gate JSON and hudline receipt.
+them in the gate JSON and hudline receipt. When `G` is present, they also
+report its minimum, mean, median, and maximum after separating the packed `B`
+marker. `G`, `B`, and `K` are diagnostic only and never alter the gate.
 
 Frame 0 is an untimed boot construction, not a playback measurement. Keep it
 only for first-loop sequence completeness and frame-axis alignment. Exclude
@@ -127,6 +140,10 @@ available.
 | `U` | Main | per frame | Main pattern-transfer elapsed time | Below the frame's available transfer window |
 | `N` | Main | per frame | Source-aware cold-run descriptor count | Content-dependent; correlate with `U` |
 | `J` | Sub | cumulative peak | Maximum streamed PrgBuf occupancy above the fps-derived normal ceiling | `00` means the jitter headroom was never used |
+| `Q` | Sub | per frame | Minimum signed logical PrgBuf balance, in exact 32-byte patterns (H40 only) | Positive is supplied data; `0000` is truly empty; `FFFF` is one-pattern underflow |
+| `G` | Sub | per frame | Longest interval outside a CDC pump opportunity, in 30.72 us ticks (`SUB_POLL_GAP_DIAG`, H40 only) | A stable band means no exceptional Sub-side pump neglect |
+| `B` | Sub | per frame | APPLY control-queue back-pressure rejected a pump (`SUB_POLL_GAP_DIAG`, derived from `G` bit 15) | `00`; `01` proves the control queue blocked continuous delivery |
+| `K` | Sub | cumulative | MSF sequence-gap recovery count (`SUB_POLL_GAP_DIAG`, H40 only) | Compare with `S`; `S-K` is the CDC_TRN retry-exhaustion count |
 | `V` | Main | previous frame | V-counter at the last accepted display flip (H40 only) | `E0` = flip at the VBlank start; higher blank lines mean the flip ran late inside its blank |
 | `O` | Main | previous frame | That flip's interval excess over 1024 stopwatch ticks (H40 only) | About `3E` (62 = nominal 1086-tick N2 interval); `FF` marks a slipped 3-field frame |
 | `E` | Main | per frame | Pass2 entry delay since the previous flip, in 4-tick units (H40 only) | Below one field (`88` = 544 ticks) with margin; approaching the field-1 blank end means the transfer is about to miss its VBlank |
@@ -135,7 +152,8 @@ available.
 once incremented, they remain nonzero until playback restarts, and the displayed
 low byte wraps from `FF` to `00`. `J` is also cumulative but retains the
 largest observed excess rather than counting events. `C`, `W`, `M`, `A`, `U`,
-and `N` describe one frame. `F`, `P`, and `L` describe current player state.
+`N`, `Q`, `G`, and `B` describe one frame. `K` is cumulative. `F`, `P`, and
+`L` describe current player state.
 `V` and `O` are sampled at `do_flip` *after* the flip register write, so the
 row that carries them was built one frame later: frame `F`'s row shows the
 flip that published frame `F - 1`. Shift by one frame when correlating them
@@ -289,7 +307,7 @@ hardware transfer choices.
 
 `J` is the maximum simultaneous streamed PrgBuf occupancy above the
 fps-derived normal ceiling observed since BODY streaming began. That ceiling
-is 382 KiB at 15fps, 397 KiB at 24fps, and 402 KiB at 30fps. It is rounded
+is 378 KiB at 15fps, 393 KiB at 24fps, and 398 KiB at 30fps. It is rounded
 upward to KiB and displayed in hexadecimal. `J=00` proves that occupancy never
 crossed the ceiling; `J=01` means a nonzero excess of at most 1 KiB, and
 `J=0A` means a maximum excess of at most 10 KiB.
@@ -301,6 +319,40 @@ stored at `F0PAT_TMP` does not pass through this path and is deliberately
 excluded. The field measures simultaneous occupancy, not whether a circular
 read or write pointer happened to enter the physical address range above that
 stream's normal boundary.
+
+### `Q`: signed per-frame PrgBuf minimum (H40 DEBUG builds)
+
+`Q` tracks a separate signed logical balance: each BODY payload sector adds 64
+patterns, and each Prg source run subtracts its exact pattern count. The player
+publishes the minimum balance reached during the frame as a four-digit signed
+16-bit hexadecimal value. `0001` means one 32-byte pattern remained, `0000`
+means the logical supply became exactly empty, and `FFFF` means it consumed one
+pattern before that pattern had arrived.
+
+This counter exists because circular pointer arithmetic cannot identify an
+underflow after it happens. If the pop head passes the append tail, the modulo
+distance looks almost full and can trigger payload back-pressure. `Q` retains
+the signed fact for the whole frame even if a later sector repays the debt.
+It is diagnostic only and does not change the upload gate.
+
+### `G` / `B` / `K`: Sub pump and control back-pressure (H40 diagnostic builds)
+
+`G` is the longest interval in one frame between Sub-CPU CDC service
+opportunities. Its low 12 bits use the Mega-CD stopwatch unit of 30.72 us.
+The timer restarts after a sector transfer or re-seek recovery, so `G` measures
+time spent outside the pump path rather than the recovery work itself.
+
+`B` is decoded from `G` bit 15 as a separate Boolean row. It is set when
+APPLY-ring occupancy reaches the `APPLY_SIZE - 4 KiB` guard (30 KiB with the
+current 34 KiB ring) and the Sub CPU therefore refuses the next control-sector
+pump. The player temporarily stores this marker in the unused high bit of the
+per-frame control-wait counter, then combines it with `G` only while formatting
+the HUD; it does not disturb the `G` maximum or the displayed low-byte `C`.
+
+`K` is the cumulative count of `S` incidents caused specifically by an MSF
+sector-sequence gap. `S` remains the total recovery count, so `S-K` identifies
+CDC_TRN retry-exhaustion recoveries modulo 256. All three fields are diagnostic
+and have no upload-gate threshold.
 
 ### `V` / `O` / `E`: flip phase and Pass2 entry phase (H40 DEBUG builds)
 
@@ -341,6 +393,11 @@ VBlank.
 | `P` changes with stable `S/D` | Normal scheduled CRAM segment switch |
 | `J` changes from `00` | Streaming occupancy used part of the physical jitter reserve |
 | `J` rises again later | Timed playback exceeded the previous startup/runtime high-water mark |
+| `Q=0000` | Logical PrgBuf supply became exactly empty during that frame |
+| `Q=8000..FFFF` | Signed PrgBuf balance went negative; decode as `Q-0x10000` patterns |
+| `G` remains in its normal band at an `S` transition | The incident was not caused by an exceptional interval outside the CDC pump |
+| `B=01`, followed by a rise in `K`/`S` | APPLY control back-pressure blocked delivery before an MSF-gap recovery |
+| `K` rises by the same amount as `S` | The observed recoveries are MSF sequence gaps, not CDC_TRN retry exhaustion |
 
 These are correlations, not standalone proofs. Use native lossless capture and
 the packed stream when investigating a regression.
@@ -350,12 +407,13 @@ the packed stream when investigating a regression.
 The HUD does not use the Window plane. For each frame the Main CPU:
 
 1. builds the complete next movie name table in the inactive Plane A table;
-2. formats the HUD into a 60-byte Main-RAM row (72 bytes with `V`/`O`/`E`);
-3. overwrites only the first 30 name-table cells (36 on H40 DEBUG builds);
+2. formats the HUD into a 60-byte Main-RAM row (80 bytes with
+   `Q/V/O/E` or `G/K/O/E`);
+3. overwrites only the first 30 name-table cells (40 on H40 DEBUG builds);
 4. selects that completed table with the same register-2 flip as the movie.
 
 The inactive tables are at VRAM `0xC000` and `0xE000`. Publishing the HUD uses
-15 longword writes (18 with `V`/`O`/`E`) and no DMA. The unoccupied cells
+15 longword writes (20 with either H40 extension) and no DMA. Unoccupied H32 cells
 retain their movie entries, which avoids exposing an unrelated Plane B frame.
 
 The final flip has a terminal-VBlank guard: V-counter lines `FC` through `FF`
@@ -394,9 +452,11 @@ frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
 ```
 
 `read_frameno.py` decodes the barcode and checks the lower glyph with normalized
-correlation. H32 and H40 share the same field layout; native width is retained
-only as mode metadata. If an H40 image has already been cropped narrower, call
-`read_hud` with `HUD_H40_LAYOUT` explicitly.
+correlation. The common H32/H40 prefix uses `HUD_LAYOUT`; the extended H40
+row uses `HUD_H40_FLIP_LAYOUT` for `Q/V/O/E` or
+`HUD_H40_POLL_GAP_LAYOUT` for `G/K/O/E`. Pass `--flip-fields` or
+`--poll-gap-fields`, respectively, to the recording analyzer; the options are
+mutually exclusive.
 
 For a complete recording, `harness/startup_resync/analyze.py` groups repeated
 60 Hz capture frames by `F`, retains per-field confidence, and reports counter
@@ -419,6 +479,14 @@ written as
 `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the `--tsv` path becomes
 a run-specific compatibility symlink to that log. Project-owned HUD logs are
 never comma-delimited.
+
+For H40 extended HUDs, the TSV preserves `Q` as
+`prgbuf_min_patterns_raw16`, decodes its signed value into
+`prgbuf_min_patterns_signed`, and writes the positive debt magnitude as
+`prgbuf_underflow_patterns`. The pump diagnostic instead writes
+`sub_poll_gap_ticks`, `sub_poll_gap_ms`, `apply_guard_blocked`,
+`slip_msf_gap_count`, and `slip_trn_retry_count`. `/hudline` and `/mixline`
+always include those rows and G/B summaries when the columns are present.
 
 The reproducible glyph/layout proof is:
 
@@ -470,6 +538,15 @@ ProfileをDEBUG付きでbuildします。
 make disc CONFIG=configs/PROFILE.toml DEBUG=1
 ```
 
+H40のopt-in Sub-pump diagnosticは次でbuildします。
+
+```sh
+make disc CONFIG=configs/PROFILE.toml DEBUG=1 SUB_POLL_GAP_DIAG=1
+```
+
+このlayoutは`Q/V`を`G/K`へ置き換え、`O/E`と同じ40-cell rowを維持します。
+Releaseと通常DEBUG buildには入りません。
+
 `tools/record_movie.sh`は既定でDEBUG discを使います。Release buildはHUDを省き、
 slip-triggered CRAM0 red indicatorを使います。DEBUG buildはHUD colourを固定し、
 slipを`S`で表示します。
@@ -490,8 +567,10 @@ F / P / S / D / R / L / C / W / M / A / U / N / J
 ```
 
 H32とH40は同じ共通layoutです。1 digitは1つの8x8 cellを使います。H40 DEBUG buildは
-さらに3つのflip-phase fieldを追加し、`... / J / V / O / E`の36 cellになります。
-H32は30-cell layoutを使い、32-cell rowにはextensionの余地がありません。
+4桁のsigned PrgBuf minimum `Q`と3つのflip-phase fieldを追加し、
+`... / J / Q / V / O / E`の40 cellになります。H32は30-cell layoutを使い、
+32-cell rowにはextensionの余地がありません。H40 `SUB_POLL_GAP_DIAG=1` buildは
+`... / J / G / K / O / E`を使い、幅を変えずに`Q/V`を`G/K`へ置き換えます。
 
 | Field | Cell columns | Native pixel range | Digits |
 |---|---:|---:|---:|
@@ -508,12 +587,13 @@ H32は30-cell layoutを使い、32-cell rowにはextensionの余地がありま�
 | `U` | 22-25 | x=176-207 | 4 |
 | `N` | 26-27 | x=208-223 | 2 |
 | `J` | 28-29 | x=224-239 | 2 |
-| `V`（H40のみ） | 30-31 | x=240-255 | 2 |
-| `O`（H40のみ） | 32-33 | x=256-271 | 2 |
-| `E`（H40のみ） | 34-35 | x=272-287 | 2 |
+| `Q`または`G`（H40のみ） | 30-33 | x=240-271 | 4 |
+| `V`または`K`（H40のみ） | 34-35 | x=272-287 | 2 |
+| `O`（H40のみ） | 36-37 | x=288-303 | 2 |
+| `E`（H40のみ） | 38-39 | x=304-319 | 2 |
 
-共通部は30 cell、240 pixelです。H32右端の2 cellはmovie表示のままです。H40は36 cellを
-使い、右端4 cellがmovie表示のままです。
+共通部は30 cell、240 pixelです。H32右端の2 cellはmovie表示のままです。
+Extended H40 HUDは40 cellすべてを使います。
 
 HUDはnative 256x224または320x224 rasterのrow 0を常に使います。Active pictureを
 覆う場合があり、letterboxに合わせて移動しません。
@@ -526,9 +606,9 @@ Fixed-Nは介在する`N-1`個のpattern-work fieldを使えます。Fixed N2は
 fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは`M>03`でfailです。
 Passing `J`の最大値はnormal ceilingから
 physical endまでの差より1 KiB小さい値で、15 fpsは`2D`、24 fpsは`1E`、30 fpsは
-`19`です。Normal jitter interval（それぞれ`24`、`19`、`14`）を超える値は、
-cadence別scheduled-delivery ceiling（15 fpsは418 KiB、24/30 fpsは422 KiB）を越え、
-schedule外に残したreserveへ入ったことを示します。値は報告しますが、cadence固有
+`19`です。Normal jitter interval（それぞれ`28`、`19`、`14`）を超える値は、
+共通の418 KiB delivery observation boundaryを越え、schedule外に残した最後の
+physical guardへ入ったことを示します。値は報告しますが、cadence固有
 passing limit内の`J`だけで再確認やfailにはしません。`C`にはgate thresholdがなく、
 gate結果を変えません。Sub側CD workのdiagnosticとして保持します。
 
@@ -536,6 +616,8 @@ PASS/WARNINGでは全`S/D/R/M/J` gate maximumとdiagnostic C maximumを報告し
 Taskがpublicationを許可済みなら、gate実行だけを理由に追加approvalは求めません。
 すべてのgate結果で、analyzerと`/hudline`はtimed first loopにおける`C`と`A`それぞれの
 minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
+`G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
+報告します。`G/B/K`はdiagnostic専用でgateを変えません。
 
 Frame 0はuntimed boot constructionで、playback measurementではありません。
 First-loop sequenceとframe-axis alignmentのためだけに保持し、全HUD値をgate maximum、
@@ -560,13 +642,17 @@ Final frameは次のmovie-frame transitionがないため、derived VBlankはunk
 | `U` | Main | per frame | Main pattern-transfer elapsed time | frameのtransfer window未満 |
 | `N` | Main | per frame | source-aware cold-run descriptor count | content依存。`U`と相関を見る |
 | `J` | Sub | cumulative peak | fps-derived normal ceilingを超えたstreamed PrgBuf occupancy最大値 | `00`ならjitter headroom未使用 |
+| `Q` | Sub | per frame | exact 32-byte pattern単位のsigned logical PrgBuf minimum（H40のみ） | positiveは供給済み、`0000`は真のempty、`FFFF`は1 pattern underflow |
+| `G` | Sub | per frame | CDC pump opportunity外にいた最長interval。30.72 us tick単位（`SUB_POLL_GAP_DIAG`、H40のみ） | 安定bandなら例外的なSub-side pump放置はない |
+| `B` | Sub | per frame | APPLY control queueのback-pressureがpumpを拒否（`SUB_POLL_GAP_DIAG`、`G` bit 15から分離） | `00`。`01`はcontrol queueがcontinuous deliveryをblockした証明 |
+| `K` | Sub | cumulative | MSF sequence-gap recovery count（`SUB_POLL_GAP_DIAG`、H40のみ） | `S`と比較し、`S-K`をCDC_TRN retry-exhaustion countとして読む |
 | `V` | Main | previous frame | accepted display flip時のV-counter（H40のみ） | `E0`ならVBlank start。大きいblank lineはlate flip |
 | `O` | Main | previous frame | flip intervalの1024 tick超過分（H40のみ） | nominal N2は約`3E`、`FF`は3-field slip |
 | `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位（H40のみ） | 1 field未満で余裕を持つ。`88`は544 tick |
 
 `S`、`D`、`R`はcumulative counterで、一度増えるとrestartまでnonzeroです。表示low byteは
 `FF`から`00`へwrapします。`J`もcumulativeですがevent数ではなく最大excessを保持します。
-`C/W/M/A/U/N`は1 frame、`F/P/L`はcurrent stateです。
+`C/W/M/A/U/N/Q/G/B`は1 frame、`K`はcumulative、`F/P/L`はcurrent stateです。
 
 `V/O`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
 作られます。Frame `F`のrowはframe `F - 1`をpublishしたflipを示すため、per-frame
@@ -696,8 +782,8 @@ transfer choice前のfragmentationを測ります。
 ### `J`: streamed PrgBuf jitter-reserve high-water mark
 
 `J`はBODY streaming開始後に観測した、fps-derived normal ceilingを超えるstreamed
-PrgBuf simultaneous occupancyの最大値です。Normal ceilingは15 fpsで382 KiB、
-24 fpsで397 KiB、30 fpsで402 KiBです。KiBへ切り上げhex表示します。
+PrgBuf simultaneous occupancyの最大値です。Normal ceilingは15 fpsで378 KiB、
+24 fpsで393 KiB、30 fpsで398 KiBです。KiBへ切り上げhex表示します。
 `J=00`はceiling未超過、`J=01`は0より大きく1 KiB以下、`J=0A`は10 KiB以下の
 最大excessです。
 
@@ -706,6 +792,35 @@ high-water markを上げるため、pollやpattern consumptionでの追加sample
 Frame-0 blockはこのpathを通らないため除外します。Fieldはsimultaneous occupancyを
 測り、circular pointerがnormal boundaryより上のphysical addressへ入ったかどうかとは
 別です。
+
+### `Q`: signed per-frame PrgBuf minimum（H40 DEBUG）
+
+`Q`は別のsigned logical balanceを追跡します。BODY payload sectorごとに64 patternを
+加え、Prg source runごとにexact pattern countを引きます。そのframeで到達した最小値を
+signed 16-bitの4桁hexでpublishします。`0001`は32 byte patternが1つ残った状態、
+`0000`はlogical supplyが正確にempty、`FFFF`は到着前のpatternを1つ消費した状態です。
+
+Circular pointer arithmeticはunderflow発生後にそれを識別できません。Pop headがappend
+tailを追い越すとmodulo distanceはほぼfullに見え、payload back-pressureを起こせます。
+`Q`は後続sectorがdebtを返済しても、そのframe全体でsigned factを保持します。
+Diagnostic専用でupload gateは変えません。
+
+### `G` / `B` / `K`: Sub pumpとcontrol back-pressure（H40 diagnostic build）
+
+`G`は1 frame内のSub CPU CDC service opportunity間で最長のintervalです。Low 12 bitを
+Mega-CD stopwatchの30.72 us unitとして使います。Sector transferまたはre-seek recovery
+後にtimer originを更新するため、recovery workそのものではなくpump path外の時間を
+測ります。
+
+`B`は`G` bit 15から独立したBoolean rowとしてdecodeします。APPLY-ring occupancyが
+`APPLY_SIZE - 4 KiB` guard（現在の34 KiB ringでは30 KiB）へ達し、Sub CPUが次の
+control-sector pumpを拒否したframeで立ちます。Playerはper-frame control-wait counterの
+未使用high bitへ一時保存し、HUD format時だけ`G`へ合成します。このためG maximumや
+表示low-byte `C`を妨げません。
+
+`K`は`S` incidentのうちMSF sector-sequence gapが原因のcumulative countです。`S`は
+全recovery countのままなので、`S-K`がCDC_TRN retry-exhaustion recoveryを示します。
+差はmodulo 256で読みます。3 fieldともdiagnostic専用でupload-gate thresholdはありません。
 
 ### `V` / `O` / `E`: flip phaseとPass2 entry phase（H40 DEBUG）
 
@@ -740,6 +855,11 @@ bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main pha
 | `P`変化、`S/D`安定 | 正常なscheduled CRAM segment switch |
 | `J`が`00`から変化 | Physical jitter reserveを使用 |
 | `J`がさらに上昇 | Timed playbackがそれまでのhigh-water markを更新 |
+| `Q=0000` | そのframeでlogical PrgBuf supplyが正確にempty |
+| `Q=8000..FFFF` | Signed PrgBuf balanceがnegative。`Q-0x10000` patternとして読む |
+| `S` transitionでも`G`がnormal band内 | CDC pump外の例外的な長時間停止はincident原因ではない |
+| `B=01`の後に`K/S`が増加 | APPLY control back-pressureがdeliveryをblockした後にMSF-gap recovery |
+| `K`と`S`が同量増加 | Recovery原因はMSF sequence gapで、CDC_TRN retry exhaustionではない |
 
 単独のproofではなくcorrelationです。Regression調査ではnative lossless captureとpacked
 streamを使います。
@@ -749,12 +869,12 @@ streamを使います。
 HUDはWindow planeを使いません。各frameでMain CPUは次を行います。
 
 1. inactive Plane A tableへcomplete next movie name tableを構築
-2. 60-byte Main-RAM row（`V/O/E`付きは72 byte）へHUDをformat
-3. 最初の30 name-table cell（H40 DEBUGは36）だけ上書き
+2. 60-byte Main-RAM row（`Q/V/O/E`または`G/K/O/E`付きは80 byte）へHUDをformat
+3. 最初の30 name-table cell（H40 DEBUGは40）だけ上書き
 4. Movieと同じregister-2 flipでcompleted tableを選択
 
 Inactive tableはVRAM `0xC000`と`0xE000`です。HUD publicationは15 longword write、
-`V/O/E`付きで18 write、DMAなしです。未使用cellはmovie entryを保持し、無関係な
+どちらのH40 extensionも20 write、DMAなしです。H32の未使用cellはmovie entryを保持し、無関係な
 Plane B frameを露出しません。
 
 Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで
@@ -789,8 +909,10 @@ frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
 ```
 
 `read_frameno.py`はbarcodeをdecodeし、lower glyphをnormalized correlationでcheckします。
-H32/H40は同じfield layoutで、native widthはmode metadataとして保持します。H40 imageを
-すでにnarrow cropした場合は`read_hud`へ`HUD_H40_LAYOUT`を明示します。
+共通H32/H40 prefixは`HUD_LAYOUT`、`Q/V/O/E` extended rowは
+`HUD_H40_FLIP_LAYOUT`、`G/K/O/E`は`HUD_H40_POLL_GAP_LAYOUT`を使います。
+Recording analyzerにはそれぞれ`--flip-fields`または`--poll-gap-fields`を渡します。
+両optionは同時に使えません。
 
 Complete recordingでは`harness/startup_resync/analyze.py`が`F`ごとにrepeated 60 Hz
 capture frameをgroup化し、field別confidenceとcounter transitionを報告します。
@@ -812,6 +934,13 @@ Required profile引数がある場合、実体は
 `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`へ永続保存し、`--tsv` pathは
 そのlogへのrun-specific compatibility symlinkになります。Project-owned HUD logは
 comma-delimitedにしません。
+
+H40 extended HUDでは、TSVは`Q`を`prgbuf_min_patterns_raw16`として保持し、
+signed valueを`prgbuf_min_patterns_signed`へdecodeし、positiveなdebt magnitudeを
+`prgbuf_underflow_patterns`へ書きます。Pump diagnosticでは代わりに
+`sub_poll_gap_ticks`、`sub_poll_gap_ms`、`apply_guard_blocked`、
+`slip_msf_gap_count`、`slip_trn_retry_count`を書きます。Columnがあれば
+`/hudline`と`/mixline`は常にそれらのrowとG/B summaryを含めます。
 
 Glyph/layoutのreproducible proofは次です。
 

@@ -21,7 +21,7 @@ CD_BYTES_PER_SECOND = av_config.CD_BYTES_PER_SECOND
 PATTERN_BYTES = 32
 PATTERNS_PER_SECTOR = SECTOR_BYTES // PATTERN_BYTES
 RUN_DESCRIPTOR_BYTES = 4
-STREAM_SCHEDULE_SCHEMA_VERSION = 5
+STREAM_SCHEDULE_SCHEMA_VERSION = 6
 
 
 class ScheduleError(ValueError):
@@ -394,7 +394,13 @@ def rate_deltas(frame_count, fps):
 
 
 def rate_match_sectors(payload_sectors, control_sectors, *, fps):
-    """Apply the player's bounded CD-rate accumulator to a routing table."""
+    """Apply the player's bounded CD-rate accumulator to a routing table.
+
+    The accumulator remains identical to the player, but an accepted
+    fixed-cadence schedule must keep the returned lead trace at zero. A
+    positive value records real display time that a later light slot cannot
+    restore.
+    """
     n_pay = np.asarray(payload_sectors, np.int64)
     n_ctrl = np.asarray(control_sectors, np.int64)
     if n_pay.shape != n_ctrl.shape or n_pay.ndim != 1:
@@ -745,7 +751,7 @@ def schedule_payload_ring(
     rate_lead_end = int(rate_lead_trace[-1])
     feasible = (
         (n_pay_sec >= 0).all() and over == 0 and under == 0
-        and ready_min >= 0 and ctrl_min >= 0 and rate_lead_end == 0
+        and ready_min >= 0 and ctrl_min >= 0 and rate_lead_peak == 0
     )
     result = {
         "n_pay_sec": n_pay_sec,

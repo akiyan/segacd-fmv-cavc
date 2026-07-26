@@ -211,6 +211,16 @@ def main() -> None:
     diagnostic_c = int(
         hudline.get("diagnostic_maxima", {}).get("C", 0)
     )
+    diagnostic_g = hudline.get("diagnostic_maxima", {}).get("G")
+    diagnostic_g_text = (
+        f"G diagnostic max {int(diagnostic_g)} ticks | "
+        if diagnostic_g is not None else ""
+    )
+    apply_guard_frames = hudline.get("apply_guard_blocked_frames")
+    apply_guard_text = (
+        f"B APPLY block {int(apply_guard_frames)} frames | "
+        if apply_guard_frames is not None else ""
+    )
     vblank_text = ""
     if hudline.get("display_vblank_warning_supported"):
         vblank_text = (
@@ -224,6 +234,8 @@ def main() -> None:
         (
             f"Playback /hudline | gate maxima / limits  {gate_text} | "
             f"C diagnostic max {diagnostic_c} | "
+            f"{diagnostic_g_text}"
+            f"{apply_guard_text}"
             f"J normal {int(hudline['jitter_normal_kib'])} KiB | "
             f"OCR {float(hudline.get('ocr_confidence_min', 0.0)):.3f}"
             f"{vblank_text}"

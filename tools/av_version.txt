@@ -11,6 +11,41 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e139: Make fixed-cadence CD time a construction constraint rather than a
+#         whole-movie average. Every online control/Prg prefix now fits both
+#         the routing-byte useful-sector ceiling and the fps-derived cumulative
+#         CD-1x allowance, and the exact finite-PrgBuf route must keep
+#         rate_lead_peak at zero. A heavy slot can no longer borrow time from
+#         later light slots, because elapsed display delay is irreversible and
+#         otherwise becomes producer lead into the finite APPLY queue.
+#   p97: Move boot-only ring, APPLY and frame-0 queue initialization into the
+#        existing HEADER-preloaded Sub extension, which grows from 176 to 216
+#        bytes while remaining inside the ADPCM sector padding. The H40/15fps
+#        G diagnostic resident image is now 4,080 bytes and fits the BIOS
+#        4 KiB load limit. PrgBuf capacity, timed player work, resolution, fps,
+#        cold cap, image settings, stream decisions and simulated output stay
+#        unchanged.
+#   p96: Add the opt-in H40 DEBUG SUB_POLL_GAP_DIAG player. It replaces Q
+#        with G, the maximum time spent outside the Sub CDC pump between
+#        service opportunities in 30.72 us stopwatch ticks, while retaining
+#        O/E and the 40-cell geometry. G excludes blocking sector transfer and
+#        slip-recovery time. K replaces V and counts MSF sequence-gap
+#        recoveries; S remains the total recovery count, so S-K identifies
+#        CDC_TRN retry-exhaustion recoveries. G bit 15 carries B when APPLY
+#        back-pressure rejects a control-sector pump. The diagnostic excludes Q
+#        bookkeeping so the resident Sub image remains within the 4 KiB limit.
+#        Release/default DEBUG playback, resolution, fps, cold cap, image
+#        settings, stream decisions, and simulated output remain unchanged.
+#   p95: Add H40 DEBUG Q, the signed per-frame minimum logical PrgBuf balance
+#        in exact 32-byte patterns. Move boot-only routing validation and
+#        two-bank duplication into the existing HEADER-preloaded Sub extension
+#        (now 176 bytes) so the resident Sub base remains within 4 KiB. The
+#        qualified 88-byte ADPCM entry remains byte-identical. Up-to-8-KiB
+#        routing leaves the second entry intact at staged address 0x7D2B8 and
+#        runs it only after prebuffer; longer routes use the copied 0x76858
+#        entry. The proven startup read path before prebuffer remains unchanged.
+#        Resolution, fps, cold cap, image settings, stream decisions, and
+#        simulated output remain unchanged.
 #   e138/p94: Preload the 88-byte ADPCM table-copy extension in the existing
 #        five-sector table padding and execute it from the unused timed-ring
 #        tail. Keep signed deltas in both physical Word-RAM banks, reserve the
@@ -842,5 +877,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260726
-e=138
-p=94
+e=139
+p=97

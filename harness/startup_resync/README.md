@@ -3,11 +3,10 @@
 This harness reads a native DEBUG playback recording sequentially and finds the
 first audio re-sync (`R`) without seeking by eye. It uses the player's fixed
 top-row values-only HUD; the internal key order remains
-`F/P/S/D/R/L/C/W/M/A`, followed by `U/N` in H40:
+`F/P/S/D/R/L/C/W/M/A/U/N/J`:
 
 ```text
-H32: xxxx xx xx xx xx xx xx xx xx xx
-H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx
+H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 ```
 
 The startup-specific fields are:
@@ -18,12 +17,21 @@ The startup-specific fields are:
 - `M`: Main-side VBlank-start waits while applying pattern DMA;
 - `A`: Sub ADPCM decode time in four-stopwatch-tick units (about 0.1229 ms
   per displayed unit); PCM builds show zero.
-- `U` (H40): Main pattern-transfer time in 30.72 us Mega-CD stopwatch ticks;
-- `N` (H40): low byte of the packed cold-run descriptor count before VBlank
+- `U`: Main pattern-transfer time in 30.72 us Mega-CD stopwatch ticks;
+- `N`: low byte of the packed cold-run descriptor count before VBlank
   splits; it wraps at 256.
+- `J`: streamed PrgBuf jitter-reserve high-water mark in KiB.
 
 The startup fields use two hexadecimal digits. `U` uses four digits and `N`
 uses two. The extra counters exist only in a `DEBUG=1` player and add no DMA.
+
+Specialized H40 DEBUG builds may extend the row to 40 cells. Use
+`--flip-fields` for `Q/V/O/E`, or `--poll-gap-fields` for the mutually
+exclusive `G/K/O/E` diagnostic layout. `G` is the longest interval outside a
+Sub CDC pump opportunity in 30.72 us ticks; its bit 15 becomes the separate
+per-frame APPLY back-pressure field `B`. `K` is the cumulative MSF-gap
+recovery count, and the TSV derives CDC_TRN retry exhaustion as
+`(S-K) & 0xFF`.
 
 Every capture frame is decoded by `ffmpeg` as a small grayscale rawvideo crop.
 `tools/read_frameno.py:read_hud` reads all visible fields.  A sample is accepted only
@@ -45,7 +53,9 @@ decimal, and the surrounding `L/C/W/M/A` values. It always reports the
 minimum, mean, median, and maximum of both `C` and `A` across the timed first
 loop; untimed frame 0 and later loops are excluded. The same statistics are
 stored in the gate JSON. `C` is diagnostic only and does not affect the gate
-status. The TSV contains one row per aggregated movie frame.
+status. With `--poll-gap-fields`, the report and gate JSON also preserve G
+minimum/mean/median/maximum and the B frame count; `/hudline` and `/mixline`
+render G/B/K permanently. The TSV contains one row per aggregated movie frame.
 Transition rows additionally carry the previous and next lead, which makes
 preload-to-live boundary failures easy to compare between A/B recordings. With
 the profile argument, the TSV body is stored permanently as

@@ -51,6 +51,10 @@ HUD_COLUMNS = (
     ("U", "main_pattern_ticks", 4),
     ("N", "cold_runs_low8", 2),
     ("J", "prgbuf_jitter_peak_kib", 2),
+    ("Q", "prgbuf_min_patterns_raw16", 4),
+    ("G", "sub_poll_gap_ticks", 4),
+    ("B", "apply_guard_blocked", 2),
+    ("K", "slip_msf_gap_count", 2),
     ("V", "flip_vcounter", 2),
     ("O", "flip_interval_excess_ticks", 2),
     ("E", "pass2_entry_q4", 2),
@@ -82,6 +86,13 @@ def as_int(row: dict[str, str], column: str) -> int:
         # The analyzer preserves some HUD-native fields, notably H40's V
         # counter, as hexadecimal glyph text such as "EE".
         return int(text, 16)
+
+
+def has_values(rows: list[dict[str, str]], column: str) -> bool:
+    """Return true only when the optional HUD field was actually decoded."""
+    return bool(rows and column in rows[0]) and any(
+        row.get(column, "").strip() for row in rows
+    )
 
 
 def hex_value(value: int, digits: int = 2) -> str:
@@ -121,6 +132,10 @@ def c_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
 
 def a_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
     return field_statistics(rows, "sub_adpcm_decode_units")
+
+
+def g_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
+    return field_statistics(rows, "sub_poll_gap_ticks")
 
 
 def format_field_statistics(
@@ -325,7 +340,21 @@ def render_markdown(
     available_hud = [
         (name, column, digits)
         for name, column, digits in HUD_COLUMNS
-        if column in fields
+        if (
+            column in fields
+            and (
+                column not in {
+                    "prgbuf_min_patterns_raw16",
+                    "sub_poll_gap_ticks",
+                    "apply_guard_blocked",
+                    "slip_msf_gap_count",
+                    "flip_vcounter",
+                    "flip_interval_excess_ticks",
+                    "pass2_entry_q4",
+                }
+                or has_values(rows, column)
+            )
+        )
     ]
     summary = []
     summary.append(
@@ -334,6 +363,32 @@ def render_markdown(
     )
     summary.append(format_c_statistics(c_statistics(rows)))
     summary.append(format_a_statistics(a_statistics(rows)))
+    if (
+        "prgbuf_min_patterns_signed" in fields
+        and has_values(rows, "prgbuf_min_patterns_signed")
+    ):
+        q_minimum = min(
+            as_int(row, "prgbuf_min_patterns_signed")
+            for row in rows[1:]
+        )
+        summary.append(
+            f"Q logical minimum (timed first loop): {q_minimum} patterns; "
+            f"underflow peak={max(0, -q_minimum)} patterns."
+        )
+    if "sub_poll_gap_ticks" in fields and has_values(rows, "sub_poll_gap_ticks"):
+        summary.append(format_field_statistics("G", g_statistics(rows)))
+    if (
+        "apply_guard_blocked" in fields
+        and has_values(rows, "apply_guard_blocked")
+    ):
+        blocked = sum(
+            as_int(row, "apply_guard_blocked") != 0
+            for row in rows[1:]
+        )
+        summary.append(
+            "B APPLY back-pressure frames "
+            f"(timed first loop): {blocked}."
+        )
     summary.append(
         "C is diagnostic only and does not affect the HUD gate status."
     )
