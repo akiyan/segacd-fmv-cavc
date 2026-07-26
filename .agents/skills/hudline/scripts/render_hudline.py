@@ -58,9 +58,13 @@ GATE_COLUMN = {
     "S": "slip",
     "D": "desync",
     "R": "resync",
-    "C": "cd_wait",
     "M": "main_vblank_wait",
     "J": "prgbuf_jitter_peak_kib",
+}
+
+MAXIMUM_COLUMN = {
+    **GATE_COLUMN,
+    "C": "cd_wait",
 }
 
 HEX_COLUMNS = {
@@ -103,7 +107,12 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray], l
     with path.open("r", encoding="utf-8", newline="") as source:
         reader = csv.DictReader(source, delimiter="\t")
         fields = list(reader.fieldnames or ())
-        missing = {"loop", "frame", *GATE_COLUMN.values()} - set(fields)
+        missing = {
+            "loop",
+            "frame",
+            *MAXIMUM_COLUMN.values(),
+            "sub_adpcm_decode_units",
+        } - set(fields)
         if missing:
             raise SystemExit(f"HUD TSV lacks columns: {sorted(missing)}")
         all_rows = list(reader)
@@ -140,7 +149,45 @@ def load_gate(path: Path) -> dict:
     if bool(gate["pass"]) != (status != "FAIL"):
         raise SystemExit("gate pass boolean disagrees with status")
     gate["status"] = status
+    if "C" not in gate["maxima"]:
+        raise SystemExit("gate JSON lacks diagnostic C maximum")
+    if int(gate.get("schema_version", 0)) >= 5:
+        if "C" in gate["limits"]:
+            raise SystemExit("schema-5 gate must not define a C limit")
+        if list(gate.get("gate_fields", ())) != list(GATE_COLUMN):
+            raise SystemExit("schema-5 gate_fields do not match the HUD gate")
     return gate
+
+
+def field_statistics(
+    data: dict[str, np.ndarray],
+    column: str,
+) -> dict[str, int | float]:
+    """Summarize one HUD field over timed first-loop frames only."""
+    values = np.asarray(data.get(column, np.asarray([]))[1:], dtype=np.float64)
+    if not values.size:
+        return {
+            "minimum": 0,
+            "mean": 0.0,
+            "median": 0.0,
+            "maximum": 0,
+            "sample_count": 0,
+        }
+    return {
+        "minimum": int(values.min()),
+        "mean": float(values.mean()),
+        "median": float(np.median(values)),
+        "maximum": int(values.max()),
+        "sample_count": int(values.size),
+    }
+
+
+def c_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
+    return field_statistics(data, "cd_wait")
+
+
+def a_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
+    return field_statistics(data, "sub_adpcm_decode_units")
 
 
 def validate(
@@ -168,7 +215,7 @@ def validate(
         if not incomplete_failure:
             raise SystemExit(
                 f"gate expected {expected} frames, TSV has {frames}")
-    for gate_key, column in GATE_COLUMN.items():
+    for gate_key, column in MAXIMUM_COLUMN.items():
         actual = int(round(float(data[column][1:].max(initial=0))))
         recorded = int(gate["maxima"][gate_key])
         if actual != recorded:
@@ -176,6 +223,31 @@ def validate(
                 f"gate {gate_key} maximum {recorded} != TSV maximum {actual}")
     if int(gate.get("evaluation_first_frame", 1)) != 1:
         raise SystemExit("HUD gate must exclude untimed frame 0")
+    for field, statistics_key, expected in (
+        ("C", "c_statistics", c_statistics(data)),
+        ("A", "a_statistics", a_statistics(data)),
+    ):
+        recorded = gate.get(statistics_key)
+        if recorded is None:
+            if int(gate.get("schema_version", 0)) >= 4:
+                raise SystemExit(f"gate JSON lacks {statistics_key}")
+            continue
+        for key in ("minimum", "maximum", "sample_count"):
+            if int(recorded[key]) != int(expected[key]):
+                raise SystemExit(
+                    f"gate {field} {key} {recorded[key]} != "
+                    f"TSV value {expected[key]}"
+                )
+        for key in ("mean", "median"):
+            if not math.isclose(
+                float(recorded[key]),
+                float(expected[key]),
+                abs_tol=1e-12,
+            ):
+                raise SystemExit(
+                    f"gate {field} {key} {recorded[key]} != "
+                    f"TSV value {expected[key]}"
+                )
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -278,9 +350,6 @@ def row_specs(
             "resync", "R  RESYNC", "cumulative", max(1, limits["R"]),
             PASS_GUIDE, "R", height=23, show_unit=False,
         ),
-        RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
-                max(1, limits["C"], timed_max("cd_wait")),
-                WARN, "C"),
         RowSpec("main_vblank_wait", "M  MAIN WAIT", "VBlanks/frame",
                 max(1, limits["M"], timed_max("main_vblank_wait")),
                 (238, 135, 73), "M"),
@@ -291,6 +360,9 @@ def row_specs(
                     timed_max("prgbuf_jitter_peak_kib"),
                     float(gate.get("jitter_headroom_kib", 0))),
                 style.COL_PRG, "J"),
+        RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
+                max(1, timed_max("cd_wait")),
+                WARN),
         RowSpec("lead_256b", "L  AUDIO LEAD", "256-byte units", lead_max,
                 (82, 153, 232)),
         RowSpec("sub_wait_lines", "W  SUB HANDOFF", "approx. scanlines", 255,
@@ -572,10 +644,12 @@ def main() -> None:
     limits = gate["limits"]
     max_text = "  ".join(
         f"{key} {int(maxima[key])}/{int(limits[key])}"
-        for key in ("S", "D", "R", "C", "M", "J")
+        for key in ("S", "D", "R", "M", "J")
     )
     confidence = data.get("confidence", np.ones(frames))[1:]
     sample_count = data.get("sample_count", np.ones(frames))[1:]
+    c_stats = c_statistics(data)
+    a_stats = a_statistics(data)
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -595,7 +669,10 @@ def main() -> None:
     )
     draw.text(
         (24, 96),
-        f"Gate maxima / limits  {max_text}",
+        (
+            f"Gate maxima / limits  {max_text}  |  "
+            f"Diagnostic C max {int(maxima['C'])}"
+        ),
         fill=DIM,
         font=font(19),
     )
@@ -603,6 +680,12 @@ def main() -> None:
         (24, 127),
         (
             f"J normal interval {int(gate.get('jitter_headroom_kib', 0))} KiB; "
+            f"C min/mean/median/max "
+            f"{int(c_stats['minimum'])}/{float(c_stats['mean']):.3f}/"
+            f"{float(c_stats['median']):g}/{int(c_stats['maximum'])}; "
+            f"A min/mean/median/max "
+            f"{int(a_stats['minimum'])}/{float(a_stats['mean']):.3f}/"
+            f"{float(a_stats['median']):g}/{int(a_stats['maximum'])}; "
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
             f"{int(finite_display_vblanks.max())}; "
@@ -659,7 +742,7 @@ def main() -> None:
             lease.release()
 
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": "hudline",
         "label": title,
         "image": str(output),
@@ -686,8 +769,14 @@ def main() -> None:
         "gate_pass": bool(gate["pass"]),
         "gate_status": str(gate["status"]),
         "status": state,
-        "gate_maxima": maxima,
+        "gate_maxima": {
+            key: maxima[key]
+            for key in ("S", "D", "R", "M", "J")
+        },
         "gate_limits": limits,
+        "diagnostic_maxima": {"C": maxima["C"]},
+        "c_statistics": c_stats,
+        "a_statistics": a_stats,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,

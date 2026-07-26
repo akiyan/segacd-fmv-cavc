@@ -135,8 +135,19 @@
 .equ ROUTING_BANK_COPIES,   2
 
 /* --- PRG-RAM レイアウト(program 0x6000〜, <0x1000) --- */
-/* 0x6800-0x8000 は連続読み中にBIOSが踏む(実証)。0x8000以上は安全(マーカー実証)。 */
+/* 0x6800-0x8000 は連続読み中にBIOSが踏む(実証)。0x8000-0x9800は安全(マーカー実証)。 */
 .equ ISO_BUF,     0x00007000        /* ISO初期化用(streaming前のみ・BIOS領域を一時利用) */
+.equ SUB_PRG_SAFE_BASE, 0x00008000
+.equ SUB_PRG_SAFE_END,  0x00009800
+.equ PCM_DEC_BUF,       0x00008000  /* Sub専用decoded PCM scratch。Word-RAM DMAと競合させない */
+.equ PCM_DEC_BUF_BYTES, 0x00000600
+.equ PCM_DEC_BUF_END,   0x00008600
+.if PCM_DEC_BUF < SUB_PRG_SAFE_BASE
+.error "PCM_DEC_BUF begins below the marker-verified Sub PRG range"
+.endif
+.if PCM_DEC_BUF_END > SUB_PRG_SAFE_END
+.error "PCM_DEC_BUF exceeds the marker-verified Sub PRG range"
+.endif
 .equ SP_STACK,    0x0007FF00        /* スタック最上位(apply端0x7F800の上, 1.8KB) */
 /* 0x9800-0xC000は連続読み中にBIOSが踏む(回収を試みたら化けた)。RINGは0xC000から。 */
 .equ RING_BASE,   0x0000C000
@@ -155,7 +166,6 @@
 .equ CTRL_SCR,    SUB_BANK_1M+PC_CTRL_SCR_OFFSET
 .equ PAD_SCR,     SUB_BANK_1M+PC_PAD_SCR_OFFSET
 .equ ADPCM_TABLE, SUB_BANK_1M+PC_ADPCM_TABLE_OFFSET
-.equ PCM_DEC_BUF, SUB_BANK_1M+PC_PCM_DEC_BUF_OFFSET
 .equ WORD_BUF0,   SUB_BANK_1M+PC_WR0_OFFSET
 .equ WORD_BUF1,   SUB_BANK_1M+PC_WR1_OFFSET
 .equ ROUTING,     SUB_BANK_1M+PC_ROUTING_OFFSET
@@ -164,12 +174,13 @@
 .equ CTRL_SCR,    0x000D0000
 .equ PAD_SCR,     0x000D2000
 .equ ADPCM_TABLE, 0x000D2800
-.equ PCM_DEC_BUF, 0x000D4C00
 .equ WORD_BUF0,   0x000D5200
 .equ WORD_BUF1,   0x000D5200
 .equ ROUTING,     0x000DC000
 .equ O_STATUS,    SUB_BANK_1M+0xAF00
 .endif
+/* PC_PCM_DEC_BUF_OFFSET / generic +0x14C00 remains an unused A/B-stable
+   Word-RAM layout reserve. Timed decode and wave output use Sub PRG above. */
 .equ ADPCM_INDICES, ADPCM_TABLE     /* 89*16 u16 new-index*32 = 2848B */
 .equ ADPCM_DELTAS, ADPCM_TABLE+2848 /* 89*16 s32 signed delta = 5696B */
 .equ ADPCM_LUT, ADPCM_TABLE+8544    /* offset-high -> RF5C164 sign-magnitude = 256B */

@@ -11,6 +11,17 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p93: Move the live 1,536-byte decoded PCM scratch from each physical
+#        Word-RAM bank to marker-verified Sub PRG-RAM at 0x8000. Keep the
+#        generated Word-RAM reserve and all stream decisions unchanged for an
+#        exact player-only A/B while reducing shared Word-RAM traffic.
+#   e137: Keep the exact scheduled PrgBuf ceiling at the fps-derived normal
+#         382/397/402 KiB capacity. The full 40/25/20 KiB cadence reserve is
+#         now live sector-arrival headroom instead of encoder Supply, so the
+#         shared-sector planner removes infeasible work before image decisions.
+#   e136: Diagnostic fixed-N2 control lead, not retained. Full Bad Apple HUD
+#         still failed at cap 180, proving that control deadline placement was
+#         not the regression source.
 #   p92: Make the boot-stage handoff an explicit HEADER read boundary. Stop
 #        before Main copies the temporary bank and restart at the exact first
 #        unread sector, so planned boot work cannot increment the slip counter.
@@ -823,6 +834,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260725
-e=135
-p=92
+date=20260726
+e=137
+p=93

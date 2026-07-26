@@ -80,13 +80,11 @@ cover active picture content; it is not repositioned around letterboxing.
 
 For any recording that can proceed to compilation or upload, the complete first
 movie loop is a mandatory gate with three results: `PASS`, `WARNING`, and
-`FAIL`. `WARNING` remains upload-capable. `S/D/R` must remain zero. `C/M` and
-`J` thresholds follow the profile's player cadence. Fixed-N warns when
-`C>00` and allows the `N-1` intervening pattern-work fields: fixed N2 fails
-when `M>01`, while fixed N4 fails when `M>03`. Delivery-paced content may use
-all but the already-armed control sector on the current Sub path and all
-display fields in one content frame; 24 fps warns when `C>03` and fails when
-`M>03`. The largest passing `J` is
+`FAIL`. `WARNING` remains upload-capable. `S/D/R` must remain zero. `M` and
+`J` thresholds follow the profile's player cadence. Fixed-N allows the `N-1`
+intervening pattern-work fields: fixed N2 fails when `M>01`, while fixed N4
+fails when `M>03`. Delivery-paced content may use all display fields in one
+content frame; 24 fps fails when `M>03`. The largest passing `J` is
 normal-ceiling-to-physical-end minus one
 KiB: `2D` at 15fps, `1E` at 24fps, and `19` at 30fps. Values above the normal
 jitter interval (`24`, `19`, or `14` respectively) show that
@@ -94,10 +92,15 @@ sector-granular occupancy crossed the cadence's scheduled-delivery ceiling
 (418 KiB at 15 fps; 422 KiB at 24/30 fps) and entered the reserve left outside
 the schedule.
 Report the value, but a `J` within the cadence-specific passing limit does not
-by itself require another confirmation or fail the recording. Report all gate
-maxima on PASS or WARNING, and report every C warning frame. When the enclosing
-task already authorizes publication,
-continue without requesting another approval merely because the gate ran.
+by itself require another confirmation or fail the recording. `C` has no gate
+threshold and never changes the gate result; it remains a diagnostic measure
+of Sub-side CD work. Report all `S/D/R/M/J` gate maxima on PASS or WARNING and
+report the diagnostic C maximum. When the enclosing task already authorizes
+publication, continue without requesting another approval merely because the
+gate ran.
+For every gate result, the analyzer and `/hudline` report the minimum, mean,
+median, and maximum of both `C` and `A` across the timed first loop and preserve
+them in the gate JSON and hudline receipt.
 
 Frame 0 is an untimed boot construction, not a playback measurement. Keep it
 only for first-loop sequence completeness and frame-axis alignment. Exclude
@@ -216,11 +219,9 @@ using the profile's effective playback sample rate.
 Each pump drains one physical sector. `C=00` means the needed control was
 already armed when `process_frame` reached it. A small nonzero value is not a
 sector slip; it means delivery work landed directly on the current frame's
-critical path. The profile-derived threshold is zero for fixed-N and follows
-the slot allowance for delivery-paced content. Above-threshold `C` produces
-`WARNING`, not `FAIL`: it identifies Sub/CD deadline pressure for review while
-remaining upload-capable. Persistent C, especially with rising `W`, is stronger
-diagnostic evidence than an isolated peak.
+critical path. `C` is excluded from the gate and has no threshold. Persistent
+C, especially with rising `W`, is stronger diagnostic evidence than an
+isolated peak, but the actual playback result determines whether it matters.
 
 ### `W`: Main wait for the Sub CPU
 
@@ -519,19 +520,22 @@ HUDはnative 256x224または320x224 rasterのrow 0を常に使います。Activ
 
 Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体を必須gateとし、
 結果は`PASS`、`WARNING`、`FAIL`です。`WARNING`はupload可能です。`S/D/R`は0を
-維持する必要があります。`C/M`と`J` thresholdはprofileのplayer cadenceに従います。
+維持する必要があります。`M`と`J` thresholdはprofileのplayer cadenceに従います。
 
-Fixed-Nは`C>00`でwarningになり、介在する`N-1`個のpattern-work fieldを使えます。
-Fixed N2は`M>01`でfail、fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは
-`C>03`でwarning、`M>03`でfailです。Passing `J`の最大値はnormal ceilingから
+Fixed-Nは介在する`N-1`個のpattern-work fieldを使えます。Fixed N2は`M>01`でfail、
+fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは`M>03`でfailです。
+Passing `J`の最大値はnormal ceilingから
 physical endまでの差より1 KiB小さい値で、15 fpsは`2D`、24 fpsは`1E`、30 fpsは
 `19`です。Normal jitter interval（それぞれ`24`、`19`、`14`）を超える値は、
 cadence別scheduled-delivery ceiling（15 fpsは418 KiB、24/30 fpsは422 KiB）を越え、
 schedule外に残したreserveへ入ったことを示します。値は報告しますが、cadence固有
-passing limit内の`J`だけで再確認やfailにはしません。
+passing limit内の`J`だけで再確認やfailにはしません。`C`にはgate thresholdがなく、
+gate結果を変えません。Sub側CD workのdiagnosticとして保持します。
 
-PASS/WARNINGでは全gate maximumと全C warning frameを報告します。Taskがpublicationを
-許可済みなら、gate実行だけを理由に追加approvalは求めません。
+PASS/WARNINGでは全`S/D/R/M/J` gate maximumとdiagnostic C maximumを報告します。
+Taskがpublicationを許可済みなら、gate実行だけを理由に追加approvalは求めません。
+すべてのgate結果で、analyzerと`/hudline`はtimed first loopにおける`C`と`A`それぞれの
+minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
 
 Frame 0はuntimed boot constructionで、playback measurementではありません。
 First-loop sequenceとframe-axis alignmentのためだけに保持し、全HUD値をgate maximum、
@@ -634,8 +638,9 @@ reserve減少、upper boundaryへ近づくか超えるとwriter先行過多で�
 
 1 pumpは1 physical sectorをdrainします。`C=00`なら`process_frame`到達時にcontrolが
 armed済みです。Small nonzeroはsector slipではなく、delivery workがcurrent frameの
-critical pathへ入ったことを示します。Threshold超過は`WARNING`で`FAIL`ではありません。
-Rising `W`を伴うpersistent Cはisolated peakより強い証拠です。
+critical pathへ入ったことを示します。`C`はgateから除外され、thresholdを持ちません。
+Rising `W`を伴うpersistent Cはisolated peakより強いdiagnosticですが、問題かどうかは
+実際の再生結果で判断します。
 
 ### `W`: MainのSub CPU待ち
 

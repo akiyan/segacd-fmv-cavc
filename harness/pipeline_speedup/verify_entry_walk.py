@@ -6,25 +6,30 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For v6-v10 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies that each
-frame's control block and cold patterns are ready before that frame can run,
-and also accepts the off-disc MOVIE.DAT compatibility concatenation.  v4/v5
-combined MOVIE.DAT files remain readable for regression checks.
+For current v16 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+that each frame's control block and cold patterns are ready before that frame
+can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
 
 from __future__ import annotations
 
 import argparse
 import struct
+import sys
 from pathlib import Path
+
+TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
+sys.path.insert(0, str(TOOLS_DIR))
+
+import av_config  # noqa: E402
+import player_constants  # noqa: E402
 
 
 SECTOR = 2048
 ROUTING_TOTAL_MAX = 5
-FEATURE_FIXED_N2 = 0x0002
+FEATURE_FIXED_N = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 ADPCM_TABLE_SECTORS = 5
-PATTERN_SUPPLY_OFFSET = 196
 
 
 def frame_sectors(
@@ -32,8 +37,8 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Return the v4+ bounded-accumulator sector schedule for frames 1+."""
-    if version >= 8 and features & FEATURE_FIXED_N2:
-        rate_numerator, rate_modulus = 1001, 400
+    if version >= 8 and features & FEATURE_FIXED_N:
+        rate_numerator, rate_modulus = av_config.fixed_cd_sector_rate(vsync_n)
     else:
         rate_numerator, rate_modulus = 75, fps
     acc = 0
@@ -115,11 +120,15 @@ def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
     """Return the validated current boot-preload sector total."""
     if not features & FEATURE_PATTERN_SUPPLY:
         return 0
-    values = struct.unpack_from(">4s8H", header, PATTERN_SUPPLY_OFFSET)
+    values = player_constants.PATTERN_SUPPLY_STRUCT.unpack_from(
+        header, player_constants.PATTERN_SUPPLY_OFFSET)
     magic, supply_version, reserved = values[:3]
-    if magic != b"PSUP" or supply_version != 2 or reserved:
+    if (magic != player_constants.PATTERN_SUPPLY_MAGIC
+            or supply_version not in (
+                1, 2, player_constants.PATTERN_SUPPLY_VERSION)
+            or reserved):
         raise AssertionError(f"invalid pattern-supply extension: {values!r}")
-    return sum(values[-3:])
+    return sum(values[6:9])
 
 
 def verify_block(

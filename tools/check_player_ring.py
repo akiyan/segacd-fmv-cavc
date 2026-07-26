@@ -238,6 +238,10 @@ print(
 # ADPCM/table and dictionary sizes remain fixed physical contracts.
 if equ(sp_text, "ADPCM_TABLE_BYTES", SP) != ima_adpcm.FULL_TABLE_BYTES:
     sys.exit("check_player_ring: Sub ADPCM table size differs from Python")
+if pattern_supply.PCM_DEC_BUF_BYTES != av_config.PCM_DEC_BUF_BYTES:
+    sys.exit(
+        "check_player_ring: A/B-stable Word-RAM PCM reserve differs from "
+        "the live PRG buffer size")
 expected_adpcm_sectors = (
     ima_adpcm.FULL_TABLE_BYTES + ttrc_routing.SECTOR_BYTES - 1
 ) // ttrc_routing.SECTOR_BYTES
@@ -262,6 +266,11 @@ apply_base = equ(sp_text, "APPLY_BASE", SP)
 apply_size = equ(sp_text, "APPLY_SIZE", SP)
 f0pat_tmp = equ(sp_text, "F0PAT_TMP", SP)
 routing_tmp = equ(sp_text, "ROUTING_TMP", SP)
+sub_prg_safe_base = equ(sp_text, "SUB_PRG_SAFE_BASE", SP)
+sub_prg_safe_end = equ(sp_text, "SUB_PRG_SAFE_END", SP)
+pcm_dec_buf = equ(sp_text, "PCM_DEC_BUF", SP)
+pcm_dec_buf_bytes = equ(sp_text, "PCM_DEC_BUF_BYTES", SP)
+pcm_dec_buf_end = equ(sp_text, "PCM_DEC_BUF_END", SP)
 max_f0_bytes = (
     (40 * 28 * pattern_supply.PATTERN_BYTES
      + ttrc_routing.SECTOR_BYTES - 1)
@@ -274,6 +283,27 @@ if f0pat_tmp + max_f0_bytes != routing_tmp:
     sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
 if routing_tmp + ttrc_routing.ROUTE_BYTES > apply_base + apply_size:
     sys.exit("check_player_ring: maximum routing staging exceeds APPLY")
+if (
+        sub_prg_safe_base != av_config.SUB_PRG_SAFE_BASE
+        or sub_prg_safe_end != av_config.SUB_PRG_SAFE_END
+):
+    sys.exit("check_player_ring: marker-verified Sub PRG range differs from config")
+if (
+        pcm_dec_buf != av_config.PCM_DEC_BUF_BASE
+        or pcm_dec_buf_bytes != av_config.PCM_DEC_BUF_BYTES
+        or pcm_dec_buf_end != av_config.PCM_DEC_BUF_END
+):
+    sys.exit("check_player_ring: live PCM decode buffer differs from config")
+if pcm_dec_buf + pcm_dec_buf_bytes != pcm_dec_buf_end:
+    sys.exit("check_player_ring: live PCM decode buffer end is inconsistent")
+if not sub_prg_safe_base <= pcm_dec_buf < pcm_dec_buf_end <= sub_prg_safe_end:
+    sys.exit("check_player_ring: live PCM decode buffer exceeds safe Sub PRG")
+if sub_prg_safe_end > ring_base:
+    sys.exit("check_player_ring: safe Sub PRG allocation reaches PrgBuf")
+if "SUB_BANK_1M+PC_PCM_DEC_BUF_OFFSET" in sp_text:
+    sys.exit("check_player_ring: timed PCM decode still addresses Word RAM")
+if sp_text.count("lea\tPCM_DEC_BUF,") != 2:
+    sys.exit("check_player_ring: decoder/wave PCM buffer references changed")
 
 
 # The live pump must consult routing before selecting a guarded destination.
@@ -295,5 +325,5 @@ if ip_max_seg != av_config.PALTAB_MAX_SEG:
     sys.exit("check_player_ring: Main palette-table capacity differs from config")
 
 print(
-    "check_player_ring: OK  PrgBuf, APPLY, ADPCM, DicBuf, palette and "
-    "route-aware pump contracts")
+    "check_player_ring: OK  PrgBuf, APPLY, PRG PCM scratch, ADPCM, DicBuf, "
+    "palette and route-aware pump contracts")

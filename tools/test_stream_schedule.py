@@ -115,7 +115,6 @@ class ControlLengthTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "non-negative"):
             schedule.max_run_control_reservation(-1, 1120)
 
-
 class BodyDeliveryRateTests(unittest.TestCase):
     def test_15fps_fixed_n4_includes_one_six_sector_slot_per_cycle(self) -> None:
         deltas = schedule.rate_deltas(201, 15)[1:]

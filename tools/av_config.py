@@ -16,12 +16,11 @@ borrow more virtual budget than the hardware can schedule, causing live
 underruns even when the encode looked feasible.
 
 Here we define the physical ring **once** and derive every capacity from it.
-The exact schedule stays below the player's pump back-pressure boundary. At
-15 fps it keeps an additional 4 KiB free so the measured sector-arrival
-variation does not enter pump back-pressure. The normal PrgBuf ceiling still
-uses a cadence reserve that scales with the time represented by one content
-frame: 20 KiB at 30 fps, 40 KiB at 15 fps, and 25 KiB at 24 fps. The
-player's ``RING_SIZE`` is asserted equal to
+The exact schedule stays at or below the normal PrgBuf ceiling. The interval
+above that ceiling is reserved entirely for live sector-arrival variation; the
+encoder cannot spend it as ordinary future Supply. The reserve scales with the
+time represented by one content frame: 20 KiB at 30 fps, 40 KiB at 15 fps,
+and 25 KiB at 24 fps. The player's ``RING_SIZE`` is asserted equal to
 ``RING_SIZE_KB`` at build time (``tools/check_player_ring.py``, run by the
 Makefile). This module also owns the fps-derived cold-cap baseline used by the
 encoder, packer, profile validator, and analysis renderer. The packer refuses
@@ -33,6 +32,18 @@ import os
 import sys
 from dataclasses import dataclass
 
+# Marker tests prove this PRG-RAM interval remains owned by the Sub program
+# during continuous CD reads. The live decoded-PCM scratch uses its first
+# 1.5 KiB; the remaining 4.5 KiB stays unassigned.
+SUB_PRG_SAFE_BASE = 0x00008000
+SUB_PRG_SAFE_END = 0x00009800
+PCM_DEC_BUF_BASE = SUB_PRG_SAFE_BASE
+PCM_DEC_BUF_BYTES = 0x00000600
+PCM_DEC_BUF_END = PCM_DEC_BUF_BASE + PCM_DEC_BUF_BYTES
+
+assert SUB_PRG_SAFE_BASE <= PCM_DEC_BUF_BASE
+assert PCM_DEC_BUF_END <= SUB_PRG_SAFE_END
+
 # Physical PRG-RAM ring in the player. MUST equal boot/movieplay_sp.s
 # `.equ RING_SIZE` (0x6B000 = 428 KB). Build-time assertion enforces it.
 # Routing now lives in both Word-RAM banks, so the physical PrgBuf ring can occupy the
@@ -40,13 +51,13 @@ from dataclasses import dataclass
 RING_SIZE_KB = 428
 
 # Keep the physical overflow guard distinct from delivery-jitter headroom. The
-# player throttles its CD pump at RING_SIZE-4KB (back-pressure). Every exact
-# schedule stops at least one 2KiB physical CD sector before that equality
-# boundary; 15 fps keeps another 4KiB free for measured arrival variation.
-# The normal PrgBuf/prebuffer ceiling stays below both scheduled limits.
+# player throttles its CD pump at RING_SIZE-4KB (back-pressure). The encoder's
+# exact schedule stops at the fps-derived normal ceiling, leaving the complete
+# cadence reserve for live sector-arrival variation. DELIVERY_CAP_KB is the
+# upper observation boundary one sector below back-pressure, not encoder
+# Supply.
 RING_PHYSICAL_GUARD_KB = 4
 RING_DELIVERY_GUARD_KB = 2
-RING_15FPS_SCHEDULE_GUARD_KB = 4
 RING_JITTER_REFERENCE_FPS = 30.0
 RING_JITTER_REFERENCE_KB = 20
 
@@ -97,22 +108,20 @@ def quality_budget_kb(fps):
     return prg_buf_cap_kb(fps)
 
 
-def scheduled_delivery_guard_kb(fps):
-    """Return the cadence-specific guard below the base delivery ceiling."""
-    nominal_fps = _nominal_content_fps(fps)
-    if math.isclose(nominal_fps, 15.0, rel_tol=0.0, abs_tol=1e-9):
-        return RING_15FPS_SCHEDULE_GUARD_KB
-    return 0
-
-
 def scheduled_delivery_cap_kb(fps):
-    """Return the hard scheduled occupancy ceiling for this cadence."""
-    return DELIVERY_CAP_KB - scheduled_delivery_guard_kb(fps)
+    """Return the encoder's fps-derived scheduled occupancy ceiling.
+
+    Planned delivery must not consume the live jitter reserve. Keeping this
+    equal to the normal PrgBuf ceiling makes the shared-sector planner reject
+    excess Supply before image decisions rather than relying on a later
+    hardware overrun or per-profile cold-cap adjustment.
+    """
+    return prg_buf_cap_kb(fps)
 
 
 def ring_jitter_headroom_kb(fps):
-    """Return scheduled delivery headroom above the normal PrgBuf ceiling."""
-    return scheduled_delivery_cap_kb(fps) - prg_buf_cap_kb(fps)
+    """Return live arrival headroom above the scheduled PrgBuf ceiling."""
+    return DELIVERY_CAP_KB - scheduled_delivery_cap_kb(fps)
 
 
 # Compatibility aliases are the 30 fps reference values. Runtime encode, pack,

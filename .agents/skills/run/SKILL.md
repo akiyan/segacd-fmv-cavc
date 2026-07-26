@@ -204,10 +204,10 @@ Before accepting the recording, verify:
 - representative lossless frames against the sim when timing or fps behavior is new or suspect.
 - one complete HUD loop with `harness/startup_resync/analyze.py --gate-json`;
   pass the encode profile as the required second positional argument and
-  require every expected movie frame. Fixed-N2 warns when `C>00` and requires
-  `S/D/R=00`, `M<=01`; delivery-paced 15 fps warns when `C>04` and requires
-  `M<=04`; delivery-paced 24 fps warns when `C>03` and requires `M<=03`.
-  Every cadence requires `S/D/R=00`. A C warning remains upload-capable. The
+  require every expected movie frame. Fixed-N2 requires `S/D/R=00`, `M<=01`;
+  delivery-paced 15 fps requires `S/D/R=00`, `M<=04`; delivery-paced 24 fps
+  requires `S/D/R=00`, `M<=03`. `C` is diagnostic only and never changes the
+  gate status. Always report the `C/A` minimum, mean, median, and maximum. The
   generated gate uses
   the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
   and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's
@@ -290,8 +290,9 @@ tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_analysis_descr
 Upload the newly rebuilt analysis as unlisted, category 20. Use `--force` only
 for a re-upload and retain the returned URL.
 
-After the analysis upload succeeds, report the exact `S/D/R/C/M/J` maxima and
-continue to the already-authorized playback compilation/upload. Do not request
+After the analysis upload succeeds, report the exact `S/D/R/M/J` gate maxima,
+the diagnostic C maximum, and the `C/A` minimum, mean, median, and maximum.
+Continue to the already-authorized playback compilation/upload. Do not request
 another approval merely because the gate ran.
 
 ## Stage 6: Compile and Upload Playback
@@ -331,7 +332,7 @@ Stop before the next source whenever a stage fails. Preserve logs and evidence,
 identify the failing layer, fix it when the requested scope permits, and rerun
 the failed stage plus every downstream stage whose inputs changed.
 
-An absent or `FAIL` `S/D/R/C/M/J` gate is a Stage 4 failure. A `WARNING`
+An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. A `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
 public MP4 until a complete loop returns `PASS` or `WARNING`.
 
@@ -357,7 +358,8 @@ Report one compact result block per source with:
 - analysis URL, output path, average rate, and starvation result;
 - pack verification result;
 - lossless recording and preview paths, duration, raster/fps, and audio metrics;
-- hudline path, `S/D/R/C/M/J` maxima, and public Gist/raw image URLs;
+- hudline path, `S/D/R/M/J` gate maxima, diagnostic C maximum, `C/A`
+  minimum/mean/median/maximum, and public Gist/raw image URLs;
 - timeline and final mixline paths plus their public Gist/raw image URLs;
 - whether startup was retained and whether human listening was performed;
 - playback compilation URL and path, duration, raster/SAR/DAR, and audio presence;
