@@ -41,12 +41,16 @@ tools/python.sh harness/startup_resync/analyze.py \
 ```
 
 The console report shows every `R` transition, its movie-frame number in hex and
-decimal, and the surrounding `L/C/W/M/A` values. The TSV contains one row per
-aggregated movie frame. Transition rows additionally carry the previous and next
-lead, which makes preload-to-live boundary failures easy to compare between A/B
-recordings. With the profile argument, the TSV body is stored permanently as
-`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the requested `--tsv`
-path is a compatibility symlink to that log.
+decimal, and the surrounding `L/C/W/M/A` values. It always reports the
+minimum, mean, median, and maximum of both `C` and `A` across the timed first
+loop; untimed frame 0 and later loops are excluded. The same statistics are
+stored in the gate JSON. `C` is diagnostic only and does not affect the gate
+status. The TSV contains one row per aggregated movie frame.
+Transition rows additionally carry the previous and next lead, which makes
+preload-to-live boundary failures easy to compare between A/B recordings. With
+the profile argument, the TSV body is stored permanently as
+`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the requested `--tsv` path
+is a compatibility symlink to that log.
 
 The default crop begins at native x=0.  A legacy 320-pixel recording whose H32
 image is centered with 32 pixels on the left can be read with `--crop-x 32`.

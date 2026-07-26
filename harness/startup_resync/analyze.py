@@ -307,6 +307,74 @@ def transition_indices(groups: list[FrameGroup]) -> list[int]:
     ]
 
 
+def timed_first_loop(groups: list[FrameGroup]) -> list[FrameGroup]:
+    """Return timed movie frames, excluding frame 0 and later loops."""
+    return [
+        group for group in groups
+        if group.loop == 0 and group.values["F"] != 0
+    ]
+
+
+def field_statistics(
+    groups: list[FrameGroup],
+    field: str,
+) -> dict[str, int | float]:
+    """Summarize one HUD field over the timed first movie loop."""
+    values = [
+        group.values[field]
+        for group in timed_first_loop(groups)
+        if field in group.values
+    ]
+    if not values:
+        return {
+            "minimum": 0,
+            "mean": 0.0,
+            "median": 0.0,
+            "maximum": 0,
+            "sample_count": 0,
+        }
+    return {
+        "minimum": min(values),
+        "mean": statistics.fmean(values),
+        "median": statistics.median(values),
+        "maximum": max(values),
+        "sample_count": len(values),
+    }
+
+
+def c_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
+    """Summarize blocking CD pumps over the timed first movie loop."""
+    return field_statistics(groups, "C")
+
+
+def a_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
+    """Summarize Sub ADPCM decode time over the timed first movie loop."""
+    return field_statistics(groups, "A")
+
+
+def format_field_statistics(
+    field: str,
+    result: dict[str, int | float],
+) -> str:
+    """Format the canonical human-readable HUD field summary."""
+    return (
+        f"{field} statistics (timed first loop; frame 0 excluded): "
+        f"min={int(result['minimum'])} "
+        f"mean={float(result['mean']):.3f} "
+        f"median={float(result['median']):g} "
+        f"max={int(result['maximum'])} "
+        f"n={int(result['sample_count'])}"
+    )
+
+
+def format_c_statistics(result: dict[str, int | float]) -> str:
+    return format_field_statistics("C", result)
+
+
+def format_a_statistics(result: dict[str, int | float]) -> str:
+    return format_field_statistics("A", result)
+
+
 def _fmt(group: FrameGroup) -> str:
     v = group.values
     transfer = f" U{v['U']:04X} N{v['N']:02X}" if "U" in v else ""
@@ -326,6 +394,8 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
     print(f"movie HUD groups: {len(groups)}")
     print(f"first: {_fmt(groups[0])}")
     print(f"last:  {_fmt(groups[-1])}")
+    print(format_c_statistics(c_statistics(groups)))
+    print(format_a_statistics(a_statistics(groups)))
     print(f"R transitions: {len(transitions)}")
     if "J" in groups[0].values:
         peak = max(group.values["J"] for group in groups)
@@ -435,24 +505,19 @@ def upload_gate_limits(content_fps: float) -> tuple[dict[str, int], str]:
     fixed_n = av_config.fixed_vblank_interval(fps)
     if fixed_n is not None:
         cadence = f"fixed_n{fixed_n}"
-        c_limit = 0
         # Pattern work may consume the N-1 intervening VBlanks; the Nth is the
         # fixed display-flip deadline.
         m_limit = fixed_n - 1
     else:
         cadence = "delivery_paced"
-        sector_num, sector_mod = av_config.cd_sector_rate(fps)
-        # A delivery-paced slot may finish all but its already-armed control
-        # sector on the current Sub path without slipping. The Main path may
-        # use the complete number of display fields available to one content
-        # frame; exceeding it proves an additional spill.
-        c_limit = max(0, math.ceil(sector_num / sector_mod) - 1)
+        # The Main path may use the complete number of display fields
+        # available to one content frame; exceeding it proves an additional
+        # spill.
         m_limit = math.ceil(av_config.NTSC_VSYNC / fps)
     return {
         "S": 0,
         "D": 0,
         "R": 0,
-        "C": c_limit,
         "M": m_limit,
         # J is ceil-KiB. Leave one complete KiB below the physical ring end so
         # an accepted value proves head and tail never became equal at full.
@@ -477,17 +542,21 @@ def evaluate_upload_gate(
     # Frame 0 is assembled during untimed boot staging.  Keep it in the
     # sequence-completeness proof, but never let its placeholder/startup HUD
     # values affect a timed playback metric or gate.
-    timed_loop = first_loop[1:]
-    fields = ("S", "D", "R", "C", "M", "J")
+    timed_loop = timed_first_loop(groups)
+    gate_fields = ("S", "D", "R", "M", "J")
+    measured_fields = ("S", "D", "R", "C", "M", "J")
     failures: list[str] = []
     warnings: list[str] = []
-    missing = [field for field in fields if field not in first_loop[0].values]
+    missing = [
+        field for field in gate_fields
+        if field not in first_loop[0].values
+    ]
     maxima = {
         field: max(
             (group.values.get(field, 0) for group in timed_loop),
             default=0,
         )
-        for field in fields
+        for field in measured_fields
     }
     if missing:
         failures.append(f"HUD fields missing: {','.join(missing)}")
@@ -511,15 +580,14 @@ def evaluate_upload_gate(
     limits, cadence = upload_gate_limits(content_fps)
     for field, limit in limits.items():
         if maxima[field] > limit:
-            target = warnings if field == "C" else failures
-            target.append(
+            failures.append(
                 f"{field} peak {maxima[field]:02X} exceeds upload limit {limit:02X}"
             )
 
     stat = recording.stat()
     status = "FAIL" if failures else "WARNING" if warnings else "PASS"
     result = {
-        "schema_version": 3,
+        "schema_version": 5,
         # WARNING remains upload-capable. Keep the compatibility boolean so
         # older consumers only stop for a real FAIL.
         "pass": status != "FAIL",
@@ -533,7 +601,11 @@ def evaluate_upload_gate(
         "evaluated_timed_frames": len(timed_loop),
         "content_fps": float(content_fps),
         "cadence": cadence,
+        "gate_fields": list(gate_fields),
+        "diagnostic_fields": ["C", "A"],
         "maxima": maxima,
+        "c_statistics": c_statistics(groups),
+        "a_statistics": a_statistics(groups),
         "limits": limits,
         "prg_buf_cap_kib": av_config.prg_buf_cap_kb(content_fps),
         "jitter_headroom_kib": (
@@ -559,7 +631,8 @@ def write_gate_json(path: Path, result: dict) -> None:
     maxima = result["maxima"]
     print(
         f"HUD record gate: {state}  "
-        + " ".join(f"{field}{maxima[field]:02X}" for field in "SDRCMJ")
+        + " ".join(f"{field}{maxima[field]:02X}" for field in "SDRMJ")
+        + f"  C diagnostic max={maxima['C']:02X}"
         + f"  frames={result['observed_first_loop_frames']}/"
         f"{result['expected_frames']}  cadence={result['cadence']} "
         f"fps={result['content_fps']:g}"

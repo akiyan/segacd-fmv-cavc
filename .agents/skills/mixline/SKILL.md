@@ -40,7 +40,8 @@ Report the Gist page, raw PNG URL, and clickable local image path.
 ## Output contract
 
 - Consolidate both source titles and run specifications into one header at the
-  top. Do not retain two full, repetitive headers.
+  top. Show `S/D/R/M/J` as gate maxima/limits and show C separately as a
+  diagnostic maximum. Do not retain two full, repetitive headers.
 - Preserve both source graph bodies pixel-for-pixel. Crop the duplicated
   headers. Also crop `/timeline` immediately after its final data row so its
   horizontal ticks and lower explanation are omitted; `/hudline` owns the one

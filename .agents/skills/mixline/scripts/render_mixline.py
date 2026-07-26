@@ -206,7 +206,10 @@ def main() -> None:
     limits = hudline["gate_limits"]
     gate_text = "  ".join(
         f"{key} {int(maxima[key])}/{int(limits[key])}"
-        for key in ("S", "D", "R", "C", "M", "J")
+        for key in ("S", "D", "R", "M", "J")
+    )
+    diagnostic_c = int(
+        hudline.get("diagnostic_maxima", {}).get("C", 0)
     )
     vblank_text = ""
     if hudline.get("display_vblank_warning_supported"):
@@ -220,6 +223,7 @@ def main() -> None:
         (24, 127),
         (
             f"Playback /hudline | gate maxima / limits  {gate_text} | "
+            f"C diagnostic max {diagnostic_c} | "
             f"J normal {int(hudline['jitter_normal_kib'])} KiB | "
             f"OCR {float(hudline.get('ocr_confidence_min', 0.0)):.3f}"
             f"{vblank_text}"

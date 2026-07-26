@@ -30,7 +30,7 @@ description: Prepare and upload an existing, verified record lossless playback c
 
 - `record` が作成したネイティブ解像度のロスレスMKV
 - 同じMKVを直接OCRして作られた、statusが`PASS`または`WARNING`で
-  `pass: true`の`S/D/R/C/M/J` HUD gate JSON
+  `pass: true`の`S/D/R/M/J` HUD gate JSON（`C/A`はdiagnostic）
 - 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
 - 対応するsim出力ディレクトリ（CRAMチャプター用）
 - `tools/av_version.txt` の現行ビルド版
@@ -38,8 +38,9 @@ description: Prepare and upload an existing, verified record lossless playback c
 アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
 `recording`、`recording_size`、`recording_mtime_ns`が入力MKVと一致しない、全映画
 フレームを含まない、statusが`FAIL`、または`pass`がfalseなら変換・アップロード前に停止して
-`record`へ戻る。`pass`がtrueでも、そのJSONの`S/D/R/C/M/J`最大値を提示した後の
-ユーザーの明示承認が無ければ停止する。HUD時刻を頭出しやチャプターには使わない。
+`record`へ戻る。`pass`がtrueでも、そのJSONの`S/D/R/M/J` gate maximum、diagnostic C
+maximum、`C/A`のminimum/mean/median/maximumを提示した後のユーザーの明示承認が
+無ければ停止する。HUD時刻を頭出しやチャプターには使わない。
 
 ## YouTube用square-pixel raster
 

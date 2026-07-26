@@ -7,6 +7,7 @@ import argparse
 import csv
 import json
 import math
+import statistics
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -23,14 +24,18 @@ GATE_COLUMNS = {
     "S": "slip",
     "D": "desync",
     "R": "resync",
-    "C": "cd_wait",
     "M": "main_vblank_wait",
     "J": "prgbuf_jitter_peak_kib",
 }
 
-# S/D/R are cumulative counters and J is a sticky maximum.  Once they exceed
-# a limit, repeating the same value on every later frame is state, not another
-# event.  Report the transition into each new over-limit value instead.
+MAXIMUM_COLUMNS = {
+    **GATE_COLUMNS,
+    "C": "cd_wait",
+}
+
+# S/D/R are cumulative counters and J is a sticky maximum. Once they exceed a
+# limit, repeating the same value on every later frame is state, not another
+# event. Report the transition into each new over-limit value instead.
 TRANSITION_FIELDS = {"S", "D", "R", "J"}
 
 HUD_COLUMNS = (
@@ -83,6 +88,63 @@ def hex_value(value: int, digits: int = 2) -> str:
     return f"0x{value:0{max(digits, len(f'{value:X}'))}X}"
 
 
+def field_statistics(
+    rows: list[dict[str, str]],
+    column: str,
+) -> dict[str, int | float]:
+    """Summarize one HUD field over timed first-loop frames only."""
+    values = (
+        [as_int(row, column) for row in rows[1:]]
+        if rows and column in rows[0]
+        else []
+    )
+    if not values:
+        return {
+            "minimum": 0,
+            "mean": 0.0,
+            "median": 0.0,
+            "maximum": 0,
+            "sample_count": 0,
+        }
+    return {
+        "minimum": min(values),
+        "mean": statistics.fmean(values),
+        "median": statistics.median(values),
+        "maximum": max(values),
+        "sample_count": len(values),
+    }
+
+
+def c_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
+    return field_statistics(rows, "cd_wait")
+
+
+def a_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
+    return field_statistics(rows, "sub_adpcm_decode_units")
+
+
+def format_field_statistics(
+    field: str,
+    result: dict[str, int | float],
+) -> str:
+    return (
+        f"{field} statistics (timed first loop; frame 0 excluded): "
+        f"min={int(result['minimum'])} "
+        f"mean={float(result['mean']):.3f} "
+        f"median={float(result['median']):g} "
+        f"max={int(result['maximum'])} "
+        f"n={int(result['sample_count'])}."
+    )
+
+
+def format_c_statistics(result: dict[str, int | float]) -> str:
+    return format_field_statistics("C", result)
+
+
+def format_a_statistics(result: dict[str, int | float]) -> str:
+    return format_field_statistics("A", result)
+
+
 def load_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
     with path.open("r", encoding="utf-8", newline="") as source:
         reader = csv.DictReader(source, delimiter="\t")
@@ -91,7 +153,8 @@ def load_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
             "loop",
             "frame",
             "capture_first",
-            *GATE_COLUMNS.values(),
+            *MAXIMUM_COLUMNS.values(),
+            "sub_adpcm_decode_units",
         }
         missing = required - set(fields)
         if missing:
@@ -119,6 +182,13 @@ def load_gate(path: Path) -> dict:
     for key in GATE_COLUMNS:
         if key not in gate["limits"] or key not in gate["maxima"]:
             raise SystemExit(f"gate JSON lacks {key} limit or maximum")
+    if "C" not in gate["maxima"]:
+        raise SystemExit("gate JSON lacks diagnostic C maximum")
+    if int(gate.get("schema_version", 0)) >= 5:
+        if "C" in gate["limits"]:
+            raise SystemExit("schema-5 gate must not define a C limit")
+        if list(gate.get("gate_fields", ())) != list(GATE_COLUMNS):
+            raise SystemExit("schema-5 gate_fields do not match the HUD gate")
     status = gate.get("status", "PASS" if gate.get("pass", False) else "FAIL")
     if status not in {"PASS", "WARNING", "FAIL"}:
         raise SystemExit(f"invalid gate status: {status!r}")
@@ -143,7 +213,7 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
         if not incomplete_failure:
             raise SystemExit(
                 f"gate expected {expected} frames, TSV has {frames}")
-    for field, column in GATE_COLUMNS.items():
+    for field, column in MAXIMUM_COLUMNS.items():
         actual = max(
             (as_int(row, column) for row in rows[1:]),
             default=0,
@@ -155,6 +225,31 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
             )
     if int(gate.get("evaluation_first_frame", 1)) != 1:
         raise SystemExit("HUD gate must exclude untimed frame 0")
+    for field, statistics_key, expected in (
+        ("C", "c_statistics", c_statistics(rows)),
+        ("A", "a_statistics", a_statistics(rows)),
+    ):
+        recorded = gate.get(statistics_key)
+        if recorded is None:
+            if int(gate.get("schema_version", 0)) >= 4:
+                raise SystemExit(f"gate JSON lacks {statistics_key}")
+            continue
+        for key in ("minimum", "maximum", "sample_count"):
+            if int(recorded[key]) != int(expected[key]):
+                raise SystemExit(
+                    f"gate {field} {key} {recorded[key]} does not match "
+                    f"TSV value {expected[key]}"
+                )
+        for key in ("mean", "median"):
+            if not math.isclose(
+                float(recorded[key]),
+                float(expected[key]),
+                abs_tol=1e-12,
+            ):
+                raise SystemExit(
+                    f"gate {field} {key} {recorded[key]} does not match "
+                    f"TSV value {expected[key]}"
+                )
 
 
 def displayed_vblanks(rows: list[dict[str, str]]) -> list[int | None]:
@@ -194,8 +289,7 @@ def gate_overage_events(
             over = value > limit
             changed = previous is None or value != previous
             if over and (field not in TRANSITION_FIELDS or changed):
-                severity = "WARNING" if field == "C" else "FAIL"
-                events[index].append((severity, field, value, ">", limit))
+                events[index].append(("FAIL", field, value, ">", limit))
             previous = value
     return dict(sorted(events.items()))
 
@@ -237,6 +331,11 @@ def render_markdown(
     summary.append(
         "Frame 0 is untimed boot staging and is excluded from every metric, "
         "gate, scale, and VBLANK statistic."
+    )
+    summary.append(format_c_statistics(c_statistics(rows)))
+    summary.append(format_a_statistics(a_statistics(rows)))
+    summary.append(
+        "C is diagnostic only and does not affect the HUD gate status."
     )
     expected_frames = int(gate["expected_frames"])
     if expected_frames != len(rows):

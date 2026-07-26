@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import importlib.util
 import csv
+import io
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 
 
@@ -67,6 +69,66 @@ class HudUploadGateTests(unittest.TestCase):
             {field: 0 for field in "SDRCMJ"},
         )
 
+    def test_c_and_a_statistics_exclude_frame_zero_and_later_loops(self):
+        rows = groups(4)
+        for row, c_value, a_value in zip(
+            rows,
+            (255, 0, 2, 4),
+            (254, 60, 64, 64),
+            strict=True,
+        ):
+            row.values.update({
+                "P": 0,
+                "L": 0,
+                "C": c_value,
+                "W": 0,
+                "A": a_value,
+            })
+        later = analyze.FrameGroup(
+            loop=1,
+            capture_first=8,
+            capture_last=9,
+            time_first=4 / 30,
+            time_last=4.5 / 30,
+            sample_count=2,
+            confidence=1.0,
+            values={**rows[0].values, "F": 0, "C": 255, "A": 255},
+        )
+        all_rows = [*rows, later]
+        c_stats = analyze.c_statistics(all_rows)
+        self.assertEqual(c_stats["minimum"], 0)
+        self.assertEqual(c_stats["mean"], 2.0)
+        self.assertEqual(c_stats["median"], 2)
+        self.assertEqual(c_stats["maximum"], 4)
+        self.assertEqual(c_stats["sample_count"], 3)
+        a_stats = analyze.a_statistics(all_rows)
+        self.assertEqual(a_stats["minimum"], 60)
+        self.assertAlmostEqual(a_stats["mean"], 62.666666666666664)
+        self.assertEqual(a_stats["median"], 64)
+        self.assertEqual(a_stats["maximum"], 64)
+        self.assertEqual(a_stats["sample_count"], 3)
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            analyze.print_report(all_rows, context=0)
+        self.assertIn(
+            "C statistics (timed first loop; frame 0 excluded): "
+            "min=0 mean=2.000 median=2 max=4 n=3",
+            output.getvalue(),
+        )
+        self.assertIn(
+            "A statistics (timed first loop; frame 0 excluded): "
+            "min=60 mean=62.667 median=64 max=64 n=3",
+            output.getvalue(),
+        )
+
+        result = self.evaluate(all_rows, 4)
+        self.assertEqual(result["schema_version"], 5)
+        self.assertEqual(result["gate_fields"], ["S", "D", "R", "M", "J"])
+        self.assertEqual(result["diagnostic_fields"], ["C", "A"])
+        self.assertEqual(result["c_statistics"], c_stats)
+        self.assertEqual(result["a_statistics"], a_stats)
+
     def test_each_unsafe_metric_blocks_upload(self):
         for field, value in {"S": 1, "D": 1, "R": 1,
                              "M": 2, "J": 26}.items():
@@ -76,40 +138,35 @@ class HudUploadGateTests(unittest.TestCase):
                 self.assertEqual(result["status"], "FAIL")
                 self.assertTrue(any(text.startswith(field) for text in result["failures"]))
 
-    def test_c_over_limit_is_upload_capable_warning(self):
-        result = self.evaluate(groups(4, C=1), 4)
+    def test_c_is_diagnostic_and_never_changes_gate_status(self):
+        result = self.evaluate(groups(4, C=255), 4)
         self.assertTrue(result["pass"], result["failures"])
-        self.assertEqual(result["status"], "WARNING")
+        self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["failures"], [])
-        self.assertTrue(any(text.startswith("C") for text in result["warnings"]))
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["maxima"]["C"], 255)
+        self.assertNotIn("C", result["limits"])
 
     def test_fixed_n4_15fps_uses_three_work_fields(self):
-        result = self.evaluate(groups(4, C=0, M=3, J=45), 4, 15)
+        result = self.evaluate(groups(4, C=255, M=3, J=45), 4, 15)
         self.assertTrue(result["pass"], result["failures"])
         self.assertEqual(result["cadence"], "fixed_n4")
-        self.assertEqual(result["limits"]["C"], 0)
+        self.assertNotIn("C", result["limits"])
         self.assertEqual(result["limits"]["M"], 3)
         self.assertEqual(result["limits"]["J"], 45)
         self.assertEqual(result["prg_buf_cap_kib"], 382)
-        self.assertEqual(result["jitter_headroom_kib"], 36)
-        self.assertEqual(result["delivery_limit_kib"], 418)
-        for field, value in (("C", 1), ("M", 4)):
-            result = self.evaluate(groups(4, **{field: value}), 4, 15)
-            if field == "C":
-                self.assertTrue(result["pass"])
-                self.assertEqual(result["status"], "WARNING")
-                self.assertTrue(any(
-                    text.startswith(field) for text in result["warnings"]))
-            else:
-                self.assertFalse(result["pass"])
-                self.assertEqual(result["status"], "FAIL")
-                self.assertTrue(any(
-                    text.startswith(field) for text in result["failures"]))
+        self.assertEqual(result["jitter_headroom_kib"], 40)
+        self.assertEqual(result["delivery_limit_kib"], 382)
+        result = self.evaluate(groups(4, M=4), 4, 15)
+        self.assertFalse(result["pass"])
+        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(any(
+            text.startswith("M") for text in result["failures"]))
 
     def test_delivery_paced_24fps_uses_variable_slot_and_field_budget(self):
-        result = self.evaluate(groups(4, C=3, M=3, J=30), 4, 24)
+        result = self.evaluate(groups(4, C=255, M=3, J=30), 4, 24)
         self.assertTrue(result["pass"], result["failures"])
-        self.assertEqual(result["limits"]["C"], 3)
+        self.assertNotIn("C", result["limits"])
         self.assertEqual(result["limits"]["M"], 3)
         self.assertEqual(result["limits"]["J"], 30)
         self.assertEqual(result["prg_buf_cap_kib"], 397)
