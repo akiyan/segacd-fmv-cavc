@@ -20,7 +20,7 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 16
+VERSION = 17
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
@@ -174,9 +174,13 @@ def take_region(
 
 
 def body_streams(
-    body: bytes, routes: list[tuple[int, int]], fps: int, features: int,
+    body: bytes, routes: list[tuple[int, int]], fps: int, vsync_n: int,
+    features: int,
 ) -> tuple[bytes, bytes]:
-    numerator, modulus = ((1001, 400) if features & FEATURE_FIXED_N2 else (75, fps))
+    numerator, modulus = (
+        (1001 * vsync_n, 800)
+        if features & FEATURE_FIXED_N2 else (75, fps)
+    )
     accumulator = 0
     lead = 0
     cursor = 0
@@ -237,7 +241,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v16 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v17 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -250,14 +254,15 @@ def main() -> None:
         raise AssertionError(
             f"header signature 0x{signature:08X} != 0x{expected_signature:08X}")
 
-    supply = struct.unpack_from(">4s8H", header, 196)
+    supply = struct.unpack_from(">4s9H", header, 196)
     magic_supply, supply_version, reserved = supply[:3]
-    wr0_count, wr1_count, dic_count, wr0_sec, wr1_sec, dic_sec = supply[3:]
-    if magic_supply != b"PSUP" or supply_version != 2 or reserved:
+    (wr0_count, wr1_count, dic_count, wr0_sec, wr1_sec, dic_sec,
+     _cold_cap) = supply[3:]
+    if magic_supply != b"PSUP" or supply_version != 3 or reserved:
         raise AssertionError(f"invalid pattern-supply extension: {supply!r}")
     for label, count, sectors, capacity in (
-        ("Wr0", wr0_count, wr0_sec, 880),
-        ("Wr1", wr1_count, wr1_sec, 880),
+        ("Wr0", wr0_count, wr0_sec, 0xFFFF),
+        ("Wr1", wr1_count, wr1_sec, 0xFFFF),
         ("Dic", dic_count, dic_sec, 256),
     ):
         if count > capacity or sectors != (count + 63) // 64:
@@ -284,26 +289,11 @@ def main() -> None:
                     raise AssertionError("invalid/duplicate boot sidecar record")
                 sidecar_vram[slot] = pattern
     cursor += len(boot_stage)
+    dic_blob, cursor = take_region(
+        header, cursor, dic_sec, dic_count * 32, "Dic")
     cursor += 5 * SECTOR
     wr0, cursor = take_region(header, cursor, wr0_sec, wr0_count * 32, "Wr0")
     wr1, cursor = take_region(header, cursor, wr1_sec, wr1_count * 32, "Wr1")
-    dic_blob, cursor = take_region(
-        header, cursor, dic_sec, dic_count * 32, "Dic")
-    cursor += audio_preload * SECTOR
-
-    f0_region = header[cursor:cursor + f0_ctrl_sectors * SECTOR]
-    if len(f0_region) != f0_ctrl_sectors * SECTOR:
-        raise AssertionError("frame 0 control region is truncated")
-    f0_len = struct.unpack_from(">H", f0_region)[0]
-    f0_control = parse_control(f0_region[:f0_len], 0, cells, audio_bytes)
-    if any(f0_region[f0_len:]):
-        raise AssertionError("frame 0 control sector padding is nonzero")
-    cursor += len(f0_region)
-    f0_cold = sum(
-        count for _slot, count, source, _dic_index in f0_control.runs
-        if source == SOURCE_PRG)
-    f0_patterns, cursor = take_region(
-        header, cursor, f0_pattern_sectors, f0_cold * 32, "frame 0 patterns")
 
     routing_region = header[cursor:cursor + routing_sectors * SECTOR]
     if len(routing_region) != routing_sectors * SECTOR:
@@ -325,7 +315,25 @@ def main() -> None:
     if cursor != len(header):
         raise AssertionError(f"HEADER has {len(header) - cursor} unparsed bytes")
 
-    control_stream, body_payload = body_streams(body, routes, fps, features)
+    body_cursor = audio_preload * SECTOR
+    f0_region = body[
+        body_cursor:body_cursor + f0_ctrl_sectors * SECTOR
+    ]
+    if len(f0_region) != f0_ctrl_sectors * SECTOR:
+        raise AssertionError("frame 0 control region is truncated")
+    f0_len = struct.unpack_from(">H", f0_region)[0]
+    f0_control = parse_control(f0_region[:f0_len], 0, cells, audio_bytes)
+    if any(f0_region[f0_len:]):
+        raise AssertionError("frame 0 control sector padding is nonzero")
+    body_cursor += len(f0_region)
+    f0_cold = sum(
+        count for _slot, count, source, _dic_index in f0_control.runs
+        if source == SOURCE_PRG)
+    f0_patterns, body_cursor = take_region(
+        body, body_cursor, f0_pattern_sectors, f0_cold * 32, "frame 0 patterns")
+
+    control_stream, body_payload = body_streams(
+        body[body_cursor:], routes, fps, vsync_n, features)
     controls = [f0_control]
     control_cursor = 0
     for frame in range(1, frames):

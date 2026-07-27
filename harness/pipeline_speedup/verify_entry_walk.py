@@ -6,7 +6,7 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For current v16 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+For current v17 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
 that each frame's control block and cold patterns are ready before that frame
 can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
@@ -255,8 +255,8 @@ def main() -> None:
     magic, version, nfr, _cols, _rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", data, 0
     )
-    if magic != b"TTRC" or version != 16:
-        raise SystemExit(f"expected TTRC v16, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 17:
+        raise SystemExit(f"expected TTRC v17, got {magic!r} v{version}")
     prebuf_pat = struct.unpack_from(">L", data, 22)[0]
     routing_sec = struct.unpack_from(">L", data, 26)[0]
     prebuf_sec = struct.unpack_from(">L", data, 30)[0]
@@ -270,20 +270,13 @@ def main() -> None:
     table_sec = ADPCM_TABLE_SECTORS
     supply_sec = pattern_supply_sectors(data, version, features)
 
-    f0_off = (
-        1 + paltab_sec + table_sec + supply_sec + audio_preload_sec
-    ) * SECTOR
-    f0_len = struct.unpack_from(">H", data, f0_off)[0]
-    controls = [data[f0_off : f0_off + f0_len]]
-
     routing_off = (
-        1 + paltab_sec + table_sec + supply_sec + audio_preload_sec
-        + f0_ctrl_sec + f0_pat_sec
+        1 + paltab_sec + table_sec + supply_sec
     ) * SECTOR
     routing_raw = data[routing_off : routing_off + routing_sec * SECTOR]
     routes = decode_routes(routing_raw, nfr, version)
     if routes[0] != (0, 0):
-        raise AssertionError(f"frame 0 must live entirely in the header, route is {routes[0]}")
+        raise AssertionError(f"frame 0 BODY-arm route must be zero, got {routes[0]}")
     fsecs = frame_sectors(routes, version, fps, vsync_n, features)
 
     frames_off = (routing_off // SECTOR + routing_sec + prebuf_sec) * SECTOR
@@ -313,7 +306,12 @@ def main() -> None:
         body_path = None
         frames = data[frames_off:]
 
-    cursor = 0
+    f0_off = audio_preload_sec * SECTOR
+    f0_len = struct.unpack_from(">H", frames, f0_off)[0]
+    controls = [frames[f0_off : f0_off + f0_len]]
+    cursor = (
+        audio_preload_sec + f0_ctrl_sec + f0_pat_sec
+    ) * SECTOR
     control_stream = bytearray()
     for i in range(1, nfr):
         n_pay, n_ctrl = routes[i]

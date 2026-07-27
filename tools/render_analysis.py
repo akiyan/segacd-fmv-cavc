@@ -222,7 +222,8 @@ if not np.array_equal(
 if any(int(values[0]) != 0 for values in (
         BODY_PAYLOAD_BYTES, BODY_CONTROL_BYTES, BODY_PAD_BYTES,
         BODY_PHYSICAL_BYTES)):
-    raise SystemExit("BODY delivery slot 0 must exclude HEADER/frame 0; re-run sim")
+    raise SystemExit(
+        "timed BODY delivery slot 0 must exclude the BODY arm/frame 0; re-run sim")
 MISS_MASKS = np.load(f"{SIM}/miss_masks.npy")
 
 # ---- stats -> mutually-exclusive display categories ----
@@ -501,7 +502,7 @@ Updated = col("updated")
 _cram = np.zeros(NF, np.int64); _cram[1:] = (FRAME_SEG[1:] != FRAME_SEG[:-1]).astype(np.int64) * 128
 FB = Raw * 32 + Buf * 32 + Updated * 2 + _cram        # 1コマの映像書込量(パターン+全ネーム+CRAM, タンク供給込み)
 # Band is useful BODY.DAT bytes in the physical delivery slot.  It excludes
-# HEADER/frame 0, stream-tail alignment zeros, and rate-match pad.
+# Untimed BODY-arm/frame-0 bytes, stream-tail alignment zeros, and rate-match pad.
 BODY_USEFUL_BYTES = BODY_PAYLOAD_BYTES + BODY_CONTROL_BYTES
 BAND_BPS = stream_schedule.body_delivery_rate_bps(
     BODY_USEFUL_BYTES, BODY_PHYSICAL_BYTES)

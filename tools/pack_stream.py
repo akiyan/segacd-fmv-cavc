@@ -11,12 +11,12 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v16): HEADER.DAT = Header(1sec) + BOOT_STAGE(全区間パレット
+TTRCレイアウト(v17): HEADER.DAT = Header(1sec) + BOOT_STAGE(全区間パレット
               n_seg×128B + optional boot-VRAM sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
-              + startup audio prefetch(1 sector/frame)
-              + frame0(control+patterns) + routing(1B/frame: total<<3 | n_ctrl_sec)
+              + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
-              BODY.DAT = frame1以降の [control][payload][rate pad]
+              BODY.DAT = arm[startup audio][frame0 control][frame0 patterns]
+              + frame1以降の [control][payload][rate pad]
 MOVIE.DAT はツール互換用の HEADER.DAT || BODY.DAT 連結コンテナ。
 control block: >H total_len >H frame_seq >H n_upd >H pal
                ceil(cells/8) bitmap n_upd*(>H entry) audio [even pad]
@@ -215,21 +215,21 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v16: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v17: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v16: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v17: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v16: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v17: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v16: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v17: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
 
 
@@ -636,8 +636,9 @@ def verify_sim_stream_schedule(log, packed_schedule):
 
 
 def verify_body_delivery_file(
-        body_path, stream_ctrl, stream_pay, schedule, *, prebuf_patterns):
-    """Check every written BODY slot against useful-byte and pad traces."""
+        body_path, body_arm, stream_ctrl, stream_pay, schedule, *,
+        prebuf_patterns):
+    """Check the BODY arm prefix and every timed slot byte-for-byte."""
     n_pay = np.asarray(schedule["n_pay_sec"], np.int64)
     n_ctrl = np.asarray(schedule["n_ctrl_sec"], np.int64)
     fsec = np.asarray(schedule["fsec"], np.int64)
@@ -650,6 +651,9 @@ def verify_body_delivery_file(
     seen_ctrl = np.zeros(len(fsec), np.int64)
     seen_pad = np.zeros(len(fsec), np.int64)
     with Path(body_path).open("rb") as body:
+        actual_arm = body.read(len(body_arm))
+        if actual_arm != body_arm:
+            raise AssertionError("BODY.DAT arm prefix differs from packed input")
         for i in range(1, len(fsec)):
             ncb = int(n_ctrl[i]) * SECTOR
             npb = int(n_pay[i]) * SECTOR
@@ -688,7 +692,8 @@ def verify_body_delivery_file(
                 f"BODY.DAT {name} trace mismatch at slot {i}: "
                 f"file={int(actual[i])} trace={int(traced[i])}")
     print(
-        f"  BODY.DAT slot照合: {len(fsec) - 1} slots exact; useful "
+        f"  BODY.DAT arm/slot照合: arm={len(body_arm) // SECTOR} sectors; "
+        f"{len(fsec) - 1} timed slots exact; useful "
         f"control={int(seen_ctrl.sum())}B payload={int(seen_pay.sum())}B "
         f"pad={int(seen_pad.sum())}B")
 
@@ -787,7 +792,7 @@ def build_control(
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v16 keeps the 16-bit entry array word-aligned even when
+            # TTRC v17 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -1058,19 +1063,18 @@ def _decode_control_chunk(chunk):
 def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v16 split stream and a combined tooling container.
+    """Write the v17 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
-                   | STARTUP_AUDIO
-                   | FRAME0(control+patterns)
                    | ROUTING(0..N-1,[0]=0,0) | PREBUF1(frame1用RING_CAP)
     BODY.DAT:
-      FRAMES(1..N-1), each [control sectors][payload sectors][rate pad]
+      ARM_AUDIO | ARM_FRAME0(control+patterns)
+                | FRAMES(1..N-1), each [control sectors][payload sectors][rate pad]
     MOVIE.DAT (``path``) is the off-disc HEADER.DAT || BODY.DAT container.
 
-    frame0 はストリーミングのリングを経由せず boot 中に VRAM 直ロードするので、リングは
-    常に RING_CAP 以下=back-pressure非接触。frame1以降が満タンリングで始まる。
+    BODY arm is read before the playback clock. Frame 0 never enters the timed
+    Prg ring; frame 1 therefore still begins from the HEADER prebuffer.
     BOOT_STAGE = 全区間パレット(n_seg×128B)と任意の裏VRAMパターン。
     Mainはboot時に前者をMain-RAM表へ、後者をVRAMの指定slotへコピーする。"""
     n_pay_sec = sc["n_pay_sec"]; n_ctrl_sec = sc["n_ctrl_sec"]
@@ -1097,7 +1101,7 @@ def write_stream(
     wr1_sec = -(-len(wr1_blob) // SECTOR)
     dic_sec = -(-len(dic_blob) // SECTOR)
 
-    # Queue the first N reconstructed PCM chunks from HEADER, then make each
+    # Queue the first N reconstructed PCM chunks from the BODY arm, then make each
     # live control carry the next future PCM or checkpointed ADPCM chunk.
     # The old duplicate-and-skip layout consumed the
     # entire startup reserve by frame N and left the writer next to the play
@@ -1124,17 +1128,19 @@ def write_stream(
         + [_decode_control_chunk(control_audio(block)) for block in disc_blocks]
     )
     if queued_pcm[:nfr] != list(source_pcm_chunks):
-        raise AssertionError("startup audio prefetch changed reconstructed sample order")
+        raise AssertionError(
+            "BODY-arm audio prefetch changed reconstructed sample order")
     silence_pcm = b"\0" * AUDIO_PCM
     if any(chunk != silence_pcm for chunk in queued_pcm[nfr:]):
-        raise AssertionError("startup audio prefetch tail is not silent")
+        raise AssertionError("BODY-arm audio prefetch tail is not silent")
     if [len(block) for block in disc_blocks] != [len(block) for block in blocks]:
         raise AssertionError("startup PCM prefetch changed control block lengths")
     print(f"  audio prefetch: {audio_prefetch_frames} chunks queued; "
           f"source order verified for {nfr} playback chunks")
 
     control = b"".join(disc_blocks)
-    # frame0の control/patterns をストリームから切り出す(ヘッダ側へ)
+    # Split frame 0 from the timed stream. It remains an untimed exact
+    # construction, but v17 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1232,8 +1238,8 @@ def write_stream(
             ">4sHHH", paltab, 0x0FC0, b"BVRM", *region_counts)
     paltab_sec = len(paltab) // SECTOR
     # One reconstructed PCM chunk per sector lets the Sub write each chunk without
-    # cross-sector staging. Offset 58 now carries the RF5C164 frequency delta;
-    # offset 60 tells the player how many HEADER sectors to queue before PCM starts.
+    # cross-sector staging. Offset 58 carries the RF5C164 frequency delta; offset
+    # 60 tells the player how many BODY-arm sectors to queue before PCM starts.
     audio_preload = b"".join(
         source_pcm_chunks[i].ljust(SECTOR, b"\0")
         for i in range(audio_prefetch_frames)
@@ -1246,7 +1252,7 @@ def write_stream(
     fps_int = int(round(FPS))                         # 名目fps。FEATURE_FIXED_N時はvsync_n由来のCD rate
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v16 requires frame0 in HEADER.DAT")
+        raise SystemExit("pack v17 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
     if av_config.uses_fixed_n_cadence(FPS):
         features |= FEATURE_FIXED_N
@@ -1266,7 +1272,7 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v16 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v17 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
@@ -1299,8 +1305,6 @@ def write_stream(
                    + adpcm_table_blob
                    + wr0_blob.ljust(wr0_sec * SECTOR, b"\0")
                    + wr1_blob.ljust(wr1_sec * SECTOR, b"\0")
-                   + audio_preload
-                   + frame0_blk
                    + routing_blob
                    + prebuf_bytes.ljust(prebuf_sec * SECTOR, b"\0"))
     if len(header_blob) % SECTOR:
@@ -1324,9 +1328,14 @@ def write_stream(
     constants_path = out_path.with_name("player_constants.inc")
     player_constants.generate_include(header_path, constants_path)
 
+    body_arm = audio_preload + frame0_blk
+    arm_sectors = len(body_arm) // SECTOR
+    if len(body_arm) % SECTOR:
+        raise AssertionError("BODY.DAT arm is not sector aligned")
     pc = Bpat * PAT; cc = 0
     fsec_schedule = sc["fsec"]
     with body_path.open("wb") as f:
+        f.write(body_arm)
         # Rate-match every frame to its exact CD-1x cadence allowance. The
         # player retains the same bounded lead accumulator, but construction
         # requires rate_lead_peak=0: a heavy slot's elapsed display delay
@@ -1352,10 +1361,11 @@ def write_stream(
     if pc < len(stream_pay):
         raise AssertionError(f"BODY.DAT omitted {len(stream_pay) - pc} payload bytes")
     frames_stream_sec = int(sum(fsec_list))
-    if body_path.stat().st_size != frames_stream_sec * SECTOR:
+    if body_path.stat().st_size != (arm_sectors + frames_stream_sec) * SECTOR:
         raise AssertionError("BODY.DAT size disagrees with frame sector schedule")
     verify_body_delivery_file(
         body_path,
+        body_arm,
         stream_ctrl,
         stream_pay,
         sc,
@@ -1372,17 +1382,18 @@ def write_stream(
             dst.write(chunk)
 
     header_sec = len(header_blob) // SECTOR
-    total = header_sec + frames_stream_sec
+    total = header_sec + arm_sectors + frames_stream_sec
     if out_path.stat().st_size != total * SECTOR:
         raise AssertionError("combined MOVIE.DAT size disagrees with HEADER.DAT + BODY.DAT")
-    print(f"wrote {header_path} {header_sec}sec + {body_path} {frames_stream_sec}sec; "
+    print(f"wrote {header_path} {header_sec}sec + {body_path} "
+          f"{arm_sectors}+{frames_stream_sec}sec; "
           f"combined {out_path} {total}sec (mode {mode_name} paltab {paltab_sec} "
-          f"startup_audio prefetch {audio_prefetch_frames}f "
+          f"BODY arm audio {audio_prefetch_frames}f "
           f"preload Wr0/Wr1/Dic={len(supply_plan.wr0_patterns)}/"
           f"{len(supply_plan.wr1_patterns)}/{len(supply_plan.dic_patterns)} "
           f"frame0 {f0_ctrl_sec}+{f0_pat_sec} backside={sidecar_count} "
           f"routing {routing_sec} prebuf {prebuf_sec} frames {frames_stream_sec}) "
-          f"ring_peak {ring_peak*PAT/1024:.0f}KB  v16 N={vsync_n}"
+          f"ring_peak {ring_peak*PAT/1024:.0f}KB  v17 N={vsync_n}"
           f"(={PLAYBACK_FPS:.3f}fps) AUDIO=adpcm22 "
           f"control={AUDIO_CONTROL}B pcm={AUDIO_PCM}B FD=0x{audio_fd:04X}")
     print(f"  initial CRAM: {palette_path} ({len(seg0)}B, canonical segment {int(frame_seg[0])})")
@@ -1469,14 +1480,14 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v16 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v17 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
     wordram_layout = pattern_supply.word_ram_layout(
         len(per), C_CELLS, int(sim_cold))
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:
         raise SystemExit(
-            "pack v16 requires a decision log with a frozen Word-RAM layout; "
+            "pack v17 requires a decision log with a frozen Word-RAM layout; "
             "re-run sim with the current encoder")
     expected_layout = dataclasses.asdict(wordram_layout)
     if frozen_layout != expected_layout:
@@ -1491,7 +1502,7 @@ def main():
         wr1_patterns=wordram_layout.wr1_patterns)
     if int(supply_meta.get("schema_version", 0)) != 3:
         raise SystemExit(
-            "pack v16 requires a current Word-RAM decision log; re-run sim")
+            "pack v17 requires a current Word-RAM decision log; re-run sim")
     print(f"  pattern supply: enabled={int(supply_plan.enabled)} "
           f"Prg={len(supply_plan.prg_patterns)} "
           f"Wr0={len(supply_plan.wr0_patterns)}/{wordram_layout.wr0_patterns} "

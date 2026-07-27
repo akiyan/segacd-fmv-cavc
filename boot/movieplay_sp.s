@@ -1,9 +1,9 @@
 /*
  * Phase B5: TTRC delta-stream player, Sub CPU side.
  *
- * HEADER.DAT contains the complete startup image through PREBUFFER.  It is
- * consumed and frame 0 is expanded before BODY.DAT starts.  BODY.DAT then runs
- * as one uninterrupted timed read, independent of either file's ISO location.
+ * HEADER.DAT contains only static boot state through PREBUFFER. BODY.DAT begins
+ * with an untimed arm prefix (audio + frame-0 control/patterns), followed by the
+ * timed frame-1+ stream. The arm and playback clocks are intentionally distinct.
  *
  * During the timed read, each frame places control sectors first, then payload
  * sectors, then rate padding.  Control feeds the apply ring and payload feeds
@@ -120,8 +120,8 @@
 
 .equ SUB_BANK_1M, 0x000C0000
 
-/* --- TTRC v16 packed-routing/audio contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       16
+/* --- TTRC v17 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
+.equ ROUTING_VERSION,       17
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -295,7 +295,7 @@
 .equ RING_MASK, WAVE_RING_END-1
 /* 音声リード: 起動時から先行書き込み位置(SYNC_LEAD)で再生を開始する。
    以前は再生位置を0x0000に固定していたため、リング先頭の無音約1.38秒を
-   先に再生して映像が音声より先行していた。STARTUP_AUDIOを同じ位置へ
+	   先に再生して映像が音声より先行していた。BODY-arm audioを同じ位置へ
    先行配置し、PCM_STもSYNC_LEADへ合わせることでframe0と音声の先頭を揃える。
    SYNC_MIN(リード下限)を割ると書込を play+SYNC_LEAD へジャンプ=re-sync(古い音をまたぐ乱れ)。
    重いシーン転換クラスタで映像が数コマ遅れリードが一瞬凹むが、O_LEAD計測で底≈0x5BB(machi_op
@@ -307,12 +307,11 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v16ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v17ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* palette/Dic stage ready for one-time Main copy */
-.equ STAT_BOOT_VRAM, 0x8002		/* frame-0 bank ready; BODY waits for built/displayed ack */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは15秒待って CMD_STREAM 再送) */
 
@@ -453,9 +452,13 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v2: frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v17: BODY-arm frame0 control sectors @offset40 */
+	tst.w	d0
+	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v2: frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v17: BODY-arm frame0 pattern sectors @offset44 */
+	tst.w	d0
+	beq	bad_header
 	move.w	d0, h_f0_pat_sec
 	move.l	48(a0), d0			/* v13: boot-stage sectors @offset48 */
 	cmpi.w	#12, d0				/* v13 boot-stage upper bound: 24KB=12 sectors */
@@ -483,9 +486,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v16 optional stream features */
+	move.w	62(a0), h_features		/* v17 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v16 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v17 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -525,6 +528,11 @@ pm_set:
 	move.w	d1, sec_rem
 	/* Controls carry future chunks, so no live audio write is skipped. */
 	move.w	60(a0), h_audio_pre_sec
+	beq	bad_header
+	move.w	h_audio_pre_sec, d0
+	add.w	h_f0_ctrl_sec, d0
+	add.w	h_f0_pat_sec, d0
+	move.w	d0, h_body_arm_sec
 	clr.w	sec_acc
 	clr.w	lead
 .endif
@@ -617,39 +625,7 @@ pm_set:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 .endif
-	/* STARTUP_AUDIO follows the pattern preloads. Each sector starts with exactly one
-	   h_audio_bytes chunk, so no cross-sector staging is needed. Current packs
-	   queue the source prefix here and put future chunks in live controls, keeping
-	   this reserve for the whole movie instead of consuming it during startup. */
-	PC_MOVE_W h_audio_pre_sec, PC_AUDIO_PRELOAD_SEC, d7
-	tst.w	d7
-	beq	ap_done
-ap_lp:
-	movem.l	d7, -(sp)
-	lea	PAD_SCR, a0
-	bsr	drain1
-	lea	PAD_SCR, a0
-	bsr	write_wave_chunk
-	movem.l	(sp)+, d7
-	subq.w	#1, d7
-	bne	ap_lp
-ap_done:
-	/* === v2: frame0 は DAT冒頭の専用ヘッダブロック(control+patterns)。boot中に別ロード
-	   してVRAMへ展開・表示する。ストリーミングのリングは一切経由しない(=boot時リングが
-	   RING_CAP以下=back-pressure非接触)。frame0の大バーストによる後続枯渇(崩壊)を根絶。 */
-	/* frame0 control(f0_ctrl_sec) を CTRL_SCR へ。CDC_TRN直行を避け STAGE経由(スリップ防止) */
-	moveq	#0, d0
-	PC_MOVE_W h_f0_ctrl_sec, PC_F0_CTRL_SEC, d0
-	lea	CTRL_SCR, a0
-	bsr	drain_lin_staged
-	/* frame0 patterns は固定boot scratchから未使用APPLY先頭へ一時保持する。
-	   BODY開始前に展開済みなのでfps別timed jitter余白とは同時利用しない。 */
-	move.l	#F0PAT_TMP, f0_pat_addr
-	moveq	#0, d0
-	PC_MOVE_W h_f0_pat_sec, PC_F0_PAT_SEC, d0
-	movea.l	f0_pat_addr, a0
-	bsr	drain_lin_staged		/* CDC_TRN直行を避け STAGE経由(PRG直行スリップ防止) */
-	/* routing table → STAGE経由でboot中未使用のAPPLY領域へ一時保持。 */
+	/* HEADER ends with the static routing table and frame-1 Prg prebuffer. */
 	moveq	#0, d0
 	PC_MOVE_W h_routing_sec, PC_ROUTING_SEC, d0
 	lea	ROUTING_TMP, a0
@@ -690,24 +666,55 @@ pb_done:
 .endif
 	tst.w	d0
 	bne	bad_header
+
+	/* BODY begins with an explicit untimed arm. Read only that finite prefix so
+	   no timed sector can arrive while frame-0 patterns still overlap the ring
+	   tail/APPLY scratch. HEADER and BODY ISO extents are independent. */
+	moveq	#0, d1
+	PC_MOVE_W h_body_arm_sec, PC_BODY_ARM_SEC, d1
+	move.l	body_total, d0
+	cmp.l	d1, d0
+	blo	bad_header
+	clr.l	prev_msf
+	clr.l	base_msf
+	move.l	body_lba, d0
+	bsr	issue_file_readn
+
+	/* The first arm region contains one decoded PCM chunk per sector. Live
+	   controls keep carrying future chunks, preserving source sample order. */
+	PC_MOVE_W h_audio_pre_sec, PC_AUDIO_PRELOAD_SEC, d7
+arm_audio_lp:
+	movem.l	d7, -(sp)
+	lea	PAD_SCR, a0
+	bsr	drain1
+	lea	PAD_SCR, a0
+	bsr	write_wave_chunk
+	movem.l	(sp)+, d7
+	subq.w	#1, d7
+	bne	arm_audio_lp
+
+	/* Frame 0 follows in the same BODY arm. It remains an untimed exact
+	   construction and never consumes the timed Prg ring. */
+	moveq	#0, d0
+	PC_MOVE_W h_f0_ctrl_sec, PC_F0_CTRL_SEC, d0
+	lea	CTRL_SCR, a0
+	bsr	drain_lin_staged
+	move.l	#F0PAT_TMP, f0_pat_addr
+	moveq	#0, d0
+	PC_MOVE_W h_f0_pat_sec, PC_F0_PAT_SEC, d0
+	movea.l	f0_pat_addr, a0
+	bsr	drain_lin_staged
+	BIOSCALL BIOS_CDC_STOP
+
 	/* The extension prepared the steady-state queues and exact ring tail.
-	   ROUTING_TMP is now free for APPLY; expand frame 0 from its boot-only
-	   pattern block before starting the independent timed BODY.DAT read. */
+	   BODY-arm storage is complete, so expand frame 0 with no active CD read. */
 	bsr	expand_frame
 	clr.w	f0_expand
-	/* Hand the complete frame-0 bank to Main before BODY.DAT starts.  Main
-	   acknowledges only after it has built and displayed frame 0. */
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	move.w	#STAT_BOOT_VRAM, (COMSTAT0).l
-1:
-	tst.w	(COMCMD1).l
-	beq.s	1b
-	/* Start one continuous read at BODY.DAT's actual ISO extent.  Rebase slip
-	   recovery there because HEADER.DAT and BODY.DAT need not be adjacent. */
+
+	/* Start one continuous read for the timed BODY suffix and pre-drain frame 1
+	   before handing frame 0 to Main. After the bank exchange, Sub can keep
+	   pumping into PRG-RAM while Main builds frame 0 from the other bank. */
 .ifdef DEBUG_PRGBUF_Q
-	/* Frame 0 used boot-only pattern storage. Reset the signed timed balance
-	   immediately before the first BODY payload can append to it. */
 	PC_MOVE_W h_prebuf_pat+2, PC_PREBUF_PAT, d0
 	move.w	d0, ring_level
 .endif
@@ -724,35 +731,36 @@ pb_done:
 	tst.l	body_total
 	beq	stream_armed
 .endif
-	/* Detect a missing first BODY sector even when ISO extents are non-adjacent
-	   or BODY sorts before HEADER.  ISO LBA and linear MSF share the same signed
-	   sector delta, so anchor BODY before issuing its read. */
+	moveq	#0, d2
+	PC_MOVE_W h_body_arm_sec, PC_BODY_ARM_SEC, d2
 	move.l	body_lba, d0
-	sub.l	header_lba, d0
-	add.l	base_msf, d0			/* expected BODY first-sector MSF */
-	move.l	d0, base_msf
-	subq.l	#1, d0
-	move.l	d0, prev_msf
-	move.l	body_lba, d0
+	add.l	d2, d0
 	move.l	body_total, d1
+	sub.l	d2, d1
+	beq	stream_armed
+	clr.l	prev_msf
+	clr.l	base_msf
 	bsr	issue_file_readn
 arm_frame1:
 	bsr	pump1_core
 	cmpi.w	#2, drain_frame
 	blo	arm_frame1
 stream_armed:
-	/* Frame 1 consumes from the beginning of PREBUFFER; later payload appends at
-	   ring_tail. */
 	move.l	#RING_BASE, ring_head
-	/* The BODY-start acknowledgement already proves that Main built and
-	   displayed frame 0. Keep PCM stopped until the first timed frame handoff;
-	   starting it during frame-1 pre-drain would consume audio lead before the
-	   timed stream has begun. */
-	/* Release Main only after frame 1 is fully pre-drained. */
+	/* One CMD_STREAM handshake now owns the whole arm. Main receives the complete
+	   frame-0 bank, shows DEBUG F=FFFF while building it, flips F=0000, then
+	   clears CMD_STREAM. Keep the continuous CD read serviced while Main is
+	   genuinely busy, but check the command edge before every future-data pump. */
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
 	move.w	#STAT_READY, (COMSTAT0).l
 1:
 	tst.w	(COMCMD0).l
-	bne.s	1b
+	beq.s	2f
+	bsr	pump_poll_core
+	bra.s	1b
+2:
+	bsr	pcm_on
 	move.w	#0, (COMSTAT0).l
 .equ ISO_HOLD_F0, 0			/* ISO診断: frame0 表示直後に静止(frame0単体の健全性確認) */
 .if ISO_HOLD_F0
@@ -785,12 +793,6 @@ stream_loop:
 	bsr	pump_poll_core			/* MD待ち中だけCDを吸い上げ(溢れ防止) */
 	bra	3b
 5:
-	/* Main has now finished and is displaying frame 0. Start PCM at this exact
-	   handshake, after the frame-0 build latency has been absorbed. */
-	tst.w	pcm_running
-	bne	1f
-	bsr	pcm_on
-1:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	move.w	#STAT_READY, (COMSTAT0).l
@@ -1549,7 +1551,7 @@ ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v16 aligns the 16-bit entry array after an odd-sized bitmap. The
+	/* v17 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -1814,7 +1816,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v16 streams use run descriptors above.  Retain a final-balance
+	/* Canonical v17 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2004,7 +2006,7 @@ ip_loop:
 	nop
 	nop
 	/* PCM_ST is the high byte of the 16-bit sample address. Start at
-	   SYNC_LEAD, where STARTUP_AUDIO was written, instead of 0x0000 silence. */
+	   SYNC_LEAD, where BODY-arm audio was written, instead of 0x0000 silence. */
 	move.b	#0x30, (PCM_ST).l		/* SYNC_LEAD=0x3000 */
 	nop
 	nop
@@ -2366,7 +2368,9 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v5: STARTUP_AUDIO sector count (one chunk per sector) */
+	.space 2				/* v17: BODY-arm audio sectors (one chunk per sector) */
+h_body_arm_sec:
+	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:
 	.space 2				/* offset 62: bit0 cold runs, bit1 authoritative fixed N */
 sec_base:

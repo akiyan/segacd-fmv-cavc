@@ -169,6 +169,10 @@ for parity in (0, 1):
             f"check_player_ring: Wr{parity} sector padding reaches the fixed tail")
 if pc("DIC_PATTERNS") > pattern_supply.DIC_BUF_PATTERNS:
     sys.exit("check_player_ring: DicBuf preload exceeds Main-RAM dictionary")
+if pc("BODY_ARM_SEC") != (
+        pc("AUDIO_PRELOAD_SEC") + pc("F0_CTRL_SEC") + pc("F0_PAT_SEC")):
+    sys.exit(
+        "check_player_ring: BODY arm is not audio + frame0 control + patterns")
 
 require(
     sp_text,
@@ -221,6 +225,36 @@ print(
     f"routing={layout.routing_bytes // 1024}KiB "
     f"Wr0={pc('WR0_PATTERNS')}/{layout.wr0_patterns} "
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
+
+
+# TTRC v17 has one startup command. HEADER contains only static boot state;
+# BODY begins with the finite untimed arm, then starts one continuous timed
+# suffix read. The player-only black state publishes F=FFFF.
+for removed in ("STAT_BOOT_VRAM", "arm_body_after_frame0", "body_start_pending"):
+    if removed in sp_text or removed in ip_text:
+        sys.exit(
+            f"check_player_ring: removed second startup handshake returned: "
+            f"{removed}")
+for source, token, description in (
+        (sp_text, "PC_MOVE_W h_body_arm_sec, PC_BODY_ARM_SEC, d1",
+         "finite BODY-arm read length"),
+        (sp_text, "PC_MOVE_W h_audio_pre_sec, PC_AUDIO_PRELOAD_SEC, d7",
+         "BODY-arm PCM drain"),
+        (sp_text, "PC_MOVE_W h_f0_ctrl_sec, PC_F0_CTRL_SEC, d0",
+         "BODY-arm frame-0 control drain"),
+        (sp_text, "PC_MOVE_W h_f0_pat_sec, PC_F0_PAT_SEC, d0",
+         "BODY-arm frame-0 pattern drain"),
+        (sp_text, "bsr\tpump_poll_core", "continuous pump during Main startup"),
+        (sp_text, "bsr\tpcm_on", "single playback-start PCM edge"),
+        (ip_text, "bsr\tshow_frame_minus_one", "frame -1 display"),
+        (ip_text, "move.w\t#-1, frame_no", "F=FFFF HUD sentinel"),
+        (ip_text, "bsr\tstart_playback", "post-frame-0 command clear"),
+):
+    if token not in source:
+        sys.exit(f"check_player_ring: missing {description}")
+print(
+    "check_player_ring: OK  v17 BODY arm and one-command "
+    "frame -1/frame-0 startup")
 
 
 # Boot stage is consumed through an explicit give/copy/take-back handshake.

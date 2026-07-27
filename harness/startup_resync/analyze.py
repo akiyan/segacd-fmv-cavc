@@ -19,6 +19,10 @@ Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
 a diagnostic tool only; its HUD timing must not be used to trim a publication
 recording or to place YouTube chapters.
+
+Current players expose their black pre-roll state as F=FFFF. The extractor
+prefers an F0000 anchor immediately after that sentinel, but retains the older
+plausible-run fallback for recordings made before the sentinel existed.
 """
 
 from __future__ import annotations
@@ -282,11 +286,19 @@ def _has_anchor_run(groups: list[FrameGroup], start: int, length: int, max_step:
 def select_movie_groups(
     groups: list[FrameGroup], anchor_run: int, max_step: int
 ) -> list[FrameGroup]:
-    anchor = None
-    for index, group in enumerate(groups):
-        if group.values["F"] == 0 and _has_anchor_run(groups, index, anchor_run, max_step):
-            anchor = index
-            break
+    plausible = [
+        index for index, group in enumerate(groups)
+        if group.values["F"] == 0
+        and _has_anchor_run(groups, index, anchor_run, max_step)
+    ]
+    sentinel_anchored = [
+        index for index in plausible
+        if index > 0
+        and groups[index - 1].values["F"] == read_frameno.FRAME_MINUS_ONE
+    ]
+    anchor = sentinel_anchored[0] if sentinel_anchored else (
+        plausible[0] if plausible else None
+    )
     if anchor is None:
         raise SystemExit(
             f"could not find F0000 followed by {anchor_run - 1} plausible HUD frames; "

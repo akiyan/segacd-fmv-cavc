@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v16 files and reconstructs every current control and payload byte. The
+TTRC v17 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -30,7 +30,7 @@ from pathlib import Path
 SECTOR = 2048
 PATTERN_BYTES = 32
 FEATURE_COLD_RUNS = 0x0001
-FEATURE_FIXED_N2 = 0x0002
+FEATURE_FIXED_N = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
@@ -104,8 +104,8 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Reproduce the v6+ bounded CD-1x BODY slot accumulator."""
-    if version >= 8 and features & FEATURE_FIXED_N2:
-        rate_numerator, rate_modulus = 1001, 400
+    if version >= 8 and features & FEATURE_FIXED_N:
+        rate_numerator, rate_modulus = 1001 * vsync_n, 800
     else:
         rate_numerator, rate_modulus = 75, fps
     accumulator = 0
@@ -248,9 +248,9 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, pool, base = struct.unpack_from(
         ">4sHHHHHHH", header
     )
-    if magic != b"TTRC" or version != 16:
+    if magic != b"TTRC" or version != 17:
         raise AssertionError(
-            f"expected split TTRC v16, got {magic!r} v{version}")
+            f"expected split TTRC v17, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
@@ -266,7 +266,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     audio_preload_sectors = struct.unpack_from(">H", header, 60)[0]
     features = struct.unpack_from(">H", header, 62)[0]
     unknown_features = features & ~(
-        FEATURE_COLD_RUNS | FEATURE_FIXED_N2
+        FEATURE_COLD_RUNS | FEATURE_FIXED_N
         | FEATURE_PATTERN_SUPPLY | FEATURE_SHADOW_UPDATE_LISTS
         | FEATURE_VRAM_RAW_PREFETCH | FEATURE_DICBUF_INDEXED_RUNS
         | FEATURE_BOOT_VRAM_SIDECAR)
@@ -280,54 +280,28 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     wr0_patterns = wr1_patterns = dic_patterns = 0
     wr0_sectors = wr1_sectors = dic_sectors = 0
     if features & FEATURE_PATTERN_SUPPLY:
-        supply = struct.unpack_from(">4s8H", header, PATTERN_SUPPLY_OFFSET)
+        supply = struct.unpack_from(">4s9H", header, PATTERN_SUPPLY_OFFSET)
         supply_magic, supply_version, supply_reserved = supply[:3]
-        if supply_magic != b"PSUP" or supply_version != 2 or supply_reserved:
+        if supply_magic != b"PSUP" or supply_version != 3 or supply_reserved:
             raise AssertionError(f"invalid pattern-supply extension: {supply!r}")
         (
             wr0_patterns, wr1_patterns, dic_patterns,
             wr0_sectors, wr1_sectors, dic_sectors,
+            _cold_cap,
         ) = supply[3:]
 
-    cursor = (1 + palette_sectors + table_sectors) * SECTOR
+    cursor = (1 + palette_sectors) * SECTOR
     wr0_payload = wr1_payload = dic_payload = b""
+    if features & FEATURE_PATTERN_SUPPLY:
+        dic_payload, cursor = take_pattern_region(
+            header, cursor, dic_sectors, dic_patterns, "Dic")
+    cursor += table_sectors * SECTOR
     if features & FEATURE_PATTERN_SUPPLY:
         wr0_payload, cursor = take_pattern_region(
             header, cursor, wr0_sectors, wr0_patterns, "Wr0")
         wr1_payload, cursor = take_pattern_region(
             header, cursor, wr1_sectors, wr1_patterns, "Wr1")
-        dic_payload, cursor = take_pattern_region(
-            header, cursor, dic_sectors, dic_patterns, "Dic")
-    cursor += audio_preload_sectors * SECTOR
-    frame0_offset = cursor
-    frame0_len = struct.unpack_from(">H", header, frame0_offset)[0]
-    controls = [
-        parse_control(
-            header[frame0_offset : frame0_offset + frame0_len],
-            0,
-            cells,
-            audio_bytes,
-            features,
-        )
-    ]
-    frame0_runs = decode_descriptors(
-        controls[0].descriptor_suffix or b"",
-        bool(features & FEATURE_PATTERN_SUPPLY),
-    )
-    frame0_cold = sum(
-        count for _slot, count, source, _dic_index in frame0_runs
-        if source == SOURCE_PRG)
-    frame0_payload_start = frame0_offset + f0_ctrl_sectors * SECTOR
-    frame0_payload = header[
-        frame0_payload_start : frame0_payload_start + frame0_cold * PATTERN_BYTES
-    ]
-    if len(frame0_payload) != frame0_cold * PATTERN_BYTES:
-        raise AssertionError("frame 0 pattern payload is truncated")
-    if frame0_cold * PATTERN_BYTES > f0_pattern_sectors * SECTOR:
-        raise AssertionError("frame 0 pattern count exceeds its header sectors")
-
-    routing_offset = frame0_offset + (
-        f0_ctrl_sectors + f0_pattern_sectors) * SECTOR
+    routing_offset = cursor
     routing_raw = header[
         routing_offset : routing_offset + routing_sectors * SECTOR
     ]
@@ -349,8 +323,37 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
         )
 
     body = body_path.read_bytes()
+    frame0_offset = audio_preload_sectors * SECTOR
+    frame0_len = struct.unpack_from(">H", body, frame0_offset)[0]
+    controls = [
+        parse_control(
+            body[frame0_offset : frame0_offset + frame0_len],
+            0,
+            cells,
+            audio_bytes,
+            features,
+        )
+    ]
+    frame0_runs = decode_descriptors(
+        controls[0].descriptor_suffix or b"",
+        bool(features & FEATURE_PATTERN_SUPPLY),
+    )
+    frame0_cold = sum(
+        count for _slot, count, source, _dic_index in frame0_runs
+        if source == SOURCE_PRG)
+    frame0_payload_start = frame0_offset + f0_ctrl_sectors * SECTOR
+    frame0_payload = body[
+        frame0_payload_start : frame0_payload_start + frame0_cold * PATTERN_BYTES
+    ]
+    if len(frame0_payload) != frame0_cold * PATTERN_BYTES:
+        raise AssertionError("frame 0 pattern payload is truncated")
+    if frame0_cold * PATTERN_BYTES > f0_pattern_sectors * SECTOR:
+        raise AssertionError("frame 0 pattern count exceeds its BODY-arm sectors")
+
     slots = frame_sectors(routes, version, fps, vsync_n, features)
-    body_pos = 0
+    body_pos = (
+        audio_preload_sectors + f0_ctrl_sectors + f0_pattern_sectors
+    ) * SECTOR
     control_stream = bytearray()
     body_payload = bytearray()
     for seq in range(1, nfr):

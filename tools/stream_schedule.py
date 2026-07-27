@@ -443,7 +443,7 @@ def useful_body_delivery_trace(
     Control and payload are independent continuous streams.  A final sector can
     therefore contain alignment zeros even when another stream still has real
     data.  ``pad_bytes`` combines those stream-tail zeros with rate-match pad;
-    HEADER data and frame 0 are absent by construction.
+    Untimed startup data and frame 0 are absent by construction.
     """
     n_pay = np.asarray(payload_sectors, np.int64)
     n_ctrl = np.asarray(control_sectors, np.int64)

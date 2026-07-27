@@ -11,6 +11,15 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e141/p100: Advance the stream to TTRC v17. Move decoded startup PCM and
+#        exact frame-0 control/pattern sectors from HEADER.DAT into a finite
+#        untimed BODY arm while keeping every timed BODY byte and sim decision
+#        identical. Keep the required BOOT_STAGE ownership acknowledgement,
+#        remove the second frame-0/BODY-start handshake, and let one
+#        CMD_STREAM command span startup through the visible frame-0 flip.
+#        The player exposes the preceding black frame -1 as DEBUG F=FFFF for
+#        exact OCR head selection, then keeps the timed BODY suffix under one
+#        continuous read while Main builds frame 0.
 #   e140: Raise the fully qualified nominal-30fps shared cold baseline from 180
 #         to 200 while preserving the 15/24/60fps baselines, and raise the
 #         standard Sonic Jam H40 profile from 190 to its qualified cap 210.
@@ -900,5 +909,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260727
-e=140
-p=99
+e=141
+p=100

@@ -34,7 +34,6 @@
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* palette/Dic staging bank is available */
-.equ STAT_BOOT_VRAM, 0x8002		/* frame-0 bank ready; BODY waits for built/displayed ack */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
 
@@ -271,7 +270,6 @@ ip_entry:
 	move.w	#0x8174, (VDP_CTRL).l		/* reg1: 表示on+vint+DMA許可(M1)+mode5 */
 
 	clr.w	dbg_seg
-	clr.w	display_blank			/* .bss is not cleared by the BIOS */
 
 .ifdef NT_DMA_FLIP
 	/* Main RAM .bss is not initialized by the BIOS.  Clear every staged name
@@ -289,11 +287,8 @@ ip_entry:
 	move.w	#CMD_STREAM, d0
 .ifdef PLAYER_SPECIALIZED
 	bsr	cmd_wait_startup
-	/* Sub is now paused at STAT_BOOT_VRAM. Hide post-preload initialization,
-	   then reveal frame 0 only after its complete Plane A table has been
-	   selected in do_flip. BODY remains stopped through that build. */
-	move.w	#0x8134, (VDP_CTRL).l		/* display off; keep VInt, DMA and mode 5 */
-	move.w	#1, display_blank
+	/* Sub has armed BODY, pre-drained frame 1 and handed over frame 0. Keep
+	   CMD_STREAM asserted until Main has built and flipped frame 0. */
 .else
 	bsr	cmd_wait_ready
 .endif
@@ -420,23 +415,9 @@ ip_entry:
 	dbra	d1, 1b
 .endif
 .endif
-	/* With display disabled, some VDP implementations keep the VBlank status
-	   asserted and the first frame's VBlank waits cannot advance. Erase the
-	   preload counter while hidden, then re-enable a clean black front plane.
-	   Frame 0 replaces it at the normal atomic flip. */
-	tst.w	display_blank
-	beq.s	2f
-	move.l	#NT1, d0
-	bsr	set_vram_write
-	moveq	#0, d0
-	move.w	#64*32-1, d1
-1:
-	move.w	d0, (VDP_DATA).l
-	dbra	d1, 1b
-	move.w	#0x8174, (VDP_CTRL).l		/* display on + VInt + DMA + mode 5 */
-	clr.w	display_blank
-2:
-
+	/* Frame -1 is a player-only black state. DEBUG publishes F=FFFF on it, so
+	   capture OCR can find the exact F0000 playback boundary without wall time. */
+	bsr	show_frame_minus_one
 	clr.w	frame_no
 	clr.w	started
 	clr.w	vsync_acc			/* v4: ペーシングカウンタ初期化(.bssはMD上でクリアされない) */
@@ -462,9 +443,9 @@ play_loop:
 1:
 	move.w	#1, started
 	bsr	build_frame
-	tst.w	frame_no			/* BODY starts only after frame 0 is fully built/displayed */
+	tst.w	frame_no			/* one CMD_STREAM edge starts video time + PCM */
 	bne.s	1f
-	bsr	arm_body_after_frame0
+	bsr	start_playback
 1:
 
 	addq.w	#1, frame_no
@@ -477,7 +458,8 @@ movie_end_md:
 	bsr	wait_vblank
 	dbra	d2, 1b
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
-	bsr	cmd_wait_ready			/* SPのframe0バンク準備完了(BODY停止中)まで待つ */
+	bsr	cmd_wait_ready			/* BODY arm + frame1 pre-drain完了まで待つ */
+	bsr	show_frame_minus_one
 	clr.w	frame_no
 	clr.w	started
 	clr.w	dbg_seg
@@ -833,7 +815,7 @@ bf_upd:
 	PC_ADDA_W md_bmbytes, PC_BMBYTES, a0	/* entries */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_BMBYTES & 1)
-	addq.l	#1, a0				/* v16: align the 16-bit entry array */
+	addq.l	#1, a0				/* v17 retains the aligned 16-bit entry array */
 .endif
 .else
 	move.w	md_bmbytes, d0
@@ -1619,15 +1601,12 @@ startup_write_hex:
 /* Initial-stream wait with live PrgBuf preload progress. COMSTAT1 is otherwise
    still free for boot errors and later desync diagnostics. */
 cmd_wait_startup:
-	clr.w	body_start_pending
 	move.w	d0, (GA_COMCMD0).l
 	move.w	#0xFFFF, d5			/* last displayed remaining count */
 1:
 	move.w	(GA_COMSTAT0).l, d0
 	cmp.w	#STAT_BOOT_STAGE, d0
 	beq.s	6f
-	cmp.w	#STAT_BOOT_VRAM, d0
-	beq.s	8f
 	cmp.w	#STAT_READY, d0
 	beq.s	3f
 	move.w	(GA_COMSTAT1).l, d0
@@ -1655,18 +1634,10 @@ cmd_wait_startup:
 	bne.s	6b
 	clr.w	(GA_COMCMD1).l
 	bra	1b
-8:
-	move.w	#1, body_start_pending
-	rts					/* keep CMD_STREAM asserted; Sub stays before BODY */
 3:
 	moveq	#0, d0
 	bsr	startup_update_prg
-	move.w	#0, (GA_COMCMD1).l
-	move.w	#0, (GA_COMCMD0).l
-4:
-	tst.w	(GA_COMSTAT0).l
-	bne.s	4b
-	rts
+	rts					/* keep CMD_STREAM asserted through frame-0 flip */
 .endif
 
 consume_boot_stage:
@@ -1706,22 +1677,14 @@ consume_boot_stage:
 	rts
 
 cmd_wait_ready:
-	clr.w	body_start_pending
 	move.w	d0, (GA_COMCMD0).l
 1:
 	move.w	(GA_COMSTAT0).l, d0
 	cmp.w	#STAT_BOOT_STAGE, d0
 	beq.s	4f
-	cmp.w	#STAT_BOOT_VRAM, d0
-	beq.s	3f
 	cmp.w	#STAT_READY, d0
 	bne	1b
-	move.w	#0, (GA_COMCMD1).l
-	move.w	#0, (GA_COMCMD0).l
-2:
-	tst.w	(GA_COMSTAT0).l
-	bne	2b
-	rts
+	rts					/* one CMD_STREAM edge remains pending */
 4:
 	bsr	consume_boot_stage
 	move.w	#1, (GA_COMCMD1).l
@@ -1730,29 +1693,14 @@ cmd_wait_ready:
 	bne.s	4b
 	clr.w	(GA_COMCMD1).l
 	bra	1b
-3:
-	move.w	#1, body_start_pending
-	rts					/* build/display frame 0 before acknowledging BODY */
 
-/* Complete the two-stage startup handshake after build_frame has selected
-   frame 0 for display.  COMCMD1 is the explicit BODY-start acknowledgement;
-   until this point Sub remains parked at STAT_BOOT_VRAM with no BODY read
-   active.  Old single-stage READY responses leave pending clear and need no
-   second handshake. */
-arm_body_after_frame0:
-	tst.w	body_start_pending
-	beq.s	3f
-	move.w	#1, (GA_COMCMD1).l
-1:
-	cmp.w	#STAT_READY, (GA_COMSTAT0).l
-	bne.s	1b
-	move.w	#0, (GA_COMCMD1).l
+/* Frame 0 is already visible when this clears the sole startup command.
+   Sub starts PCM on this edge and clears READY before Main enters frame 1. */
+start_playback:
 	move.w	#0, (GA_COMCMD0).l
-2:
+1:
 	tst.w	(GA_COMSTAT0).l
-	bne.s	2b
-	clr.w	body_start_pending
-3:
+	bne.s	1b
 	rts
 /* Boot-stage directory at stage+0x0FC0:
      "BVRM", count_A.w, count_B.w, count_C.w
@@ -1856,6 +1804,36 @@ swap_or_end:
 	tst.w	(GA_COMSTAT0).l
 	bne	3b
 	move.w	d3, d0				/* swap_or_end return contract */
+	rts
+
+/* Display the player-only frame -1 while frame 0 is built. It is a black movie
+   plane; DEBUG overlays the complete ordinary HUD with F=FFFF. The visible
+   name table is back_idx^1 because back_idx always names the next build target. */
+show_frame_minus_one:
+	movem.l	d0-d2, -(sp)
+	move.w	#0x8134, (VDP_CTRL).l		/* display off; keep VInt, DMA and mode 5 */
+	moveq	#0, d0
+	move.w	back_idx, d0
+	eori.w	#1, d0
+	lsl.l	#8, d0
+	lsl.l	#5, d0
+	add.l	#NT0, d0
+	bsr	set_vram_write
+	moveq	#0, d0
+	move.w	#64*32-1, d1
+1:
+	move.w	d0, (VDP_DATA).l
+	dbra	d1, 1b
+.ifdef DEBUG
+	move.w	#-1, frame_no
+	eori.w	#1, back_idx			/* publish_dbg target = visible plane */
+	bsr	prepare_dbg
+	bsr	publish_dbg
+	eori.w	#1, back_idx
+.endif
+	move.w	#0x8174, (VDP_CTRL).l		/* display on + VInt + DMA + mode 5 */
+	bsr	wait_vblank			/* make FFFF visible in at least one capture field */
+	movem.l	(sp)+, d0-d2
 	rts
 
 wait_vblank:
@@ -2122,10 +2100,6 @@ md_prg_buf_cap_patterns:
 .endif
 back_idx:
 	.space 2
-display_blank:
-	.space 2				/* startup-to-frame0 VDP blanking latch */
-body_start_pending:
-	.space 2				/* STAT_BOOT_VRAM held until frame 0 build/display completes */
 frame_no:
 	.space 2
 started:

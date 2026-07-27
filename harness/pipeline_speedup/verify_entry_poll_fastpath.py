@@ -8,7 +8,7 @@ therefore perform the same single poll after consuming its runs. H40 can
 contain up to 1120 cells, so the fallback retains its possible short-prefix
 poll followed by the final poll.
 
-This checker reads the real split TTRC v6-v10 stream, compares the fallback DBRA
+This checker reads the real split TTRC v17 stream, compares the fallback DBRA
 countdown with an equivalent grouped model for every frame, and confirms that
 entry order and cold-slot run grouping are unchanged.  It additionally checks
 every synthetic update count up to the format's H40 maximum.
@@ -26,7 +26,7 @@ SECTOR = 2048
 POLL_CHUNK_30FPS = 1024
 MAX_H40_CELLS = 40 * 28
 ROUTING_TOTAL_MAX = 5
-FEATURE_FIXED_N2 = 0x0002
+FEATURE_FIXED_N = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
@@ -46,8 +46,8 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Reproduce the packer's versioned bounded BODY schedule."""
-    if version >= 8 and features & FEATURE_FIXED_N2:
-        rate_numerator, rate_modulus = 1001, 400
+    if version >= 8 and features & FEATURE_FIXED_N:
+        rate_numerator, rate_modulus = 1001 * vsync_n, 800
     else:
         rate_numerator, rate_modulus = 75, fps
     accumulator = 0
@@ -113,11 +113,11 @@ def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
     """Return the validated current boot-preload sector total."""
     if not features & FEATURE_PATTERN_SUPPLY:
         return 0
-    values = struct.unpack_from(">4s8H", header, PATTERN_SUPPLY_OFFSET)
+    values = struct.unpack_from(">4s9H", header, PATTERN_SUPPLY_OFFSET)
     magic, supply_version, reserved = values[:3]
-    if magic != b"PSUP" or supply_version != 2 or reserved:
+    if magic != b"PSUP" or supply_version != 3 or reserved:
         raise AssertionError(f"invalid pattern-supply extension: {values!r}")
-    return sum(values[-3:])
+    return sum(values[6:9])
 
 
 def parse_entries(block: bytes, seq: int, cells: int) -> tuple[int, ...]:
@@ -172,8 +172,8 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, _cols, _rows, cells = struct.unpack_from(
         ">4sHHHHH", header
     )
-    if magic != b"TTRC" or version != 16:
-        raise AssertionError(f"expected split TTRC v16, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 17:
+        raise AssertionError(f"expected split TTRC v17, got {magic!r} v{version}")
 
     routing_sec = struct.unpack_from(">L", header, 26)[0]
     prebuf_sec = struct.unpack_from(">L", header, 30)[0]
@@ -185,19 +185,8 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     table_sec = ADPCM_TABLE_SECTORS
     supply_sec = pattern_supply_sectors(header, version, features)
 
-    frame0_offset = (
-        1 + paltab_sec + table_sec + supply_sec + audio_preload_sec
-    ) * SECTOR
-    frame0_len = struct.unpack_from(">H", header, frame0_offset)[0]
-    entries = [
-        parse_entries(
-            header[frame0_offset : frame0_offset + frame0_len], 0, cells
-        )
-    ]
-
     routing_offset = (
-        1 + paltab_sec + table_sec + supply_sec + audio_preload_sec
-        + f0_ctrl_sec + f0_pat_sec
+        1 + paltab_sec + table_sec + supply_sec
     ) * SECTOR
     routing_raw = header[
         routing_offset : routing_offset + routing_sec * SECTOR
@@ -214,8 +203,18 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
         )
 
     body = body_path.read_bytes()
+    frame0_offset = audio_preload_sec * SECTOR
+    frame0_len = struct.unpack_from(">H", body, frame0_offset)[0]
+    entries = [
+        parse_entries(
+            body[frame0_offset : frame0_offset + frame0_len], 0, cells
+        )
+    ]
+
     slots = frame_sectors(routes, version, fps, vsync_n, features)
-    body_pos = 0
+    body_pos = (
+        audio_preload_sec + f0_ctrl_sec + f0_pat_sec
+    ) * SECTOR
     control_stream = bytearray()
     for seq in range(1, nfr):
         slot_len = slots[seq] * SECTOR
