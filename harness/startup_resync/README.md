@@ -45,6 +45,8 @@ shows `F=FFFF`. The extractor prefers the first valid `F0000` run immediately
 after that sentinel, making the movie-head decision exact without seeking by
 wall-clock time. `FFFF` is never emitted as a HUD TSV row. Recordings from
 players without the sentinel retain the plausible `F0000` sequence fallback.
+The console report states which anchor method was used, and gate JSON preserves
+the sentinel and frame-0 capture indices as `ocr_start_anchor`.
 
 Run it against the lossless output from `/record`:
 

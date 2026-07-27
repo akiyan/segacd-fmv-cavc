@@ -283,9 +283,9 @@ def _has_anchor_run(groups: list[FrameGroup], start: int, length: int, max_step:
     return accepted >= length
 
 
-def select_movie_groups(
+def find_movie_anchor(
     groups: list[FrameGroup], anchor_run: int, max_step: int
-) -> list[FrameGroup]:
+) -> tuple[int, bool]:
     plausible = [
         index for index, group in enumerate(groups)
         if group.values["F"] == 0
@@ -304,6 +304,13 @@ def select_movie_groups(
             f"could not find F0000 followed by {anchor_run - 1} plausible HUD frames; "
             "check --confidence and --crop-x"
         )
+    return anchor, bool(sentinel_anchored)
+
+
+def select_movie_groups(
+    groups: list[FrameGroup], anchor_run: int, max_step: int
+) -> list[FrameGroup]:
+    anchor, _sentinel = find_movie_anchor(groups, anchor_run, max_step)
 
     selected: list[FrameGroup] = []
     loop = 0
@@ -950,7 +957,16 @@ def main() -> int:
                      combined_fields),
         args.max_gap,
     )
+    anchor, sentinel_anchor = find_movie_anchor(
+        raw_groups, args.anchor_run, args.max_frame_step)
     groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)
+    anchor_method = (
+        "F=FFFF frame -1 sentinel" if sentinel_anchor
+        else "legacy plausible F0000 sequence"
+    )
+    print(
+        f"movie start anchor: {anchor_method}; "
+        f"F0000 capture={raw_groups[anchor].capture_first}")
     transitions = print_report(groups, args.context)
     if args.tsv:
         if profile is None:
@@ -966,6 +982,17 @@ def main() -> int:
         content_fps = float(Fraction(str(profile.data["source"]["fps"])))
         result = evaluate_upload_gate(
             groups, args.expected_frames, args.recording, content_fps, profile)
+        result["ocr_start_anchor"] = {
+            "method": "frame_minus_one" if sentinel_anchor else "plausible_sequence",
+            "frame0_capture_first": raw_groups[anchor].capture_first,
+        }
+        if sentinel_anchor:
+            sentinel = raw_groups[anchor - 1]
+            result["ocr_start_anchor"].update({
+                "frame_minus_one_raw16": read_frameno.FRAME_MINUS_ONE,
+                "frame_minus_one_capture_first": sentinel.capture_first,
+                "frame_minus_one_capture_last": sentinel.capture_last,
+            })
         write_gate_json(args.gate_json, result)
         if not result["pass"]:
             return 1

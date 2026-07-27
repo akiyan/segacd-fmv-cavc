@@ -31,7 +31,11 @@ class MovieAnchorTest(unittest.TestCase):
         ]
 
         selected = analyze.select_movie_groups(raw, anchor_run=4, max_step=4)
+        anchor, used_sentinel = analyze.find_movie_anchor(
+            raw, anchor_run=4, max_step=4)
 
+        self.assertEqual(anchor, 5)
+        self.assertTrue(used_sentinel)
         self.assertEqual(selected[0].capture_first, 5)
         self.assertEqual([row.values["F"] for row in selected[:4]], [0, 1, 2, 3])
 
@@ -39,7 +43,11 @@ class MovieAnchorTest(unittest.TestCase):
         raw = [group(0, 0), group(1, 1), group(2, 2), group(3, 3)]
 
         selected = analyze.select_movie_groups(raw, anchor_run=4, max_step=4)
+        anchor, used_sentinel = analyze.find_movie_anchor(
+            raw, anchor_run=4, max_step=4)
 
+        self.assertEqual(anchor, 0)
+        self.assertFalse(used_sentinel)
         self.assertEqual([row.values["F"] for row in selected], [0, 1, 2, 3])
 
 

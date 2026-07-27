@@ -471,6 +471,8 @@ For a complete recording, `harness/startup_resync/analyze.py` groups repeated
 transitions. It prefers a valid `F0000` run immediately after `F=FFFF`, which
 makes first-loop head selection exact; recordings made before the sentinel
 retain the plausible-sequence fallback. The `FFFF` group itself is discarded.
+The analyzer reports the selected method and stores its capture indices in the
+gate JSON `ocr_start_anchor` object.
 HUD timing is diagnostic only: do not use OCR to trim publication recordings
 or place YouTube chapters.
 
@@ -940,8 +942,9 @@ Complete recordingでは`harness/startup_resync/analyze.py`が`F`ごとにrepeat
 capture frameをgroup化し、field別confidenceとcounter transitionを報告します。
 `F=FFFF`直後のvalidな`F0000` runを優先するため、first-loopの頭出しを正確にできます。
 sentinel導入前のrecordingにはplausible sequence fallbackを残し、`FFFF` group自体は
-捨てます。HUD timingはdiagnostic専用で、publication recordingのtrimやYouTube
-chapter配置には使いません。
+捨てます。Analyzerは選んだmethodを報告し、capture indexをgate JSONの
+`ocr_start_anchor` objectへ保存します。HUD timingはdiagnostic専用で、publication
+recordingのtrimやYouTube chapter配置には使いません。
 
 Canonical project TSVを書きます。
 
