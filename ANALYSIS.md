@@ -41,7 +41,7 @@ corresponding encoder values remain available in the `stat_*` columns.
 | `cells`, `active_tiles`, `budget_tiles`, `cold_cap_tiles`, `prefetch_cap_tiles` | Raster and limits repeated on every row for self-contained filtering. `cold_cap_tiles` is the fixed effective profile/base cap over every physical cold source. Physical delivery failure stops sim and does not create a local per-frame cap. |
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Per-frame category counts. `legend_wr` is the displayed Wr0+Wr1 total; the two source banks are also kept separately. |
 | `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_dma`, `status_run` | Numeric values printed in the bottom status bar, including the frame-0 untimed display rule. |
-| `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Exact physical BODY delivery-slot accounting behind the Band display. Slot 0 is zero because frame 0 comes from `HEADER.DAT`. |
+| `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Exact physical timed-BODY delivery-slot accounting behind the Band display. Slot 0 is zero because frame 0 comes from the untimed BODY arm. |
 | `quality_budget_remaining_bytes` | Non-borrowed encoder-only whole-movie quality allowance remaining after the frame. A terminal-drain loan displays as zero until future suffix allowance repays it. This is diagnostic state, not a physical meter. |
 | `stat_frame` through the remaining `stat_*` columns | Every column from `stats.npz`, preserved with a `stat_` prefix and in its original order. These raw columns may grow when the simulator gains a new statistic. |
 
@@ -183,7 +183,7 @@ used by the optional absolute-threshold mode.
 
 | Class | Colour | Bytes | Meaning |
 |-------|--------|-------|---------|
-| **Raw**  | black/white dashed border | 34 | An exact pattern delivered for this frame, loaded into VRAM before display, and used immediately. Timed frames are bounded by the per-frame cold cap; frame 0 is boot-loaded from `HEADER.DAT` and is exempt. |
+| **Raw**  | black/white dashed border | 34 | An exact pattern delivered for this frame, loaded into VRAM before display, and used immediately. Timed frames are bounded by the per-frame cold cap; frame 0 is boot-loaded from the untimed BODY arm and is exempt. |
 | **Same** | light/dark checker in legend; no map border | 0 or 2 (name only) | The target tile's exact pattern is **already resident** in VRAM. This includes a pattern prefetched in an earlier frame and first displayed now. No pattern transfer occurs this frame. |
 | **Near** | grey thin border | 2 (name) | No exact match, but a resident pattern passes the **Near** thresholds; the cell points to it. Near-perfect reuse. Also covers "keep the current display" when the currently shown tile is already accurate and still within Near of the new target. |
 | **Flbk** | yellow thin border | 2 (name) | **Fallback** (merged Mid+Far). Used when an exact load is unavailable. It remains distinct from the solid-red Miss because it did improve the displayed tile. |
@@ -300,19 +300,19 @@ physical BODY slots. The input Raw/Prg counts and every slot's total payload
 remain exact; the Raw/Prg split across the prebuffer boundary and BODY slots is
 a visualization because the discarded sub-frame ordering was not logged.
 
-For TTRC v16, the control contribution includes whichever shadow-update
+For TTRC v17, the control contribution includes whichever shadow-update
 representation was selected for that frame: the bitmap plus name
 entries, or the completed offset/entry list. The analysis does not add a
 separate meter for this internal representation; its exact byte cost is already
 included in the dim control portion of `Band`.
 
 The metric excludes rate-match pad sectors, the zero-filled tail of the final
-control/payload sectors, all of `HEADER.DAT`, frame 0 patterns/control, startup
-audio, palettes, routing, and the compatibility `MOVIE.DAT` container. Slot 0
-therefore reads `Band:000`. `avg N KiB/sec` in the top meta and
-`body_useful_bps` in `report.txt` divide all useful BODY bytes by the complete
-physical BODY read time. This is a physical-time-weighted average, not a simple
-mean of the displayed slots.
+control/payload sectors, all of `HEADER.DAT`, the complete untimed BODY arm
+(frame-0 patterns/control and decoded startup audio), palettes, routing, and
+the compatibility `MOVIE.DAT` container. Slot 0 therefore reads `Band:000`.
+`avg N KiB/sec` in the top meta and `body_useful_bps` in `report.txt` divide
+all useful timed-BODY bytes by the complete timed-BODY read time. This is a
+physical-time-weighted average, not a simple mean of the displayed slots.
 `codec_work_bps` remains a separate quality-allocation diagnostic.
 
 The bar uses the slot's physical bytes as full-scale. Payload and control fill
@@ -469,7 +469,7 @@ overlayと同じ値です。Frame 0は`legend_raw`と`legend_same`を保持し�
 | `cells`, `active_tiles`, `budget_tiles`, `cold_cap_tiles`, `prefetch_cap_tiles` | Self-contained filter用に各rowへ繰り返すrasterとlimit。`cold_cap_tiles`は全物理cold sourceへ適用するeffective cap。物理配信失敗はsimを停止し、local per-frame capは作らない |
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Frameごとのcategory count。表示`legend_wr`はWr0+Wr1で、source bank別の値も保持 |
 | `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_dma`, `status_run` | Frame-0のuntimed ruleを含むbottom status barの数値 |
-| `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Band表示の元になる正確なphysical BODY delivery-slot会計。Frame 0は`HEADER.DAT`由来なのでslot 0は0 |
+| `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Band表示の元になる正確なphysical timed-BODY delivery-slot会計。Frame 0はuntimed BODY arm由来なのでslot 0は0 |
 | `quality_budget_remaining_bytes` | Frame後に残る、借入ではないencoder-only全編画質allowance。Terminal-drain loan中はzeroを表示し、将来suffix allowanceの返済後に増える。Diagnostic stateであり物理meterではない |
 | `stat_frame`以降の`stat_*` | `stats.npz`の全columnを元の順序で保存。Simulatorへstatisticが増えると追加される |
 
@@ -681,15 +681,16 @@ Physical delivery traceはtotal payloadを正確に持ちますが、1 frame内�
 残りをphysical BODY slotへ対応付けます。Total payloadとinput countは正確ですが、
 prebuffer境界・slot間のRaw/Prg splitはvisualizationです。
 
-TTRC v16のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
+TTRC v17のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
 name entryまたはcompleted offset/entry listのbyte costを含みます。独立meterは作らず、
 dim control部分へ含めます。
 
-Rate-match pad sector、final sectorのzero tail、`HEADER.DAT`全体、frame 0、
-startup audio、palette、routing、compatibility `MOVIE.DAT`は除外します。Slot 0は
-`Band:000`です。Top metaの`avg N KiB/sec`と`report.txt`の`body_useful_bps`は、
-全useful BODY byteをcomplete physical BODY read timeで割るphysical-time-weighted
-averageです。`codec_work_bps`は別の画質配分diagnosticです。
+Rate-match pad sector、final sectorのzero tail、`HEADER.DAT`全体、untimed BODY arm
+全体（frame-0 pattern/controlとdecoded startup audio）、palette、routing、
+compatibility `MOVIE.DAT`は除外します。Slot 0は`Band:000`です。Top metaの
+`avg N KiB/sec`と`report.txt`の`body_useful_bps`は、全useful timed-BODY byteを
+complete timed-BODY read timeで割るphysical-time-weighted averageです。
+`codec_work_bps`は別の画質配分diagnosticです。
 
 Barのfull-scaleはslotのphysical byteで、payload/controlがuseful fractionを埋め、
 padはblankです。右端のthin yellow lineがCD 1xを示します。

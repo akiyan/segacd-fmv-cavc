@@ -115,7 +115,9 @@ them in the gate JSON and hudline receipt. When `G` is present, they also
 report its minimum, mean, median, and maximum after separating the packed `B`
 marker. `G`, `B`, and `K` are diagnostic only and never alter the gate.
 
-Frame 0 is an untimed boot construction, not a playback measurement. Keep it
+The black player-only frame -1 uses `F=FFFF` before frame 0. It is an OCR
+sentinel, not a stream frame, and is never written as a HUD TSV row. Frame 0
+is an untimed boot construction, not a playback measurement. Keep it
 only for first-loop sequence completeness and frame-axis alignment. Exclude
 all of its HUD values from gate maxima, warning/failure events, timeline bars,
 dynamic scale maxima, OCR aggregates, and derived VBlank cadence statistics.
@@ -127,7 +129,7 @@ available.
 
 | Field | Owner | Scope | Meaning | Healthy interpretation |
 |---|---|---|---|---|
-| `F` | Main | current state | Visible movie frame number | Advances according to the movie cadence |
+| `F` | Main | current state | Visible movie frame number; `FFFF` is player-only frame -1 | `FFFF`, then `0000`, then movie cadence |
 | `P` | Main | current state | Zero-based CRAM palette-segment number | Changes only at expected palette boundaries |
 | `S` | Sub | cumulative | CD sector-slip/re-seek recovery count | `00` throughout a clean run |
 | `D` | Sub | cumulative | Control-stream frame-sequence mismatch count | `00` throughout a clean run |
@@ -164,14 +166,18 @@ its transfer VBlank wait, and needs no shift.
 
 ### `F`: displayed frame
 
-`F` is the full 16-bit movie frame number. Frame 0 is `0000`. The Main CPU
-formats the number into the inactive table and selects that table with the same
-Plane A flip that publishes the picture, so the value and image identify the
-same frame.
+`F` is the full 16-bit movie frame number. Before frame 0, the player clears
+the visible movie table to black and publishes the reserved `FFFF` value for
+frame -1. Frame -1 exists only in the player/HUD: sim, routing, controls, and
+the HUD TSV still begin at frame 0 (`0000`).
+
+For streamed frames, the Main CPU formats the number into the inactive table
+and selects that table with the same Plane A flip that publishes the picture,
+so the value and image identify the same frame.
 
 The current stream format holds fewer than 65536 frames, so `F` does not wrap
-inside one valid playback loop. It returns to `0000` when loop playback starts
-again after the end hold.
+inside one valid playback loop and `FFFF` remains unambiguous. Loop playback
+shows frame -1 again after the end hold, then returns to `0000`.
 
 ### `P`: active palette segment
 
@@ -462,8 +468,13 @@ profile is supplied.
 
 For a complete recording, `harness/startup_resync/analyze.py` groups repeated
 60 Hz capture frames by `F`, retains per-field confidence, and reports counter
-transitions. HUD timing is diagnostic only: do not use OCR to trim publication
-recordings or place YouTube chapters.
+transitions. It prefers a valid `F0000` run immediately after `F=FFFF`, which
+makes first-loop head selection exact; recordings made before the sentinel
+retain the plausible-sequence fallback. The `FFFF` group itself is discarded.
+The analyzer reports the selected method and stores its capture indices in the
+gate JSON `ocr_start_anchor` object.
+HUD timing is diagnostic only: do not use OCR to trim publication recordings
+or place YouTube chapters.
 
 Write the complete per-frame series as the canonical project TSV:
 
@@ -622,7 +633,9 @@ minimum、mean、median、maximumを報告し、gate JSONとhudline receiptに�
 `G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
 報告します。`G/B/K`はdiagnostic専用でgateを変えません。
 
-Frame 0はuntimed boot constructionで、playback measurementではありません。
+Player-onlyの黒いframe -1はframe 0の前に `F=FFFF` を使います。これはOCR
+sentinelでstream frameではなく、HUD TSV rowにも書きません。Frame 0はuntimed boot
+constructionで、playback measurementではありません。
 First-loop sequenceとframe-axis alignmentのためだけに保持し、全HUD値をgate maximum、
 warning/failure event、timeline bar、dynamic scale maximum、OCR aggregate、derived
 VBlank cadenceから除外します。`/hudline`の全metric rowでframe-0範囲をblankにします。
@@ -632,7 +645,7 @@ Final frameは次のmovie-frame transitionがないため、derived VBlankはunk
 
 | Field | Owner | Scope | 意味 | Healthyな解釈 |
 |---|---|---|---|---|
-| `F` | Main | current state | Visible movie frame number | Movie cadenceどおりに進む |
+| `F` | Main | current state | Visible movie frame number。`FFFF`はplayer-only frame -1 | `FFFF`、`0000`、movie cadenceの順 |
 | `P` | Main | current state | zero-based CRAM palette-segment number | 予定palette boundaryだけで変化 |
 | `S` | Sub | cumulative | CD sector-slip / re-seek recovery count | clean run全体で`00` |
 | `D` | Sub | cumulative | control-stream frame-sequence mismatch count | clean run全体で`00` |
@@ -666,12 +679,17 @@ VBlank wait前にsampleし、shift不要です。
 
 ### `F`: displayed frame
 
-`F`はfull 16-bit movie frame numberです。Frame 0は`0000`です。Main CPUはinactive
-tableへ値をformatし、pictureをpublishするPlane A flipと同じflipでtableを選ぶため、
-値とimageは同じframeを示します。
+`F`はfull 16-bit movie frame numberです。Frame 0より前にplayerがvisible movie
+tableを黒でclearし、予約値`FFFF`をframe -1としてpublishします。frame -1は
+player/HUDだけに存在し、sim、routing、control、HUD TSVはframe 0（`0000`）から
+始まります。
+
+stream frameではMain CPUがinactive tableへ値をformatし、pictureをpublishする
+Plane A flipと同じflipでtableを選ぶため、値とimageは同じframeを示します。
 
 Valid streamは65536 frame未満なので1 loop内でwrapせず、end hold後のloop開始時に
-`0000`へ戻ります。
+`FFFF`は曖昧になりません。Loop playbackはframe -1を再び表示してから`0000`へ
+戻ります。
 
 ### `P`: active palette segment
 
@@ -922,8 +940,11 @@ frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
 
 Complete recordingでは`harness/startup_resync/analyze.py`が`F`ごとにrepeated 60 Hz
 capture frameをgroup化し、field別confidenceとcounter transitionを報告します。
-HUD timingはdiagnostic専用で、publication recordingのtrimやYouTube chapter配置には
-使いません。
+`F=FFFF`直後のvalidな`F0000` runを優先するため、first-loopの頭出しを正確にできます。
+sentinel導入前のrecordingにはplausible sequence fallbackを残し、`FFFF` group自体は
+捨てます。Analyzerは選んだmethodを報告し、capture indexをgate JSONの
+`ocr_start_anchor` objectへ保存します。HUD timingはdiagnostic専用で、publication
+recordingのtrimやYouTube chapter配置には使いません。
 
 Canonical project TSVを書きます。
 

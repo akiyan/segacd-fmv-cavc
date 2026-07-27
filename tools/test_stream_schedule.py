@@ -383,15 +383,16 @@ class PayloadRingScheduleTests(unittest.TestCase):
             + payload.ljust(2048, b"\0")
             + bytes(2048)
         )
+        arm = b"a" * 2048
         with tempfile.TemporaryDirectory() as tmp:
             body = Path(tmp) / "BODY.DAT"
-            body.write_bytes(slot)
+            body.write_bytes(arm + slot)
             pack.verify_body_delivery_file(
-                body, control, payload, packed, prebuf_patterns=0)
-            body.write_bytes(slot[:-1] + b"x")
+                body, arm, control, payload, packed, prebuf_patterns=0)
+            body.write_bytes(arm + slot[:-1] + b"x")
             with self.assertRaisesRegex(AssertionError, "rate-match pad"):
                 pack.verify_body_delivery_file(
-                    body, control, payload, packed, prebuf_patterns=0)
+                    body, arm, control, payload, packed, prebuf_patterns=0)
 
 
 if __name__ == "__main__":

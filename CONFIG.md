@@ -121,11 +121,12 @@ Omission selects the baseline; a lower value is rejected.
 
 The sim and packer share `tools/tile_alloc.py`. The packer replays the frozen
 allocation and requires realized cold to remain within the effective cap.
-Frame 0 is exempt because HEADER installs it before timed playback.
+Frame 0 is exempt because the untimed BODY arm installs it before timed
+playback.
 
 ## Audio
 
-TTRC v16 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+TTRC v17 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
@@ -147,9 +148,13 @@ packed bytes. The 24–30 fps specialized path omits that counter and call.
 
 ## CD pump
 
-Startup reads HEADER through PREBUFFER, expands and displays frame 0, then
-starts one continuous BODY read at frame 1. BODY delivers 75 sectors per
-second, so Sub drains ready sectors throughout frame expansion and idle time.
+Startup reads static HEADER through PREBUFFER, reads the finite untimed BODY
+arm, expands frame 0, and hands it to Main while the timed reader remains
+stopped. After Main displays frame 0, the original `CMD_STREAM` clear edge
+starts one continuous timed BODY read at frame 1. Sub pre-drains frame 1 while
+Main displays frame 0 and waits through the ordinary `CMD_SWAP`. Timed BODY
+delivers 75 sectors per second, so Sub drains ready sectors throughout timed
+frame expansion and idle time.
 
 Back-pressure depends on the next sector's destination:
 
@@ -167,6 +172,7 @@ Back-pressure depends on the next sector's destination:
 | `FRAME_SECTORS` | 5 useful sectors | pack / sp | Maximum control + payload represented by one routing byte. |
 | `HEADER_SECTORS` | 1 metadata sector | pack / sp | Fixed header sector before BOOT_STAGE and other boot regions. |
 | boot-stage read boundary | after metadata + BOOT_STAGE + DicBuf | sp | Stop before the Main handoff; restart `HEADER.DAT` at the exact first unread sector. |
+| BODY arm boundary | audio preload + frame-0 control + frame-0 patterns | pack / sp | Read exactly this untimed prefix and stop before frame-0 expansion; start the continuous timed suffix only after frame 0 is visible. |
 | Word-RAM swap completion | DMNA bit 1 | sp | Hardware busy flag is polled until the 1M bank switch completes. |
 
 `FEATURE_FIXED_N` makes header `vsync_n` authoritative. Main displays every N
@@ -528,11 +534,11 @@ baselineを使い、baseline未満は拒否します。
 
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
 realized coldがeffective cap内にあることを要求します。frame 0はtimed playback前に
-HEADERが構築するため対象外です。
+untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-TTRC v16のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+TTRC v17のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |
@@ -554,9 +560,12 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 ## CD pump
 
-startupはHEADERからPREBUFFERまでを読み、frame 0を展開・表示してから、frame 1を
-起点に1回の連続BODY readを始めます。BODYは毎秒75 sectorを届けるため、Subはframe
-展開中とidle中の両方でready sectorをdrainします。
+startupはstatic HEADERからPREBUFFERまでを読み、有限でuntimedなBODY armを読んで
+frame 0を展開し、timed readerを停止したままMainへ渡します。Mainがframe 0を表示した
+後、元の `CMD_STREAM` をclearするedgeでframe 1を起点とするtimed BODYの連続readを
+開始します。SubはMainがframe 0を表示し、通常の `CMD_SWAP` で待っている間にframe 1を
+先読みします。Timed BODYは毎秒75 sectorを届けるため、Subはtimed frame展開中とidle中
+の両方でready sectorをdrainします。
 
 back-pressureは次sectorの行き先で決まります。
 
@@ -574,6 +583,7 @@ back-pressureは次sectorの行き先で決まります。
 | `FRAME_SECTORS` | 有効5 sectors | pack / sp | 1 routing byteが表すcontrol + payload上限。 |
 | `HEADER_SECTORS` | metadata 1 sector | pack / sp | BOOT_STAGEなどのboot領域より前にある固定header sector。 |
 | boot-stage read境界 | metadata + BOOT_STAGE + DicBufの直後 | sp | Main handoff前に停止し、正確な最初の未読sectorから `HEADER.DAT` を再開する。 |
+| BODY arm境界 | audio preload + frame-0 control + frame-0 patterns | pack / sp | このuntimed prefixだけを読み、frame-0展開前に停止する。連続timed suffixはframe 0表示後にだけ開始する。 |
 | Word-RAM swap completion | DMNA bit 1 | sp | 1M bank switch完了までhardware busy flagをpollする。 |
 
 `FEATURE_FIXED_N` はheaderの `vsync_n` を正式なcadenceにします。MainはN VBlankごとに

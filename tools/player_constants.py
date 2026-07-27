@@ -92,6 +92,7 @@ class PlayerConstants:
     fps_int: int
     audio_fd: int
     audio_preload_sec: int
+    body_arm_sec: int
     features: int
     pump_mask: int
     wave_pump_mask: int
@@ -176,6 +177,11 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         raise ValueError(
             f"invalid timing: vsync_n={vsync_n} audio={audio_bytes} "
             f"fps={fps_int} fd={audio_fd}")
+    if f0_ctrl_sec <= 0 or f0_pat_sec <= 0 or audio_preload_sec <= 0:
+        raise ValueError(
+            "BODY arm regions must be non-empty: "
+            f"audio={audio_preload_sec} control={f0_ctrl_sec} "
+            f"patterns={f0_pat_sec}")
 
     signature = struct.unpack_from(">L", sector, HEADER_SIGNATURE_OFFSET)[0]
     expected_signature = header_signature(sector[:FIXED_HEADER_BYTES])
@@ -291,6 +297,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         fps_int=fps_int,
         audio_fd=audio_fd,
         audio_preload_sec=audio_preload_sec,
+        body_arm_sec=audio_preload_sec + f0_ctrl_sec + f0_pat_sec,
         features=features,
         pump_mask=0x03FF if fast_poll else 0x003F,
         wave_pump_mask=0x01FF if fast_poll else 0x00FF,
@@ -334,7 +341,7 @@ INCLUDE_ORDER = (
     "prebuf_pat", "routing_sec", "prebuf_sec", "ring_peak", "f0_ctrl_sec",
     "f0_pat_sec", "paltab_sec", "vsync_n", "audio_bytes",
     "audio_control_bytes", "adpcm_table_sectors", "fps_int",
-    "audio_fd", "audio_preload_sec", "features", "pump_mask",
+    "audio_fd", "audio_preload_sec", "body_arm_sec", "features", "pump_mask",
     "wave_pump_mask", "sec_num", "sec_mod", "sec_base", "sec_rem",
     "prg_buf_cap_patterns", "prg_delivery_cap_patterns",
     "jitter_headroom_kb",

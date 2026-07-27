@@ -102,7 +102,7 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
   outputs, and a versioned full-encode timing example.
 - [`CONFIG.md`](CONFIG.md): profile schema, encoder settings, throttles,
   capacities, physical limits, and DEBUG gate thresholds.
-- [`MOVIE.md`](MOVIE.md): the exact TTRC v16 `HEADER.DAT` and `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): the exact TTRC v17 `HEADER.DAT` and `BODY.DAT`
   on-disc binary format.
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
   assignment plus whole-movie quality planning.
@@ -251,9 +251,9 @@ out/PROFILE.cue
 ```
 
 Transient objects, disc staging, and direct-emulator scratch files live under
-`tmp/PROFILE/`. `HEADER.DAT` contains startup state, exact frame 0, boot VRAM
-prefetch, and the PrgBuf prebuffer. `BODY.DAT` starts at frame 1 and is read
-continuously.
+`tmp/PROFILE/`. `HEADER.DAT` contains static boot state, boot VRAM prefetch,
+and the PrgBuf prebuffer. `BODY.DAT` begins with an untimed audio/frame-0 arm,
+then carries the continuously read timed frame-1+ slots.
 
 Run every prepared profile through the protected local pipeline, even when
 only one profile is being processed:
@@ -422,7 +422,7 @@ timed-work valueとgraph maximumから除外します。
   version付き全編encode実測例。
 - [`CONFIG.md`](CONFIG.md): profile schema、encoder設定、throttle、容量、
   物理limit、DEBUG gate threshold。
-- [`MOVIE.md`](MOVIE.md): TTRC v16の正確なon-disc `HEADER.DAT` / `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): TTRC v17の正確なon-disc `HEADER.DAT` / `BODY.DAT`
   binary format。
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
   割り当てとmovie全体quality planning。
@@ -565,8 +565,9 @@ out/PROFILE.cue
 ```
 
 transient object、disc staging、direct-emulator scratch fileは `tmp/PROFILE/` に置きます。
-`HEADER.DAT` はstartup state、正確なframe 0、boot VRAM prefetch、PrgBuf prebufferを
-持ちます。`BODY.DAT` はframe 1から始まり、連続して読みます。
+`HEADER.DAT` はstatic boot state、boot VRAM prefetch、PrgBuf prebufferを持ちます。
+`BODY.DAT` はuntimedなaudio/frame-0 armから始まり、その後に連続readするtimed
+frame-1+ slotを持ちます。
 
 準備済みprofileが1つだけでも、保護されたlocal pipelineを使います。
 

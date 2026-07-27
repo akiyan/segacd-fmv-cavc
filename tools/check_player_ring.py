@@ -169,6 +169,10 @@ for parity in (0, 1):
             f"check_player_ring: Wr{parity} sector padding reaches the fixed tail")
 if pc("DIC_PATTERNS") > pattern_supply.DIC_BUF_PATTERNS:
     sys.exit("check_player_ring: DicBuf preload exceeds Main-RAM dictionary")
+if pc("BODY_ARM_SEC") != (
+        pc("AUDIO_PRELOAD_SEC") + pc("F0_CTRL_SEC") + pc("F0_PAT_SEC")):
+    sys.exit(
+        "check_player_ring: BODY arm is not audio + frame0 control + patterns")
 
 require(
     sp_text,
@@ -221,6 +225,68 @@ print(
     f"routing={layout.routing_bytes // 1024}KiB "
     f"Wr0={pc('WR0_PATTERNS')}/{layout.wr0_patterns} "
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
+
+
+# TTRC v17 has one startup command. HEADER contains only static boot state;
+# BODY begins with the finite untimed arm. The player-only black state publishes
+# F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
+# after publishing frame 0.
+for removed in ("STAT_BOOT_VRAM", "arm_body_after_frame0", "body_start_pending"):
+    if removed in sp_text or removed in ip_text:
+        sys.exit(
+            f"check_player_ring: removed second startup handshake returned: "
+            f"{removed}")
+for source, token, description in (
+        (sp_text, "PC_MOVE_W h_body_arm_sec, PC_BODY_ARM_SEC, d1",
+         "finite BODY-arm read length"),
+        (sp_text, "PC_MOVE_W h_audio_pre_sec, PC_AUDIO_PRELOAD_SEC, d7",
+         "BODY-arm PCM drain"),
+        (sp_text, "PC_MOVE_W h_f0_ctrl_sec, PC_F0_CTRL_SEC, d0",
+         "BODY-arm frame-0 control drain"),
+        (sp_text, "PC_MOVE_W h_f0_pat_sec, PC_F0_PAT_SEC, d0",
+         "BODY-arm frame-0 pattern drain"),
+        (sp_text, "frame0_ready_wait:", "untimed frame-0 handoff wait"),
+        (sp_text, "timed_suffix_start:", "post-frame-0 timed start"),
+        (sp_text, "bsr\tpcm_on", "single playback-start PCM edge"),
+        (ip_text, "bsr\tshow_frame_minus_one", "frame -1 display"),
+        (ip_text, "move.w\t#-1, frame_no", "F=FFFF HUD sentinel"),
+        (ip_text, "bsr\tstart_playback", "post-frame-0 command clear"),
+):
+    if token not in source:
+        sys.exit(f"check_player_ring: missing {description}")
+
+startup_order = (
+    "frame0_handoff:",
+    "move.w\t#STAT_READY, (COMSTAT0).l",
+    "frame0_ready_wait:",
+    "tst.w\t(COMCMD0).l",
+    "bsr\tpcm_on",
+    "move.w\t#0, (COMSTAT0).l",
+    "timed_suffix_start:",
+    "bsr\tissue_file_readn",
+    "arm_frame1:",
+    "timed_suffix_armed:",
+)
+cursor = 0
+for token in startup_order:
+    position = sp_text.find(token, cursor)
+    if position < 0:
+        sys.exit(
+            "check_player_ring: frame-1/frame-0/timed-start order is broken "
+            f"at {token!r}")
+    cursor = position + len(token)
+
+untimed_wait = sp_text[
+    sp_text.index("frame0_handoff:"):sp_text.index("timed_suffix_start:")
+]
+for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
+    if forbidden in untimed_wait:
+        sys.exit(
+            "check_player_ring: timed CD service entered the untimed "
+            f"frame-1/frame-0 interval through {forbidden}")
+print(
+    "check_player_ring: OK  v17 BODY arm and one-command "
+    "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge")
 
 
 # Boot stage is consumed through an explicit give/copy/take-back handshake.

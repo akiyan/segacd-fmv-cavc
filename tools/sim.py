@@ -2132,7 +2132,7 @@ def main():
             committed_plain[c] = key
             updated[c] = True
 
-        # frame0はHEADER内のboot constructionなのでtimed limitsは0。
+        # frame0はBODY arm内のboot constructionなのでtimed limitsは0。
 
         def commit_plain(c):
             # Legacy non-unified path: exact resident/L3/preload/cold only.

@@ -7,7 +7,7 @@ VBlank cadence: cell updates, physical pattern loads by source
 runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
 CD slot schedule (control/payload sectors, rate lead).
 
-Supports the current TTRC v16 stream, including PSUP v3 variable Word-RAM
+Supports the current TTRC v17 stream, including PSUP v3 variable Word-RAM
 preload capacities.  The fixed per-frame audio size from HEADER.DAT
 locates the cold-run suffix (`[u16 n_runs][n_runs x 4]`), which is
 validated against the update entries.  The low byte of `n_runs` can
@@ -203,8 +203,8 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     body = (pack_dir / "BODY.DAT").read_bytes()
     magic, version, nfr, cols, rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", header)
-    if magic != b"TTRC" or version != 16:
-        die(f"expected TTRC v16, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 17:
+        die(f"expected TTRC v17, got {magic!r} v{version}")
     if cols * rows != cells:
         die(f"grid {cols}x{rows} != {cells} cells")
     routing_sec = struct.unpack_from(">L", header, 26)[0]
@@ -221,15 +221,16 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     table_sec = ADPCM_TABLE_SECTORS
     supply_sec = pattern_supply_sectors(header, version, features)
 
-    frame0_offset = (
-        1 + paltab_sec + table_sec + supply_sec + audio_preload_sec) * SECTOR
-    frame0_len = struct.unpack_from(">H", header, frame0_offset)[0]
+    frame0_offset = audio_preload_sec * SECTOR
+    frame0_len = struct.unpack_from(">H", body, frame0_offset)[0]
     row0 = parse_frame(
-        header[frame0_offset:frame0_offset + frame0_len], 0, cells, pool,
+        body[frame0_offset:frame0_offset + frame0_len], 0, cells, pool,
         features, audio_control_bytes)
     rows_out = [row0]
 
-    routing_offset = frame0_offset + (f0_ctrl_sec + f0_pat_sec) * SECTOR
+    routing_offset = (
+        1 + paltab_sec + table_sec + supply_sec
+    ) * SECTOR
     routes = decode_routes(
         header[routing_offset:routing_offset + routing_sec * SECTOR], nfr)
 
@@ -239,7 +240,9 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
 
     accumulator = 0
     lead = 0
-    body_pos = 0
+    body_pos = (
+        audio_preload_sec + f0_ctrl_sec + f0_pat_sec
+    ) * SECTOR
     control_stream = bytearray()
     schedule = [(0, 0, 0, 0, 0)]
     for seq in range(1, nfr):

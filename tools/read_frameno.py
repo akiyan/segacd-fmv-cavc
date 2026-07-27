@@ -14,6 +14,8 @@ H40 DEBUG は Q/V/O/E を追加する。Q はそのframe中の符号付き論理
 Gはframe内でSub CDC pump外にいた最大時間を30.72 us stopwatch tick単位で示し、
 KはMSF連番gapから再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureが
 control sector pumpを拒否したframeを示すB markerである。
+再生開始前のplayer-only frame -1はF=FFFFで表す。これはOCR頭出し用の
+センチネルであり、sim frameでもHUD TSV rowでもない。
 各8x8セルの上段バーコードを直接4-bitとして読み、下段の小型hex字形とのNCCで
 信頼度を確認する。ネイティブ録画の原点(0,0)は即時判定し、位置がずれた画像だけ
 先頭4桁で原点を探索する。
@@ -30,6 +32,8 @@ import numpy as np
 
 import gen_debugfont
 
+
+FRAME_MINUS_ONE = 0xFFFF
 
 _T = {
     value: np.array([[1.0 if c == "#" else 0.0 for c in row]

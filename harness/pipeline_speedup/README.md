@@ -113,13 +113,16 @@ The remaining slip already existed on displayed frame 0 and never increased,
 then repeated once on the next loop. Frame 0 was being expanded while the
 continuous FRAMES read had already started. The first armed-startup version
 fixed the Sub-side expansion overlap. The current handshake additionally keeps
-BODY stopped until the Main CPU has completed the frame-0 VRAM/name-table build:
+timed BODY stopped until the Main CPU has completed the frame-0 VRAM/name-table
+build:
 
 1. drains HEADER through PREBUFFER;
-2. stops the CDC, expands frame 0, and hands its bank to Main;
-3. lets Main build and display frame 0;
-4. starts a new continuous read at the exact BODY sector;
-5. pre-drains frame 1 before the first timed handoff and PCM start.
+2. reads and stops at the finite untimed BODY arm;
+3. expands frame 0 and hands its bank to Main with the timed suffix stopped;
+4. lets Main show frame -1, build and display frame 0;
+5. uses the original command-clear edge to start PCM and a new continuous read
+   at the exact timed BODY-suffix sector;
+6. pre-drains frame 1 behind the ordinary frame-1 `CMD_SWAP` wait.
 
 For the measured Sonic file the split is sector 211, leaving 6777 timed sectors.
 `S` is not cleared at that split: prefix slips remain visible, and the first FRAMES
@@ -280,9 +283,9 @@ widths 1--40 with the scalar word copy.
 
 ## Packed cold-run descriptor proof
 
-e26 feature bit 0 appends the already-known cold slot runs to each control block
+Feature bit 0 appends the already-known cold slot runs to each control block
 after its audio and absolute-address alignment pad. The suffix is one big-endian
-`n_runs` word followed by four-byte run descriptors. TTRC v12 keeps the record
+`n_runs` word followed by four-byte run descriptors. TTRC v17 keeps the record
 size, stores Prg/Wr/Dic in the high source bits, and stores an 8-bit DicBuf index
 across the remaining high bits. A run splits when its physical source changes,
 or when DicBuf indices stop being consecutive. The optimized player consumes these runs
@@ -301,10 +304,15 @@ every control; feature-zero legacy streams remain supported by constructing the 
 suffix hypothetically. Display entries stay in cell order, while the packed suffix
 and payload follow ascending physical VRAM-slot order. Across the complete supplied
 profile the checker rebuilds those two orders independently, including run grouping
-and 32-byte payload consumption. For v12 it independently walks frame 0, Prg, Wr0,
+and 32-byte payload consumption. For v17 it independently walks frame 0, Prg, Wr0,
 Wr1, and indexed Dic payloads and proves every physical source is reproduced exactly.
 It also matches bitmap cells, entry palettes and every physical cold pattern to
-`decisions.pkl`.
+`decisions.pkl`. Timed raw-prefetch runs are verified as the separately
+slot-sorted Prg suffix after visible cold records. Because they have no
+name-table entry, their slots and packed patterns are taken from the frozen
+raw-prefetch requests and checked against both descriptor bytes and source
+payload consumption. Frame-0 inline requests are kept separate from the
+boot-sidecar records.
 The report gives the exact added control bytes/sectors,
 startup frames 1--42 statistics, and decimal frame 2019 statistics.
 

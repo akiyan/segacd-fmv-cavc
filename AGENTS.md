@@ -101,8 +101,9 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
      category map / audio waveform; bottom status = Req / Cold / Band /
      Prg / Wr0 / Wr1 / DMA / Run plus the stacked timelines, and Dic in the category legend). Define Band as useful
      `BODY.DAT` payload + control bytes in the physical delivery slot, excluding
-     all pad, `HEADER.DAT`, and frame 0, divided by that slot's actual physical
-     CD read time. Its range is 0 to CD 1x (150 KiB/s); pad is unused bandwidth.
+     all pad and the untimed `HEADER.DAT` / BODY-arm / frame-0 regions, divided
+     by that slot's actual physical CD read time. Its range is 0 to CD 1x
+     (150 KiB/s); pad is unused bandwidth.
   4. What the encoder does — first a short list of the techniques applied, then
      the details for each.
   5. Project link — always include the source repository URL:
@@ -201,10 +202,10 @@ are kept generic). The current encoder/player path is:
 tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
 ```
 
-The on-disc stream is split into `HEADER.DAT` (all startup state, including
-frame 0) and `BODY.DAT` (frame 1 onward) using the TTRC layout. The packer also
-writes a concatenated `MOVIE.DAT` compatibility container for offline tools;
-the player does not read it.
+The on-disc stream is split into static boot state in `HEADER.DAT` and an
+untimed audio/frame-0 arm followed by timed frame-1+ slots in `BODY.DAT`.
+The packer also writes a concatenated `MOVIE.DAT` compatibility container for
+offline tools; the player does not read it.
 
 Resolution, aspect, and frame rate are **per-source encoder settings**
 within Sega CD limits, not fixed presets:
@@ -214,7 +215,7 @@ within Sega CD limits, not fixed presets:
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
   CPU through full lookup tables duplicated in both physical 1M Word-RAM
-  banks. It is the only TTRC v16 audio format. Physical hardware and additional
+  banks. It is the only TTRC v17 audio format. Physical hardware and additional
   modes/cadences are broader compatibility checks rather than implementation
   blockers (see [ADPCM.md](ADPCM.md)). Z80 offload remains shelved because
   BUSREQ-based feeding contends with Main CPU video work.
@@ -300,6 +301,10 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 
 - Treat the timed BODY read as an absolute 75-sector/s physical service clock
   at every point in playback. CD 1x is not a whole-movie average budget.
+- Keep the player-only frame -1 outside that clock. With no simulated frame -1,
+  the timed BODY suffix must remain stopped until the visible frame-0 flip;
+  pumping future sectors during frame -1 creates unmodeled producer lead even
+  when the displayed sentinel itself is correct.
 - Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
   display deadline, including only startup lead that the model explicitly
   proves. A routing-table slot limit is a format capacity, not proof that the

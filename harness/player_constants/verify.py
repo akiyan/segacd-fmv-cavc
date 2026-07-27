@@ -267,8 +267,22 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
 
 
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
-    """Prove BODY is acknowledged only after the Main frame-0 build."""
+    """Prove the single startup command spans frame -1 through frame 0."""
     disassembly = run([str(objdump), "-d", str(obj)])
+
+    def function_block(name: str) -> str:
+        match = re.search(
+            rf"^[0-9a-f]+ <{re.escape(name)}>:$", disassembly, re.MULTILINE)
+        if not match:
+            raise AssertionError(f"{obj}: missing {name}")
+        next_match = re.search(
+            r"^[0-9a-f]+ <[^>]+>:$",
+            disassembly[match.end():],
+            re.MULTILINE,
+        )
+        end = match.end() + next_match.start() if next_match else len(disassembly)
+        return disassembly[match.end():end]
+
     loop_match = re.search(
         r"^[0-9a-f]+ <play_loop>:$", disassembly, re.MULTILINE)
     loop_end_match = re.search(
@@ -277,39 +291,49 @@ def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
         raise AssertionError(f"{obj}: missing play-loop symbols")
     loop = disassembly[loop_match.end():loop_end_match.start()]
     build_call = re.search(r"\bbsr\w*\s+[^\n]*<build_frame>", loop)
-    arm_call = re.search(r"\bbsr\w*\s+[^\n]*<arm_body_after_frame0>", loop)
-    if not build_call or not arm_call or build_call.start() >= arm_call.start():
+    start_call = re.search(r"\bbsr\w*\s+[^\n]*<start_playback>", loop)
+    if not build_call or not start_call or build_call.start() >= start_call.start():
         raise AssertionError(
-            f"{obj}: BODY arm does not follow the completed frame-0 build")
+            f"{obj}: playback start does not follow the completed frame-0 build")
 
-    startup_match = re.search(
-        r"^[0-9a-f]+ <cmd_wait_startup>:$", disassembly, re.MULTILINE)
-    generic_match = re.search(
-        r"^[0-9a-f]+ <cmd_wait_ready>:$", disassembly, re.MULTILINE)
-    arm_match = re.search(
-        r"^[0-9a-f]+ <arm_body_after_frame0>:$", disassembly, re.MULTILINE)
-    arm_end_match = re.search(
-        r"^[0-9a-f]+ <load_boot_vram_sidecar>:$", disassembly, re.MULTILINE)
-    if not all((generic_match, arm_match, arm_end_match)):
-        raise AssertionError(f"{obj}: missing startup-handshake symbols")
     start_wait = (
-        disassembly[startup_match.end():generic_match.start()]
-        if startup_match else "")
-    generic_wait = disassembly[generic_match.end():arm_match.start()]
-    arm = disassembly[arm_match.end():arm_end_match.start()]
-    body_ack = r"\bmovew\s+#1,(?:00)?a12012 <GA_COMCMD1>"
+        function_block("cmd_wait_startup")
+        if re.search(
+            r"^[0-9a-f]+ <cmd_wait_startup>:$", disassembly, re.MULTILINE)
+        else ""
+    )
+    generic_wait = function_block("cmd_wait_ready")
+    start = function_block("start_playback")
+    stage_ack = r"\bmovew\s+#1,(?:00)?a12012 <GA_COMCMD1>"
     stage_copy = r"\bbsr\w*\s+[^\n]*<consume_boot_stage>"
+    command_clear = r"\bmovew\s+#0,(?:00)?a12010 <GA_COMCMD0>"
     for name, block in (
             ("startup", start_wait),
             ("generic", generic_wait)):
         if not block:
             continue
-        if len(re.findall(body_ack, block)) != 1 or not re.search(stage_copy, block):
+        if len(re.findall(stage_ack, block)) != 1 or not re.search(stage_copy, block):
             raise AssertionError(
                 f"{obj}: {name} wait must acknowledge exactly one copied "
                 "boot stage")
-    if not re.search(body_ack, arm):
-        raise AssertionError(f"{obj}: post-frame-0 BODY acknowledgement is missing")
+        if re.search(command_clear, block):
+            raise AssertionError(
+                f"{obj}: {name} clears CMD_STREAM before frame 0 is visible")
+    if len(re.findall(command_clear, start)) != 1:
+        raise AssertionError(
+            f"{obj}: start_playback must clear exactly one CMD_STREAM command")
+    if re.search(stage_ack, start):
+        raise AssertionError(
+            f"{obj}: start_playback reintroduces a second startup handshake")
+
+    frame_minus_one = function_block("show_frame_minus_one")
+    if not re.search(r"\bmovew\s+#-1,", frame_minus_one):
+        raise AssertionError(f"{obj}: frame -1 does not publish F=FFFF")
+    for callee in ("prepare_dbg", "publish_dbg", "wait_vblank"):
+        if not re.search(
+                rf"\bbsr\w*\s+[^\n]*<{callee}>", frame_minus_one):
+            raise AssertionError(
+                f"{obj}: frame -1 is missing its {callee} call")
 
 
 def verify_adpcm_decode_pump(

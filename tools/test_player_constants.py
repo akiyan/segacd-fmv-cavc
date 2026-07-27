@@ -65,6 +65,7 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual(values.vbudget, 2800)
         self.assertEqual(values.audio_bytes, 736)
         self.assertEqual(values.audio_fd, 0x345)
+        self.assertEqual(values.body_arm_sec, 46)
         self.assertEqual((values.sec_num, values.sec_mod), (1001, 400))
         self.assertEqual((values.sec_base, values.sec_rem), (2, 201))
         self.assertEqual(values.pump_mask, 0x03FF)
@@ -213,6 +214,7 @@ class PlayerConstantsTest(unittest.TestCase):
             self.assertIn(".equ PC_AUDIO_BYTES, 0x02E0", text)
             self.assertIn(".equ PC_AUDIO_CONTROL_BYTES, 0x0174", text)
             self.assertIn(".equ PC_AUDIO_FD, 0x0345", text)
+            self.assertIn(".equ PC_BODY_ARM_SEC, 0x002E", text)
             self.assertIn(".equ PC_SEC_REM, 0x00C9", text)
             self.assertIn(
                 ".equ PC_PRG_BUF_CAP_PATTERNS, 0x31C0", text)

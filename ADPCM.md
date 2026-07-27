@@ -2,7 +2,7 @@ EN / [JP](#jp)
 
 # 22.05 kHz IMA ADPCM playback
 
-TTRC v16 uses 22.05 kHz mono IMA ADPCM as its only audio format. The Sub CPU
+TTRC v17 uses 22.05 kHz mono IMA ADPCM as its only audio format. The Sub CPU
 decodes each timed control chunk and writes the reconstructed 8-bit
 sign-magnitude samples to the RF5C164.
 
@@ -21,10 +21,10 @@ player therefore keeps decode and RF5C164 output on the Sub CPU.
   byte. A chunk can therefore be decoded independently after a seek or
   control-ring recovery.
 - Two samples are packed per byte, low nibble first.
-- `HEADER.DAT` startup audio is already reconstructed RF5C164 data, one chunk
-  per sector. Timed control blocks carry future checkpointed ADPCM chunks so
-  the wave-RAM write reserve remains persistent.
-- Header offset 54 is the decoded RF5C164 sample count per frame. TTRC v16
+- The untimed `BODY.DAT` arm audio is already reconstructed RF5C164 data, one
+  chunk per sector. Timed control blocks carry future checkpointed ADPCM
+  chunks so the wave-RAM write reserve remains persistent.
+- Header offset 54 is the decoded RF5C164 sample count per frame. TTRC v17
   derives the control size as `4 + decoded_samples / 2`.
 - Header offset 58 stores the RF5C164 frequency delta calculated from the fixed
   chunk size and actual playback cadence.
@@ -117,7 +117,7 @@ broader portability checks rather than alternate-codec fallbacks.
 
 # 22.05 kHz IMA ADPCM再生
 
-TTRC v16の音声形式は、22.05 kHz mono IMA ADPCMのみです。Sub CPUが時刻指定された
+TTRC v17の音声形式は、22.05 kHz mono IMA ADPCMのみです。Sub CPUが時刻指定された
 各control chunkをdecodeし、復元した8-bit sign-magnitude sampleをRF5C164へ
 書き込みます。
 
@@ -135,10 +135,10 @@ Sub CPU上で行います。
   （signed 16-bit predictor、8-bit step index、予約済みzero byte）を置きます。
   そのため、seekやcontrol-ring recoveryの後でもchunkを独立してdecodeできます。
 - 1 byteに2 sampleを格納し、low nibbleを先に置きます。
-- `HEADER.DAT`のstartup audioは、すでに復元済みのRF5C164 dataで、1 sectorに
+- untimed `BODY.DAT` armのaudioは、すでに復元済みのRF5C164 dataで、1 sectorに
   1 chunkを格納します。時刻指定control blockには将来分のcheckpoint付きADPCM
   chunkを格納し、wave-RAM write reserveを維持します。
-- Header offset 54は、frameごとのdecode済みRF5C164 sample数です。TTRC v16の
+- Header offset 54は、frameごとのdecode済みRF5C164 sample数です。TTRC v17の
   control sizeは`4 + decoded_samples / 2`で求めます。
 - Header offset 58は、固定chunk sizeと実際のplayback cadenceから求めたRF5C164
   frequency deltaを格納します。

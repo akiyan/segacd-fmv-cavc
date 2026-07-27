@@ -40,6 +40,13 @@ Every capture frame is decoded by `ffmpeg` as a small grayscale rawvideo crop.
 when every field meets the confidence threshold, then repeated capture frames
 with the same `F` value are aggregated.  This matters because a 29.97 fps movie
 frame normally appears in about two frames of a 59.94 fps recording.
+The black state immediately before playback is the player-only frame -1 and
+shows `F=FFFF`. The extractor prefers the first valid `F0000` run immediately
+after that sentinel, making the movie-head decision exact without seeking by
+wall-clock time. `FFFF` is never emitted as a HUD TSV row. Recordings from
+players without the sentinel retain the plausible `F0000` sequence fallback.
+The console report states which anchor method was used, and gate JSON preserves
+the sentinel and frame-0 capture indices as `ocr_start_anchor`.
 
 Run it against the lossless output from `/record`:
 
