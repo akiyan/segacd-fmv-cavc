@@ -31,6 +31,42 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertEqual(frame, read_frameno.FRAME_MINUS_ONE)
         self.assertGreaterEqual(confidence, 0.99)
 
+    def test_combined_layout_wraps_at_each_native_width(self) -> None:
+        self.assertEqual(
+            read_frameno.hud_layout_dimensions(
+                read_frameno.HUD_H32_COMBINED_LAYOUT
+            ),
+            (32, 2),
+        )
+        self.assertEqual(
+            read_frameno.hud_layout_dimensions(
+                read_frameno.HUD_H40_COMBINED_LAYOUT
+            ),
+            (40, 2),
+        )
+        self.assertEqual(
+            read_frameno.hud_layout_field_position(
+                read_frameno.HUD_H32_COMBINED_LAYOUT, 32
+            ),
+            (0, 1),
+        )
+        self.assertEqual(
+            read_frameno.hud_layout_field_position(
+                read_frameno.HUD_H40_COMBINED_LAYOUT, 40
+            ),
+            (0, 1),
+        )
+
+    def test_native_width_selects_current_combined_layout(self) -> None:
+        self.assertIs(
+            read_frameno.hud_layout_for_width(256),
+            read_frameno.HUD_H32_COMBINED_LAYOUT,
+        )
+        self.assertIs(
+            read_frameno.hud_layout_for_width(320),
+            read_frameno.HUD_H40_COMBINED_LAYOUT,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

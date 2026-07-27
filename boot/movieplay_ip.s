@@ -132,16 +132,12 @@
 .endif
 
 .ifdef HUD_HEX_TABLE
-.if PC_MODE == 1
-/* H40 DEBUG builds fill the four cells left after the common HUD with the
-   signed per-frame PrgBuf minimum, then append the three flip-phase fields.
-   The standard second row adds G/K in its first six cells. G is the maximum
-   time spent outside the Sub CDC pump and K is the cumulative MSF-gap recovery
-   count.
-   H32's 32-cell row has no room for these H40-only fields. */
+/* Specialized H32/H40 DEBUG builds publish the same 46 hexadecimal cells:
+   common fields, signed per-frame PrgBuf minimum Q, flip phase V/O/E, then
+   pump diagnostics G/K. H32 wraps the linear stream after 32 cells; H40 wraps
+   after 40. */
 .equ HUD_FLIP_FIELDS, 1
 .equ HUD_SUB_POLL_GAP, 1
-.endif
 .endif
 
 .ifdef PLAYER_SPECIALIZED
@@ -1850,13 +1846,13 @@ wait_vblank:
 	move.w	(sp)+, d1
 	rts
 
-/* Build the values-only HUD row in Main RAM before the display deadline.
-   Publishing the finished row into the inactive Plane A table is a short fixed
+/* Build the values-only HUD rows in Main RAM before the display deadline.
+   Publishing the finished rows into the inactive Plane A table is a short fixed
    copy; reg2 selects the completed picture and HUD atomically.
    Category glyphs are omitted to reserve cells for future supply metrics.
    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx = 30 words.
-   H40 DEBUG appends Q/V/O/E = 40 words. The poll-gap diagnostic keeps that
-   row and appends G/K = 6 words on row 1. Q and G are four digits.
+   Both modes append Q/V/O/E/G/K for 46 words total. H32 wraps at 32 words and
+   H40 wraps at 40 words. Q and G are four digits.
 	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
@@ -1982,20 +1978,33 @@ publish_dbg:
 	lea	dbg_row, a0
 .ifdef PLAYER_SPECIALIZED
 .ifdef HUD_FLIP_FIELDS
+.if PC_MODE == 0
+	.rept 16				/* H32 row 0: common 30 + first two Q digits */
+	move.l	(a0)+, (VDP_DATA).l
+	.endr
+.else
 	.rept 20				/* row 0: common 30 + Q/V/O/E */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+.endif
 .ifdef HUD_SUB_POLL_GAP
-	/* H40 name tables use a 64-cell pitch: publish G/K at row 1, col 0. */
+	/* Name tables use a 64-cell pitch. H32 resumes the linear 46-cell stream
+	   at logical cell 32; H40 resumes it at logical cell 40. */
 	moveq	#0, d0
 	move.w	back_idx, d0
 	lsl.l	#8, d0
 	lsl.l	#5, d0
 	add.l	#NT0+0x80, d0
 	bsr	set_vram_write
+.if PC_MODE == 0
+	.rept 7				/* H32 row 1: remaining Q/V/O/E/G/K = 14 words */
+	move.l	(a0)+, (VDP_DATA).l
+	.endr
+.else
 	.rept 3				/* row 1: GGGG KK */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+.endif
 .endif
 .else
 	.rept 15
@@ -2063,7 +2072,7 @@ shadow:
 	.space 0x1000				/* logical H40=2240B; padded for bounded list offsets */
 dbg_row:
 .ifdef HUD_SUB_POLL_GAP
-	.space 46*2				/* H40 rows: 40-cell primary + 6-cell G/K */
+	.space 46*2				/* H32/H40 combined HUD; wraps at native width */
 .else
 	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
 .endif

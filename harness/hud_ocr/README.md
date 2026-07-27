@@ -1,15 +1,17 @@
 # DEBUG HUD OCR proof
 
-The movie player writes hexadecimal values only in a contiguous top row. The
+The movie player writes hexadecimal values as one contiguous logical stream
+wrapped across at most two rows. The
 keys below describe the fixed interpretation; their letters are not drawn:
 
 ```text
 common H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
-extended H40:   xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx xxxx xx xx xx
+combined:       xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx xxxx xx xx xx xxxx xx
 ```
 
-The common order is `F/P/S/D/R/L/C/W/M/A/U/N/J`. Standard H40 DEBUG appends
-`Q/V/O/E` on row 0 and `G/K` in the first six cells of row 1. `F/U/Q/G` contain four
+The common order is `F/P/S/D/R/L/C/W/M/A/U/N/J`. Standard H32/H40 DEBUG appends
+`Q/V/O/E/G/K`. H32 wraps the 46 cells after cell 31, splitting `Q` across the
+two rows; H40 wraps after cell 39, before `G`. `F/U/Q/G` contain four
 hexadecimal digits. `L` is the high byte of the audio lead;
 `P`, `S`, `D`, `R`, `C`, `W`, `M`, `A`, and `N` show two hexadecimal digits. There
 `U` is the Main pattern-transfer time in 30.72 us Mega-CD stopwatch ticks, and
@@ -19,9 +21,10 @@ patterns (`0000` empty, `FFFF` one-pattern underflow). `G` low 12 bits are the
 longest interval outside a Sub CDC pump opportunity in 30.72 us ticks; bit 15
 is decoded separately as `B`, the per-frame APPLY back-pressure marker. `K`
 counts cumulative MSF-gap recoveries. The player formats these
-values into a 30-word common, 40-word extended, or 46-word combined Main-RAM
-area before display pacing, then publishes it with fixed longword writes over
-the first cells of row 0 and, for the combined layout, row 1 of the inactive
+values into a 30-word legacy common, 40-word legacy extended, or 46-word
+combined Main-RAM area before display pacing, then publishes it with fixed
+longword writes over the first 32 H32 or 40 H40 cells of row 0 and the
+remaining cells on row 1 of the inactive
 movie Plane A table. The
 final control-port word switches to that complete picture-and-HUD table. Its
 VBlank guard rejects terminal V-counter lines `0xFC..0xFF`, keeping the HUD and
@@ -38,9 +41,10 @@ tools/python.sh harness/hud_ocr/verify.py
 
 It renders the actual generated font onto H32- and H40-sized frames, verifies
 all visible fields and their widths, covers `00`/`FF` byte values and negative
-four-digit `Q`, covers simultaneous `Q/V/O/E` and `G/K` across two rows, and confirms that
+four-digit `Q`, covers both 32-cell and 40-cell wrapping of simultaneous
+`Q/V/O/E/G/K`, and confirms that
 the older `read_frameno()` API still reads an isolated `Fxxxx` field without
 requiring the rest of the HUD. The synthetic source is deliberately bright and
-noisy; the proof models opaque font cells and also verifies that the unused
-width of the common 30-cell H40 layout remains movie content. This matches the
-player: no Window transparency or alternate Plane B is involved.
+noisy; the proof models opaque font cells and also retains a legacy common-row
+case. This matches the player: no Window transparency or alternate Plane B is
+involved.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""実機/エミュ録画のデバッグHUD（左上端、H40 diagnosticは最大2行）から各値を読む。
+"""実機/エミュ録画のデバッグHUD（左上端、H32/H40とも最大2行）から各値を読む。
 
 HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値だけを描く:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
@@ -8,9 +8,9 @@ HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値�
 16進2桁、U は16進4桁。U はMain pattern転送時間（Mega-CD stopwatchの
 30.72 us tick）、N はcold-run数の下位byte、J はfps由来の通常PrgBuf上限を超えた
 streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
-H40 DEBUG は Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
+標準H32/H40 DEBUGは Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
 最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
-標準H40 DEBUGはその40-cell rowを維持し、2行目の先頭6 cellへG/Kを追加する。
+さらにG/Kを追加し、同じ46桁の論理列をH32は32 cell、H40は40 cellで折り返す。
 Gはframe内でSub CDC pump外にいた最大時間を30.72 us stopwatch tick単位で示し、
 KはMSF連番gapから再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureが
 control sector pumpを拒否したframeを示すB markerである。
@@ -80,7 +80,7 @@ HUD_H40_POLL_GAP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
     ("O", 2),
     ("E", 2),
 )
-HUD_H40_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
+HUD_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
     ("G", 4),
     ("K", 2),
 )
@@ -107,23 +107,32 @@ HUD_H40_POLL_GAP_LAYOUT, HUD_H40_POLL_GAP_CELLS = _make_layout(
 HUD_H40_POLL_GAP_FIELDS = tuple(
     name for name, _col, _digits in HUD_H40_POLL_GAP_LAYOUT
 )
+HUD_H32_COMBINED_LAYOUT, HUD_H32_COMBINED_CELLS = _make_layout(
+    HUD_COMBINED_FIELD_DIGITS
+)
+HUD_H32_COMBINED_FIELDS = tuple(
+    name for name, _col, _digits in HUD_H32_COMBINED_LAYOUT
+)
 HUD_H40_COMBINED_LAYOUT, HUD_H40_COMBINED_CELLS = _make_layout(
-    HUD_H40_COMBINED_FIELD_DIGITS
+    HUD_COMBINED_FIELD_DIGITS
 )
 HUD_H40_COMBINED_FIELDS = tuple(
     name for name, _col, _digits in HUD_H40_COMBINED_LAYOUT
 )
+HUD_H32_COMBINED_ROW_CELLS = 32
 HUD_H40_COMBINED_ROW_CELLS = 40
 H40_NATIVE_WIDTH = 320
 
 
 def hud_layout_field_position(layout, logical_col):
-    """Return the physical cell column and row for one layout field."""
-    if layout == HUD_H40_COMBINED_LAYOUT:
-        return (
-            logical_col % HUD_H40_COMBINED_ROW_CELLS,
-            logical_col // HUD_H40_COMBINED_ROW_CELLS,
-        )
+    """Return the physical cell column and row for one logical HUD digit."""
+    row_cells = None
+    if layout is HUD_H32_COMBINED_LAYOUT:
+        row_cells = HUD_H32_COMBINED_ROW_CELLS
+    elif layout is HUD_H40_COMBINED_LAYOUT:
+        row_cells = HUD_H40_COMBINED_ROW_CELLS
+    if row_cells is not None:
+        return logical_col % row_cells, logical_col // row_cells
     return logical_col, 0
 
 
@@ -132,19 +141,27 @@ def hud_layout_dimensions(layout):
     width = 0
     height = 1
     for _name, logical_col, digits in layout:
-        col, row = hud_layout_field_position(layout, logical_col)
-        width = max(width, col + digits)
-        height = max(height, row + 1)
+        for digit in range(digits):
+            col, row = hud_layout_field_position(layout, logical_col + digit)
+            width = max(width, col + 1)
+            height = max(height, row + 1)
     return width, height
 
 
-def hud_layout_for_width(width):
-    """Return the native H32/H40 layout from the captured frame width.
+def hud_common_layout_for_width(width):
+    """Return the legacy common H32/H40 layout from captured frame width.
 
     H32 and H40 deliberately use the same 30-cell layout. Separate layout
     objects remain for callers that retain native-mode metadata.
     """
     return HUD_H40_LAYOUT if width >= H40_NATIVE_WIDTH else HUD_LAYOUT
+
+
+def hud_layout_for_width(width):
+    """Return the current standard combined layout for a native recording."""
+    if width >= H40_NATIVE_WIDTH:
+        return HUD_H40_COMBINED_LAYOUT
+    return HUD_H32_COMBINED_LAYOUT
 
 
 def _ncc(a, b):
@@ -214,6 +231,20 @@ def _read_hex(gray, x0, y, digits=4):
     return val, minsc
 
 
+def _read_layout_hex(gray, x0, y, layout, logical_col, digits):
+    """Read a field whose digits may wrap onto the next physical HUD row."""
+    val, minsc = 0, 2.0
+    for digit in range(digits):
+        col, row = hud_layout_field_position(layout, logical_col + digit)
+        x = x0 + col * CELL
+        yy = y + row * CELL
+        cell = gray[yy:yy + CELL, x:x + CELL].astype(float)
+        bv, best = _read_cell(cell)
+        val = val * 16 + bv
+        minsc = min(minsc, best)
+    return val, minsc
+
+
 def _find_origin(gray, required_width):
     """Use the native (0,0) HUD directly; fall back to the movable-image scan."""
     if gray.shape[0] >= CELL and gray.shape[1] >= required_width:
@@ -234,9 +265,8 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Pass ``HUD_H40_LAYOUT`` when the image has already been cropped narrower
-    than its native 320-pixel frame; the 30-cell H40 row itself also fits in an
-    H32-width crop and therefore cannot identify the mode.
+    Current native H32/H40 frames default to their 46-cell combined layouts.
+    Pass an explicit legacy layout when reading an older recording.
     """
     gray = _gray(img)
     if layout is None:
@@ -250,9 +280,9 @@ def read_hud(img, layout=None):
         )
     out = {}
     for name, logical_col, digits in layout:
-        col, row = hud_layout_field_position(layout, logical_col)
-        gx = x0 + col * CELL
-        val, minsc = _read_hex(gray, gx, y + row * CELL, digits)
+        val, minsc = _read_layout_hex(
+            gray, x0, y, layout, logical_col, digits
+        )
         out[name] = (val, round(min(fconf, minsc), 3))
     return out
 
