@@ -9,7 +9,7 @@ targeted player experiments, and full-length ladder recordings.
 ## Tools
 
 - `extract_frames.py` — parses a packed `HEADER.DAT` + `BODY.DAT` pair
-  (TTRC v16) and emits one TSV row per frame: cell updates, physical
+  (TTRC v17) and emits one TSV row per frame: cell updates, physical
   pattern loads by source (Prg/Wr/Dic), cold-run descriptor structure
   (count, short runs, max run length), Pass2 word total, palette-switch
   flag, control bytes, and the CD slot schedule (control/payload sectors,

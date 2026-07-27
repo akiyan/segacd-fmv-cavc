@@ -147,9 +147,10 @@ DicBuf staging uses `+0x6000..+0x7FFF`. Sub gives that bank to Main, Main copies
 the palette, dictionary, and optional VRAM sidecar to their persistent homes,
 and Main returns the bank. Sub stops `HEADER.DAT` before this handoff and
 restarts at the exact first unread sector after the return, so the copy
-interval cannot create a sector slip. Frame 0 and WordBuf may then overwrite
-the staging range safely. Dump diagnostics write list-form updates into
-control scratch.
+interval cannot create a sector slip. Sub then reads the finite untimed BODY
+arm and expands frame 0; frame 0 and WordBuf may overwrite the temporary
+staging range safely. Dump diagnostics write list-form updates into control
+scratch.
 
 ## Main RAM Map
 
@@ -171,7 +172,49 @@ RUN_TABLE space beyond a profile's realized maximum and any gap below
 generated code are conditional. They may be used only with symbols and
 assertions that preserve the supported cold cap and maximum generated output.
 
-## Per-Frame CPU Sequence
+## Startup and Per-Frame CPU Sequence
+
+### Startup
+
+One `CMD_STREAM` command spans the complete startup. The BOOT_STAGE ownership
+exchange still uses `STAT_BOOT_STAGE` plus `COMCMD1`, because Main must copy
+palette, dictionary, and sidecar data before Sub reuses that physical bank.
+There is no separate frame-0/BODY-start handshake.
+
+```mermaid
+sequenceDiagram
+    participant CD as CD / CDC
+    participant S as Sub CPU
+    participant W as Word RAM 1M/1M
+    participant M as Main CPU
+    participant V as VDP
+
+    M->>S: Assert CMD_STREAM
+    CD-->>S: Static HEADER
+    S-->>M: STAT_BOOT_STAGE
+    M->>W: Copy PALTAB, DicBuf, sidecar
+    M->>S: COMCMD1 stage acknowledgement
+    CD-->>S: Finish static HEADER
+    CD-->>S: Finite BODY arm (PCM + frame 0)
+    S->>S: Stop arm read and expand frame 0
+    CD-->>S: Start continuous timed suffix; pre-drain frame 1
+    S->>W: Exchange completed frame-0 bank
+    S-->>M: STAT_READY
+    par Main prepares first visible frame
+        M->>V: Show black frame -1 (DEBUG F=FFFF)
+        M->>V: Build and flip frame 0 (F=0000)
+    and Sub preserves continuous delivery
+        CD-->>S: Pump timed BODY into PRG-RAM
+    end
+    M->>S: Clear the original CMD_STREAM
+    S->>S: Start PCM and playback clock
+    S-->>M: Clear STAT_READY
+```
+
+Frame -1 is a player/HUD state only. It does not add a sim frame, a control
+block, a routing entry, or a HUD TSV row.
+
+### Timed playback
 
 After a bank swap, Main consumes frame `N` while Sub prepares frame `N+1`.
 
@@ -395,8 +438,9 @@ Boot中はBOOT_STAGEが `+0x0000..+0x5FFF`、その中のPALTABが `+0x1000`、D
 `+0x6000..+0x7FFF` を使います。SubがそのbankをMainへ渡し、Mainはpalette、dictionary、
 任意のVRAM sidecarをpersistentな保存先へcopyしてbankを返します。Subはhandoff前に
 `HEADER.DAT` を停止し、返却後に正確な最初の未読sectorから再開するため、copy intervalが
-sector slipを発生させません。その後はframe 0とWordBufがstage rangeを安全に上書き
-できます。Dump diagnosticはlist形式のupdateをcontrol scratchへ書きます。
+sector slipを発生させません。続いてSubは有限でuntimedなBODY armを読み、frame 0を
+展開します。その後はframe 0とWordBufがtemporary stage rangeを安全に上書きできます。
+Dump diagnosticはlist形式のupdateをcontrol scratchへ書きます。
 
 ## Main RAM map
 
@@ -417,7 +461,49 @@ boundaryに対してbuild-time checkされます。
 Profileの実maximumを超えるRUN_TABLE領域やgenerated code下のgapは条件付きです。
 対応cold capと最大generated outputを守るsymbolとassertionがある場合だけ使えます。
 
-## FrameごとのCPU sequence
+## StartupとframeごとのCPU sequence
+
+### Startup
+
+1個の `CMD_STREAM` commandがstartup全体を通してassertされたままです。BOOT_STAGEの
+ownership交換には引き続き `STAT_BOOT_STAGE` と `COMCMD1` を使います。Subが同じ物理
+bankを再利用する前に、Mainがpalette、dictionary、sidecar dataをcopyする必要がある
+ためです。frame-0/BODY-start専用の2個目のhandshakeはありません。
+
+```mermaid
+sequenceDiagram
+    participant CD as CD / CDC
+    participant S as Sub CPU
+    participant W as Word RAM 1M/1M
+    participant M as Main CPU
+    participant V as VDP
+
+    M->>S: CMD_STREAMをassert
+    CD-->>S: static HEADER
+    S-->>M: STAT_BOOT_STAGE
+    M->>W: PALTAB、DicBuf、sidecarをcopy
+    M->>S: COMCMD1 stage acknowledgement
+    CD-->>S: static HEADERの残り
+    CD-->>S: finite BODY arm（PCM + frame 0）
+    S->>S: arm readを停止しframe 0を展開
+    CD-->>S: continuous timed suffix開始、frame 1先読み
+    S->>W: completed frame-0 bankを交換
+    S-->>M: STAT_READY
+    par Mainが最初の表示frameを準備
+        M->>V: black frame -1を表示（DEBUG F=FFFF）
+        M->>V: frame 0を構築・flip（F=0000）
+    and Subがcontinuous deliveryを維持
+        CD-->>S: timed BODYをPRG-RAMへpump
+    end
+    M->>S: 元のCMD_STREAMをclear
+    S->>S: PCMとplayback clockを開始
+    S-->>M: STAT_READYをclear
+```
+
+frame -1はplayer/HUDだけのstateです。sim frame、control block、routing entry、
+HUD TSV rowは追加しません。
+
+### Timed playback
 
 Bank swap後、Mainはframe `N`を消費し、Subは他方のbankでframe `N+1`を準備します。
 

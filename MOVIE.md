@@ -12,19 +12,20 @@ analysis and regression tools. The disc contains only `HEADER.DAT` and
 `BODY.DAT`.
 
 All multi-byte integers are big-endian. Every region is sector-aligned. The Sub
-CPU reads all of `HEADER.DAT`, prepares frame 0 while no timed read is active,
-then issues one continuous `ROM_READN` for `BODY.DAT`.
+CPU reads the static `HEADER.DAT`, reads and stops at the finite untimed
+`BODY.DAT` arm, prepares frame 0, then issues one continuous `ROM_READN` for
+the timed BODY suffix.
 
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 16
+VERSION        = 17
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 16. Bitmap controls insert one zero byte after an
+The player accepts version 17. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -46,10 +47,6 @@ HEADER.DAT
 +--------------------------------------------------+
 | WR1_PRELOAD (wr1_sec sectors)                    |  WordBuf1 patterns
 +--------------------------------------------------+
-| STARTUP_AUDIO (audio_preload_sec sectors)        |  one decoded chunk per sector
-+--------------------------------------------------+
-| FRAME 0 (f0_ctrl_sec + f0_pat_sec sectors)       |  control, then patterns
-+--------------------------------------------------+
 | ROUTING (routing_sec sectors)                    |  one byte per frame
 +--------------------------------------------------+
 | PREBUFFER (prebuf_sec sectors)                   |  frame-1 PrgBuf prefill
@@ -57,6 +54,10 @@ HEADER.DAT
 
 BODY.DAT
 +--------------------------------------------------+  sector 0
+| ARM_AUDIO (audio_preload_sec sectors)            |  one decoded chunk per sector
++--------------------------------------------------+
+| ARM_FRAME0 (f0_ctrl_sec + f0_pat_sec sectors)    |  control, then patterns
++--------------------------------------------------+
 | FRAME 1  (control, future payload, rate pad)     |
 | ...                                              |
 | FRAME nfr-1                                      |
@@ -68,11 +69,17 @@ back after Main copies the persistent palette, dictionary, and optional VRAM
 sidecar. This handoff is an intentional `HEADER.DAT` read boundary: Sub stops
 the current read before giving the bank away and restarts the remaining
 sectors at the exact next LBA after taking it back. Sub then installs the ADPCM
-and WordBuf preloads, writes STARTUP_AUDIO while PCM is stopped, expands frame
-0, and hands the completed bank to Main while `BODY.DAT` remains stopped. Main
-builds and displays frame 0, then acknowledges BODY start. Sub starts
-`BODY.DAT`, pre-drains frame 1, and only then begins timed handoffs. PCM starts
-with the first timed handoff.
+and WordBuf preloads.
+
+The same `CMD_STREAM` command remains asserted for the rest of startup. Sub
+reads the finite BODY arm, writes its decoded audio while PCM is stopped,
+stops the read at the declared arm boundary, and expands frame 0. It then
+starts one continuous read at the timed BODY suffix and pre-drains frame 1.
+Sub hands the completed frame-0 bank to Main with `STAT_READY` and keeps
+pumping into PRG-RAM from the opposite Word-RAM bank while Main shows the black
+player-only frame -1 (`F=FFFF`) and builds frame 0. Once frame 0 is visible as
+`F=0000`, Main clears the original `CMD_STREAM`. That single edge starts PCM
+and the playback clock; no second startup-only handshake exists.
 
 Frame 0 has no timed delivery budget. Its visible name table uses exact target
 patterns only. Remaining resident VRAM slots may receive future patterns
@@ -86,8 +93,9 @@ Sub-owned bank follows the display handoff while delivery may run ahead.
 
 Frame 0 patterns use the fixed 36 KiB boot-only staging area at PRG RAM
 `0x72000..0x7B000`, which overlaps space that is not yet serving its timed
-purpose. BODY does not start until frame 0 has been expanded, so this area is
-independent of the timed PrgBuf and its jitter reserve.
+purpose. The finite BODY arm is stopped before frame 0 is expanded, and the
+timed BODY suffix starts only after expansion, so this area is independent of
+the timed PrgBuf and its jitter reserve.
 
 ## Header
 
@@ -96,7 +104,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | exactly `16` |
+| 4 | 2 | version | exactly `17` |
 | 6 | 2 | frames | total frame count (`nfr`) |
 | 8 | 2 | tcols | tile-grid columns |
 | 10 | 2 | trows | tile-grid rows |
@@ -121,14 +129,14 @@ The remaining fields are:
 |---:|---:|---|---|
 | 38 | 1 | display_mode | `0` H32, `1` H40, `2` mode4 |
 | 39 | 1 | pad | zero |
-| 40 | 4 | f0_ctrl_sec | FRAME 0 control sectors |
-| 44 | 4 | f0_pat_sec | FRAME 0 pattern sectors |
+| 40 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sectors |
+| 44 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sectors |
 | 48 | 4 | paltab_sec | BOOT_STAGE sectors |
 | 52 | 2 | vsync_n | nearest display-VBlank interval |
 | 54 | 2 | audio_bytes | even decoded samples per effective playback frame |
 | 56 | 2 | fps_int | nominal content rate |
 | 58 | 2 | audio_fd | RF5C164 frequency delta |
-| 60 | 2 | audio_preload_sec | STARTUP_AUDIO sectors |
+| 60 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors |
 | 62 | 2 | features | feature bits described below |
 | 64 | 128 | seg0 | frame-0 CRAM palette |
 | 192 | 4 | player_signature | CRC-32 of bytes 0 through 63 |
@@ -252,13 +260,13 @@ DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0x6000`
 and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
 8-bit index.
 
-## Startup audio
+## BODY arm audio
 
-Each STARTUP_AUDIO sector begins with one decoded `audio_bytes` PCM chunk and is
-zero-padded. Sub appends these source-leading chunks to wave RAM at `SYNC_LEAD`
-while PCM is stopped. Live controls continue the shifted source order. PCM
-starts after frame 0 is displayed, so source sample zero aligns with the first
-visible movie frame.
+Each ARM_AUDIO sector at the start of `BODY.DAT` begins with one decoded
+`audio_bytes` PCM chunk and is zero-padded. Sub appends these source-leading
+chunks to wave RAM at `SYNC_LEAD` while PCM is stopped. Live controls continue
+the shifted source order. PCM starts after frame 0 is displayed, so source
+sample zero aligns with the first visible movie frame.
 
 ## Routing table
 
@@ -342,7 +350,7 @@ Frames 1 through `nfr - 1` use:
 ```
 
 Useful control bytes, useful payload bytes, and pad sum to `fsec * 2048`.
-HEADER regions and frame 0 are not BODY delivery.
+The untimed BODY arm, including frame 0, is not part of timed BODY delivery.
 
 Payload patterns are 32-byte `pack_key` values: eight rows of four bytes, with
 two 4-bit pixels per byte. Prg patterns consumed by a frame were delivered by
@@ -426,19 +434,20 @@ packer はディスク外の解析・回帰確認用に
 `HEADER.DAT` と `BODY.DAT` だけです。
 
 複数バイト整数はすべてビッグエンディアンです。各領域は sector 境界に揃えます。
-Sub CPU は `HEADER.DAT` 全体を読み、時間制約のある読み出しを始める前に frame 0
-を準備し、その後 `BODY.DAT` に対して1回の連続 `ROM_READN` を発行します。
+Sub CPUはstaticな `HEADER.DAT` を読み、有限でuntimedな `BODY.DAT` armだけを読んで
+停止し、frame 0を準備します。その後、timed BODY suffixへ1回の連続
+`ROM_READN`を発行します。
 
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 16
+VERSION        = 17
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は16です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は17です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -460,10 +469,6 @@ HEADER.DAT
 +--------------------------------------------------+
 | WR1_PRELOAD (wr1_sec sectors)                    |  WordBuf1 patterns
 +--------------------------------------------------+
-| STARTUP_AUDIO (audio_preload_sec sectors)        |  one decoded chunk per sector
-+--------------------------------------------------+
-| FRAME 0 (f0_ctrl_sec + f0_pat_sec sectors)       |  control, then patterns
-+--------------------------------------------------+
 | ROUTING (routing_sec sectors)                    |  one byte per frame
 +--------------------------------------------------+
 | PREBUFFER (prebuf_sec sectors)                   |  frame-1 PrgBuf prefill
@@ -471,6 +476,10 @@ HEADER.DAT
 
 BODY.DAT
 +--------------------------------------------------+  sector 0
+| ARM_AUDIO (audio_preload_sec sectors)            |  one decoded chunk per sector
++--------------------------------------------------+
+| ARM_FRAME0 (f0_ctrl_sec + f0_pat_sec sectors)    |  control, then patterns
++--------------------------------------------------+
 | FRAME 1  (control, future payload, rate pad)     |
 | ...                                              |
 | FRAME nfr-1                                      |
@@ -481,10 +490,16 @@ Subは最初にBOOT_STAGEとDicBufをstageし、そのbankをMainへ渡します
 palette、dictionary、任意のVRAM sidecarをcopyすると、Subはbankを取り戻します。この
 handoffは意図した `HEADER.DAT` read境界です。Subはbankを渡す前にreadを停止し、bankを
 取り戻した後に正確な次LBAから残りのsectorを再開します。続いてADPCMとWordBuf preloadを
-配置し、PCM停止中にSTARTUP_AUDIOをwave RAMへ書き、frame 0を展開します。完成したbankを
-Mainへ渡す間も `BODY.DAT` は停止したままです。Mainがframe 0を構築・表示してBODY開始を
-返答すると、Subは `BODY.DAT` を開始してframe 1を先に読み切り、その後に時間制約のある
-handoffへ入ります。PCMは最初のtimed handoffで始まります。
+配置します。
+
+以後のstartupでは同じ `CMD_STREAM` commandをassertしたままにします。Subは有限の
+BODY armを読み、PCM停止中にdecoded audioをwave RAMへ書き、宣言済みarm境界でreadを
+停止してframe 0を展開します。次にtimed BODY suffixへ1回の連続readを開始し、frame 1を
+先に読み切ります。完成したframe-0 bankを `STAT_READY` でMainへ渡した後も、Subは反対側
+Word-RAM bankからPRG-RAMへのpumpを続けられます。その間、Mainはplayer-onlyの黒い
+frame -1（`F=FFFF`）を表示し、frame 0を構築します。frame 0が `F=0000` として表示
+された時点でMainが元の `CMD_STREAM` をclearします。この1回のedgeがPCMとplayback
+clockを開始し、2個目のstartup専用handshakeはありません。
 
 frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
 patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
@@ -497,8 +512,9 @@ handoffに応じてSub所有bankが変わり、deliveryが先行し得るため�
 必要です。
 
 frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
-領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。frame 0
-展開完了までBODYを開始しないため、timed PrgBufとそのjitter reserveから独立しています。
+領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。有限の
+BODY armはframe 0展開前に停止し、timed BODY suffixは展開後にだけ開始するため、
+timed PrgBufとそのjitter reserveから独立しています。
 
 ## Header
 
@@ -507,7 +523,7 @@ frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | 必ず `16` |
+| 4 | 2 | version | 必ず `17` |
 | 6 | 2 | frames | 総frame数（`nfr`） |
 | 8 | 2 | tcols | tile gridの列数 |
 | 10 | 2 | trows | tile gridの行数 |
@@ -532,14 +548,14 @@ frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
 |---:|---:|---|---|
 | 38 | 1 | display_mode | `0` H32、`1` H40、`2` mode4 |
 | 39 | 1 | pad | zero |
-| 40 | 4 | f0_ctrl_sec | FRAME 0 control sector数 |
-| 44 | 4 | f0_pat_sec | FRAME 0 pattern sector数 |
+| 40 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sector数 |
+| 44 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sector数 |
 | 48 | 4 | paltab_sec | BOOT_STAGE sector数 |
 | 52 | 2 | vsync_n | 最も近いdisplay VBlank間隔 |
 | 54 | 2 | audio_bytes | 実効playback frameごとの偶数decoded sample数 |
 | 56 | 2 | fps_int | nominal content rate |
 | 58 | 2 | audio_fd | RF5C164 frequency delta |
-| 60 | 2 | audio_preload_sec | STARTUP_AUDIO sector数 |
+| 60 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数 |
 | 62 | 2 | features | 下記のfeature bit |
 | 64 | 128 | seg0 | frame 0のCRAM palette |
 | 192 | 4 | player_signature | byte 0〜63のCRC-32 |
@@ -657,12 +673,12 @@ DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0x600
 Main RAM `0xFF6600..0xFF8600` へ起動時に1回copyします。controlは8-bit indexで
 entryを参照します。
 
-## Startup audio
+## BODY arm音声
 
-各STARTUP_AUDIO sectorは、先頭にdecoded `audio_bytes` PCM chunkを1個置き、残りを
-zero padします。SubはPCM停止中にsource先頭のchunkを `SYNC_LEAD` からwave RAMへ
-追記します。live controlは続くsource順を維持します。PCMはframe 0表示後に始まる
-ため、source sample 0は最初のmovie表示frameと揃います。
+`BODY.DAT` 先頭の各ARM_AUDIO sectorは、先頭にdecoded `audio_bytes` PCM chunkを
+1個置き、残りをzero padします。SubはPCM停止中にsource先頭のchunkを
+`SYNC_LEAD` からwave RAMへ追記します。live controlは続くsource順を維持します。
+PCMはframe 0表示後に始まるため、source sample 0は最初のmovie表示frameと揃います。
 
 ## Routing table
 
@@ -740,8 +756,8 @@ frame 1から `nfr - 1` までは次の形式です。
 [ pad to fsec sectors ]
 ```
 
-有効control byte、有効payload byte、padの合計は `fsec * 2048` です。HEADER領域と
-frame 0はBODY deliveryに含みません。
+有効control byte、有効payload byte、padの合計は `fsec * 2048` です。frame 0を含む
+untimed BODY armはtimed BODY deliveryに含みません。
 
 payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-bit pixelを
 2個持ちます。frameが消費するPrg patternはPREBUFFERまたは過去のBODY slotから
