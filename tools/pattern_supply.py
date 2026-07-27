@@ -314,10 +314,21 @@ class SupplyPlan:
     dic_loads: np.ndarray
     # Per-update DicBuf indices. Non-Dic entries use -1.
     dic_indices: tuple[tuple[int, ...], ...] = ()
+    # Timed refill streams appended to the initial parity-specific WordBuf
+    # contents. Legacy plans leave both empty.
+    wr0_refill_patterns: tuple[bytes, ...] = ()
+    wr1_refill_patterns: tuple[bytes, ...] = ()
+    word_stage_sectors: tuple[int, ...] = ()
 
     @property
     def enabled(self) -> bool:
-        return bool(self.wr0_patterns or self.wr1_patterns or self.dic_patterns)
+        return bool(
+            self.wr0_patterns
+            or self.wr1_patterns
+            or self.wr0_refill_patterns
+            or self.wr1_refill_patterns
+            or self.dic_patterns
+        )
 
 
 @dataclass(frozen=True)
@@ -696,7 +707,7 @@ def _frozen_sources(
     frozen = log.get("pattern_supply")
     if frozen is None:
         return None
-    if int(frozen.get("schema_version", 0)) not in (1, 2, 3):
+    if int(frozen.get("schema_version", 0)) not in (1, 2, 3, 4):
         raise ValueError(
             f"unsupported frozen pattern-supply schema: "
             f"{frozen.get('schema_version')!r}")
@@ -825,8 +836,8 @@ def plan_supply(
     dictionary_index = {pattern: index for index, pattern in enumerate(dictionary)}
 
     prg: list[bytes] = []
-    wr0: list[bytes] = []
-    wr1: list[bytes] = []
+    wr0_all: list[bytes] = []
+    wr1_all: list[bytes] = []
     dic: list[bytes] = list(dictionary)
     prg_loads = np.zeros(frame_count, np.int64)
     wr0_loads = np.zeros(frame_count, np.int64)
@@ -845,7 +856,7 @@ def plan_supply(
             prg.append(pattern)
             prg_loads[frame] += 1
         elif source == SOURCE_WR:
-            (wr1 if frame & 1 else wr0).append(pattern)
+            (wr1_all if frame & 1 else wr0_all).append(pattern)
             (wr1_loads if frame & 1 else wr0_loads)[frame] += 1
         elif source == SOURCE_DIC:
             if dictionary_mode:
@@ -874,12 +885,53 @@ def plan_supply(
             if bool(item[1]):
                 consume_pattern(frame, None, SOURCE_PRG)
 
-    if (len(wr0) > wr_capacities[0]
-            or len(wr1) > wr_capacities[1]
-            or len(dic) > dic_patterns):
+    ring_meta = frozen_supply.get("word_ring") or {}
+    ring_enabled = (
+        int(frozen_supply.get("schema_version", 0)) >= 4
+        and bool(ring_meta.get("enabled", False))
+    )
+    if ring_enabled:
+        raw_boot = tuple(int(value) for value in ring_meta.get(
+            "boot_patterns", ()))
+        if len(raw_boot) != 2:
+            raise ValueError(
+                "frozen WordBuf ring plan lacks two boot counts")
+        boot_counts = raw_boot
+        raw_stage = tuple(int(value) for value in ring_meta.get(
+            "stage_sectors", ()))
+        if len(raw_stage) != frame_count or any(
+                value < 0 for value in raw_stage):
+            raise ValueError(
+                "frozen WordBuf stage-sector trace is invalid")
+    else:
+        boot_counts = (len(wr0_all), len(wr1_all))
+        raw_stage = (0,) * frame_count
+
+    if (
+        boot_counts[0] > wr_capacities[0]
+        or boot_counts[1] > wr_capacities[1]
+        or boot_counts[0] > len(wr0_all)
+        or boot_counts[1] > len(wr1_all)
+        or len(dic) > dic_patterns
+    ):
         raise AssertionError("pattern supply planner exceeded a physical preload capacity")
+    wr0 = wr0_all[:boot_counts[0]]
+    wr1 = wr1_all[:boot_counts[1]]
+    wr0_refill = wr0_all[boot_counts[0]:]
+    wr1_refill = wr1_all[boot_counts[1]:]
+    if ring_enabled:
+        staged = (
+            sum(raw_stage[::2]) * (SECTOR_BYTES // PATTERN_BYTES),
+            sum(raw_stage[1::2]) * (SECTOR_BYTES // PATTERN_BYTES),
+        )
+        if staged != (len(wr0_refill), len(wr1_refill)):
+            raise ValueError(
+                "frozen WordBuf refill stream differs from stage sectors: "
+                f"stream={(len(wr0_refill), len(wr1_refill))} "
+                f"staged={staged}")
     occurrence_count = (
-        len(prg) + len(wr0) + len(wr1) + int(dic_loads.sum()))
+        len(prg) + len(wr0_all) + len(wr1_all)
+        + int(dic_loads.sum()))
     if occurrence_count != len(patterns):
         raise AssertionError("pattern supply planner lost or duplicated pattern occurrences")
 
@@ -894,4 +946,7 @@ def plan_supply(
         wr1_loads=wr1_loads,
         dic_loads=dic_loads,
         dic_indices=tuple(tuple(frame) for frame in dic_indices),
+        wr0_refill_patterns=tuple(wr0_refill),
+        wr1_refill_patterns=tuple(wr1_refill),
+        word_stage_sectors=raw_stage,
     )

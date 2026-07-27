@@ -1,0 +1,28 @@
+schema_version = 3
+
+[source]
+path = "assets/machi_op.mp4"
+fps = "15"
+duration = "90.000000"
+sar = "32:35"
+
+[video]
+mode = "H40"
+width = 320
+height = 152
+fit = "crop"
+master_denoise = false
+master_filter = "setsar=1,crop=320:152:0:34"
+raw_filter = "setsar=1,crop=320:152:0:34"
+
+[output]
+directory = "videos/machi_op_H40_320x152_adpcm22_issue64_90s/tmp"
+reuse = false
+emit_decisions = true
+
+[encoder]
+cold_cap = 480
+raw_prefetch = true
+
+[palette]
+algorithm = "mosaic-gm"

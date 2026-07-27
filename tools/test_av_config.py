@@ -34,16 +34,16 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.PRG_BUF_BASE, 0x0D000)
 
     def test_full_reclaimed_ring_geometry(self) -> None:
-        self.assertEqual(av_config.RING_SIZE_KB, 424)
+        self.assertEqual(av_config.RING_SIZE_KB, 422)
         self.assertEqual(av_config.RING_PHYSICAL_GUARD_KB, 4)
         self.assertEqual(av_config.RING_DELIVERY_GUARD_KB, 2)
         self.assertEqual(av_config.RING_JITTER_HEADROOM_KB, 20)
         self.assertEqual(av_config.FRAME0_PATTERN_STAGING_KB, 36)
-        self.assertEqual(av_config.RING_CAP_KB, 398)
-        self.assertEqual(av_config.PRG_BUF_CAP_KB, 398)
-        self.assertEqual(av_config.QUALITY_BUDGET_KB, 398)
-        self.assertEqual(av_config.BACKPRESSURE_KB, 420)
-        self.assertEqual(av_config.DELIVERY_CAP_KB, 418)
+        self.assertEqual(av_config.RING_CAP_KB, 396)
+        self.assertEqual(av_config.PRG_BUF_CAP_KB, 396)
+        self.assertEqual(av_config.QUALITY_BUDGET_KB, 396)
+        self.assertEqual(av_config.BACKPRESSURE_KB, 418)
+        self.assertEqual(av_config.DELIVERY_CAP_KB, 416)
         self.assertEqual(
             av_config.DELIVERY_CAP_KB - av_config.RING_CAP_KB, 20)
 
@@ -51,13 +51,13 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.cadence_jitter_reserve_kb(30), 20)
         self.assertEqual(av_config.cadence_jitter_reserve_kb(24), 25)
         self.assertEqual(av_config.cadence_jitter_reserve_kb(15), 40)
-        self.assertEqual(av_config.prg_buf_cap_kb(30), 398)
-        self.assertEqual(av_config.prg_buf_cap_kb(24), 393)
-        self.assertEqual(av_config.prg_buf_cap_kb(15), 378)
+        self.assertEqual(av_config.prg_buf_cap_kb(30), 396)
+        self.assertEqual(av_config.prg_buf_cap_kb(24), 391)
+        self.assertEqual(av_config.prg_buf_cap_kb(15), 376)
         expected = {
-            15: (378, 40),
-            24: (393, 25),
-            30: (398, 20),
+            15: (376, 40),
+            24: (391, 25),
+            30: (396, 20),
         }
         for fps, (delivery_kb, headroom_kb) in expected.items():
             self.assertEqual(
@@ -76,7 +76,7 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(
             av_config.cadence_jitter_reserve_kb(24_000 / 1001), 25)
         self.assertEqual(
-            av_config.scheduled_delivery_cap_kb(15_000 / 1001), 378)
+            av_config.scheduled_delivery_cap_kb(15_000 / 1001), 376)
 
     def test_fixed_encoder_and_pack_resources(self) -> None:
         self.assertEqual(av_config.VRAM_PATTERN_BASE_TILE, 1)
@@ -88,7 +88,7 @@ class RingGeometryTests(unittest.TestCase):
 
     def test_boot_sidecar_capacity_preserves_fixed_word_ram_holes(self) -> None:
         # A one-segment Sonic-style clip has 469 physical record slots.  The
-        # resident-pool limit, rather than this stage, caps its 398 requests.
+        # resident-pool limit, rather than this stage, caps its 396 requests.
         self.assertEqual(av_config.boot_vram_sidecar_capacity(1), 469)
         # At the maximum palette count, the middle hole is fully occupied;
         # the two outer holes still hold 232 records.

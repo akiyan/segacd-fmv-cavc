@@ -12,6 +12,14 @@ back toward the old game-specific port unless the user explicitly asks for it.
 - The priority is that the explanation is understandable, not that it uses the
   most formal vocabulary.
 
+## Chat Media Links
+
+- In Codex chat responses, never use inline embedding syntax for video or
+  audio, including Markdown image syntax such as `![...](...)`.
+- Present local media artifacts and uploaded video or audio as ordinary
+  clickable Markdown links only. This applies even when the client supports
+  inline playback, because embedded media can make the Codex app unstable.
+
 ## Terminology and Intent Checks
 
 This project has several similarly named objects whose substitution changes the
@@ -116,13 +124,14 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   switches are navigable. Generate analysis chapters with
   `tools/youtube_chapters.py <sim_out>` and prepend the block to the description
   (a blank line after it), before the Overview. For a playback recording that
-  retains the Mega-CD startup, pass
-  `--content-offset <movie-start-seconds> --intro-label "Mega-CD startup"`.
-  Determine the offset by ordinary visual playback, not DEBUG HUD OCR. It shifts
-  chapter metadata only: do not trim or seek the recording. The tool reads the
-  sim's `frame_seg` and enforces YouTube's rules (first at 0:00, 10 s minimum
-  spacing, ascending). This is not optional or per-video — it is the standing
-  convention for these uploads.
+  retains the Mega-CD startup, pass its matching complete gate as
+  `--hud-gate-json videos/<stem>_emu_hud_gate.json --intro-label "Mega-CD startup"`.
+  The gate must record the first valid `F=0000` immediately after the
+  player-only `F=FFFF` sentinel; that exact HUD transition supplies the content
+  offset. It shifts chapter metadata only: do not trim or seek the recording.
+  The tool reads the sim's `frame_seg` and enforces YouTube's rules (first at
+  0:00, 10 s minimum spacing, ascending). This is not optional or per-video —
+  it is the standing convention for these uploads.
 - Do not show bitrate in the Source spec line.
 - Uploads are unlisted, category 20 (Gaming). Descriptive titles, not vNNN.
 - **"Upload" always means the latest version.** Before uploading, rebuild the
@@ -311,6 +320,12 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
   the timed BODY suffix must remain stopped until the visible frame-0 flip;
   pumping future sectors during frame -1 creates unmodeled producer lead even
   when the displayed sentinel itself is correct.
+- Do not advance PCM through the first timed `ROM_READN` startup interval.
+  Launch the suffix only after the frame-0 flip, use the first frame-1 control
+  sector as the proof that 75-sector/s service is flowing, start PCM there,
+  and finish that physical slot before releasing Main. The remaining slot and
+  VBlank phase establish the first movie interval; CD startup latency is not
+  an audio packet and must not become A/V lead.
 - Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
   display deadline, including only startup lead that the model explicitly
   proves. A routing-table slot limit is a format capacity, not proof that the

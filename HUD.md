@@ -481,9 +481,10 @@ transitions. It prefers a valid `F0000` run immediately after `F=FFFF`, which
 makes first-loop head selection exact; recordings made before the sentinel
 retain the plausible-sequence fallback. The `FFFF` group itself is discarded.
 The analyzer reports the selected method and stores its capture indices in the
-gate JSON `ocr_start_anchor` object.
-HUD timing is diagnostic only: do not use OCR to trim publication recordings
-or place YouTube chapters.
+gate JSON `ocr_start_anchor` object together with the corresponding capture
+times. Publication recordings remain untrimmed. Their CRAM chapter offset uses
+the exact `F=FFFF` to `F=0000` transition stored in this object, avoiding a
+second visual head search.
 
 Write the complete per-frame series as the canonical project TSV:
 
@@ -959,8 +960,9 @@ capture frameをgroup化し、field別confidenceとcounter transitionを報告�
 `F=FFFF`直後のvalidな`F0000` runを優先するため、first-loopの頭出しを正確にできます。
 sentinel導入前のrecordingにはplausible sequence fallbackを残し、`FFFF` group自体は
 捨てます。Analyzerは選んだmethodを報告し、capture indexをgate JSONの
-`ocr_start_anchor` objectへ保存します。HUD timingはdiagnostic専用で、publication
-recordingのtrimやYouTube chapter配置には使いません。
+`ocr_start_anchor` objectへ対応するcapture timeと共に保存します。Publication
+recordingはtrimしません。CRAM chapter offsetにはこのobjectの正確な
+`F=FFFF`から`F=0000`へのtransitionを使うため、別の目視頭出しは不要です。
 
 Canonical project TSVを書きます。
 

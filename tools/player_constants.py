@@ -199,6 +199,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         | ttrc_routing.FEATURE_VRAM_RAW_PREFETCH
         | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS
         | ttrc_routing.FEATURE_BOOT_VRAM_SIDECAR
+        | ttrc_routing.FEATURE_WORDBUF_RING
     )
     unknown_features = features & ~known_features
     if unknown_features:

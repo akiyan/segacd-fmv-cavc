@@ -1,6 +1,6 @@
 ---
 name: compilation
-description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, add boot-aware CRAM chapters and project metadata, verify the result, and upload without recording, trimming, or using the DEBUG HUD for head cueing. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
+description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, anchor boot-aware CRAM chapters to the verified F=FFFF to F=0000 HUD transition, add project metadata, verify the result, and upload without recording or trimming. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
 ---
 
 # compilation — 録画済み再生映像をYouTubeへ
@@ -20,7 +20,7 @@ description: Prepare and upload an existing, verified record lossless playback c
 このスキルでは行わないもの:
 
 - discのビルド、RetroArch起動、START入力、録画、同期検証
-- DEBUGビルドの要求、HUD OCR、`F0000`探索
+- DEBUGビルドの要求やHUD OCRの実行（検証済みgate JSONを入力として使う）
 - `-ss` / `-t`による頭出しや映画部分だけの切り出し
 
 録画が無い、またはコード・データより古い場合は、ここへ録画手順を複製せず
@@ -31,6 +31,8 @@ description: Prepare and upload an existing, verified record lossless playback c
 - `record` が作成したネイティブ解像度のロスレスMKV
 - 同じMKVを直接OCRして作られた、gateが`PASS`でalertが`NONE`または
   `WARNING`の`S/D/R/M/J` HUD result JSON（`C/A`はdiagnostic）
+- 同gateの`ocr_start_anchor`。`method=frame_minus_one`、
+  `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須
 - 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
 - 対応するsim出力ディレクトリ（CRAMチャプター用）
 - `tools/av_version.txt` の現行ビルド版
@@ -91,12 +93,13 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
 3. **起動画面込みのCRAMチャプターを作る**
 
-   完成映像を普通に再生し、映画frame 0が見え始める時刻を秒単位で確認する。
-   HUDやOCRは使わない。この時刻はチャプターだけをずらす値であり、映像は切らない。
+   matching HUD gate JSONの`F=FFFF`直後にある最初のvalidな`F=0000`時刻を使う。
+   `youtube_chapters.py`がsentinel anchorを検証してoffsetを読みます。この時刻は
+   チャプターだけをずらす値であり、映像は切らない。
 
    ```sh
    tools/python.sh tools/youtube_chapters.py SIM_OUT CONTENT_FPS \
-     --content-offset MOVIE_START_SECONDS \
+     --hud-gate-json videos/STEM_emu_hud_gate.json \
      --intro-label "Mega-CD startup"
    ```
 

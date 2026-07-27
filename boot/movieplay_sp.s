@@ -28,6 +28,9 @@
 .if (PC_FEATURES & 0x0008)
 .equ INCLUDE_PATTERN_SUPPLY, 1
 .endif
+.if (PC_FEATURES & 0x0100)
+.equ INCLUDE_WORDBUF_RING, 1
+.endif
 .endif
 	.include "sp_extension.inc"
 
@@ -118,8 +121,8 @@
 
 .equ SUB_BANK_1M, 0x000C0000
 
-/* --- TTRC v17 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       17
+/* --- TTRC v18 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
+.equ ROUTING_VERSION,       18
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -130,8 +133,13 @@
 .equ ROUTING_SECTOR_SHIFT_A,8
 .equ ROUTING_SECTOR_SHIFT_B,3
 .equ ROUTING_CTRL_MASK,     0x0007
+.equ ROUTING_CTRL_COUNT_MASK,0x0003
+.equ ROUTING_WORD4_FLAG,    0x0004
 .equ ROUTING_TOTAL_SHIFT,   3
-.equ ROUTING_MAX_ENTRY,     0x002D
+.equ ROUTING_TOTAL_MASK,    0x0038
+.equ ROUTING_WORD_SHIFT,    6
+.equ ROUTING_WORD_MASK,     0x00C0
+.equ ROUTING_MAX_ENTRY,     0x00ED
 .equ FEATURE_COLD_RUNS_BIT, 0
 .equ FEATURE_FIXED_N_BIT,   1
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
@@ -139,6 +147,7 @@
 .equ FEATURE_VRAM_RAW_PREFETCH_BIT, 5
 .equ FEATURE_DICBUF_INDEXED_RUNS_BIT, 6
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
+.equ FEATURE_WORDBUF_RING_BIT, 8
 .equ SHADOW_UPDATE_LIST_BIT, 15
 .equ SHADOW_UPDATE_COUNT_MASK, 0x7FFF
 .ifdef PLAYER_SPECIALIZED
@@ -159,6 +168,10 @@
 .equ PCM_DEC_BUF,       0x00008000  /* Sub専用decoded PCM scratch。Word-RAM DMAと競合させない */
 .equ PCM_DEC_BUF_BYTES, 0x00000600
 .equ PCM_DEC_BUF_END,   0x00008600
+.equ WORD_PENDING0,     0x00008600  /* bank待ちWord sectorをCDCから退避するSub専用scratch */
+.equ WORD_PENDING1,     0x00008E00
+.equ WORD_PENDING_SAFE_END,0x00009600
+.equ WORD_PENDING3,     0x00076800  /* boot extension tail; timed playback may reuse it */
 .equ ADPCM_INDICES,     0x0000C000  /* 89*16 u16 new-index*32 */
 .equ ADPCM_INDEX_BYTES, 0x00000B20
 .equ ADPCM_INDICES_END, 0x0000CB20
@@ -173,6 +186,12 @@
 .endif
 .if PCM_DEC_BUF_END > SUB_PRG_SAFE_END
 .error "PCM_DEC_BUF exceeds the marker-verified Sub PRG range"
+.endif
+.if WORD_PENDING0 != PCM_DEC_BUF_END
+.error "Word pending scratch must follow PCM_DEC_BUF"
+.endif
+.if WORD_PENDING_SAFE_END > SUB_PRG_SAFE_END
+.error "Word pending scratch exceeds the marker-verified Sub PRG range"
 .endif
 .if ADPCM_INDICES_END != ADPCM_LUT
 .error "ADPCM output LUT does not follow the index table"
@@ -192,11 +211,8 @@
 .equ SP_STACK,    0x0007FF00        /* スタック最上位(apply端0x7F800の上, 1.8KB) */
 /* 0x9800-0xC000は連続読み中にBIOSが踏む。0xC000の4KBはhot table、RINGは0xD000から。 */
 .equ RING_BASE,   0x0000D000
-.equ RING_SIZE,   0x0006A000        /* 424KB。先頭4KBはhot ADPCM table。fps別jitterはpackで予約 */
-.equ RING_END,    RING_BASE+RING_SIZE     /* 0x77000 = APPLY_BASE */
-.if SP_EXTENSION_EXEC_BASE+SP_EXTENSION_BYTES > RING_END
-.error "boot-time Sub extension exceeds PrgBuf"
-.endif
+.equ RING_SIZE,   0x00069800        /* 422KB。末尾2KBは4本目のbank待ちWord sector */
+.equ RING_END,    RING_BASE+RING_SIZE     /* 0x76800 = WORD_PENDING3 */
 .equ RING_PATTERNS, RING_SIZE/32
 .equ F0PAT_TMP,   0x00072000        /* boot限定: H40最大1120 patterns=36KBを固定scratchから
                                        未使用APPLY先頭まで連続配置し、BODY前に展開する。 */
@@ -204,6 +220,12 @@
 .equ APPLY_SIZE,  0x00008800        /* 34KB(16KBは頭詰まり→滑りを実測。42KB→34KBはrouting移設分) */
 .equ APPLY_END,   APPLY_BASE+APPLY_SIZE   /* 0x7F800 */
 .equ ROUTING_TMP, 0x0007B000        /* boot限定。最大frame0 staging直後の未使用APPLY 16KB */
+.if RING_END != WORD_PENDING3
+.error "fourth pending Word sector must begin at the physical PrgBuf end"
+.endif
+.if WORD_PENDING3+0x800 != APPLY_BASE
+.error "fourth pending Word sector must end at APPLY_BASE"
+.endif
 
 /* --- Word-RAM compact tail (same offsets in both physical banks) --- */
 .ifdef PLAYER_SPECIALIZED
@@ -212,6 +234,10 @@
 .equ ADPCM_TABLE, SUB_BANK_1M+PC_ADPCM_TABLE_OFFSET
 .equ WORD_BUF0,   SUB_BANK_1M+PC_WR0_OFFSET
 .equ WORD_BUF1,   SUB_BANK_1M+PC_WR1_OFFSET
+.equ WORD_BUF0_END,SUB_BANK_1M+PC_WR0_END
+.equ WORD_BUF1_END,SUB_BANK_1M+PC_WR1_END
+.equ WORD_BUF0_CAP,PC_WR0_CAPACITY
+.equ WORD_BUF1_CAP,PC_WR1_CAPACITY
 .equ ROUTING,     SUB_BANK_1M+PC_ROUTING_OFFSET
 .equ O_STATUS,    SUB_BANK_1M+PC_STATUS_OFFSET
 .else
@@ -220,6 +246,10 @@
 .equ ADPCM_TABLE, 0x000D2800
 .equ WORD_BUF0,   0x000D5200
 .equ WORD_BUF1,   0x000D5200
+.equ WORD_BUF0_END,0x000DC000
+.equ WORD_BUF1_END,0x000DC000
+.equ WORD_BUF0_CAP,(WORD_BUF0_END-WORD_BUF0)/32
+.equ WORD_BUF1_CAP,(WORD_BUF1_END-WORD_BUF1)/32
 .equ ROUTING,     0x000DC000
 .equ O_STATUS,    SUB_BANK_1M+0xAF00
 .endif
@@ -394,6 +424,9 @@ stream_start:
 	clr.w	(COMSTAT1).l
 	clr.w	(COMSTAT2).l
 	clr.w	drain_frame
+.ifdef INCLUDE_WORDBUF_RING
+	clr.w	word_pending_count
+.endif
 	bsr	init_pcm
 	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
 	clr.l	base_msf
@@ -623,6 +656,24 @@ pm_set:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 .endif
+	/* WordBuf boot contents are the first ring turn. The timed writer starts
+	   immediately after them and normalizes an exactly-full preload to base. */
+.ifdef INCLUDE_WORDBUF_RING
+	move.l	#WORD_BUF0+(PC_WR0_PATTERNS*32), d0
+	cmpi.l	#WORD_BUF0_END, d0
+	blo.s	1f
+	move.l	#WORD_BUF0, d0
+1:
+	move.l	d0, word_write_ptr0
+	move.l	#WORD_BUF1+(PC_WR1_PATTERNS*32), d0
+	cmpi.l	#WORD_BUF1_END, d0
+	blo.s	1f
+	move.l	#WORD_BUF1, d0
+1:
+	move.l	d0, word_write_ptr1
+	move.w	#PC_WR0_PATTERNS, word_level0
+	move.w	#PC_WR1_PATTERNS, word_level1
+.endif
 	/* HEADER ends with the static routing table and frame-1 Prg prebuffer. */
 	moveq	#0, d0
 	PC_MOVE_W h_routing_sec, PC_ROUTING_SEC, d0
@@ -719,22 +770,25 @@ arm_audio_lp:
 	move.l	#RING_BASE, ring_head
 
 frame0_handoff:
-	/* One CMD_STREAM command spans startup, but its clear edge is the physical
-	   timed-start boundary. Hand frame 0 to Main with the suffix still stopped;
-	   Main shows F=FFFF, builds and flips F=0000, then clears CMD_STREAM. */
+	/* One CMD_STREAM command spans startup. Hand frame 0 to Main with the
+	   suffix still stopped; Main shows F=FFFF, builds and flips F=0000, then
+	   clears CMD_STREAM to launch the first timed BODY read. */
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
+.ifdef INCLUDE_WORDBUF_RING
+	move.w	#1, word_owned_bank		/* Main owns frame-0 bank; Sub owns Wr1 */
+.endif
 	move.w	#STAT_READY, (COMSTAT0).l
 frame0_ready_wait:
 	tst.w	(COMCMD0).l
 	bne.s	frame0_ready_wait
-	bsr	pcm_on
-	move.w	#0, (COMSTAT0).l
 
 timed_suffix_start:
-	/* The frame-0 flip has happened. Start the one continuous timed read now,
-	   then pre-drain frame 1 while Main displays frame 0 and waits through the
-	   ordinary CMD_SWAP handshake. */
+	/* The frame-0 flip has happened. Start the one continuous timed read now.
+	   ROM_READN has a startup interval before its first 75 Hz sector. Keep PCM
+	   stopped through that interval, then start it immediately after the first
+	   frame-1 control sector has arrived. The rest of frame 1's physical slot
+	   supplies the normal frame-0 audio/display interval before Main proceeds. */
 .ifdef PLAYER_SPECIALIZED
 .if PC_FRAMES < 2
 	bra	timed_suffix_armed
@@ -759,9 +813,30 @@ timed_suffix_start:
 	bsr	issue_file_readn
 arm_frame1:
 	bsr	pump1_core
+	tst.w	pcm_running
+	bne.s	1f
+	/* The first routed sector is frame 1 control. drain_k is nonzero while
+	   its physical slot remains open; a one-sector slot instead advances
+	   drain_frame directly. Both cases prove that ROM_READN is flowing. */
+	tst.w	drain_k
+	bne.s	2f
+	cmpi.w	#2, drain_frame
+	blo.s	1f
+2:
+	bsr	pcm_on
+1:
 	cmpi.w	#2, drain_frame
 	blo	arm_frame1
+	bra.s	startup_ready
 timed_suffix_armed:
+	/* A one-frame/empty suffix has no first timed sector to anchor PCM. */
+	bsr	pcm_on
+startup_ready:
+	/* Release Main only after the complete frame-1 physical slot is armed.
+	   PCM has already run through the slot remainder, so frame 1 reaches the
+	   next VBlank at the ordinary source-audio position instead of inheriting
+	   ROM_READN's startup delay. */
+	move.w	#0, (COMSTAT0).l
 .equ ISO_HOLD_F0, 0			/* ISO診断: frame0 表示直後に静止(frame0単体の健全性確認) */
 .if ISO_HOLD_F0
 f0h1:
@@ -771,6 +846,9 @@ f0hw:
 	bne	f0hw
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
+.ifdef INCLUDE_WORDBUF_RING
+	eori.w	#1, word_owned_bank
+.endif
 	move.w	#STAT_READY, (COMSTAT0).l
 f0h2:
 	tst.w	(COMCMD0).l
@@ -795,7 +873,15 @@ stream_loop:
 5:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
+.ifdef INCLUDE_WORDBUF_RING
+	eori.w	#1, word_owned_bank
+.endif
 	move.w	#STAT_READY, (COMSTAT0).l
+.ifdef INCLUDE_WORDBUF_RING
+	/* Let Main begin on the handed-off bank while Sub commits any Word sectors
+	   accepted before the swap into the newly owned parity bank. */
+	bsr	flush_word_pending
+.endif
 4:
 	tst.w	(COMCMD0).l
 	beq.s	5f				/* let Main and the next frame proceed immediately */
@@ -1138,14 +1224,24 @@ p1_top:
 	PC_CMP_W h_frames, PC_FRAMES, d0
 	bhs	p1_ret				/* ストリーム終端: 読まずに戻る */
 	tst.w	drain_k
-	bne.s	p1_read				/* コマ途中: cur_fsec は計算済み */
+	bne	p1_read				/* コマ途中: cur_fsec は計算済み */
 	/* --- コマ先頭: v7+ routingを展開し cur_fsec を計算 --- */
 	lea	ROUTING, a0
 	moveq	#0, d2
-	move.b	(a0,d0.w), d2			/* bits 3..5=total, 0..2=n_ctrl */
+	move.b	(a0,d0.w), d2			/* word prefix, total, n_ctrl */
 	moveq	#ROUTING_CTRL_MASK, d1
 	and.w	d2, d1
+	move.w	d2, d3
+	andi.w	#ROUTING_WORD_MASK, d3
+	lsr.w	#ROUTING_WORD_SHIFT, d3
+	btst	#2, d1				/* ctrl bit 2 extends Word prefix 3 -> 4 */
+	beq.s	9f
+	andi.w	#ROUTING_CTRL_COUNT_MASK, d1
+	addq.w	#1, d3
+9:
 	move.w	d1, cur_n_ctrl
+	move.w	d3, cur_n_word
+	andi.w	#ROUTING_TOTAL_MASK, d2
 	lsr.w	#ROUTING_TOTAL_SHIFT, d2
 	move.w	d2, cur_total
 	/* ratedelta = base + carry(acc+rem, mod). Numerator/modulus quotient and
@@ -1176,16 +1272,91 @@ p1_top:
 	clr.w	drain_k
 	bra	p1_top
 p1_read:
+.ifdef INCLUDE_WORDBUF_RING
+	/* A future frame's control and Word prefix may be drained before the bank
+	   swap. word_accept_guard either proves a direct write or reserves one of
+	   four Sub-PRG pending sectors, keeping the continuous CDC read moving. */
+	move.w	drain_k, d3
+	move.w	cur_n_ctrl, d1
+	cmp.w	d1, d3
+	blo.s	p1_drain
+	add.w	cur_n_word, d1
+	cmp.w	d1, d3
+	bhs.s	p1_drain
+	bsr	word_accept_guard
+	tst.w	d0
+	beq	p1_ret
+p1_drain:
+.endif
 	lea	PAD_SCR, a0			/* STAGE = Word-RAM */
 	bsr	drain1				/* 1セクタ取り込み(d1/d2破壊) */
 	move.w	cur_n_ctrl, d1
 	move.w	cur_total, d4			/* stage_copy preserves cached routing in memory */
 	move.w	drain_k, d3
 	cmp.w	d1, d3
-	blo.s	p1_apply			/* k < n_ctrl: BODY control comes first */
+	blo	p1_apply			/* k < n_ctrl: BODY control comes first */
+.ifdef INCLUDE_WORDBUF_RING
+	add.w	cur_n_word, d1
+	cmp.w	d1, d3
+	blo	p1_word				/* leading payload prefix -> parity WordBuf */
+.endif
 	cmp.w	d4, d3
-	blo.s	p1_ring				/* n_ctrl <= k < total: payload */
-	bra.s	p1_adv				/* k >= total: pad セクタ(捨て) */
+	blo	p1_ring				/* n_ctrl <= k < total: payload */
+	bra	p1_adv				/* k >= total: pad セクタ(捨て) */
+.ifdef INCLUDE_WORDBUF_RING
+p1_word:
+	move.w	drain_frame, d0
+	andi.w	#1, d0
+	cmp.w	word_owned_bank, d0
+	bne.s	p1_word_pending
+	tst.w	d0
+	bne.s	p1_word_direct1
+	movea.l	word_write_ptr0, a1
+	bsr	stage_copy
+	movea.l	word_write_ptr0, a0
+	lea	0x800(a0), a0
+	cmpa.l	#WORD_BUF0_END, a0
+	blo.s	2f
+	movea.l	#WORD_BUF0, a0
+2:
+	move.l	a0, word_write_ptr0
+	addi.w	#64, word_level0
+	bra	p1_adv
+p1_word_direct1:
+	movea.l	word_write_ptr1, a1
+	bsr	stage_copy
+	movea.l	word_write_ptr1, a0
+	lea	0x800(a0), a0
+	cmpa.l	#WORD_BUF1_END, a0
+	blo.s	2f
+	movea.l	#WORD_BUF1, a0
+2:
+	move.l	a0, word_write_ptr1
+	addi.w	#64, word_level1
+	bra	p1_adv
+p1_word_pending:
+	move.w	word_pending_count, d0
+	bne.s	1f
+	movea.l	#WORD_PENDING0, a1
+	move.w	drain_frame, word_pending_frame
+	bra.s	4f
+1:
+	cmpi.w	#1, d0
+	bne.s	2f
+	movea.l	#WORD_PENDING1, a1
+	bra.s	4f
+2:
+	cmpi.w	#2, d0
+	bne.s	3f
+	lea	word_pending2, a1
+	bra.s	4f
+3:
+	movea.l	#WORD_PENDING3, a1
+4:
+	bsr	stage_copy
+	addq.w	#1, word_pending_count
+	bra	p1_adv
+.endif
 p1_ring:
 	movea.l	ring_tail, a1
 	bsr	stage_copy			/* STAGE→PRG 2048B CPUコピー */
@@ -1246,6 +1417,7 @@ p1_ret:
    this fixed 75 Hz path; one final 32-byte MOVEM completes the sector. */
 stage_copy:
 	lea	PAD_SCR, a0
+copy_sector:
 	move.w	#7-1, d0			/* 7 * 6 * 48 = 2016 bytes */
 1:
 	movem.l	(a0)+, d1-d7/a2-a6
@@ -1313,12 +1485,12 @@ pump_poll_core:
 9:
 .endif
 	move.w	drain_frame, d0
-	beq.s	pp_done				/* v2: frame0展開中は drain_frame=0。ここで pump すると
+	beq	pp_done				/* v2: frame0展開中は drain_frame=0。ここで pump すると
 						   routing[0]=0 によりframe1の実セクタをpad扱いで捨て、
 						   CD位置とdrain_k/frameが N セクタ desync → frame1が化ける。
 						   streaming state(drain_frame>=1)確立まで pump しない。 */
 	PC_CMP_W h_frames, PC_FRAMES, d0
-	bcc.s	pp_done				/* ストリーム終端 */
+	bcc	pp_done				/* ストリーム終端 */
 	/* Guard only the destination of the next physical sector.  The old pair
 	   of unconditional guards stopped control and padding whenever PrgBuf was
 	   full (and stopped payload whenever APPLY was full), so the continuously
@@ -1328,10 +1500,33 @@ pump_poll_core:
 	moveq	#0, d2
 	move.b	0(a0,d0.w), d2
 	moveq	#ROUTING_CTRL_MASK, d1
-	and.w	d2, d1				/* n_ctrl */
+	and.w	d2, d1				/* packed n_ctrl + Word-4 escape */
+.ifdef INCLUDE_WORDBUF_RING
+	move.w	d2, d4
+	andi.w	#ROUTING_WORD_MASK, d4
+	lsr.w	#ROUTING_WORD_SHIFT, d4
+	btst	#2, d1
+	beq.s	9f
+	andi.w	#ROUTING_CTRL_COUNT_MASK, d1
+	addq.w	#1, d4
+9:
+.endif
 	move.w	drain_k, d3
 	cmp.w	d3, d1
 	bhi.s	pp_apply_space			/* k < n_ctrl: control -> APPLY only */
+.ifdef INCLUDE_WORDBUF_RING
+	/* A Word payload can enter its owned bank directly or a reserved Sub-PRG
+	   pending sector while waiting for the next physical bank swap. */
+	add.w	d1, d4
+	cmp.w	d4, d3
+	bhs.s	pp_not_word
+	bsr	word_accept_guard
+	tst.w	d0
+	beq	pp_done
+	bra	pp_cdc
+pp_not_word:
+.endif
+	andi.w	#ROUTING_TOTAL_MASK, d2
 	lsr.w	#ROUTING_TOTAL_SHIFT, d2	/* total useful sectors */
 	cmp.w	d3, d2
 	bls.s	pp_cdc				/* k >= total: padding -> no buffer guard */
@@ -1378,6 +1573,113 @@ pp_done:
 .endif
 	rts
 
+.ifdef INCLUDE_WORDBUF_RING
+/* Return d0=1 iff the next Word sector has a bounded destination. Direct
+   writes require the current parity bank. A not-yet-owned bank reserves up to
+   four sectors without making those queued patterns logically resident.
+   Accept the sector's frame at or ahead of the expanding frame: the packer's
+   replay commits every refill sector at its arrival slot, and the CD keeps
+   delivering while frame_idx catches up, so demanding equality stalls the
+   only CDC service path at a mid-stream refill turn until sectors slip.
+   Reject only a sector whose frame already began expanding. */
+word_accept_guard:
+	moveq	#0, d0
+	move.w	drain_frame, d0
+	cmp.w	frame_idx, d0
+	blo.s	wag_no			/* too late: that frame already began expanding */
+	move.w	d0, d1
+	andi.w	#1, d1
+	tst.w	d1
+	bne.s	1f
+	move.w	word_level0, d2
+	move.w	#WORD_BUF0_CAP, d3
+	bra.s	2f
+1:
+	move.w	word_level1, d2
+	move.w	#WORD_BUF1_CAP, d3
+2:
+	cmp.w	word_owned_bank, d1
+	bne.s	wag_pending
+	tst.w	word_pending_count
+	bne.s	wag_no
+	addi.w	#64, d2
+	cmp.w	d3, d2
+	bhi.s	wag_no
+	moveq	#1, d0
+	rts
+wag_pending:
+	move.w	word_pending_count, d4
+	cmpi.w	#4, d4
+	bhs.s	wag_no
+	tst.w	d4
+	beq.s	1f
+	cmp.w	word_pending_frame, d0
+	bne.s	wag_no
+1:
+	addq.w	#1, d4
+	lsl.w	#6, d4
+	add.w	d4, d2
+	cmp.w	d3, d2
+	bhi.s	wag_no
+	moveq	#1, d0
+	rts
+wag_no:
+	moveq	#0, d0
+	rts
+
+/* Commit pending sectors after the physical swap. COMSTAT0 is already READY,
+   so Main can build the handed-off frame in parallel on the other bank. */
+flush_word_pending:
+	tst.w	word_pending_count
+	beq.s	fwp_done
+	movea.l	#WORD_PENDING0, a0
+	bsr	flush_word_one
+	cmpi.w	#2, word_pending_count
+	blo.s	fwp_clear
+	movea.l	#WORD_PENDING1, a0
+	bsr	flush_word_one
+	cmpi.w	#3, word_pending_count
+	blo.s	fwp_clear
+	lea	word_pending2, a0
+	bsr	flush_word_one
+	cmpi.w	#4, word_pending_count
+	blo.s	fwp_clear
+	movea.l	#WORD_PENDING3, a0
+	bsr	flush_word_one
+fwp_clear:
+	clr.w	word_pending_count
+fwp_done:
+	rts
+
+flush_word_one:
+	move.w	word_pending_frame, d0
+	andi.w	#1, d0
+	bne.s	1f
+	movea.l	word_write_ptr0, a1
+	bsr	copy_sector
+	movea.l	word_write_ptr0, a1
+	lea	0x800(a1), a1
+	cmpa.l	#WORD_BUF0_END, a1
+	blo.s	2f
+	movea.l	#WORD_BUF0, a1
+2:
+	move.l	a1, word_write_ptr0
+	addi.w	#64, word_level0
+	rts
+1:
+	movea.l	word_write_ptr1, a1
+	bsr	copy_sector
+	movea.l	word_write_ptr1, a1
+	lea	0x800(a1), a1
+	cmpa.l	#WORD_BUF1_END, a1
+	blo.s	2f
+	movea.l	#WORD_BUF1, a1
+2:
+	move.l	a1, word_write_ptr1
+	addi.w	#64, word_level1
+	rts
+.endif
+
 /* 1フレーム: BODY先頭側の control sector が揃うまでポンプ → control取り出し
    → expand → 音声。payload/pad はPrgBufを先行充填しながら後続処理と並走する。 */
 process_frame:
@@ -1402,11 +1704,24 @@ pf_pump:
 	cmp.w	drain_frame, d0
 	blo.s	pf_ready			/* drain_frame > frame_idx: full frame already drained */
 	bhi.s	pf_body_blocked			/* BODY is still draining an older frame */
-	/* Same frame: control-first means drain_k>=n_ctrl is sufficient.  n_ctrl=0
-	   is intentionally ready immediately because its bytes arrived earlier. */
+		/* Same frame: control must be complete. A ring stream also drains the
+		   following Word prefix before expansion, so its capacity proof cannot
+		   reuse patterns before Main has consumed the current bank. */
 	lea	ROUTING, a0
+	moveq	#0, d2
+	move.b	(a0,d0.w), d2
 	moveq	#ROUTING_CTRL_MASK, d1
-	and.b	(a0,d0.w), d1			/* v7+ low three bits = n_ctrl */
+	and.w	d2, d1				/* packed n_ctrl + Word-4 escape */
+.ifdef INCLUDE_WORDBUF_RING
+	andi.w	#ROUTING_WORD_MASK, d2
+	lsr.w	#ROUTING_WORD_SHIFT, d2
+	btst	#2, d1
+	beq.s	9f
+	andi.w	#ROUTING_CTRL_COUNT_MASK, d1
+	addq.w	#1, d2
+9:
+	add.w	d2, d1				/* wait through the complete Word payload prefix */
+.endif
 	cmp.w	drain_k, d1
 	bls.s	pf_ready
 .ifdef DEBUG
@@ -1693,6 +2008,21 @@ ef_run:
 	or.w	d3, d1
 	move.w	d1, (a1)+			/* indexed source/count; cached runs carry no inline bytes */
 	add.w	d3, d4
+.ifdef INCLUDE_WORDBUF_RING
+	cmpi.w	#0x4000, d0
+	bne.s	3f
+	/* frame_idx already points one past the descriptor being expanded. Retire
+	   that frame's parity now; Main completes the read before the bank returns. */
+	move.w	frame_idx, d1
+	subq.w	#1, d1
+	andi.w	#1, d1
+	bne.s	2f
+	sub.w	d3, word_level0
+	bra.s	3f
+2:
+	sub.w	d3, word_level1
+3:
+.endif
 	tst.w	d0
 	bne	ef_run_next			/* Wr/Dic: Main DMA reads the persistent preload directly */
 .ifdef DEBUG_PRGBUF_Q
@@ -2386,6 +2716,8 @@ cur_fsec:
 	.space 2				/* v4: 現コマのディスクセクタ数 fsec=max(total,ratedelta-lead) */
 cur_n_ctrl:
 	.space 2				/* 現コマrouting cache: leading control sectors */
+cur_n_word:
+	.space 2				/* leading payload sectors staged into parity WordBuf */
 cur_total:
 	.space 2				/* 現コマrouting cache: payload+control sectors */
 lead:
@@ -2398,6 +2730,22 @@ write_ptr:
 	.word	0
 f0_expand:
 	.word	0				/* !=0: frame0 cold pop is contiguous boot storage, not streaming ring */
+.ifdef INCLUDE_WORDBUF_RING
+word_write_ptr0:
+	.long	0				/* next timed Wr0 sector destination */
+word_write_ptr1:
+	.long	0				/* next timed Wr1 sector destination */
+word_level0:
+	.word	0				/* logical live patterns, excluding sector padding */
+word_level1:
+	.word	0
+word_owned_bank:
+	.word	0				/* physical parity currently mapped to Sub */
+word_pending_frame:
+	.word	0				/* one routed slot owns all queued sectors */
+word_pending_count:
+	.word	0				/* zero to four queued 2 KiB sectors */
+.endif
 .if ring_tail-ring_head != 4
 .error "Sub extension ring state layout changed"
 .endif
@@ -2445,4 +2793,9 @@ ring_frame_min:
 .endif
 .endif
 
+.ifdef INCLUDE_WORDBUF_RING
+	.align 4
+word_pending2:
+	.space 0x800				/* third pending sector; resident image stays below 8 KiB */
+.endif
 sp_end:

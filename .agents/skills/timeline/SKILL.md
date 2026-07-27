@@ -76,7 +76,8 @@ perform it only when the user requested this timeline workflow.
 Keep these parts in every image:
 
 - The canonical four whole-movie rows, using the analysis colours and fixed
-  scales: Req categories; physical Prg plus combined Wrd remaining; physical
+  scales: Req categories; combined Wrd remaining at the bottom of Supply with
+  physical Prg above it; physical
   cold-run count scaled to the timed RUN maximum actually present in the TSV;
   and useful BODY delivery split into Raw payload, Prg
   charge, and control versus physical slot bytes. Raw is the bottom Band

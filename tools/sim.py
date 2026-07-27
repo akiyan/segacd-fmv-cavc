@@ -57,6 +57,7 @@ import resource_tokens  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
 import ttrc_routing  # noqa: E402
+import wordbuf_ring  # noqa: E402
 import sim_artifact_cache  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 import upgrade_planner  # noqa: E402
@@ -127,6 +128,15 @@ AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * FPS))
 DISPLAY_CATEGORY_MASK_ORDER = (
     "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
 )
+STAT_COLUMNS = (
+    "frame", "ffix", "want", "updated", "miss", "delta", "dedup", "tx",
+    "carry", "age", "want_frac", "near", "flbk", "buf", "prg", "wr0",
+    "wr1", "dic", "same", "same_u", "near_u", "flbk_u", "dma_tiles",
+    "dma_runs", "prefetch",
+)
+STAT_COLUMN_INDEX = {
+    name: index for index, name in enumerate(STAT_COLUMNS)
+}
 PATTERN_BYTES = 32              # 4bpp 8x8 パターン
 NAME_BYTES = 2                  # ネームテーブル1エントリ(tile index + palette + priority)
 VRAM_TILES = av_config.VRAM_PATTERN_POOL_TILES
@@ -640,6 +650,26 @@ def _inline_boot_prefetch_slots(prefetch_slots, inline_count):
     slots = tuple(int(slot) for slot in prefetch_slots)
     count = max(0, min(int(inline_count), len(slots)))
     return slots[:count]
+
+
+def apply_postplan_transfer_stats(stats, *, dma_runs, prefetch_cold):
+    """Publish final run counts without changing the raw-prefetch trace."""
+    table = np.asarray(stats)
+    runs = np.asarray(dma_runs, np.int64)
+    expected_prefetch = np.asarray(prefetch_cold, np.int64)
+    if table.ndim != 2 or table.shape[1] != len(STAT_COLUMNS):
+        raise ValueError(
+            "sim stats shape does not match the named column contract")
+    if runs.shape != (len(table),):
+        raise ValueError("post-plan DMA-run trace length differs from stats")
+    if expected_prefetch.shape != (len(table),):
+        raise ValueError("raw-prefetch trace length differs from stats")
+    table[:, STAT_COLUMN_INDEX["dma_runs"]] = runs
+    observed_prefetch = table[
+        :, STAT_COLUMN_INDEX["prefetch"]].astype(np.int64)
+    if not np.array_equal(observed_prefetch, expected_prefetch):
+        raise AssertionError(
+            "post-plan transfer stats changed the raw-prefetch trace")
 
 
 def border_weight_mask():
@@ -1448,6 +1478,11 @@ def main():
     transfer_tiles_log = []    # pack/player照合用: cold pattern tile数
     transfer_runs_log = []     # pack/player照合用: packed cold-run record数
     supply_sources_log = []    # per-frame update-aligned Prg/Wr/Dic source codes
+    ring_per_log = []          # resolved cells/entries/cold flags for ring planning
+    ring_prefetch_log = []     # resolved physical prefetch records for ring planning
+    ring_transfer_orders_log = []
+    ring_dic_indices_log = []  # update-aligned Dic indices (-1 for non-Dic)
+    ring_raw_flags_log = []    # update-aligned same-frame Raw funding markers
     prg_loads_log = []         # physical PrgBuf pattern consumption
     prg_cold_cells_log = []    # physical Prg loads mapped to cells (-1=prefetch)
     wr0_loads_log = []         # physical boot-preload consumption by source
@@ -2706,6 +2741,7 @@ def main():
         # later frames may optionally spend spare BODY/cold room on the next
         # frame's predicted excess.
         frame_prefetch_requests = []
+        frame_prefetch_physical = []
         prefetch_cold_slots = []
         if i == 0 and boot_prefetch_plan:
             for key, deadline in boot_prefetch_plan:
@@ -2716,6 +2752,8 @@ def main():
                 slot, _cold = result
                 frame_prefetch_requests.append(
                     (key, deadline, slot))
+                frame_prefetch_physical.append(
+                    (int(slot), True, key, int(deadline)))
                 cold_spent += 1
                 spent_tiles += PATTERN_BYTES
                 prefetch_cold_slots.append(int(slot))
@@ -2787,6 +2825,8 @@ def main():
                         slot, cold = result
                         frame_prefetch_requests.append(
                             (key, deadline, slot))
+                        frame_prefetch_physical.append(
+                            (int(slot), bool(cold), key, int(deadline)))
                         if cold:
                             cold_spent += 1
                             commit_prg_source(
@@ -2816,6 +2856,14 @@ def main():
                 dic_dictionary_index[key]
                 if source == pattern_supply.SOURCE_DIC else -1)
         dma_dic_indices.extend([-1] * len(prefetch_cold_slots))
+        frame_dic_indices = [
+            (
+                int(dic_dictionary_index[upd_ck[index][1]])
+                if frame_sources[index] == pattern_supply.SOURCE_DIC
+                else -1
+            )
+            for index in range(len(upd_ck))
+        ]
         dma_tiles = len(dma_slots)                 # 実際にVRAMへ送る32Bパターンタイル数
         if not L3_TILES and dma_tiles != cold_spent:
             raise AssertionError(
@@ -2865,6 +2913,24 @@ def main():
         transfer_tiles_log.append(dma_tiles)
         transfer_runs_log.append(dma_runs)
         supply_sources_log.append(np.asarray(frame_sources, np.uint8))
+        ring_per_log.append((
+            tuple(int(cell) for cell, _key in upd_ck),
+            tuple(
+                (int(cur_pal[cell]) << 13) | (1 + int(slot))
+                for (cell, _key), (slot, _cold)
+                in zip(upd_ck, placements)
+            ),
+            tuple(bool(cold) for _slot, cold in placements),
+        ))
+        ring_prefetch_log.append(tuple(sorted(
+            frame_prefetch_physical, key=lambda item: int(item[0]))))
+        ring_transfer_orders_log.append(
+            tuple(int(index) for index in transfer_order))
+        ring_dic_indices_log.append(tuple(frame_dic_indices))
+        ring_raw_flags_log.append(tuple(
+            bool(raw_display_mask[int(cell)])
+            for cell, _key in upd_ck
+        ))
         prefetch_requests_log.append(frame_prefetch_requests)
         prefetch_cold_log.append(len(prefetch_cold_slots))
         prg_used = sum(
@@ -3337,6 +3403,139 @@ def main():
             f"rate_lead_peak/end="
             f"{physical_schedule['rate_lead_peak']}/"
             f"{physical_schedule['rate_lead_end']})")
+
+    ring_plan = None
+    ring_enabled = False
+    if PATTERN_SUPPLY_ON:
+        current_supply = pattern_supply.SupplyPlan(
+            sources=tuple(
+                tuple(int(source) for source in frame)
+                for frame in supply_sources_log
+            ),
+            prg_patterns=(),
+            wr0_patterns=(),
+            wr1_patterns=(),
+            dic_patterns=(),
+            prg_loads=prg_loads,
+            wr0_loads=wr0_loads,
+            wr1_loads=wr1_loads,
+            dic_loads=dic_loads,
+            dic_indices=tuple(ring_dic_indices_log),
+        )
+        ring_plan = wordbuf_ring.plan(
+            per=ring_per_log,
+            prefetch_per=ring_prefetch_log,
+            transfer_orders=ring_transfer_orders_log,
+            current_plan=current_supply,
+            n_updates=stats[:, 3].astype(np.int64),
+            update_lists=shadow_list_flags,
+            fps=FPS,
+            cells=C_CELLS,
+            audio_frame_bytes=AUDIO_CONTROL_BYTES,
+            prg_capacity_patterns=(
+                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+            word_capacities=(
+                wordram_layout.wr0_patterns,
+                wordram_layout.wr1_patterns,
+            ),
+            baseline_occupancy=np.asarray(
+                physical_schedule["ring_occupancy"], np.int64),
+        )
+        if ring_plan.feasible:
+            ring_enabled = True
+            supply_sources_log = [
+                np.asarray(frame, np.uint8)
+                for frame in ring_plan.sources
+            ]
+            prg_loads = np.asarray(ring_plan.prg_loads, np.int64)
+            wr0_loads = np.asarray(ring_plan.wr0_loads, np.int64)
+            wr1_loads = np.asarray(ring_plan.wr1_loads, np.int64)
+            transfer_runs_log = [
+                int(value) for value in ring_plan.runs
+            ]
+            control_lengths = stream_schedule.control_block_lengths(
+                stats[:, 3].astype(np.int64),
+                np.asarray(transfer_runs_log, np.int64),
+                cells=C_CELLS,
+                audio_frame_bytes=AUDIO_CONTROL_BYTES,
+                update_lists=shadow_list_flags,
+            )
+            physical_schedule = wordbuf_ring.schedule_dict(
+                ring_plan, control_lengths)
+            physical_schedule["f0_cold"] = int(transfer_tiles_log[0])
+            physical_schedule["f0_ctrl_len"] = int(control_lengths[0])
+            print(
+                "WordBuf ring: enabled; "
+                f"boot={ring_plan.boot_patterns} "
+                f"timed refill={ring_plan.selected_refill_patterns}; "
+                f"runs {ring_plan.current_runs}->{ring_plan.model_runs}; "
+                f"Prg min={physical_schedule['ring_min_evaluation']} patterns",
+                flush=True,
+            )
+        else:
+            print(
+                "WordBuf ring: disabled for this stream because the exact "
+                f"deadline proof failed ({ring_plan.failure})",
+                flush=True,
+            )
+
+    if ring_enabled:
+        apply_postplan_transfer_stats(
+            stats,
+            dma_runs=ring_plan.runs,
+            prefetch_cold=prefetch_cold_log,
+        )
+        source_names = ("Prg", "Wr0", "Wr1", "Dic")
+        source_bits = {
+            name: np.uint16(
+                1 << DISPLAY_CATEGORY_MASK_ORDER.index(name))
+            for name in source_names
+        }
+        source_mask = np.uint16(0)
+        for bit in source_bits.values():
+            source_mask |= bit
+        rewritten_rows = []
+        for frame, (
+            (cells, _entries, colds),
+            frame_sources,
+            raw_flags,
+            raw_row,
+        ) in enumerate(zip(
+            ring_per_log,
+            ring_plan.sources,
+            ring_raw_flags_log,
+            dec_category_rows,
+            strict=True,
+        )):
+            row = np.frombuffer(raw_row, "<u2").copy()
+            for cell, cold, source, is_raw in zip(
+                    cells, colds, frame_sources, raw_flags, strict=True):
+                if not cold or is_raw or not (row[int(cell)] & source_mask):
+                    continue
+                row[int(cell)] &= np.uint16(~source_mask)
+                if source == pattern_supply.SOURCE_PRG:
+                    name = "Prg"
+                elif source == pattern_supply.SOURCE_WR:
+                    name = "Wr1" if frame & 1 else "Wr0"
+                elif source == pattern_supply.SOURCE_DIC:
+                    name = "Dic"
+                else:
+                    raise AssertionError(
+                        f"frame {frame}: invalid ring source {source}")
+                row[int(cell)] |= source_bits[name]
+            counts = [
+                int(np.count_nonzero(row & source_bits[name]))
+                for name in source_names
+            ]
+            if sum(counts) != int(stats[frame, 13]):
+                raise AssertionError(
+                    f"frame {frame}: ring source categories total "
+                    f"{sum(counts)} != Buf {int(stats[frame, 13])}")
+            stats[frame, 14:18] = counts
+            rewritten_rows.append(
+                row.astype("<u2", copy=False).tobytes())
+        dec_category_rows = rewritten_rows
+
     prg_remaining = np.asarray(
         physical_schedule["ring_occupancy"], np.int64)
     quality_budget_remaining = np.asarray(quality_budget_log, np.int64)
@@ -3349,8 +3548,14 @@ def main():
         total = int(loads.sum())
         return total - np.cumsum(loads, dtype=np.int64)
 
-    wr0_remaining = preload_remaining(wr0_loads)
-    wr1_remaining = preload_remaining(wr1_loads)
+    if ring_enabled:
+        word_occupancy = np.asarray(
+            physical_schedule["word_occupancy"], np.int64)
+        wr0_remaining = word_occupancy[:, 0]
+        wr1_remaining = word_occupancy[:, 1]
+    else:
+        wr0_remaining = preload_remaining(wr0_loads)
+        wr1_remaining = preload_remaining(wr1_loads)
     # DicBuf is persistent: hits never consume dictionary entries. Keep the
     # schema field for readers while reporting a constant installed count.
     dic_remaining = np.full(
@@ -3363,6 +3568,100 @@ def main():
         physical_schedule["body_pad_bytes"], np.int64)
     body_physical_bytes = np.asarray(
         physical_schedule["body_physical_bytes"], np.int64)
+
+    prg_raw_flags = []
+    word_raw_flags = [[], []]
+    for frame, (
+        (_cells, _entries, colds),
+        frame_sources,
+        raw_flags,
+        frame_prefetch,
+        transfer_order,
+    ) in enumerate(zip(
+        ring_per_log,
+        (
+            ring_plan.sources if ring_enabled else
+            tuple(tuple(int(source) for source in frame_sources)
+                  for frame_sources in supply_sources_log)
+        ),
+        ring_raw_flags_log,
+        ring_prefetch_log,
+        ring_transfer_orders_log,
+        strict=True,
+    )):
+        for update in transfer_order:
+            if not colds[update]:
+                raise AssertionError(
+                    f"frame {frame}: transfer order contains a reuse")
+            source = int(frame_sources[update])
+            is_raw = bool(raw_flags[update])
+            if frame == 0 or source == pattern_supply.SOURCE_PRG:
+                prg_raw_flags.append(is_raw)
+            elif source == pattern_supply.SOURCE_WR:
+                word_raw_flags[frame & 1].append(is_raw)
+        prg_raw_flags.extend(
+            False for item in frame_prefetch if bool(item[1]))
+
+    prg_flag_cursor = (
+        int(transfer_tiles_log[0])
+        + int(physical_schedule["prebuf_pat"])
+    )
+    word_flag_cursors = [
+        (
+            int(ring_plan.boot_patterns[parity])
+            if ring_enabled else len(word_raw_flags[parity])
+        )
+        for parity in (0, 1)
+    ]
+    body_raw_payload_bytes = np.zeros(len(prg_loads), np.int64)
+    for frame in range(len(prg_loads)):
+        word_patterns = int(np.asarray(
+            physical_schedule.get(
+                "word_stage_patterns",
+                np.zeros(len(prg_loads), np.int64),
+            ),
+            np.int64,
+        )[frame])
+        if word_patterns:
+            parity = frame & 1
+            start = word_flag_cursors[parity]
+            stop = start + word_patterns
+            flags = word_raw_flags[parity][start:stop]
+            if len(flags) != word_patterns:
+                raise AssertionError(
+                    f"frame {frame}: WordBuf raw-funding trace is truncated")
+            body_raw_payload_bytes[frame] += (
+                sum(flags) * PATTERN_BYTES)
+            word_flag_cursors[parity] = stop
+        prg_patterns = (
+            int(ring_plan.prg_payload_patterns[frame])
+            if ring_enabled else
+            int(body_payload_bytes[frame]) // PATTERN_BYTES
+        )
+        if prg_patterns:
+            start = prg_flag_cursor
+            stop = start + prg_patterns
+            flags = prg_raw_flags[start:stop]
+            if len(flags) != prg_patterns:
+                raise AssertionError(
+                    f"frame {frame}: Prg raw-funding trace is truncated")
+            body_raw_payload_bytes[frame] += (
+                sum(flags) * PATTERN_BYTES)
+            prg_flag_cursor = stop
+    if prg_flag_cursor != len(prg_raw_flags):
+        raise AssertionError(
+            "physical Prg schedule did not consume the complete raw-funding "
+            f"trace ({prg_flag_cursor}/{len(prg_raw_flags)})")
+    if ring_enabled and any(
+            cursor != len(word_raw_flags[parity])
+            for parity, cursor in enumerate(word_flag_cursors)):
+        raise AssertionError(
+            "physical WordBuf schedule did not consume the complete refill "
+            "raw-funding trace")
+    if np.any(body_raw_payload_bytes > body_payload_bytes):
+        raise AssertionError(
+            "Raw-funded payload exceeds useful physical payload")
+
     body_useful_bytes = body_payload_bytes + body_control_bytes
     body_useful_bps = stream_schedule.average_body_delivery_rate_bps(
         body_useful_bytes, body_physical_bytes)
@@ -3397,9 +3696,25 @@ def main():
         f"request_events={sum(len(items) for items in prefetch_requests_log)} "
         f"cache_evictions={alloc.prefetch_cache_evictions} "
         f"pin_evictions={alloc.prefetch_evictions}",
-        f"boot_preload_patterns=Wr0:{int(wr0_loads.sum())} "
-        f"Wr1:{int(wr1_loads.sum())} "
+        f"boot_preload_patterns=Wr0:"
+        f"{int(ring_plan.boot_patterns[0]) if ring_enabled else int(wr0_loads.sum())} "
+        f"Wr1:"
+        f"{int(ring_plan.boot_patterns[1]) if ring_enabled else int(wr1_loads.sum())} "
         f"Dic:{supply_budget.dic_patterns} hits:{int(dic_loads.sum())}",
+        (
+            f"WordBuf_ring=enabled refill="
+            f"{ring_plan.selected_refill_patterns[0]}/"
+            f"{ring_plan.selected_refill_patterns[1]} patterns "
+            f"stage_sectors={int(ring_plan.word_stage_sectors.sum())} "
+            f"runs={ring_plan.current_runs}->{ring_plan.model_runs}"
+            if ring_enabled
+            else (
+                "WordBuf_ring=disabled "
+                f"reason={ring_plan.failure}"
+                if ring_plan is not None else
+                "WordBuf_ring=disabled"
+            )
+        ),
         f"avg_L2_dedup_hit_per_frame={ded.mean():.1f} (VRAM常駐で0転送)",
         f"avg_L3_hit_per_frame={l3h.mean():.1f} (再登場をRAMから0CDで供給)",
         f"avg_noncurrent_budget_exact_loads={prh.mean():.1f}",
@@ -3451,9 +3766,9 @@ def main():
     print(report)
 
     # status line 用の per-frame 実測を保存
-    cols = ("frame ffix want updated miss delta dedup tx carry age want_frac near flbk buf"
-            " prg wr0 wr1 dic same same_u near_u flbk_u dma_tiles dma_runs prefetch")
-    budget_tiles = int(np.median(stats[:, 1]))   # ffix中央値 = 固定予算タイル数(fps依存)
+    cols = " ".join(STAT_COLUMNS)
+    budget_tiles = int(np.median(
+        stats[:, STAT_COLUMN_INDEX["ffix"]]))
     # 全編ユニーク(cattotals併記用): same/near/flbk の別タイル総数
     cat_uniq = np.array([
         len(guniq["same"]), len(guniq["near"]), len(guniq["flbk"]),
@@ -3481,7 +3796,7 @@ def main():
         # silently drive any of the four hardware meters.
         np.savez(
             OUT / "buffer_remaining.npz",
-            schema_version=np.int64(7),
+            schema_version=np.int64(8),
             remaining_kind=np.array("three_consumptive_plus_dicbuf"),
             # Compatibility aliases for offline readers predating schema 4.
             remaining=prg_remaining,
@@ -3501,8 +3816,26 @@ def main():
             wr0_loads=wr0_loads,
             wr1_loads=wr1_loads,
             dic_loads=dic_loads,
-            wr0_preloaded=np.int64(wr0_loads.sum()),
-            wr1_preloaded=np.int64(wr1_loads.sum()),
+            wr0_preloaded=np.int64(
+                ring_plan.boot_patterns[0]
+                if ring_enabled else wr0_loads.sum()),
+            wr1_preloaded=np.int64(
+                ring_plan.boot_patterns[1]
+                if ring_enabled else wr1_loads.sum()),
+            wordbuf_ring_enabled=np.int64(ring_enabled),
+            wordbuf_stage_sectors=np.asarray(
+                (
+                    ring_plan.word_stage_sectors
+                    if ring_enabled else np.zeros(len(prg_loads), np.int64)
+                ),
+                np.int64,
+            ),
+            wr0_boot_patterns=np.int64(
+                ring_plan.boot_patterns[0]
+                if ring_enabled else wr0_loads.sum()),
+            wr1_boot_patterns=np.int64(
+                ring_plan.boot_patterns[1]
+                if ring_enabled else wr1_loads.sum()),
             dic_preloaded=np.int64(supply_budget.dic_patterns),
             wordbuf_prg_pressure_start_frame=np.int64(
                 supply_budget.prg_pressure_start),
@@ -3542,6 +3875,7 @@ def main():
             control_sectors=np.asarray(
                 physical_schedule["n_ctrl_sec"], np.int64),
             body_useful_payload_bytes=body_payload_bytes,
+            body_raw_payload_bytes=body_raw_payload_bytes,
             body_useful_control_bytes=body_control_bytes,
             body_pad_bytes=body_pad_bytes,
             body_physical_bytes=body_physical_bytes,
@@ -3647,9 +3981,11 @@ def main():
                 "rows": dec_category_rows,
             },
             "pattern_supply": {
-                "schema_version": 3,
+                "schema_version": 4,
                 "enabled": bool(PATTERN_SUPPLY_ON),
-                "policy": "prg-pressure-waterfill",
+                "policy": (
+                    "deadline-run-sector-refill"
+                    if ring_enabled else "prg-pressure-waterfill"),
                 "prg_pressure_start_frame": int(
                     supply_budget.prg_pressure_start),
                 "predicted_prg_supply_patterns": np.asarray(
@@ -3669,10 +4005,44 @@ def main():
                     "dic": pattern_supply.DIC_BUF_PATTERNS,
                 },
                 "word_ram_layout": dataclasses.asdict(wordram_layout),
+                "word_ring": {
+                    "enabled": bool(ring_enabled),
+                    "policy": "prg-first-complete-run-sector-refill",
+                    "boot_patterns": (
+                        tuple(int(value) for value in ring_plan.boot_patterns)
+                        if ring_enabled else (
+                            int(wr0_loads.sum()), int(wr1_loads.sum())
+                        )
+                    ),
+                    "boot_end_frames": (
+                        tuple(
+                            int(value)
+                            for value in ring_plan.boot_end_frames
+                        )
+                        if ring_enabled else (0, 0)
+                    ),
+                    "selected_refill_patterns": (
+                        tuple(
+                            int(value)
+                            for value in ring_plan.selected_refill_patterns
+                        )
+                        if ring_enabled else (0, 0)
+                    ),
+                    "stage_sectors": np.asarray(
+                        (
+                            ring_plan.word_stage_sectors
+                            if ring_enabled else
+                            np.zeros(len(prg_loads), np.int64)
+                        ),
+                        np.uint8,
+                    ),
+                },
             },
             "physical_budget": {
-                "schema_version": 4,
-                "policy": "online-cadence-sector-prefix",
+                "schema_version": 5,
+                "policy": (
+                    "wordbuf-ring-cadence-sector-prefix"
+                    if ring_enabled else "online-cadence-sector-prefix"),
                 "planning_passes": int(
                     physical_budget_plan.planning_passes),
                 "desired_prg_patterns": np.asarray(
@@ -3695,7 +4065,17 @@ def main():
                     physical_budget_plan.cumulative_useful_sector_capacity,
                     np.int64),
                 "realized_prg_patterns": np.asarray(
+                    prg_loads, np.int64),
+                "construction_prg_patterns": np.asarray(
                     physical_budget_plan.realized_prg_patterns, np.int64),
+                "realized_word_stage_patterns": np.asarray(
+                    (
+                        ring_plan.word_stage_patterns
+                        if ring_enabled else
+                        np.zeros(len(prg_loads), np.int64)
+                    ),
+                    np.int64,
+                ),
                 "realized_cold_patterns": np.asarray(
                     physical_budget_plan.realized_cold_patterns, np.int64),
                 "realized_control_block_bytes": np.asarray(
@@ -3728,13 +4108,21 @@ def main():
             },
             # simが決めた値をpackで全frame再計算し、descriptor/HUD Nとのズレを即時検出する。
             "pattern_transfers": {
-                "schema_version": 2,
+                "schema_version": 3,
                 "tiles": np.asarray(transfer_tiles_log, np.uint16),
                 "runs": np.asarray(transfer_runs_log, np.uint16),
                 "prg": prg_loads.astype(np.uint16),
                 "wr0": wr0_loads.astype(np.uint16),
                 "wr1": wr1_loads.astype(np.uint16),
                 "dic": dic_loads.astype(np.uint16),
+                "word_stage_sectors": np.asarray(
+                    (
+                        ring_plan.word_stage_sectors
+                        if ring_enabled else
+                        np.zeros(len(prg_loads), np.int64)
+                    ),
+                    np.uint8,
+                ),
             },
             # Analysis and pack must show the same physical PrgBuf trace.
             # The packer compares this frozen trace with its built control data.
@@ -3754,7 +4142,22 @@ def main():
                 "ring_min_full": int(physical_schedule["ring_min"]),
                 "control_sectors": np.asarray(
                     physical_schedule["n_ctrl_sec"], np.int64),
+                "word_stage_sectors": np.asarray(
+                    physical_schedule.get(
+                        "word_stage_sectors",
+                        np.zeros(len(prg_loads), np.int64),
+                    ),
+                    np.int64,
+                ),
+                "word_occupancy": np.asarray(
+                    physical_schedule.get(
+                        "word_occupancy",
+                        np.zeros((len(prg_loads), 2), np.int64),
+                    ),
+                    np.int64,
+                ),
                 "body_useful_payload_bytes": body_payload_bytes,
+                "body_raw_payload_bytes": body_raw_payload_bytes,
                 "body_useful_control_bytes": body_control_bytes,
                 "body_pad_bytes": body_pad_bytes,
                 "body_physical_bytes": body_physical_bytes,

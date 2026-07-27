@@ -47,8 +47,8 @@ COL_BORDER_WHITE: RGB = (235, 235, 235)
 DISPLAY_SOURCE_ORDER = ("Prg", "Wr0", "Wr1", "Dic")
 METER_SUPPLY_SOURCE_ORDER = ("Prg", "Wr0", "Wr1")
 METER_SUPPLY_GROUPS = {
-    "Prg": ("Prg",),
     "Wrd": ("Wr0", "Wr1"),
+    "Prg": ("Prg",),
 }
 METER_SUPPLY_ORDER = tuple(METER_SUPPLY_GROUPS)
 REQ_TIMELINE_CATS = (

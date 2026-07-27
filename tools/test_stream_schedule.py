@@ -394,6 +394,24 @@ class PayloadRingScheduleTests(unittest.TestCase):
                 pack.verify_body_delivery_file(
                     body, arm, control, payload, packed, prebuf_patterns=0)
 
+    def test_packer_requires_frame1_control_sector_for_pcm_anchor(self) -> None:
+        packed = {
+            "n_pay_sec": np.array([0, 0]),
+            "n_ctrl_sec": np.array([0, 0]),
+            "fsec": np.array([0, 2]),
+            "body_useful_payload_bytes": np.array([0, 0]),
+            "body_useful_control_bytes": np.array([0, 0]),
+            "body_pad_bytes": np.array([0, 2 * 2048]),
+        }
+        arm = b"a" * 2048
+        with tempfile.TemporaryDirectory() as tmp:
+            body = Path(tmp) / "BODY.DAT"
+            body.write_bytes(arm + bytes(2 * 2048))
+            with self.assertRaisesRegex(
+                    AssertionError, "anchor PCM start"):
+                pack.verify_body_delivery_file(
+                    body, arm, b"", b"", packed, prebuf_patterns=0)
+
 
 if __name__ == "__main__":
     unittest.main()

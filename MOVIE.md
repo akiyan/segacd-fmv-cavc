@@ -77,9 +77,14 @@ stops the read at the declared arm boundary, and expands frame 0. Sub hands the
 completed frame-0 bank to Main with `STAT_READY` while the timed suffix remains
 stopped. Main shows the black player-only frame -1 (`F=FFFF`) and builds frame
 0. Once frame 0 is visible as `F=0000`, Main clears the original `CMD_STREAM`.
-That single edge starts PCM and the continuous timed BODY read. Sub pre-drains
-frame 1 while Main displays frame 0 and waits through the ordinary `CMD_SWAP`
-handshake; no second startup-only handshake exists.
+That edge launches the continuous timed BODY read, but PCM remains stopped
+during the initial `ROM_READN` latency. Sub starts PCM as soon as the first
+frame-1 control sector proves that the 75-sector/s stream is flowing, drains
+the remainder of frame 1's physical slot, and then clears `STAT_READY`. The
+slot remainder plus the next VBlank places frame 1 at its ordinary
+source-audio position instead of charging the CD startup interval to audio.
+This is the delayed acknowledgement of the original command, not a second
+startup-only handshake.
 
 Frame 0 has no timed delivery budget. Its visible name table uses exact target
 patterns only. Remaining resident VRAM slots may receive future patterns
@@ -254,7 +259,12 @@ WordBuf0 and WordBuf1 have generated, parity-specific starts and capacities.
 Wr0 starts after the frame-0 `O_LOADS` envelope; Wr1 starts after the timed
 cold/run envelope. Both capacities are rounded down to complete preload
 sectors. Even timed frames consume WordBuf0 and odd timed frames consume
-WordBuf1. Their sequences advance monotonically and are never refilled.
+WordBuf1. Each preload is the initial content of that parity's WordBuf ring.
+When the stream carries the WordBuf-ring feature, a slot's leading
+`n_word_sec` payload sectors append 64 patterns each to the arriving frame's
+parity ring; write and read cursors both advance forward and wrap at the
+declared capacity, and the packer's replay proves every refill sector commits
+before its frame begins expanding.
 
 DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0x6000`
 and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
@@ -265,8 +275,10 @@ and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
 Each ARM_AUDIO sector at the start of `BODY.DAT` begins with one decoded
 `audio_bytes` PCM chunk and is zero-padded. Sub appends these source-leading
 chunks to wave RAM at `SYNC_LEAD` while PCM is stopped. Live controls continue
-the shifted source order. PCM starts after frame 0 is displayed, so source
-sample zero aligns with the first visible movie frame.
+the shifted source order. Frame 0 may already be visible while the first timed
+`ROM_READN` is starting, but PCM remains stopped. Source sample zero starts
+when the first frame-1 control sector arrives; the rest of that physical slot
+positions frame 1 one source frame later.
 
 ## Routing table
 
@@ -274,12 +286,14 @@ ROUTING contains one byte per frame:
 
 | Bits | Field | Meaning |
 |---|---|---|
-| 0-2 | `n_ctrl_sec` | control sectors at the start of the BODY slot |
+| 0-2 | `n_ctrl_sec` | control sectors at the start of the BODY slot; bit 2 is the WordBuf-4 escape, which narrows the control count to bits 0-1 |
 | 3-5 | `total_sec` | useful control plus payload sectors |
-| 6-7 | reserved | zero |
+| 6-7 | `n_word_sec` | leading payload sectors staged to the arriving frame's parity WordBuf ring (0-3; with the escape set these bits carry 3 and the staged count is 4) |
 
-The byte is `(total_sec << 3) | n_ctrl_sec`; `n_pay_sec = total_sec -
-n_ctrl_sec`. The player requires
+The byte is `(n_word_field << 6) | (total_sec << 3) | n_ctrl_field`;
+`n_pay_sec = total_sec - n_ctrl_sec` and `n_word_sec <= n_pay_sec`. A stream
+without the WordBuf-ring feature always encodes `n_word_sec = 0`. The player
+requires
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` and
 `routing_sec = ceil(nfr / 2048)`. Frame 0's entry and unused tail bytes are
 zero. The resident copy uses exactly `routing_sec` sectors and supports at most
@@ -498,9 +512,12 @@ BODY armを読み、PCM停止中にdecoded audioをwave RAMへ書き、宣言済
 停止してframe 0を展開します。完成したframe-0 bankを `STAT_READY` でMainへ渡しますが、
 この時点ではtimed suffixを停止したままにします。Mainはplayer-onlyの黒いframe -1
 （`F=FFFF`）を表示し、frame 0を構築します。frame 0が `F=0000` として表示された時点で
-Mainが元の `CMD_STREAM` をclearします。この1回のedgeがPCMとtimed BODYの連続readを
-開始します。SubはMainがframe 0を表示し、通常の `CMD_SWAP` handshakeで待っている間に
-frame 1を先読みします。2個目のstartup専用handshakeはありません。
+Mainが元の `CMD_STREAM` をclearします。このedgeでtimed BODYの連続readを起動しますが、
+最初の `ROM_READN` latency中はPCMを停止したままにします。最初のframe-1 control
+sectorが到着して75 sector/sのstream開始を確認した時点でPCMを開始し、frame 1の
+physical slotの残りをdrainしてから `STAT_READY` をclearします。slotの残り時間と次の
+VBlankにより、CD起動待ちを音声へ加算せず、frame 1を通常のsource-audio位置へ置きます。
+これは元commandへの遅延acknowledgementであり、2個目のstartup専用handshakeではありません。
 
 frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
 patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
@@ -668,7 +685,11 @@ handoffでfront-of-bankのtemporary dataをすべてMainが消費できるよう
 WordBuf0とWordBuf1はgenerated parity別startとcapacityを持ちます。Wr0はframe-0
 `O_LOADS` envelopeの直後、Wr1はtimed cold/run envelopeの直後から始まります。
 両capacityとも完全なpreload sectorへ切り下げます。偶数timed frameはWordBuf0、
-奇数timed frameはWordBuf1を消費します。sequenceは単調に進み、補充しません。
+奇数timed frameはWordBuf1を消費します。各preloadは、そのparityのWordBuf ringの
+初期内容です。WordBuf-ring featureを持つstreamでは、slot先頭の `n_word_sec`
+payload sectorが到着frameのparity ringへ64 patternずつ追記されます。writeと
+readのcursorはともに前進のみで宣言capacityでwrapし、packerのreplayは全refill
+sectorがそのframeの展開開始前にcommitされることを証明します。
 
 DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0x6000` に一時配置し、
 Main RAM `0xFF6600..0xFF8600` へ起動時に1回copyします。controlは8-bit indexで
@@ -679,7 +700,9 @@ entryを参照します。
 `BODY.DAT` 先頭の各ARM_AUDIO sectorは、先頭にdecoded `audio_bytes` PCM chunkを
 1個置き、残りをzero padします。SubはPCM停止中にsource先頭のchunkを
 `SYNC_LEAD` からwave RAMへ追記します。live controlは続くsource順を維持します。
-PCMはframe 0表示後に始まるため、source sample 0は最初のmovie表示frameと揃います。
+最初のtimed `ROM_READN` 起動中にはframe 0が先に表示されることがありますが、PCMは停止した
+ままです。最初のframe-1 control sector到着時にsource sample 0を開始し、そのphysical
+slotの残り時間でframe 1を1 source frame後へ配置します。
 
 ## Routing table
 
@@ -687,12 +710,14 @@ ROUTINGはframeごとに1 byteです。
 
 | Bits | Field | 意味 |
 |---|---|---|
-| 0-2 | `n_ctrl_sec` | BODY slot先頭のcontrol sector数 |
+| 0-2 | `n_ctrl_sec` | BODY slot先頭のcontrol sector数。bit 2はWordBuf-4 escapeで、この場合control数はbits 0-1 |
 | 3-5 | `total_sec` | 有効なcontrol + payload sector数 |
-| 6-7 | reserved | zero |
+| 6-7 | `n_word_sec` | 到着frameのparity WordBuf ringへstageする先頭payload sector数（0〜3。escape設定時はこのbitsに3を置き、実stage数は4） |
 
-byte値は `(total_sec << 3) | n_ctrl_sec` で、
-`n_pay_sec = total_sec - n_ctrl_sec` です。playerは
+byte値は `(n_word_field << 6) | (total_sec << 3) | n_ctrl_field` で、
+`n_pay_sec = total_sec - n_ctrl_sec`、`n_word_sec <= n_pay_sec` です。
+WordBuf-ring featureを持たないstreamは常に `n_word_sec = 0` をencodeします。
+playerは
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` と
 `routing_sec = ceil(nfr / 2048)` を要求します。frame 0のentryと末尾の未使用byteは
 zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大16,384 frameに

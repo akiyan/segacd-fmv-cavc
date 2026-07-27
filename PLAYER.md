@@ -203,8 +203,11 @@ There is no separate frame-0/BODY-start handshake.
 
 `STAT_READY` exposes the completed frame-0 bank while the timed CD reader is
 still stopped. Clearing the original command after the visible frame-0 flip
-is both the acknowledgement and the exact physical start of PCM and timed
-BODY service. Frame -1 therefore creates no unplanned PrgBuf lead.
+launches timed BODY service. PCM stays stopped through `ROM_READN` startup and
+begins when the first frame-1 control sector arrives. Sub finishes that
+physical slot before acknowledging the clear, so its remainder and the next
+VBlank form the normal frame-0-to-frame-1 interval. Frame -1 therefore creates
+no unplanned PrgBuf lead, and the CD startup interval does not advance audio.
 
 ```mermaid
 sequenceDiagram
@@ -228,13 +231,12 @@ sequenceDiagram
     M->>V: Show black frame -1 (DEBUG F=FFFF)
     M->>V: Build and flip frame 0 (F=0000)
     M->>S: Clear the original CMD_STREAM
-    S->>S: Start PCM and timed playback clock
+    S->>CD: Launch continuous timed suffix
+    CD-->>S: First frame-1 control sector
+    S->>S: Start PCM
+    CD-->>S: Finish frame-1 physical slot
     S-->>M: Clear STAT_READY
-    par Sub prepares frame 1
-        CD-->>S: Start continuous timed suffix; pre-drain frame 1
-    and Main waits through the normal handoff
-        M->>S: CMD_SWAP for frame 1
-    end
+    M->>S: CMD_SWAP for frame 1
 ```
 
 Frame -1 is a player/HUD state only. It does not add a sim frame, a control
@@ -494,9 +496,11 @@ Subが同じ物理bankを再利用する前に、Mainがpalette、dictionary、s
 
 `STAT_READY`は完成したframe-0 bankを公開しますが、この時点ではtimed CD
 readerを停止したままにします。frame 0を実際にflipした後で元のcommandを
-clearする操作が、acknowledgementであると同時にPCMとtimed BODY serviceの
-正確な物理開始点になります。したがってframe -1は計画外のPrgBuf先行量を
-作りません。
+clearするとtimed BODY serviceを起動します。`ROM_READN` の起動中はPCMを停止したままにし、
+最初のframe-1 control sector到着時にPCMを開始します。Subはそのphysical slotを最後まで
+drainしてからclearをacknowledgeするため、slotの残り時間と次のVBlankが通常の
+frame-0-to-frame-1 intervalになります。したがってframe -1は計画外のPrgBuf先行量を
+作らず、CD起動待ちも音声を進めません。
 
 ```mermaid
 sequenceDiagram
@@ -520,13 +524,12 @@ sequenceDiagram
     M->>V: black frame -1を表示（DEBUG F=FFFF）
     M->>V: frame 0を構築・flip（F=0000）
     M->>S: 元のCMD_STREAMをclear
-    S->>S: PCMとtimed playback clockを開始
+    S->>CD: continuous timed suffixを起動
+    CD-->>S: 最初のframe-1 control sector
+    S->>S: PCMを開始
+    CD-->>S: frame-1 physical slotを完了
     S-->>M: STAT_READYをclear
-    par Subがframe 1を準備
-        CD-->>S: continuous timed suffixを開始しframe 1を先読み
-    and Mainが通常handoffで待つ
-        M->>S: frame 1のCMD_SWAP
-    end
+    M->>S: frame 1のCMD_SWAP
 ```
 
 frame -1はplayer/HUDだけのstateです。sim frame、control block、routing

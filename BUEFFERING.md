@@ -11,8 +11,8 @@ and how boot-only memory is assigned to frames with concentrated exact demand.
 | Public name | Analysis | Memory | Capacity | Lifetime |
 |---|---|---|---:|---|
 | `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 12,224 / 12,704 / 12,864 patterns at 15 / 24 / 30 fps (382 / 397 / 402 KiB) | Streamed circular buffer refilled from `BODY.DAT`. |
-| `WordBuf0` | `Wr0` | frame-0 physical 1M Word-RAM bank | Build-derived, parity-specific | Loaded from `HEADER.DAT`, then consumed by eligible even frames. |
-| `WordBuf1` | `Wr1` | other physical 1M Word-RAM bank | Build-derived, parity-specific | Loaded from `HEADER.DAT`, then consumed by eligible odd frames. |
+| `WordBuf0` | `Wr0` | frame-0 physical 1M Word-RAM bank | Build-derived, parity-specific | Ring loaded from `HEADER.DAT`, refilled during streaming by leading BODY payload sectors, and consumed by eligible even frames. |
+| `WordBuf1` | `Wr1` | other physical 1M Word-RAM bank | Build-derived, parity-specific | Ring loaded from `HEADER.DAT`, refilled during streaming by leading BODY payload sectors, and consumed by eligible odd frames. |
 | `DicBuf` | `Dic` | Main RAM | 256 patterns / 8 KiB | Staged through Word RAM at boot, copied to Main RAM, and reused by 8-bit index. |
 
 `PrgBuf` is implemented as a ring buffer, so player assembly uses internal
@@ -129,6 +129,13 @@ are not duplicate caches. The forecast does not run the physical sector
 scheduler a second time. The one-pass shared-sector planner still supplies the
 authoritative per-frame limits and the final PrgBuf proof.
 
+After credit allocation, the WordBuf ring replan converts each parity plan
+into the boot preload plus a timed refill stream. It places the boot turn at
+the first pressure suffix, stages refill sectors only where PrgBuf cannot
+accept a complete payload sector, assigns only complete physical runs to a
+WordBuf source, and the packer's independent replay re-proves every Prg and
+WordBuf deadline and capacity for the frozen route.
+
 ## Quality Reserve
 
 Each timed frame receives fresh offline allowance:
@@ -205,8 +212,8 @@ validates update counts, cold flags, frame-0 rules, preload capacities,
 per-frame source totals, and source-aware runs. It materializes:
 
 - the continuously delivered Prg stream;
-- the boot-only Wr0 stream;
-- the boot-only Wr1 stream; and
+- the Wr0 stream, split into its boot preload and its timed ring refill;
+- the Wr1 stream, split into its boot preload and its timed ring refill; and
 - the boot-only indexed DicBuf dictionary.
 
 ## Player Path
@@ -217,8 +224,10 @@ authoritative for physical pattern transfer. Source selection changes the
 
 - `Prg`: Sub consumes the next `PrgBuf` pattern and copies it into the frame's
   Word-RAM output.
-- `Wr0` / `Wr1`: Main reads the immutable preload region in the physical bank
-  handed over for that frame; frame parity identifies the bank.
+- `Wr0` / `Wr1`: Main reads the parity WordBuf ring in the physical bank
+  handed over for that frame; frame parity identifies the bank. Sub commits
+  every timed ring-refill sector before that frame begins expanding, so the
+  region Main reads is settled for the whole handoff.
 - `Dic`: Main addresses the persistent dictionary by 8-bit index.
 
 Word-RAM DMA uses the measured first-word correction. Main-RAM DicBuf DMA does
@@ -302,8 +311,8 @@ encoder内のoffline画質予算の違い、boot専用memoryを正確な需要�
 | 公開名 | 解析表示 | Memory | 容量 | Lifetime |
 |---|---|---|---:|---|
 | `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 15 / 24 / 30 fpsで12,224 / 12,704 / 12,864 pattern（382 / 397 / 402 KiB） | `BODY.DAT`から補充するstreamed circular buffer |
-| `WordBuf0` | `Wr0` | frame-0 physical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadし、対象となるeven frameが消費 |
-| `WordBuf1` | `Wr1` | 反対側のphysical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadし、対象となるodd frameが消費 |
+| `WordBuf0` | `Wr0` | frame-0 physical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadしたringをstream中に先頭BODY payload sectorで補充し、対象となるeven frameが消費 |
+| `WordBuf1` | `Wr1` | 反対側のphysical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadしたringをstream中に先頭BODY payload sectorで補充し、対象となるodd frameが消費 |
 | `DicBuf` | `Dic` | Main RAM | 256 pattern / 8 KiB | boot時にWord RAM経由でMain RAMへcopyし、8-bit indexで再利用 |
 
 `PrgBuf`はring bufferとして実装されるため、player assemblyは`RING_BASE`や
@@ -405,6 +414,12 @@ parity bankがpressure suffix内だけをwater-fillします。Protected cold de
 ありません。この予測のためにphysical sector schedulerを2回走らせません。One-pass
 shared-sector plannerが、引き続き正本のper-frame limitと最終PrgBuf proofを提供します。
 
+Credit割り当ての後、WordBuf ring replanが各parityの計画をboot preloadとtimed
+refill streamへ変換します。boot転回を最初のpressure suffixに置き、PrgBufが完全な
+payload sectorを受け取れない場所だけへrefill sectorをstageし、WordBuf sourceには
+完全なphysical runだけを割り当てます。packerの独立replayが、凍結routeの全Prg /
+WordBuf deadlineとcapacityを再証明します。
+
 ## 画質reserve
 
 各timed frameは新しいoffline allowanceを受け取ります。
@@ -475,8 +490,8 @@ cold flag、frame-0 rule、preload capacity、frameごとのsource total、sourc
 検証し、次をmaterializeします。
 
 - 連続配信するPrg stream
-- boot専用Wr0 stream
-- boot専用Wr1 stream
+- boot preloadとtimed ring refillに分かれたWr0 stream
+- boot preloadとtimed ring refillに分かれたWr1 stream
 - boot専用indexed DicBuf dictionary
 
 ## Player経路
@@ -486,8 +501,10 @@ On-disc format version 17は各cold run descriptorにsourceを持ちます。物
 表示name valueは変えません。
 
 - `Prg`: Subが次の`PrgBuf` patternを消費し、そのframeのWord-RAM outputへcopyします。
-- `Wr0` / `Wr1`: Mainが、そのframeでhandoffされたphysical bankのimmutable preload
-  regionを読みます。Frame parityがbankを決めます。
+- `Wr0` / `Wr1`: Mainが、そのframeでhandoffされたphysical bankのparity WordBuf
+  ringを読みます。Frame parityがbankを決めます。Subは全timed ring-refill sectorを
+  そのframeの展開開始前にcommitするため、Mainが読む領域はhandoff中ずっと確定
+  しています。
 - `Dic`: Mainがpersistent dictionaryを8-bit indexで参照します。
 
 Word-RAM DMAは実測済みfirst-word correctionを使います。Main-RAM上のDicBuf DMAには

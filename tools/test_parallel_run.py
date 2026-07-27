@@ -66,6 +66,18 @@ class ParallelRunTests(unittest.TestCase):
             self.assertIn("41", record)
             self.assertNotIn("--gpu", commands[0][1])
 
+    def test_default_record_seconds_adds_startup_margin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_path = Path(tmp) / "movie.toml"
+            write_profile(profile_path, source="assets/movie.mp4")
+            profile = load_profile(profile_path)
+            self.assertEqual(parallel_run.RECORD_MARGIN_SECONDS, 45)
+            self.assertEqual(
+                parallel_run._record_seconds(profile, None),
+                8 + parallel_run.RECORD_MARGIN_SECONDS,
+            )
+            self.assertEqual(parallel_run._record_seconds(profile, 41), 41)
+
     def test_summary_is_tsv(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "summary.tsv"

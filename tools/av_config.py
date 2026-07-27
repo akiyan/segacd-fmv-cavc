@@ -7,7 +7,7 @@ has an fps-derived normal prebuffer ceiling plus a physical delivery ceiling,
 and the player holds the real sectors. Historically each side had its own
 capacity knob:
 
-* player  ``.equ RING_SIZE``       = 424 KB   (the physical buffer)
+* player  ``.equ RING_SIZE``       = 422 KB   (the physical buffer)
 * pack    normal prebuffer ceiling  = fps-derived
 * sim     quality budget             = 440 KB   (*larger than PrgBuf!*)
 
@@ -73,9 +73,9 @@ assert (
 assert SUB_BOOT_ISO_BUF_END <= 0x00077000
 
 # Physical PRG-RAM ring in the player. MUST equal boot/movieplay_sp.s
-# `.equ RING_SIZE` (0x6A000 = 424 KB). Build-time assertion enforces it.
+# `.equ RING_SIZE` (0x69800 = 422 KB). Build-time assertion enforces it.
 # The first 4 KiB of the former ring holds persistent hot ADPCM tables.
-RING_SIZE_KB = 424
+RING_SIZE_KB = 422
 
 # Keep the physical overflow guard distinct from delivery-jitter headroom. The
 # player throttles its CD pump at RING_SIZE-4KB (back-pressure). The encoder's

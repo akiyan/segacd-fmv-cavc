@@ -16,22 +16,26 @@ YouTube's chapter rules are enforced so the list is actually rendered:
     since YouTube ignores a shorter list).
 
 Timestamps use the *content* fps (the segment frame index / fps). Analysis videos
-normally begin at content frame 0. Playback recordings may retain the Mega-CD
-startup sequence; pass ``--content-offset`` for those so only the chapter markers
-move while the recording remains intact. Determine that offset by ordinary visual
-playback, not DEBUG HUD OCR.
+normally begin at content frame 0. Playback recordings retain the Mega-CD startup
+sequence and use ``--hud-gate-json``. The matching complete HUD gate records the
+first valid ``F=0000`` immediately after the player-only ``F=FFFF`` sentinel, so
+the chapter offset is exact and repeatable. Only chapter markers move; the
+recording remains intact.
 
 Usage:
     python tools/youtube_chapters.py <sim_out_dir> [fps]
     python tools/youtube_chapters.py <sim_out_dir> [fps] \
-        --content-offset SECONDS --intro-label "Mega-CD startup"
+        --hud-gate-json videos/STEM_emu_hud_gate.json \
+        --intro-label "Mega-CD startup"
 Prints the chapter block to stdout; prepend it (with a blank line after) to the
 video description before uploading.
 """
 import argparse
-import sys
+import json
+import math
 import pickle
 from pathlib import Path
+import sys
 
 import numpy as np
 
@@ -53,6 +57,31 @@ def parse_fps(value):
         num, den = value.split("/", 1)
         return float(num) / float(den)
     return float(value)
+
+
+def content_offset_from_hud_gate(path):
+    """Return exact movie frame-0 time from an F=FFFF-anchored HUD gate."""
+    gate_path = Path(path)
+    try:
+        gate = json.loads(gate_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"cannot read HUD gate {gate_path}: {exc}") from exc
+    anchor = gate.get("ocr_start_anchor")
+    if not isinstance(anchor, dict):
+        raise ValueError(f"{gate_path}: HUD gate has no OCR start anchor")
+    if anchor.get("method") != "frame_minus_one":
+        raise ValueError(
+            f"{gate_path}: playback chapters require the F=FFFF start anchor")
+    if int(anchor.get("frame_minus_one_raw16", -1)) != 0xFFFF:
+        raise ValueError(f"{gate_path}: invalid frame -1 sentinel value")
+    try:
+        offset = float(anchor["frame0_time_first_s"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{gate_path}: HUD gate has no valid frame-0 timestamp") from exc
+    if not math.isfinite(offset) or offset < 0:
+        raise ValueError(f"{gate_path}: invalid frame-0 timestamp {offset!r}")
+    return offset
 
 
 def chapters(out_dir, fps=None, content_offset=0.0):
@@ -87,22 +116,38 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("sim_out_dir")
     parser.add_argument("fps", nargs="?", type=parse_fps)
-    parser.add_argument(
+    offset_group = parser.add_mutually_exclusive_group()
+    offset_group.add_argument(
         "--content-offset",
         type=float,
-        default=0.0,
         metavar="SECONDS",
-        help="time from recording start to movie frame 0; shifts chapters only",
+        help="explicit time from recording start to movie frame 0",
+    )
+    offset_group.add_argument(
+        "--hud-gate-json",
+        type=Path,
+        help=(
+            "matching complete playback HUD gate; uses the F=FFFF to F=0000 "
+            "transition as the chapter offset"
+        ),
     )
     parser.add_argument(
         "--intro-label",
         default="Mega-CD startup",
-        help="00:00 chapter label when --content-offset is greater than zero",
+        help="00:00 chapter label when the content offset is greater than zero",
     )
     args = parser.parse_args()
-    if args.content_offset < 0:
+    if args.content_offset is not None and args.content_offset < 0:
         parser.error("--content-offset must be zero or greater")
-    out, fps = chapters(args.sim_out_dir, args.fps, args.content_offset)
+    try:
+        content_offset = (
+            content_offset_from_hud_gate(args.hud_gate_json)
+            if args.hud_gate_json is not None
+            else float(args.content_offset or 0.0)
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    out, fps = chapters(args.sim_out_dir, args.fps, content_offset)
     if len(out) < MIN_CHAPTERS:
         print(f"[youtube_chapters] only {len(out)} chapters (< {MIN_CHAPTERS}); "
               f"YouTube would ignore them, emitting nothing.", file=sys.stderr)

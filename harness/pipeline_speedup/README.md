@@ -120,9 +120,10 @@ build:
 2. reads and stops at the finite untimed BODY arm;
 3. expands frame 0 and hands its bank to Main with the timed suffix stopped;
 4. lets Main show frame -1, build and display frame 0;
-5. uses the original command-clear edge to start PCM and a new continuous read
-   at the exact timed BODY-suffix sector;
-6. pre-drains frame 1 behind the ordinary frame-1 `CMD_SWAP` wait.
+5. uses the original command-clear edge to launch a new continuous read at the
+   exact timed BODY-suffix sector while PCM remains stopped;
+6. starts PCM when the first frame-1 control sector proves that `ROM_READN` is
+   flowing, then finishes that physical slot before acknowledging Main.
 
 For the measured Sonic file the split is sector 211, leaving 6777 timed sectors.
 `S` is not cleared at that split: prefix slips remain visible, and the first FRAMES

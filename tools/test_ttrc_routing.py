@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for the TTRC v7+ routing byte retained by v17."""
+"""Regression tests for the TTRC v18 routing byte."""
 
 from __future__ import annotations
 
@@ -9,38 +9,59 @@ import ttrc_routing as routing
 
 
 class RoutingEntryTests(unittest.TestCase):
-    def test_v17_feature_bits_are_stable(self) -> None:
+    def test_v18_feature_bits_are_stable(self) -> None:
         self.assertEqual(routing.FEATURE_COLD_RUNS, 0x0001)
         self.assertEqual(routing.FEATURE_FIXED_N, 0x0002)
         self.assertEqual(routing.FEATURE_FIXED_N2, routing.FEATURE_FIXED_N)
         self.assertEqual(routing.FEATURE_PATTERN_SUPPLY, 0x0008)
         self.assertEqual(routing.FEATURE_BOOT_VRAM_SIDECAR, 0x0080)
+        self.assertEqual(routing.FEATURE_WORDBUF_RING, 0x0100)
 
     def test_all_valid_pairs_round_trip(self) -> None:
         seen = set()
         for total in range(routing.FRAME_SECTORS + 1):
-            for ctrl in range(total + 1):
+            for ctrl in range(
+                    min(total, routing.MAX_CTRL_SECTORS) + 1):
                 pay = total - ctrl
-                entry = routing.encode_route(pay, ctrl)
-                self.assertEqual(routing.decode_route(entry), (pay, ctrl, total))
-                seen.add(entry)
-        self.assertEqual(len(seen), 21)
+                for word in range(
+                        min(pay, routing.MAX_WORD_SECTORS) + 1):
+                    entry = routing.encode_route(pay, ctrl, word)
+                    self.assertEqual(
+                        routing.decode_route(entry),
+                        (pay, ctrl, total))
+                    self.assertEqual(
+                        routing.decode_word_sectors(entry), word)
+                    seen.add(entry)
+        self.assertEqual(len(seen), 51)
 
     def test_invalid_pairs_are_rejected(self) -> None:
-        for pair in ((-1, 0), (0, -1), (6, 0), (3, 3), (1.5, 0)):
+        for pair in (
+            (-1, 0),
+            (0, -1),
+            (6, 0),
+            (3, 3),
+            (1.5, 0),
+            (1, 0, 2),
+            (1, 4, 0),
+        ):
             with self.subTest(pair=pair), self.assertRaises(ValueError):
                 routing.encode_route(*pair)
 
     def test_invalid_bytes_are_rejected(self) -> None:
-        for entry in (0x06, 0x07, 0x30, 0x38, 0x40, 0x80, 0x100, -1):
+        for entry in (
+                0x04, 0x06, 0x07, 0x30, 0x38, 0x40, 0x80, 0x100, -1):
             with self.subTest(entry=entry), self.assertRaises(ValueError):
                 routing.decode_route(entry)
 
     def test_all_byte_values_match_the_v7_plus_contract(self) -> None:
         expected = {
-            routing.encode_route(total - ctrl, ctrl): (total - ctrl, ctrl, total)
+            routing.encode_route(total - ctrl, ctrl, word):
+                (total - ctrl, ctrl, total)
             for total in range(routing.FRAME_SECTORS + 1)
-            for ctrl in range(total + 1)
+            for ctrl in range(
+                min(total, routing.MAX_CTRL_SECTORS) + 1)
+            for word in range(
+                min(total - ctrl, routing.MAX_WORD_SECTORS) + 1)
         }
         for entry in range(256):
             with self.subTest(entry=f"0x{entry:02X}"):
