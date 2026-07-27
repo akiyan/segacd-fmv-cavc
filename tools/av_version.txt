@@ -11,6 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e140: Raise the fully qualified nominal-30fps shared cold baseline from 180
+#         to 200 while preserving the 15/24/60fps baselines, and raise the
+#         standard Sonic Jam H40 profile from 190 to its qualified cap 210.
+#         Resolution, source filtering, palette settings, fps, and player code
+#         remain unchanged.
 #   p99: Make the qualified two-row layout standard for every specialized H40
 #        DEBUG build and select it automatically from H40 profiles during OCR.
 #        The BIOS now initial-loads the complete resident SP from disc-system
@@ -895,5 +900,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260727
-e=139
+e=140
 p=99

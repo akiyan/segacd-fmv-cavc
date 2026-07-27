@@ -121,10 +121,12 @@ raising it by itself.
 ### Encoder cap
 
 `tools/av_config.py` derives the baseline cold-tile ceiling only from content
-frame rate as `round(5400 / fps)`: 360 at 15 fps, 225 at 24 fps, and 180 at
-30 fps. A profile may raise this baseline only after source-specific
-qualification and may not lower it. A diagnostic override is measurement-only
-and is not publishable without its own full-length qualification.
+frame rate. The general rule is `round(5400 / fps)`: 360 at 15 fps and 225 at
+24 fps. Full-path qualification raises the nominal-30-fps baseline from the
+formula's 180 to 200 without changing the other cadence baselines. A profile
+may raise its baseline only after source-specific qualification and may not
+lower it. A diagnostic override is measurement-only and is not publishable
+without its own full-length qualification.
 
 The pack asserts that every timed frame's realized new-tile loads stay within
 the effective encoded cap and does not re-cap the stream. Frame 0 is exempt
@@ -259,10 +261,11 @@ Pure-DMA ceilingだけでは再生上限を決められません。各frameに�
 ### Encoder cap
 
 `tools/av_config.py`はcontent frame rateだけからbaseline cold-tile ceilingを
-`round(5400 / fps)`で求めます。15 fpsで360、24 fpsで225、30 fpsで180です。
-Profileはsource固有のqualification後にだけbaselineを引き上げられ、引き下げることは
-できません。Diagnostic overrideは測定専用で、それ自身の全編qualificationなしには
-公開できません。
+求めます。一般則は`round(5400 / fps)`で、15 fpsは360、24 fpsは225です。全経路の
+qualificationによりnominal 30 fps baselineだけは式の180から200へ引き上げ、他cadence
+のbaselineは変えません。Profileはsource固有のqualification後にだけbaselineを
+引き上げられ、引き下げることはできません。Diagnostic overrideは測定専用で、
+それ自身の全編qualificationなしには公開できません。
 
 Packは各timed frameの実new-tile loadがencode時のeffective cap以内にあることをassertし、
 streamへ別のcapをかけません。Frame 0は`HEADER.DAT`によってtimed playback前にload

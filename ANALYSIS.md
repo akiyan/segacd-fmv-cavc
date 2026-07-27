@@ -259,8 +259,9 @@ prefetch`, i.e. every 32-byte pattern newly written to VRAM from any physical
 supply). The bar stacks the corresponding category/source colours and blue
 prefetch;
 full-scale = `cold_cap_for_fps`
-(`av_config.py`, calculated as `round(5400 / fps)` unless the profile raises
-it; display mode and active tile count do not affect the baseline).
+(`av_config.py`: generally `round(5400 / fps)`, with a qualified nominal-30-fps
+baseline of 200, unless the profile raises it; display mode and active tile
+count do not affect the baseline).
 Frame 0 is outside this timing calculation and is displayed as `Cold:000`.
 Its Raw/Same category counts remain visible in the legend.
 This visualises the value the hardware slip investigations were fought over.
@@ -647,8 +648,9 @@ frameごとのupdate budgetです。Labelは`Req:NNN Miss:NNN`です。
 `Cold:NNN`はこのframeの**timed new tile load**です。
 `Raw + Prg + Wr0 + Wr1 + Dic + future raw prefetch`、つまり全物理sourceからVRAMへ
 新しく書いた32-byte patternを数えます。Barはcategory/source colourとblue prefetchを
-stackし、full-scaleはeffective cold capです。Baselineは`round(5400 / fps)`で、
-profileが引き上げられます。Frame 0はtiming外なので`Cold:000`ですが、Raw/Same countは
+stackし、full-scaleはeffective cold capです。Baselineは一般に
+`round(5400 / fps)`で、qualification済みnominal 30 fps baselineは200です。Profileは
+これを引き上げられます。Frame 0はtiming外なので`Cold:000`ですが、Raw/Same countは
 legendへ表示します。
 
 ### Pre meter

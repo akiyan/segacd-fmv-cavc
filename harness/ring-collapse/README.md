@@ -70,9 +70,10 @@ behavior was once added to the sim), not a finer occupancy metric.
 
 > Historical note (e9): `CBRSIM_PACK_MAXCOLD` was later removed. The temporary
 > encoder override and separate realized ceiling were subsequently removed as
-> well; current sim and pack share the fps-only
-> `round(5400/fps)` baseline from `tools/av_config.py`, with optional higher
-> profile qualifications. The ring capacity is also derived there.
+> well; current sim and pack share the cadence baseline from
+> `tools/av_config.py`: generally `round(5400/fps)`, with a qualified
+> nominal-30-fps value of 200 and optional higher profile qualifications. The
+> ring capacity is also derived there.
 
 ## Scripts
 

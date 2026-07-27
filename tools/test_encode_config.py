@@ -147,6 +147,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_RAW_VF"], "setsar=1")
         self.assertEqual(
             profile.section("analysis")["source_canvas"], [320, 224])
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(env["CBRSIM_OUT"].endswith(
             "videos/SonicJamOp_H40_288x200_adpcm22/tmp"))
 
@@ -204,7 +205,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(
             env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"],
             str(av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES))
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "180")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
         self.assertEqual(
             env["CBRSIM_VRAM_TILES"],
             str(av_config.VRAM_PATTERN_POOL_TILES))
@@ -218,18 +219,18 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "raised-cold-cap.toml"
             path.write_text(PROFILE.replace(
-                "[palette]", "[encoder]\ncold_cap = 180\n\n[palette]"))
+                "[palette]", "[encoder]\ncold_cap = 210\n\n[palette]"))
             env = apply_profile_env(
                 load_profile(path), {"CBRSIM_COLD_CAP": "999"})
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "180")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
 
     def test_profile_cold_cap_below_baseline_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lowered-cold-cap.toml"
             path.write_text(PROFILE.replace(
-                "[palette]", "[encoder]\ncold_cap = 179\n\n[palette]"))
+                "[palette]", "[encoder]\ncold_cap = 199\n\n[palette]"))
             with self.assertRaisesRegex(
-                    ValueError, "cold_cap 179 is below baseline 180"):
+                    ValueError, "cold_cap 199 is below baseline 200"):
                 load_profile(path)
 
     def test_profile_cold_cap_must_be_an_integer(self) -> None:

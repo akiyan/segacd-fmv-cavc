@@ -80,20 +80,20 @@ def check_profiles() -> None:
         temp = Path(td)
         omitted_path = temp / "sonic-h40-omitted.toml"
         omitted_path.write_text(
-            source.replace("cold_cap = 190\n", ""), encoding="utf-8")
+            source.replace("cold_cap = 210\n", ""), encoding="utf-8")
         omitted = load_profile(omitted_path)
         omitted_env = {"CBRSIM_COLD_CAP": "999"}
         apply_profile_env(omitted, omitted_env)
-        assert omitted_env["CBRSIM_COLD_CAP"] == "180"
+        assert omitted_env["CBRSIM_COLD_CAP"] == "200"
 
         lower_path = temp / "sonic-h40-lower.toml"
         lower_path.write_text(
-            source.replace("cold_cap = 190", "cold_cap = 179"),
+            source.replace("cold_cap = 210", "cold_cap = 199"),
             encoding="utf-8")
         try:
             load_profile(lower_path)
         except ValueError as exc:
-            assert "below baseline 180" in str(exc)
+            assert "below baseline 200" in str(exc)
         else:
             raise AssertionError("below-baseline TOML cold cap was accepted")
     print("TOML mapping: OK (profile values replace polluted environment)")
@@ -103,7 +103,7 @@ def check_cold_caps() -> None:
     expected = (
         (15, 360),
         (24, 225),
-        (30, 180),
+        (30, 200),
     )
     for fps, cap in expected:
         assert av_config.cold_cap_for_fps(fps) == cap
