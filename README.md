@@ -106,8 +106,8 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
   on-disc binary format.
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
   assignment plus whole-movie quality planning.
-- [`PLAYER.md`](PLAYER.md): Main/Sub player memory maps, frame handoff, safe
-  allocation areas, CPU headroom, and qualification rules.
+- [`PLAYER.md`](PLAYER.md): Main/Sub player memory maps with named ranges,
+  unallocated space, the startup sequence, and the per-frame CPU handoff.
 - [`ANALYSIS.md`](ANALYSIS.md): every analysis-video panel, category, meter,
   timeline, and TSV field.
 - [`HUD.md`](HUD.md): the on-screen DEBUG HUD fields, units, limits, rendering,
@@ -426,8 +426,8 @@ timed-work valueとgraph maximumから除外します。
   binary format。
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
   割り当てとmovie全体quality planning。
-- [`PLAYER.md`](PLAYER.md): Main/Sub playerのmemory map、frame handoff、
-  安全なallocation領域、CPU余裕、qualification rule。
+- [`PLAYER.md`](PLAYER.md): 名前付きrangeによるMain/Sub playerのmemory map、
+  未割当領域、startup sequence、frameごとのCPU handoff。
 - [`ANALYSIS.md`](ANALYSIS.md): analysis videoの全panel、category、meter、
   timeline、TSV field。
 - [`HUD.md`](HUD.md): 画面上のDEBUG HUD field、unit、limit、rendering、OCR、
