@@ -226,9 +226,6 @@ $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT: moviepack
 # 既定はリリースビルド。DEBUG=1 でデバッグオーバーレイを有効化する。
 DEBUG ?= 0
 ISO_HOLD_N ?= 0
-# H40-only DEBUG diagnostic. Replaces Q/V with G/K while keeping O/E.
-# G is the maximum time outside the Sub CDC pump between service opportunities.
-SUB_POLL_GAP_DIAG ?= 0
 # Issue #27 Main-CPU straight-line bitmap handlers and fixed-geometry NT
 # blitters. H32/H40 full-playback validation is complete; MAIN_CODEGEN=0 keeps
 # the byte-identical reference player available for fallback/A-B diagnostics.
@@ -258,7 +255,7 @@ $(SP_EXTENSION_CONSTANTS): $(SP_EXTENSION_BIN) tools/sp_extension.py tools/av_co
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(BOOT_DIR)/security.bin $(MOVIEPLAY_STREAM_DIR)/palettes.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(BOOT_DIR)/dbgfont.bin tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(SUB_POLL_GAP_DIAG)),--defsym SUB_POLL_GAP_DIAG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
 	$(PYTHON) tools/gen_debugfont.py
@@ -274,13 +271,13 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(SUB_POLL_GAP_DIAG)),--defsym SUB_POLL_GAP_DIAG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $<
 	@bytes=$$(wc -c < $@); \
-		if [ "$$bytes" -gt 4096 ]; then \
-			echo "ERROR: $@ is $$bytes bytes; the resident Sub base image is limited to 4096 bytes" >&2; \
+		if [ "$$bytes" -gt 8192 ]; then \
+			echo "ERROR: $@ is $$bytes bytes; the boot system area reserves 8192 bytes for SP" >&2; \
 			rm -f $@; \
 			exit 1; \
 		fi

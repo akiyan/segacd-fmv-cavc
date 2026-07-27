@@ -5,7 +5,7 @@ This harness separates two similarly shaped but different measurements:
 - Timeline `status_prg` is the packer's modeled end-of-frame PrgBuf occupancy.
 - H40 DEBUG HUD `Q` is the player's live signed minimum logical balance reached
   during that frame, in exact 32-byte patterns.
-- H40 `SUB_POLL_GAP_DIAG` HUD `G` measures the longest interval outside a Sub
+- H40 HUD `G` measures the longest interval outside a Sub
   CDC pump opportunity; `B` proves APPLY control-queue back-pressure rejected
   a pump, and `K` identifies the MSF-gap subset of `S`.
 
@@ -29,7 +29,7 @@ rejected without changing playback scheduling or image-quality settings.
 ## Usage
 
 Analyze the timed part of H40 Bad Apple while excluding the terminal drain.
-For a `G/K/O/E` recording, include the expected 30 fps cadence:
+For a recording containing `G/K`, include the expected 30 fps cadence:
 
 ```sh
 tools/python.sh harness/prgbuf_low_water/analyze.py \

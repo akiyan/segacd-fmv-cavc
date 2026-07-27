@@ -17,5 +17,6 @@ SECTIONS
   {
     *(.bss)
   }
-}
 
+  ASSERT(. <= 0x008000, "resident Sub image exceeds its initial PRG allocation")
+}

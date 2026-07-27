@@ -275,8 +275,19 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
   costs too much bandwidth.
 - 1M/1M Word RAM bank swaps are cheap enough for frame-granular buffering.
 - RF5C164 wave RAM writes use the odd byte window and correct PCM bank select.
-- PRG-RAM `0x6800-0x8000` is unsafe during continuous reads; BIOS code touches
-  it. Prefer safe high PRG areas for routing and queues.
+- Keep three Sub-program domains separate: the SP source inside the disc system
+  area, the BIOS-loaded resident destination in Sub PRG-RAM, and boot-only
+  scratch in Sub PRG-RAM. The BIOS can load a multi-sector SP; the former 4 KiB
+  limit was a project layout caused by placing its disc source at `0x7000` in a
+  32 KiB boot image and reusing PRG `0x7000` as ISO scratch. The active layout
+  places the source at `0x6000`, reserves up to 8 KiB at resident PRG `0x6000`,
+  and moves the 64 KiB ISO scratch to the inactive timed-ring tail
+  `0x67000..0x76FFF`.
+- Do not infer generic live scratch from unused bytes inside the 8 KiB SP
+  reservation. Only the exact linked resident prefix is playback-qualified.
+  Marker tests qualify rewritten scratch at `0x08000..0x097FF`;
+  `0x09800..0x0BFFF` is BIOS-touched during continuous reads. Prefer checked
+  high PRG allocations for routing and queues.
 - Long CDC drain gaps can silently drop sectors. Streaming code must keep
   pumping while Main CPU work is happening.
 - In Sub-CPU wait loops, service an already-arrived or already-cleared
@@ -284,6 +295,25 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
   Main is genuinely idle; once the handshake is pending, future-data work must
   not consume the current fixed-cadence display deadline.
 - `total_len` fields in apply/control blocks must stay even.
+
+### CD 1x deadline invariant
+
+- Treat the timed BODY read as an absolute 75-sector/s physical service clock
+  at every point in playback. CD 1x is not a whole-movie average budget.
+- Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
+  display deadline, including only startup lead that the model explicitly
+  proves. A routing-table slot limit is a format capacity, not proof that the
+  slot can be delivered by its deadline.
+- Never accept a heavy slot that creates positive rate lead on the assumption
+  that a later light slot, omitted pad, or a zero final average will repay it.
+  Later work can repair byte accounting; it cannot return display time that
+  has already elapsed. Exact finite-buffer schedules therefore require zero
+  rate lead at every prefix, not merely at the end.
+- Prove three conditions separately for any delivery change: on-disc route
+  capacity, cumulative physical delivery by every deadline, and finite
+  producer/consumer-buffer bounds. Fix a violated construction condition
+  before considering a larger APPLY ring, a smaller PrgBuf, or another buffer
+  trade that would only absorb the invalid lead.
 
 ### VDP DMA rules (measured)
 
@@ -391,6 +421,46 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
 
 ## Debugging Method — additions
 
+- **Identify the owner before optimizing work.** State the object, operation,
+  CPU, and memory domain. Main-CPU run/locality work does not remove a
+  Sub-CPU pump, audio, copy, or handoff bottleneck, and player optimization
+  does not repair an encoder schedule that exceeds a physical deadline.
+- **Keep target quality fixed while testing a regression.** Resolution, fps,
+  cold cap, filters, palette policy, and other target-quality settings stay
+  fixed. Encoder decisions and concrete sim results may change when the model
+  is corrected. Lowering workload until a failure disappears measures a
+  workaround, not the original regression. If a previously qualified quality
+  point now fails, treat it as a regression; once failure is reproduced at or
+  below that baseline, stop lowering the cold cap. Resume upper-bound tuning
+  only after the cause is corrected at the original quality point.
+- **Separate correctness, non-regression, and measured benefit.** A change can
+  be valid and playback-safe without addressing the observed failure. Prefer a
+  player-only A/B on the same packed stream, and report those three conclusions
+  independently. Do not automatically stack the next optimization stage, spend
+  PrgBuf/APPLY capacity, or enlarge resident code merely because the preceding
+  change was theoretically faster; require an observable benefit or a separate
+  correctness need.
+- **Interpret waiting in context, not as severity.** A faster Sub path can
+  reach the next sector wait earlier and therefore increase HUD `C`; that alone
+  is neither improvement nor regression. Keep `C` diagnostic-only and read it
+  with `S/D/R`, visible playback, cadence, `J`, `A`, and `W`.
+- **A graph near zero is not proof of zero.** Fixed whole-movie scales can hide
+  a small positive balance. Add an exact signed diagnostic when zero,
+  underflow, wraparound, or debt matters, and preserve its per-frame minimum
+  rather than inferring it from a circular pointer distance.
+- **Use HUD fields to falsify hypotheses, then follow transitions.** Add the
+  smallest measurement that can disprove the current explanation. Correlation
+  at one low-water interval is not causation; align encoder decisions, live
+  balances, queue guards, displayed-frame cadence, and cumulative recovery
+  transitions on one frame axis before naming the cause. Instrumentation must
+  remain observational rather than steering playback. When added HUD work or
+  a unified layout increases runtime cost, requalify the instrumented standard
+  build on representative fast and slow cadences before relying on its data.
+- **Derive resources from cadence, then qualify each cadence.** Control size,
+  PCM work, routing lifetime, PrgBuf ceiling, jitter, and resident-code margin
+  differ with fps. Use one fps-derived source of truth rather than a 15fps or
+  30fps exception, and run representative full-playback checks for both slow
+  and fast cadences after shared player or scheduler changes.
 - **Treat failures near the first frames as startup-sequence failures until
   proven otherwise.** The boot/header drain, frame-0 expansion, PrgBuf
   prebuffer, Word-RAM handoff, continuous `BODY.DAT` read start, first routing

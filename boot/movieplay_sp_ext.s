@@ -124,6 +124,7 @@ routing_prepare:
 	move.w	#1, (a4)
 	clr.w	(a5)
 	move.w	#1, 4(a5)
+
 	moveq	#0, d0
 	rts
 

@@ -136,20 +136,12 @@
 .if PC_MODE == 1
 /* H40 DEBUG builds fill the four cells left after the common HUD with the
    signed per-frame PrgBuf minimum, then append the three flip-phase fields.
-   SUB_POLL_GAP_DIAG replaces Q/V with the maximum time spent outside the Sub
-   CDC pump and the cumulative MSF-gap recovery count, retaining O/E and the
-   same 40-cell geometry.
+   The standard second row adds G/K in its first six cells. G is the maximum
+   time spent outside the Sub CDC pump and K is the cumulative MSF-gap recovery
+   count.
    H32's 32-cell row has no room for these H40-only fields. */
 .equ HUD_FLIP_FIELDS, 1
-.ifdef SUB_POLL_GAP_DIAG
 .equ HUD_SUB_POLL_GAP, 1
-.endif
-.endif
-.endif
-
-.ifdef SUB_POLL_GAP_DIAG
-.ifndef HUD_SUB_POLL_GAP
-.error "SUB_POLL_GAP_DIAG requires a specialized H40 DEBUG build"
 .endif
 .endif
 
@@ -1185,7 +1177,7 @@ bf_flip:
 .ifdef NT_DMA_FLIP
 	bsr	nt_dma_flip			/* whole back NT in ~11 blank lines */
 .ifdef DEBUG
-	bsr	publish_dbg			/* republish: the DMA replaced HUD row 0 */
+	bsr	publish_dbg			/* republish: the DMA replaced HUD rows */
 .endif
 .endif
 	move.l	#0xC0000000, (VDP_CTRL).l	/* CRAM addr 0 */
@@ -1201,7 +1193,7 @@ bf_doflip:
 	   switch there horizontally splices the old and new name tables at the
 	   current scanline.  Build the HUD row in Main RAM and copy it into the
 	   inactive video name table before the cadence wait.  The target VBlank then
-	   switches reg2, so the fixed 11/14-MOVE.L HUD copy is
+	   switches reg2, so the fixed 15/20/23-MOVE.L HUD copy is
 	   off the display deadline and cannot lead or defer the picture.  Re-check
 	   immediately before the atomic flip; count a newly waited VBlank through
 	   wait_vb_start just like a split DMA. */
@@ -1218,7 +1210,7 @@ bf_doflip:
 	bsr	wait_vb_start			/* NT DMA needs the blank head */
 	bsr	nt_dma_flip
 .ifdef DEBUG
-	bsr	publish_dbg			/* republish: the DMA replaced HUD row 0 */
+	bsr	publish_dbg			/* republish: the DMA replaced HUD rows */
 .endif
 .endif
 .endif
@@ -1884,8 +1876,8 @@ wait_vblank:
    copy; reg2 selects the completed picture and HUD atomically.
    Category glyphs are omitted to reserve cells for future supply metrics.
    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx = 30 words.
-   H40 DEBUG appends Q/V/O/E = 40 words; the poll-gap diagnostic substitutes
-   G/K/O/E with the same widths. Q and G are four digits.
+   H40 DEBUG appends Q/V/O/E = 40 words. The poll-gap diagnostic keeps that
+   row and appends G/K = 6 words on row 1. Q and G are four digits.
 	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
@@ -1954,24 +1946,6 @@ prepare_dbg:
 2:
 	DBG_PUT2
 .ifdef HUD_FLIP_FIELDS
-.ifdef HUD_SUB_POLL_GAP
-	/* G: maximum time spent outside the Sub CDC pump between service
-	   opportunities during this frame, in 30.72 us stopwatch ticks. Bit 15
-	   carries B when APPLY back-pressure rejected a control-sector pump.
-	   Sub stores B in CTRLWAIT's unused high-byte sign bit so it cannot
-	   interfere with the running G maximum. */
-	move.w	(PROBE_BANK+STATUS_OFF+0x24).l, d4
-	tst.b	(PROBE_BANK+STATUS_OFF+0x18).l
-	bpl.s	9f
-	ori.w	#0x8000, d4
-9:
-	DBG_PUT4
-	/* K: cumulative MSF sequence-gap recoveries packed into S's high byte.
-	   S's low byte remains the total slip/recovery count. */
-	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d4
-	lsr.w	#8, d4
-	DBG_PUT2
-.else
 	/* Q: signed minimum logical PrgBuf balance observed during this frame,
 	   in exact 32-byte patterns.  0000 is truly empty; FFFF is one-pattern
 	   underflow.  Unlike tail-head modulo arithmetic, it cannot turn an
@@ -1982,13 +1956,30 @@ prepare_dbg:
 	   its own frame's flip, so the freshest sample is one frame old). */
 	move.w	flip_hv_v, d4
 	DBG_PUT2
-.endif
 	/* O: that flip's interval excess over 1024 ticks (nominal N2 ~1086) */
 	move.w	arm_overshoot, d4
 	DBG_PUT2
 	/* E: this frame's Pass2 entry delay since the previous flip, ticks/4 */
 	move.w	pass2_entry_q, d4
 	DBG_PUT2
+.ifdef HUD_SUB_POLL_GAP
+	/* G: maximum time spent outside the Sub CDC pump between service
+	   opportunities during this frame, in 30.72 us stopwatch ticks. Bit 15
+	   carries B when APPLY back-pressure rejected a control-sector pump.
+	   Sub stores B in CTRLWAIT's unused high-byte sign bit so it cannot
+	   interfere with the running G maximum. */
+	move.w	(PROBE_BANK+STATUS_OFF+0x26).l, d4
+	tst.b	(PROBE_BANK+STATUS_OFF+0x18).l
+	bpl.s	9f
+	ori.w	#0x8000, d4
+9:
+	DBG_PUT4
+	/* K: cumulative MSF sequence-gap recoveries packed into S's high byte.
+	   S's low byte remains the total slip/recovery count. */
+	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d4
+	lsr.w	#8, d4
+	DBG_PUT2
+.endif
 .endif
 .ifdef HUD_HEX_TABLE
 	movem.l	(sp)+, d0-d4/a0-a1
@@ -2012,9 +2003,21 @@ publish_dbg:
 	lea	dbg_row, a0
 .ifdef PLAYER_SPECIALIZED
 .ifdef HUD_FLIP_FIELDS
-	.rept 20				/* 40 cells: common 30 + Q/V/O/E or G/K/O/E */
+	.rept 20				/* row 0: common 30 + Q/V/O/E */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+.ifdef HUD_SUB_POLL_GAP
+	/* H40 name tables use a 64-cell pitch: publish G/K at row 1, col 0. */
+	moveq	#0, d0
+	move.w	back_idx, d0
+	lsl.l	#8, d0
+	lsl.l	#5, d0
+	add.l	#NT0+0x80, d0
+	bsr	set_vram_write
+	.rept 3				/* row 1: GGGG KK */
+	move.l	(a0)+, (VDP_DATA).l
+	.endr
+.endif
 .else
 	.rept 15
 	move.l	(a0)+, (VDP_DATA).l
@@ -2080,7 +2083,11 @@ dbg_hex_pairs:
 shadow:
 	.space 0x1000				/* logical H40=2240B; padded for bounded list offsets */
 dbg_row:
+.ifdef HUD_SUB_POLL_GAP
+	.space 46*2				/* H40 rows: 40-cell primary + 6-cell G/K */
+.else
 	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
+.endif
 nt_stage:
 	.space 64*28*2				/* zero-bordered visible H40 staging for flip-blank DMA */
 .ifndef PLAYER_SPECIALIZED

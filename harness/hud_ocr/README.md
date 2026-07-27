@@ -8,9 +8,9 @@ common H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 extended H40:   xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx xxxx xx xx xx
 ```
 
-The common order is `F/P/S/D/R/L/C/W/M/A/U/N/J`. Ordinary extended H40
-appends `Q/V/O/E`; an opt-in `SUB_POLL_GAP_DIAG=1` build appends `G/K/O/E`
-instead. `F/U/Q/G` contain four hexadecimal digits. `L` is the high byte of the audio lead;
+The common order is `F/P/S/D/R/L/C/W/M/A/U/N/J`. Standard H40 DEBUG appends
+`Q/V/O/E` on row 0 and `G/K` in the first six cells of row 1. `F/U/Q/G` contain four
+hexadecimal digits. `L` is the high byte of the audio lead;
 `P`, `S`, `D`, `R`, `C`, `W`, `M`, `A`, and `N` show two hexadecimal digits. There
 `U` is the Main pattern-transfer time in 30.72 us Mega-CD stopwatch ticks, and
 `N` is the low byte of the packed cold-run descriptor count (wrapping at 256).
@@ -19,9 +19,10 @@ patterns (`0000` empty, `FFFF` one-pattern underflow). `G` low 12 bits are the
 longest interval outside a Sub CDC pump opportunity in 30.72 us ticks; bit 15
 is decoded separately as `B`, the per-frame APPLY back-pressure marker. `K`
 counts cumulative MSF-gap recoveries. The player formats these
-values into a 30-word common or 40-word extended Main-RAM row before display
-pacing, then publishes it with fixed longword writes over the first cells of
-the inactive movie Plane A table. The
+values into a 30-word common, 40-word extended, or 46-word combined Main-RAM
+area before display pacing, then publishes it with fixed longword writes over
+the first cells of row 0 and, for the combined layout, row 1 of the inactive
+movie Plane A table. The
 final control-port word switches to that complete picture-and-HUD table. Its
 VBlank guard rejects terminal V-counter lines `0xFC..0xFF`, keeping the HUD and
 picture aligned without extending a 30 fps frame to a third scanout.
@@ -37,7 +38,7 @@ tools/python.sh harness/hud_ocr/verify.py
 
 It renders the actual generated font onto H32- and H40-sized frames, verifies
 all visible fields and their widths, covers `00`/`FF` byte values and negative
-four-digit `Q`, covers the `G/K/O/E` layout, and confirms that
+four-digit `Q`, covers simultaneous `Q/V/O/E` and `G/K` across two rows, and confirms that
 the older `read_frameno()` API still reads an isolated `Fxxxx` field without
 requiring the rest of the HUD. The synthetic source is deliberately bright and
 noisy; the proof models opaque font cells and also verifies that the unused

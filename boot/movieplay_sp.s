@@ -49,21 +49,12 @@
 .ifdef DEBUG
 .ifdef PLAYER_SPECIALIZED
 .if PC_MODE == 1
-.ifdef SUB_POLL_GAP_DIAG
-.equ DEBUG_SUB_POLL_GAP, 1
-.else
 .equ DEBUG_PRGBUF_Q, 1
 .if PC_PUMP_MASK == 0x03FF
 .equ DEBUG_PRGMIN_DIRECT, 1
 .endif
+.equ DEBUG_SUB_POLL_GAP, 1
 .endif
-.endif
-.endif
-.endif
-
-.ifdef SUB_POLL_GAP_DIAG
-.ifndef DEBUG_SUB_POLL_GAP
-.error "SUB_POLL_GAP_DIAG requires a specialized H40 DEBUG build"
 .endif
 .endif
 
@@ -124,7 +115,7 @@
 .equ COMSTAT2,    SUB_GA_BASE+0x0024
 .equ GA_STOPWATCH,SUB_GA_BASE+0x000C    /* 12-bit, 30.72us/tick */
 /* The 68000 absolute-word form sign-extends 0x800C to the same 24-bit bus
-   address and saves two bytes in the opt-in 4 KiB diagnostic image. */
+   address and saves two bytes in the DEBUG diagnostic image. */
 .equ GA_STOPWATCH_ABS_W,GA_STOPWATCH-0x01000000
 
 .equ SUB_BANK_1M, 0x000C0000
@@ -160,10 +151,11 @@
 .equ ROUTING_BANK_COPIES,   2
 
 /* --- PRG-RAM layout --- */
-/* The resident image remains within 0x6000..0x6FFF. Extra one-shot code is
-   carried in existing HEADER preload padding and copied to the timed-ring tail
-   before frame-0 scratch reuses that range. */
-.equ ISO_BUF,     0x00007000        /* ISO初期化用(streaming前のみ・BIOS領域を一時利用) */
+/* The BIOS loads this resident image at 0x6000. ISO directory discovery uses
+   the timed-ring tail only during boot, before any PrgBuf/frame-0 owner exists,
+   so the initial SP may extend beyond the former 4 KiB project layout. */
+.equ ISO_BUF,     0x00067000
+.equ ISO_BUF_BYTES, 0x00010000
 .equ SUB_PRG_SAFE_BASE, 0x00008000
 .equ SUB_PRG_SAFE_END,  0x00009800
 .equ PCM_DEC_BUF,       0x00008000  /* Sub専用decoded PCM scratch。Word-RAM DMAと競合させない */
@@ -189,6 +181,9 @@
 .endif
 .if ADPCM_LUT_END > 0x0000D000
 .error "hot ADPCM tables exceed their reserved PrgBuf page"
+.endif
+.if ISO_BUF+ISO_BUF_BYTES > 0x00077000
+.error "boot ISO directory scratch overlaps timed APPLY"
 .endif
 .if SP_EXTENSION_EXEC_BASE != ADPCM_BOOT_COPY
 .error "loaded Sub extension address differs from ADPCM_BOOT_COPY"
@@ -268,10 +263,11 @@
 .equ O_AUDIOLEFT,O_STATUS+0x1C
 .equ O_RESYNC, O_STATUS+0x20
 .equ O_LEAD,   O_STATUS+0x22
-.ifdef DEBUG_SUB_POLL_GAP
-.equ O_PUMPGAP,O_STATUS+0x24
-.else
+.ifdef DEBUG_PRGBUF_Q
 .equ O_PRGMIN, O_STATUS+0x24
+.endif
+.ifdef DEBUG_SUB_POLL_GAP
+.equ O_PUMPGAP,O_STATUS+0x26
 .endif
 .equ O_HDR,    O_STATUS+0x80
 .equ PALTAB_STAGE_OFF, 0x0000
@@ -1555,7 +1551,7 @@ ef_bm:
 	bne.s	ef_list_audio
 	/* v16 aligns the 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
-	   runtime branch or code-size cost to the resident 4 KiB Sub base image. */
+	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
 	move.w	#((PC_BMBYTES+1)&0xFFFE), d0
 	adda.w	d0, a0				/* entries */

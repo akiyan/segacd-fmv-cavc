@@ -22,6 +22,7 @@ SP = ROOT / "boot/movieplay_sp.s"
 SP_EXT = ROOT / "boot/movieplay_sp_ext.s"
 IP = ROOT / "boot/movieplay_ip.s"
 BOOT = ROOT / "boot/movieplay_boot.s"
+SP_LD = ROOT / "cfg/sp.ld"
 SP_EXT_LD = ROOT / "cfg/sp_ext.ld"
 MAKEFILE = ROOT / "Makefile"
 QUALIFIED_ADPCM_BOOT_COPY_BYTES = 0x58
@@ -32,6 +33,7 @@ sp_text = SP.read_text()
 sp_ext_text = SP_EXT.read_text()
 ip_text = IP.read_text()
 boot_text = BOOT.read_text()
+sp_ld_text = SP_LD.read_text()
 sp_ext_ld_text = SP_EXT_LD.read_text()
 make_text = MAKEFILE.read_text()
 
@@ -89,8 +91,6 @@ if (
 ):
     sys.exit(
         "check_player_ring: the qualified 88-byte ADPCM boot entry changed")
-
-
 def pc(name: str) -> int:
     if not pc_text:
         sys.exit(
@@ -269,6 +269,17 @@ for token, description in (
         sys.exit(f"check_player_ring: boot handoff is missing {description}")
 if any(symbol in sp_text for symbol in (".equ O_CRAM,", ".equ O_NUPD,", ".equ O_UPDS,")):
     sys.exit("check_player_ring: removed O_CRAM/O_NUPD/O_UPDS allocation returned")
+for token, description in (
+        (".equ O_PRGMIN, O_STATUS+0x24", "signed PrgBuf HUD status word"),
+        (".equ O_PUMPGAP,O_STATUS+0x26", "Sub pump-gap HUD status word")):
+    if token not in sp_text:
+        sys.exit(
+            f"check_player_ring: missing {description} at its fixed offset")
+require(
+    ip_text,
+    r"^\s*move\.w\s+\(PROBE_BANK\+STATUS_OFF\+0x26\)\.l,\s*d4\s*$",
+    "separate Main-side Sub pump-gap HUD read",
+)
 require(
     sp_text,
     r"^\s*lea\s+\(CTRL_SCR\+8\)\.l,\s*a2\s*$",
@@ -334,6 +345,8 @@ apply_base = equ(sp_text, "APPLY_BASE", SP)
 apply_size = equ(sp_text, "APPLY_SIZE", SP)
 f0pat_tmp = equ(sp_text, "F0PAT_TMP", SP)
 routing_tmp = equ(sp_text, "ROUTING_TMP", SP)
+iso_buf = equ(sp_text, "ISO_BUF", SP)
+iso_buf_bytes = equ(sp_text, "ISO_BUF_BYTES", SP)
 sub_prg_safe_base = equ(sp_text, "SUB_PRG_SAFE_BASE", SP)
 sub_prg_safe_end = equ(sp_text, "SUB_PRG_SAFE_END", SP)
 pcm_dec_buf = equ(sp_text, "PCM_DEC_BUF", SP)
@@ -358,6 +371,14 @@ if f0pat_tmp + max_f0_bytes != routing_tmp:
     sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
 if routing_tmp + ttrc_routing.ROUTE_BYTES > apply_base + apply_size:
     sys.exit("check_player_ring: maximum routing staging exceeds APPLY")
+if (
+        iso_buf != av_config.SUB_BOOT_ISO_BUF_BASE
+        or iso_buf_bytes != av_config.SUB_BOOT_ISO_BUF_BYTES
+        or iso_buf + iso_buf_bytes != av_config.SUB_BOOT_ISO_BUF_END
+):
+    sys.exit("check_player_ring: boot ISO scratch differs from config")
+if iso_buf + iso_buf_bytes > apply_base:
+    sys.exit("check_player_ring: boot ISO scratch reaches timed APPLY")
 if (
         sub_prg_safe_base != av_config.SUB_PRG_SAFE_BASE
         or sub_prg_safe_end != av_config.SUB_PRG_SAFE_END
@@ -434,16 +455,22 @@ if "ADPCM_TABLE" in decoder:
     sys.exit("check_player_ring: decoder still directly uses the full Word table")
 
 
-# The BIOS boot image contains only the resident 4 KiB Sub module. The packer
-# places the exact linked extension after the ADPCM tables in their existing
-# five-sector HEADER preload; the base copies it to the timed-ring tail.
+# The BIOS directly loads the multi-sector resident Sub module. Its disc-system
+# source range, live PRG destination, and boot-only ISO scratch are independent
+# ownership contracts. The packer still places the exact one-shot extension
+# after the ADPCM tables in their existing five-sector HEADER preload.
 for pattern, description in (
-        (r"SP_Addr:\s*\n\s*\.long\s+0x00007000\b",
-         "Sub boot source at 0x7000"),
-        (r"^\s*\.org\s+0x7000\s*$", "resident Sub boot source"),
+        (r"SP_Addr:\s*\n\s*\.long\s+0x00006000\b",
+         "Sub boot source at 0x6000"),
+        (r"^\s*\.org\s+0x6000\s*$", "resident Sub boot source"),
         (r"^\s*\.align\s+0x8000\s*$", "32 KiB boot image bound"),
 ):
     require(boot_text, pattern, description)
+require(
+    sp_ld_text,
+    r'ASSERT\(\.\s*<=\s*0x008000,\s*"resident Sub image exceeds',
+    "8 KiB resident Sub linker assertion",
+)
 if re.search(
         r'^\s*\.incbin\s+"movieplay_sp_ext\.bin"\s*$',
         boot_text, re.MULTILINE):
@@ -508,10 +535,20 @@ if "rt_validate:" in sp_text or "rt_copy:" in sp_text:
     sys.exit(
         "check_player_ring: boot-only routing preparation returned to the "
         "resident Sub image")
+for token in (
+        ".equ GA_STOPWATCH_ABS_W,GA_STOPWATCH-0x01000000",
+        "move.w\t(GA_STOPWATCH_ABS_W).w, d0",
+        "move.w\tpoll_max_gap, (O_PUMPGAP).l",
+        "poll_last_tick:",
+        "poll_max_gap:",
+):
+    if token not in sp_text:
+        sys.exit(
+            f"check_player_ring: inline Sub diagnostic is missing {token!r}")
 require(
     make_text,
-    rf'if \[ "\$\$bytes" -gt {av_config.SUB_BOOT_BASE_BYTES} \]; then',
-    "resident Sub base-size Makefile guard",
+    rf'if \[ "\$\$bytes" -gt {av_config.SUB_BOOT_IMAGE_MAX_BYTES} \]; then',
+    "resident Sub image-size Makefile guard",
 )
 require(
     make_text,
@@ -540,5 +577,6 @@ if ip_max_seg != av_config.PALTAB_MAX_SEG:
 
 print(
     "check_player_ring: OK  PrgBuf, APPLY, PRG PCM/hot ADPCM, "
-    "HEADER-preloaded extension, Word delta, DicBuf, palette and "
+    "BIOS-loaded resident Sub image, HEADER-preloaded boot extension, "
+    "Word delta, DicBuf, palette and "
     "route-aware pump contracts")

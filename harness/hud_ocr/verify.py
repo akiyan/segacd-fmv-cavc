@@ -39,14 +39,29 @@ def make_hud(width, values, origin=(5, 4), complete=True, black_backing=False,
         layout = read_frameno.hud_layout_for_width(width)
     fields = layout if complete else layout[:1]
     if black_backing:
-        cells = max(col + digits for _name, col, digits in layout)
-        image[y:y + read_frameno.CELL,
-              x:x + cells * read_frameno.CELL] = 0
-    for name, col, digits in fields:
+        for _name, logical_col, digits in layout:
+            col, row = read_frameno.hud_layout_field_position(
+                layout, logical_col
+            )
+            image[
+                y + row * read_frameno.CELL:
+                y + (row + 1) * read_frameno.CELL,
+                x + col * read_frameno.CELL:
+                x + (col + digits) * read_frameno.CELL,
+            ] = 0
+    for name, logical_col, digits in fields:
+        col, row = read_frameno.hud_layout_field_position(
+            layout, logical_col
+        )
         gx = x + col * read_frameno.CELL
         text = f"{values[name] & ((1 << (digits * 4)) - 1):0{digits}X}"
         for j, char in enumerate(text):
-            _draw_cell(image, gx + j * read_frameno.CELL, y, GLYPHS[char])
+            _draw_cell(
+                image,
+                gx + j * read_frameno.CELL,
+                y + row * read_frameno.CELL,
+                GLYPHS[char],
+            )
     return Image.fromarray(image, "L")
 
 
@@ -112,6 +127,28 @@ def main():
                      "G": 0x0456,
                      "K": 0x12, "O": 0x3E, "E": 0x88}, (0, 3),
                layout=read_frameno.HUD_H40_POLL_GAP_LAYOUT)
+    if read_frameno.HUD_H40_COMBINED_CELLS != 46:
+        raise SystemExit(
+            f"H40 combined HUD has "
+            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 46"
+        )
+    if read_frameno.hud_layout_dimensions(
+        read_frameno.HUD_H40_COMBINED_LAYOUT
+    ) != (40, 2):
+        raise SystemExit("H40 combined HUD must occupy 40x2 cells")
+    check_case(
+        320,
+        {
+            "F": 0x0A99, "P": 0x0C, "S": 0x00,
+            "D": 0x00, "R": 0x00, "L": 0x38,
+            "C": 0x00, "W": 0x63, "M": 0x01, "A": 0x42,
+            "U": 0x023D, "N": 0x87, "J": 0x0E,
+            "Q": 0xFFFD, "V": 0xF2, "O": 0x3E, "E": 0x88,
+            "G": 0x8456, "K": 0x12,
+        },
+        (0, 3),
+        layout=read_frameno.HUD_H40_COMBINED_LAYOUT,
+    )
 
     h40 = np.asarray(make_hud(
         320, {"F": 0x0000, "P": 0x00, "S": 0x00, "D": 0x00,
@@ -132,7 +169,8 @@ def main():
             f"standalone F API: got {frame:04X}/{confidence:.3f}, expected CAFE")
 
     print("HUD OCR proof: OK (values only, common H32/H40 30 cells, "
-          "unused H40 width movie-visible, standalone F compatible)")
+          "combined H40 40+6 cells over two rows, unused H40 width "
+          "movie-visible, standalone F compatible)")
 
 
 if __name__ == "__main__":
