@@ -246,7 +246,7 @@ tools/python.sh tools/check_player_ring.py \
   --constants out/PROFILE/player_constants.inc \
   --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
   --extension-constants tmp/PROFILE/build/sp_extension.inc
-make movieplay CONFIG=configs/PROFILE.toml \
+make movieplay CONFIG=profiles/PROFILE.toml \
   DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-size -A \
@@ -490,7 +490,7 @@ tools/python.sh tools/check_player_ring.py \
   --constants out/PROFILE/player_constants.inc \
   --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
   --extension-constants tmp/PROFILE/build/sp_extension.inc
-make movieplay CONFIG=configs/PROFILE.toml \
+make movieplay CONFIG=profiles/PROFILE.toml \
   DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-size -A \

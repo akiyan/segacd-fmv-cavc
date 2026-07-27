@@ -168,7 +168,7 @@ validated the new fields and immediately restructured the model:
   emulator-level artifact.  Break location also moved p74→p75 (1107 →
   471), confirming build-level phase sensitivity of marginal frames.
 
-The current production profile is `configs/sonic-jam-op-h40.toml`; its
+The current production profile is `profiles/sonic-jam-op.toml`; its
 source-qualified cap is recorded as `[encoder].cold_cap`. Historical ladder
 artifacts retain their cap-suffixed output names, but no separate Sonic H40
 profile is needed for each specimen.

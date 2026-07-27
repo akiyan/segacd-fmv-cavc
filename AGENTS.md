@@ -220,7 +220,7 @@ within Sega CD limits, not fixed presets:
   BUSREQ-based feeding contends with Main CPU video work.
 
 The old `OP.STR` / RLE and `PROBE.BIN` bring-up paths have been removed.
-`make disc CONFIG=configs/PROFILE.toml` builds the `HEADER.DAT` + `BODY.DAT`
+`make disc CONFIG=profiles/PROFILE.toml` builds the `HEADER.DAT` + `BODY.DAT`
 disc played by `boot/movieplay_*.s`. The TOML filename is the artifact identity:
 packed stream files live under `out/PROFILE/`, transient build, disc-staging,
 and direct-emulator scratch files live under `tmp/PROFILE/`, and the bootable
@@ -536,7 +536,7 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
 - Prefer:
 
 ```sh
-tools/record_movie.sh --config configs/PROFILE.toml \
+tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
 ```
 

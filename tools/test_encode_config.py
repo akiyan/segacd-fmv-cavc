@@ -53,7 +53,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_required_profile_is_consumed_as_first_positional_argument(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        profile_path = root / "configs" / "bad-apple-h32.toml"
+        profile_path = root / "profiles" / "bad-apple.toml"
         argv = ["sim.py", str(profile_path)]
         with patch.dict(os.environ, {}, clear=False):
             profile = consume_config_arg(argv, required=True)
@@ -62,7 +62,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_required_profile_preserves_following_frame_range(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        profile_path = root / "configs" / "bad-apple-h32.toml"
+        profile_path = root / "profiles" / "bad-apple.toml"
         argv = ["render_analysis.py", str(profile_path), "10", "20"]
         with patch.dict(os.environ, {}, clear=False):
             consume_config_arg(argv, required=True)
@@ -75,19 +75,35 @@ class EncodeProfileArtifactTests(unittest.TestCase):
     def test_legacy_config_option_is_rejected(self) -> None:
         with self.assertRaisesRegex(SystemExit, "positional; do not use --config"):
             consume_config_arg(
-                ["sim.py", "--config", "configs/bad-apple-h32.toml"],
+                ["sim.py", "--config", "profiles/bad-apple.toml"],
                 required=True,
             )
 
     def test_all_repository_profiles_have_measured_cold_cap_coverage(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        for path in sorted((root / "configs").glob("*.toml")):
+        for path in sorted((root / "profiles").glob("*.toml")):
             with self.subTest(profile=path.name):
                 load_profile(path)
 
+    def test_repository_profile_names_are_canonical(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        self.assertEqual(
+            {path.name for path in (root / "profiles").glob("*.toml")},
+            {
+                "bad-apple.toml",
+                "lunar-sss-op-h32.toml",
+                "lunar-sss-op-h40.toml",
+                "machi-ed.toml",
+                "machi-op.toml",
+                "ps2-sakura-op-h32.toml",
+                "sonic-jam-op.toml",
+                "tears-of-steel-h32.toml",
+            },
+        )
+
     def test_bad_apple_h40_uses_source_endpoint_snap(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        h40 = load_profile(root / "configs/bad-apple-h40.toml")
+        h40 = load_profile(root / "profiles/bad-apple.toml")
         inherited = {
             "CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX": "9",
             "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN": "246",
@@ -104,31 +120,17 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(
             env["CBRSIM_OUT"].endswith(
-                "videos/BadApple_H40_320x224_adpcm22/tmp"))
+                "videos/BadApple_H40_320x224_adpcm22_cold210/tmp"))
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
         self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)
 
-    def test_bad_apple_h32_is_full_cover_adpcm22(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        h32 = load_profile(root / "configs/bad-apple-h32.toml")
-        env = apply_profile_env(h32, {})
-        self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "crop")
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "896")
-        self.assertEqual(env["CBRSIM_RESIZE_FILTER"], "area")
-        self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
-        self.assertEqual(
-            env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX"], "2")
-        self.assertEqual(
-            env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN"], "253")
-        self.assertTrue(env["CBRSIM_OUT"].endswith(
-            "videos/BadApple_H32_256x224_adpcm22/tmp"))
-
     def test_sonic_h40_encodes_only_native_truemotion_raster(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "configs/sonic-jam-op-h40.toml")
+        profile = load_profile(root / "profiles/sonic-jam-op.toml")
         env = apply_profile_env(profile, {})
         self.assertTrue(env["CBRSIM_SRC"].endswith("assets/SonicJamOp.avi"))
         self.assertEqual(env["CBRSIM_FPS"], "30")
@@ -149,7 +151,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             profile.section("analysis")["source_canvas"], [320, 224])
         self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(env["CBRSIM_OUT"].endswith(
-            "videos/SonicJamOp_H40_288x200_adpcm22/tmp"))
+            "videos/SonicJamOp_H40_288x200_adpcm22_cold210/tmp"))
 
     def test_analysis_source_canvas_requires_two_positive_integers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -161,7 +163,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_machi_op_uses_confirmed_black_bar_crop_and_native_h40_sar(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "configs/machi-op-h40.toml")
+        profile = load_profile(root / "profiles/machi-op.toml")
         env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
         self.assertEqual(env["CBRSIM_H"], "152")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "760")
@@ -179,7 +181,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_machi_ed_uses_full_h40_grid_and_profile_cap_380(self) -> None:
         root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "configs/machi-ed-h40.toml")
+        profile = load_profile(root / "profiles/machi-ed.toml")
         env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
@@ -351,7 +353,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_removed_pack_output_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "bad-apple-h40.toml"
+            path = Path(tmp) / "removed-pack-section.toml"
             path.write_text(
                 PROFILE + '\n[pack]\noutput = "out/legacy/MOVIE.DAT"\n')
             with self.assertRaisesRegex(ValueError, "unknown sections.*pack"):

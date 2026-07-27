@@ -46,7 +46,7 @@ Run it against the lossless output from `/record`:
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
   videos/SonicJamOp_startup_audio2_ab_debug_lossless.mkv \
-  configs/sonic-jam-op-h40.toml \
+  profiles/sonic-jam-op.toml \
   --tsv videos/SonicJamOp_startup_audio2_ab_debug_hud.tsv
 ```
 

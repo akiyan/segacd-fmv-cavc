@@ -59,7 +59,7 @@ to the Mega-CD BIOS startup geometry before the H32/H40 movie changes mode:
 
 ```sh
 RECORD_MODE="$(
-  tools/python.sh tools/encode_config.py configs/PROFILE.toml --print-env |
+  tools/python.sh tools/encode_config.py profiles/PROFILE.toml --print-env |
   tools/python.sh -c 'import json,sys; print(json.load(sys.stdin)["CBRSIM_MODE"])'
 )"
 case "$RECORD_MODE" in
@@ -82,12 +82,12 @@ tools/record_movie.sh [--config TOML | --disc CUE --no-build] [--out MP4] [--sec
 
 Defaults and rules:
 
-- Pass the same `--config configs/PROFILE.toml` used by sim and pack. The
+- Pass the same `--config profiles/PROFILE.toml` used by sim and pack. The
   harness derives `out/PROFILE.cue` from the TOML filename.
 - Use an explicit `--disc CUE --no-build` only for a previously verified image.
 - Build with `DEBUG=1` by default. The Plane A HUD is part of the normal recording artifact.
 - Use `--release-build` only when the user explicitly asks for a release build. It changes the
-  harness build to `make disc CONFIG=configs/PROFILE.toml DEBUG=0`.
+  harness build to `make disc CONFIG=profiles/PROFILE.toml DEBUG=0`.
 - Keep the startup sequence. The default is `--trim 0`; omitting `--trim` has the same result.
 - Treat `--seconds` as the final duration from emulator launch. Include enough time for the
   startup screens, the full movie, and a short tail. With the default
@@ -124,7 +124,7 @@ Canonical full capture for later upload:
 
 ```sh
 OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --config configs/PROFILE.toml --seconds 180 \
+  --config profiles/PROFILE.toml --seconds 180 \
   --tag STEM_emu --preset ffv1-flac \
   --record-size "$NATIVE_RECORD_SIZE" \
   --out videos/STEM_emu_preview.mp4
@@ -138,7 +138,7 @@ Do not delete it before `compilation` finishes.
 For a short boot/playback check:
 
 ```sh
-tools/record_movie.sh --config configs/PROFILE.toml \
+tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 30 --tag rec_check \
   --out videos/rec_check_preview.mp4
 ```
@@ -149,7 +149,7 @@ Routine `$record` work uses faster-than-realtime FFV1/FLAC without an extra mode
 
 ```sh
 OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --config configs/PROFILE.toml --seconds 180 \
+  --config profiles/PROFILE.toml --seconds 180 \
   --tag STEM_offline --record-size 256x224 \
   --out videos/STEM_offline_preview.mp4
 ```
@@ -248,7 +248,7 @@ Check the raw MKV and reports before trusting a capture:
 
    ```sh
    tools/python.sh harness/startup_resync/analyze.py \
-     videos/STEM_emu_lossless.mkv configs/PROFILE.toml \
+     videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
      --tsv videos/STEM_emu_hud.tsv \
      --gate-json videos/STEM_emu_hud_gate.json --expected-frames FRAME_COUNT
    ```
@@ -333,7 +333,7 @@ remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
 
 ```sh
-make disc CONFIG=configs/PROFILE.toml DEBUG=1
+make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 OUTDIR="$PWD/videos" tools/run_headless.sh out/PROFILE.cue \
   --tag STEM_debug --record --record-preset ffv1-flac \
   --record-size 256x224 --shots 68 --interval 2

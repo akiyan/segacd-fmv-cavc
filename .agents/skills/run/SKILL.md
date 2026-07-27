@@ -117,7 +117,7 @@ Follow `sim` source inspection exactly:
 - preserve the displayed aspect with the mode's HAR-aware fit/pad conversion;
 - allow starvation instead of shrinking the raster.
 
-Create or update one strict `schema_version = 3` profile under `configs/`. Put
+Create or update one strict `schema_version = 3` profile under `profiles/`. Put
 the exact full duration, source timing and aspect, mode raster, output path,
 optional timed `raw_prefetch`, optional qualified `cold_cap`, and palette
 algorithm in the profile. ADPCM22, the 1,535-tile VRAM pool, GPU, Bayer
@@ -136,7 +136,7 @@ orchestrator invocation. Use it even when this `$run` has only one profile:
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
-  configs/PROFILE.toml
+  profiles/PROFILE.toml
 ```
 
 For profiles intentionally handled by the same `$run`, pass them together and
@@ -144,7 +144,7 @@ set `--jobs` to the desired profile concurrency:
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
-  configs/PROFILE_A.toml configs/PROFILE_B.toml
+  profiles/PROFILE_A.toml profiles/PROFILE_B.toml
 ```
 
 Do not invoke `sim.py`, `make disc`, or `record_movie.sh` as separate normal
@@ -196,7 +196,7 @@ Require the protected pipeline's disc stage to build against the same profile.
 The child command it owns is:
 
 ```sh
-make disc CONFIG=configs/PROFILE.toml DEBUG=1
+make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
 The Make target removes every previous packed stream file first, runs the

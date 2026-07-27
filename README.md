@@ -215,7 +215,7 @@ m68k-elf-objcopy
 Check the toolchain and ISO writer:
 
 ```sh
-make check-tools CONFIG=configs/PROFILE.toml
+make check-tools CONFIG=profiles/PROFILE.toml
 ```
 
 The Japanese Mega-CD BIOS is user-supplied and git-ignored:
@@ -234,8 +234,8 @@ harness copies the BIOS into a private per-run system directory.
 Run a full encode and DEBUG disc build:
 
 ```sh
-tools/python.sh --gpu tools/sim.py configs/PROFILE.toml
-make disc CONFIG=configs/PROFILE.toml DEBUG=1
+tools/python.sh --gpu tools/sim.py profiles/PROFILE.toml
+make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
 `make disc` cleans the selected profile's packed stream, verifies the
@@ -260,14 +260,14 @@ only one profile is being processed:
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
-  configs/PROFILE.toml
+  profiles/PROFILE.toml
 ```
 
 Pass multiple profiles together when one invocation owns the batch:
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
-  configs/PROFILE_A.toml configs/PROFILE_B.toml
+  profiles/PROFILE_A.toml profiles/PROFILE_B.toml
 ```
 
 Independent invocations use the same cross-process locks, so separate sessions
@@ -279,7 +279,7 @@ baseline. Public timeline, Gist, and upload stages remain interactive.
 Use emulator-synchronized A/V:
 
 ```sh
-tools/record_movie.sh --config configs/PROFILE.toml \
+tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
 ```
 
@@ -323,7 +323,7 @@ upload sidecars.
 ```text
 boot/        68000 Main/Sub player and hardware tests
 cfg/         linker scripts
-configs/     per-source TOML profiles
+profiles/    per-source TOML profiles
 harness/     reproducible diagnostics and their local documentation
 tools/       encoder, packer, analysis, build, and recording tools
 vendor/      third-party reference code
@@ -529,7 +529,7 @@ m68k-elf-objcopy
 toolchainとISO writerを確認します。
 
 ```sh
-make check-tools CONFIG=configs/PROFILE.toml
+make check-tools CONFIG=profiles/PROFILE.toml
 ```
 
 Japanese Mega-CD BIOSはuser suppliedかつgit-ignoredです。
@@ -548,8 +548,8 @@ BIOSをrunごとのprivate system directoryへcopyします。
 full encodeとDEBUG disc build:
 
 ```sh
-tools/python.sh --gpu tools/sim.py configs/PROFILE.toml
-make disc CONFIG=configs/PROFILE.toml DEBUG=1
+tools/python.sh --gpu tools/sim.py profiles/PROFILE.toml
+make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
 `make disc` は選択profileのpacked streamをcleanし、profile-authenticated
@@ -572,14 +572,14 @@ transient object、disc staging、direct-emulator scratch fileは `tmp/PROFILE/`
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
-  configs/PROFILE.toml
+  profiles/PROFILE.toml
 ```
 
 1つのinvocationが複数profileを扱う場合はまとめて渡します。
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
-  configs/PROFILE_A.toml configs/PROFILE_B.toml
+  profiles/PROFILE_A.toml profiles/PROFILE_B.toml
 ```
 
 独立したinvocationも同じprocess間lockを使うため、別session間でjob listを共有する必要は
@@ -591,7 +591,7 @@ public timeline、Gist、upload stageは対話的に実行します。
 emulator-synchronized A/Vを使います。
 
 ```sh
-tools/record_movie.sh --config configs/PROFILE.toml \
+tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
 ```
 
@@ -632,7 +632,7 @@ BIOS file、source media、generated video、upload sidecarをcommitしてはい
 ```text
 boot/        68000 Main/Sub player and hardware tests
 cfg/         linker scripts
-configs/     per-source TOML profiles
+profiles/    per-source TOML profiles
 harness/     reproducible diagnostics and their local documentation
 tools/       encoder, packer, analysis, build, and recording tools
 vendor/      third-party reference code

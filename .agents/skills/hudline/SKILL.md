@@ -29,7 +29,7 @@ OCR pass. Keep the image frame-aligned with `/timeline`, then immediately use
 tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
   videos/STEM_emu_hud.tsv \
   --gate-json videos/STEM_emu_hud_gate.json \
-  --config configs/PROFILE.toml \
+  --config profiles/PROFILE.toml \
   --label "short run label" \
   --output videos/STEM_hudline.png
 ```

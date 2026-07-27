@@ -11,7 +11,7 @@ import analysis_logs
 
 
 class Profile:
-    path = Path("/repo/configs/sonic-jam-op-h40.toml")
+    path = Path("/repo/profiles/sonic-jam-op.toml")
     sha256 = "4dd3ae5754c01c1d4f3948a8eddc8a5f19a5739b03c26eeb32c385502fecffdb"
 
 
@@ -24,7 +24,7 @@ class AnalysisLogTests(unittest.TestCase):
                     2026, 7, 23, 12, 34, 56, 123456, tzinfo=timezone.utc))
             self.assertRegex(
                 path.name,
-                r"^20260723-123456-123456_sonic-jam-op-h40_"
+                r"^20260723-123456-123456_sonic-jam-op_"
                 r"4dd3ae5754_e\d+_p\d+_timeline\.tsv$")
 
     def test_av_versions_include_encoder_and_player(self) -> None:

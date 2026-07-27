@@ -25,7 +25,7 @@ start work independently:
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
-  configs/PROFILE.toml
+  profiles/PROFILE.toml
 ```
 
 Run the local pipeline sequentially:
@@ -33,8 +33,8 @@ Run the local pipeline sequentially:
 ```sh
 tools/python.sh tools/parallel_run.py \
   --sequential --through disc --force-reencode \
-  harness/parallel_run/configs/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/configs/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
+  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
 ```
 
 Run the same work concurrently:
@@ -42,8 +42,8 @@ Run the same work concurrently:
 ```sh
 tools/python.sh tools/parallel_run.py \
   --jobs 2 --through disc --force-reencode \
-  harness/parallel_run/configs/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/configs/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
+  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
 ```
 
 Snapshot the deterministic outputs after each run and compare the concurrent
@@ -52,14 +52,14 @@ result with the sequential baseline:
 ```sh
 tools/python.sh harness/parallel_run/snapshot.py \
   --output logs/parallel-run/issue73-sequential/artifacts.tsv \
-  harness/parallel_run/configs/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/configs/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
+  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
 
 tools/python.sh harness/parallel_run/snapshot.py \
   --output logs/parallel-run/issue73-parallel/artifacts.tsv \
   --compare logs/parallel-run/issue73-sequential/artifacts.tsv \
-  harness/parallel_run/configs/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/configs/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
+  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
 ```
 
 Use `--through hud` for the complete local sim, verified DEBUG disc, lossless

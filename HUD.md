@@ -25,7 +25,7 @@ failure, and several fields show only the low byte of a larger counter.
 Build the profile with DEBUG enabled:
 
 ```sh
-make disc CONFIG=configs/PROFILE.toml DEBUG=1
+make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
 H40 DEBUG always uses the combined layout: the complete 40-cell `Q/V/O/E`
@@ -469,7 +469,7 @@ Write the complete per-frame series as the canonical project TSV:
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/STEM_emu_lossless.mkv configs/PROFILE.toml \
+  videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
   --tsv videos/STEM_emu_hud.tsv \
   --gate-json videos/STEM_emu_hud_gate.json \
   --expected-frames FRAME_COUNT
@@ -537,7 +537,7 @@ HUDは同時に3つの問いへ答えます。
 ProfileをDEBUG付きでbuildします。
 
 ```sh
-make disc CONFIG=configs/PROFILE.toml DEBUG=1
+make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
 H40 DEBUGは常にcombined layoutを使います。完全な40-cell `Q/V/O/E` first rowに
@@ -929,7 +929,7 @@ Canonical project TSVを書きます。
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/STEM_emu_lossless.mkv configs/PROFILE.toml \
+  videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
   --tsv videos/STEM_emu_hud.tsv \
   --gate-json videos/STEM_emu_hud_gate.json \
   --expected-frames FRAME_COUNT

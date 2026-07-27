@@ -42,8 +42,8 @@ stream with:
 
 ```sh
 tools/python.sh harness/player_constants/measure_cycles.py \
-  --header out/sonic-jam-op-h32/HEADER.DAT \
-  --body out/sonic-jam-op-h32/BODY.DAT
+  --header out/sonic-jam-op/HEADER.DAT \
+  --body out/sonic-jam-op/BODY.DAT
 ```
 
 The cycle model uses the MC68000 User's Manual Section 8 timings. It counts all
