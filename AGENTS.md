@@ -319,6 +319,12 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
   the timed BODY suffix must remain stopped until the visible frame-0 flip;
   pumping future sectors during frame -1 creates unmodeled producer lead even
   when the displayed sentinel itself is correct.
+- Do not advance PCM through the first timed `ROM_READN` startup interval.
+  Launch the suffix only after the frame-0 flip, use the first frame-1 control
+  sector as the proof that 75-sector/s service is flowing, start PCM there,
+  and finish that physical slot before releasing Main. The remaining slot and
+  VBlank phase establish the first movie interval; CD startup latency is not
+  an audio packet and must not become A/V lead.
 - Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
   display deadline, including only startup lead that the model explicitly
   proves. A routing-table slot limit is a format capacity, not proof that the
