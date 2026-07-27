@@ -594,10 +594,14 @@ scheduler; the project tools coordinate their heavy stages through Linux
   second process targeting the same `videos/<stem>` fails immediately rather
   than sharing aliases, packed files, or recording paths.
 
-Use `tools/parallel_run.py` for a multi-profile local pipeline through the HUD
-gate. It divides CPU workers across jobs, keeps each sim tmpfs entry leased
-across stage boundaries, isolates failures, and writes per-profile logs plus a
-TSV summary. `--sequential` retains a reproducible comparison mode.
+Every interactive `$run` must use `tools/parallel_run.py` for its local
+sim-through-HUD pipeline, including a run with only one profile. This retains
+the stem lock and sim tmpfs lease across stage boundaries even when unrelated
+Codex sessions start runs without coordinating with each other. It divides CPU
+workers across jobs, isolates failures, and writes per-profile logs plus a TSV
+summary. `--jobs 1` is the single-profile form; `--sequential` retains a
+reproducible comparison mode. Direct stage commands are for standalone skills
+and diagnosis, not the normal `$run` path.
 
 Xvfb normally allocates a free display with `-displayfd`; `--display :N` is an
 explicit diagnostic override and fails if that display is already active.

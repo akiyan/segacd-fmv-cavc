@@ -19,6 +19,15 @@ each `run_headless.sh` invocation uses an EMU token. Xvfb chooses a free display
 with `-displayfd`; an explicitly requested display fails if another server owns
 it.
 
+Interactive `$run` uses this orchestrator even for one profile. That rule is
+what preserves the pipeline-wide lock and lease when unrelated Codex sessions
+start work independently:
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
+  configs/PROFILE.toml
+```
+
 Run the local pipeline sequentially:
 
 ```sh
@@ -76,6 +85,11 @@ with the default two EMU tokens. H40 and H32 each recorded 2,880 raw packets,
 produced a 2,278-frame bounded capture with 1,677,312 stereo PCM sample frames,
 and passed `S/D/R=0`, `M=1`, `J=0`. Xvfb selected separate displays `:2` and
 `:3`.
+
+Two unrelated one-profile orchestrator processes were also started without a
+shared job list. H40 passed through HUD in 46.7 seconds and H32 passed in 44.7
+seconds. Both processes exited zero; shared resource pressure caused waiting,
+not cancellation or a pipeline failure.
 
 Same-Replay comparisons passed in all required directions:
 

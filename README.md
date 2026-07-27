@@ -255,15 +255,24 @@ Transient objects, disc staging, and direct-emulator scratch files live under
 prefetch, and the PrgBuf prebuffer. `BODY.DAT` starts at frame 1 and is read
 continuously.
 
-Run multiple prepared profiles concurrently through the local HUD gate with:
+Run every prepared profile through the protected local pipeline, even when
+only one profile is being processed:
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
+  configs/PROFILE.toml
+```
+
+Pass multiple profiles together when one invocation owns the batch:
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
   configs/PROFILE_A.toml configs/PROFILE_B.toml
 ```
 
-Use `--sequential` for an A/B timing or determinism baseline. Public timeline,
-Gist, and upload stages remain interactive.
+Independent invocations use the same cross-process locks, so separate sessions
+need no shared job list. Use `--sequential` for an A/B timing or determinism
+baseline. Public timeline, Gist, and upload stages remain interactive.
 
 ## Recording
 
@@ -559,15 +568,23 @@ transient object、disc staging、direct-emulator scratch fileは `tmp/PROFILE/`
 `HEADER.DAT` はstartup state、正確なframe 0、boot VRAM prefetch、PrgBuf prebufferを
 持ちます。`BODY.DAT` はframe 1から始まり、連続して読みます。
 
-準備済みの複数profileをlocal HUD gateまで並列実行します。
+準備済みprofileが1つだけでも、保護されたlocal pipelineを使います。
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
+  configs/PROFILE.toml
+```
+
+1つのinvocationが複数profileを扱う場合はまとめて渡します。
 
 ```sh
 tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
   configs/PROFILE_A.toml configs/PROFILE_B.toml
 ```
 
-A/B timingまたはdeterminism baselineには `--sequential` を使います。public timeline、
-Gist、upload stageは対話的に実行します。
+独立したinvocationも同じprocess間lockを使うため、別session間でjob listを共有する必要は
+ありません。A/B timingまたはdeterminism baselineには `--sequential` を使います。
+public timeline、Gist、upload stageは対話的に実行します。
 
 ## Recording
 
