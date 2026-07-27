@@ -124,13 +124,14 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   switches are navigable. Generate analysis chapters with
   `tools/youtube_chapters.py <sim_out>` and prepend the block to the description
   (a blank line after it), before the Overview. For a playback recording that
-  retains the Mega-CD startup, pass
-  `--content-offset <movie-start-seconds> --intro-label "Mega-CD startup"`.
-  Determine the offset by ordinary visual playback, not DEBUG HUD OCR. It shifts
-  chapter metadata only: do not trim or seek the recording. The tool reads the
-  sim's `frame_seg` and enforces YouTube's rules (first at 0:00, 10 s minimum
-  spacing, ascending). This is not optional or per-video — it is the standing
-  convention for these uploads.
+  retains the Mega-CD startup, pass its matching complete gate as
+  `--hud-gate-json videos/<stem>_emu_hud_gate.json --intro-label "Mega-CD startup"`.
+  The gate must record the first valid `F=0000` immediately after the
+  player-only `F=FFFF` sentinel; that exact HUD transition supplies the content
+  offset. It shifts chapter metadata only: do not trim or seek the recording.
+  The tool reads the sim's `frame_seg` and enforces YouTube's rules (first at
+  0:00, 10 s minimum spacing, ascending). This is not optional or per-video —
+  it is the standing convention for these uploads.
 - Do not show bitrate in the Source spec line.
 - Uploads are unlisted, category 20 (Gaming). Descriptive titles, not vNNN.
 - **"Upload" always means the latest version.** Before uploading, rebuild the

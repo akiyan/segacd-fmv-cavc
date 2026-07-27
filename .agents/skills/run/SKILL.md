@@ -343,9 +343,9 @@ validated H32/H40 pixel aspect into 2048x1568 square pixels using nearest-neighb
 scaling, H.264 CRF 10 slow, yuv420p, AAC 192 kbps, and faststart. Do not add
 `-ss`, `-t`, an fps filter, or `-r`.
 
-Watch the completed recording normally and determine when movie frame 0 begins.
-Use that time only as the CRAM chapter offset; do not trim the video and do not
-derive the time from the DEBUG HUD.
+Use the matching complete HUD gate's verified `F=FFFF` to `F=0000` transition
+as the CRAM chapter offset. Pass that gate through
+`tools/youtube_chapters.py --hud-gate-json`; do not trim the video.
 
 Verify the final MP4 has:
 

@@ -990,6 +990,8 @@ def main() -> int:
         result["ocr_start_anchor"] = {
             "method": "frame_minus_one" if sentinel_anchor else "plausible_sequence",
             "frame0_capture_first": raw_groups[anchor].capture_first,
+            "frame0_time_first_s": raw_groups[anchor].time_first,
+            "frame0_time_last_s": raw_groups[anchor].time_last,
         }
         if sentinel_anchor:
             sentinel = raw_groups[anchor - 1]
@@ -997,6 +999,8 @@ def main() -> int:
                 "frame_minus_one_raw16": read_frameno.FRAME_MINUS_ONE,
                 "frame_minus_one_capture_first": sentinel.capture_first,
                 "frame_minus_one_capture_last": sentinel.capture_last,
+                "frame_minus_one_time_first_s": sentinel.time_first,
+                "frame_minus_one_time_last_s": sentinel.time_last,
             })
         write_gate_json(args.gate_json, result)
         if result["gate"] == "FAIL":
