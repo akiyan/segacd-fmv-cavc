@@ -20,7 +20,7 @@ Build `20260711.e8.p3` — https://youtu.be/5C6t5pvUo-Y (unlisted).
 
 ## The system, in one paragraph
 
-The codec is the **Tile Texture Reuse Codec (TTRC)**. `tools/sim.py` decides, per
+The codec is the **Sega CD Constraint-Aware Video Codec**. `tools/sim.py` decides, per
 cell, whether it is a *cold* tile (a fresh 32-byte pattern read from CD) or a
 *reuse* of a pattern already resident in VRAM. `tools/pack_stream.py` turns those
 decisions into the then-current `MOVIE.DAT`. On the console the **Sub CPU** (`movieplay_sp.s`)
@@ -212,7 +212,7 @@ make disc DEBUG=1
 
 ## システムを一段落で
 
-コーデックは **Tile Texture Reuse Codec（TTRC）**。`tools/sim.py` が各セルごとに、
+コーデックは **Sega CD Constraint-Aware Video Codec**。`tools/sim.py` が各セルごとに、
 *cold*（CDから新規に読む32Bのタイル）か *reuse*（VRAM常駐タイルの流用）かを決める。
 `tools/pack_stream.py` がその決定を `MOVIE.DAT` にする。実機では **Sub CPU**
 （`movieplay_sp.s`）がディスクを連続で読み続け、各コマを Word-RAM 出力バッファへ展開。

@@ -102,7 +102,7 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
   outputs, and a versioned full-encode timing example.
 - [`CONFIG.md`](CONFIG.md): profile schema, encoder settings, throttles,
   capacities, physical limits, and DEBUG gate thresholds.
-- [`MOVIE.md`](MOVIE.md): the exact TTRC v17 `HEADER.DAT` and `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): the exact version 17 `HEADER.DAT` and `BODY.DAT`
   on-disc binary format.
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
   assignment plus whole-movie quality planning.
@@ -157,7 +157,7 @@ aliases are isolated per run.
 
 | Target | Purpose |
 |---|---|
-| `movieplay` / `disc` | TTRC player disc. |
+| `movieplay` / `disc` | Codec player disc. |
 | `cdcbench` | Continuous and restarted CD-read measurement. |
 | `dmabench` | Maximum VRAM DMA per VBlank and screen mode. |
 | `still256` | Static H32 display bring-up. |
@@ -422,7 +422,7 @@ timed-work valueとgraph maximumから除外します。
   version付き全編encode実測例。
 - [`CONFIG.md`](CONFIG.md): profile schema、encoder設定、throttle、容量、
   物理limit、DEBUG gate threshold。
-- [`MOVIE.md`](MOVIE.md): TTRC v17の正確なon-disc `HEADER.DAT` / `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): version 17の正確なon-disc `HEADER.DAT` / `BODY.DAT`
   binary format。
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
   割り当てとmovie全体quality planning。
@@ -472,7 +472,7 @@ build intermediate、tmpfs lease、public aliasはrunごとに分離します。
 
 | Target | 用途 |
 |---|---|
-| `movieplay` / `disc` | TTRC player disc。 |
+| `movieplay` / `disc` | Codec player disc。 |
 | `cdcbench` | continuous/restarted CD read計測。 |
 | `dmabench` | screen mode別のVBlank当たり最大VRAM DMA。 |
 | `still256` | static H32 display bring-up。 |

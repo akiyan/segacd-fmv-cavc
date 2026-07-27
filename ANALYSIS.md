@@ -4,7 +4,7 @@ EN / [JP](#jp)
 
 This document defines, exactly and completely, every element drawn in the
 1920x1080 analysis frame produced by `tools/render_analysis.py` for the
-**Tile Texture Reuse Codec**. The layout "source of truth" is
+**Sega CD Constraint-Aware Video Codec**. The layout "source of truth" is
 `tools/layout_preview.py` (dummy data); `render_analysis` runs the same drawing
 functions on real encoder output.
 `tools/render_analysis.py` replays `decisions.pkl` and materializes the
@@ -300,7 +300,7 @@ physical BODY slots. The input Raw/Prg counts and every slot's total payload
 remain exact; the Raw/Prg split across the prebuffer boundary and BODY slots is
 a visualization because the discarded sub-frame ordering was not logged.
 
-For TTRC v17, the control contribution includes whichever shadow-update
+For on-disc format version 17, the control contribution includes whichever shadow-update
 representation was selected for that frame: the bitmap plus name
 entries, or the completed offset/entry list. The analysis does not add a
 separate meter for this internal representation; its exact byte cost is already
@@ -435,7 +435,7 @@ semantic colours and border styles from `tools/analysis_style.py`.
 
 # 解析overlay reference
 
-この文書は、**Tile Texture Reuse Codec**用の`tools/render_analysis.py`が生成する
+この文書は、**Sega CD Constraint-Aware Video Codec**用の`tools/render_analysis.py`が生成する
 1920x1080解析frameの全要素を定義します。Layoutの正本はdummy dataを使う
 `tools/layout_preview.py`で、`render_analysis`も実encoder outputに対して同じ描画関数を
 実行します。
@@ -683,7 +683,7 @@ Physical delivery traceはtotal payloadを正確に持ちますが、1 frame内�
 残りをphysical BODY slotへ対応付けます。Total payloadとinput countは正確ですが、
 prebuffer境界・slot間のRaw/Prg splitはvisualizationです。
 
-TTRC v17のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
+On-disc format version 17のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
 name entryまたはcompleted offset/entry listのbyte costを含みます。独立meterは作らず、
 dim control部分へ含めます。
 

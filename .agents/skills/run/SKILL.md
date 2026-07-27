@@ -314,7 +314,9 @@ analysis upload rather than the pre-recording TSV.
 Generate CRAM chapters with `tools/youtube_chapters.py`. Build the title and
 English-then-Japanese description from the current `AGENTS.md` convention,
 including the repository URL in both language sections and never adding source
-bitrate or angle brackets. Save the exact description to a UTF-8 text file and
+bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
+public codec name; never expose the binary magic as a codec or format name.
+Save the exact description to a UTF-8 text file and
 measure it before upload. YouTube's description limit is 5,000 characters:
 target 4,800 or fewer and hard-fail above 5,000. If it is too long, shorten
 explanatory prose without removing CRAM chapters, required specs/layout/
@@ -357,7 +359,9 @@ Extract startup/movie/tail stills with `tools/extract_verification_frames.sh`, u
 `CHECK_DIR`; do not mix files from an older compilation.
 
 Generate boot-aware CRAM chapters and current bilingual metadata according to
-`AGENTS.md`. Save and measure the exact UTF-8 description before upload using
+`AGENTS.md`. Use **Sega CD Constraint-Aware Video Codec** as the public codec
+name and never use the binary magic as a codec or format name. Save and measure
+the exact UTF-8 description before upload using
 the same 5,000-character hard gate as Stage 5 (target 4,800 or fewer). Never
 send an over-limit description and wait for YouTube to reject it. Upload as
 unlisted, category 20. Use `--force` only for a re-upload and retain the
