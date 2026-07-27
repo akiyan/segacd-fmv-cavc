@@ -7,13 +7,14 @@ description: >-
   complete HUD gate to be upload-capable, then render/upload the analysis and create/upload
   the boot-preserving square-pixel compilation. Use when the user invokes
   "$run", says "same as usual", or asks for /sim, /record, and /compilation as
-  one end-to-end job, including sequential batches.
+  one end-to-end job, including parallel profile batches.
 ---
 
 # run: Complete FMV Pipeline
 
-Take each source from inspection through both YouTube uploads. Finish and verify
-one source completely before starting the next source.
+Take each source from inspection through both YouTube uploads. Independent
+profiles may overlap through the local HUD gate; publication remains
+source-specific and proceeds only after that source passes its gates.
 
 Expected invocation:
 
@@ -80,12 +81,16 @@ would make public metadata materially wrong.
 Use one profile and one stem throughout sim, pack, record, and compilation.
 Never hand-copy different geometry or timing into a later stage.
 
-## Enforce Shared-Machine and CUDA Safety
+## Enforce Resource Tokens and CUDA Safety
 
-Before every sim, analysis render, pack/build, or emulator capture, run the
-shared-machine process check from `AGENTS.md`. Wait while the other kind of
-heavy work is active. Never overlap sim/render with an emulator capture, never
-run two captures together, and never kill another session's process.
+Use the CPU/GPU/EMU tokens and output-stem lock from `AGENTS.md`; do not
+schedule by process-name scans. Run the local sim-through-HUD pipeline through
+`tools/parallel_run.py --through hud` for every `$run`, including one profile.
+It keeps one stem lock and tmpfs lease across sim, verified disc build,
+recording, and HUD extraction. Separate Codex sessions do not need to know
+about each other: their processes share the same cross-process tokens and
+locks. Never bypass the orchestrator for a normal `$run` or kill another
+session's process.
 
 Use the locked GPU Python environment without a system or legacy fallback:
 
@@ -124,10 +129,38 @@ profile identity and canonical `videos/` artifact paths from `AGENTS.md`.
 Do not bump `tools/av_version.txt` merely for a new source profile. Apply the
 version policy in `AGENTS.md` if output-affecting encoder or player code changes.
 
+## Start the Protected Local Pipeline
+
+After every profile is finalized, start Stages 2 through 4 with exactly one
+orchestrator invocation. Use it even when this `$run` has only one profile:
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
+  configs/PROFILE.toml
+```
+
+For profiles intentionally handled by the same `$run`, pass them together and
+set `--jobs` to the desired profile concurrency:
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
+  configs/PROFILE_A.toml configs/PROFILE_B.toml
+```
+
+Do not invoke `sim.py`, `make disc`, or `record_movie.sh` as separate normal
+`$run` steps. The single outer process must retain the stem lock and sim tmpfs
+lease across their stage boundaries. The commands shown in Stages 2 through 4
+describe what the orchestrator owns and are diagnostic references, not an
+alternative normal entry path.
+
+Require a `PASS` row for the profile in the generated summary TSV. A failed
+profile stops only its own downstream stages; unrelated profiles and
+independent sessions continue or wait for shared resource tokens.
+
 ## Stage 2: Simulate and Publish Numeric Evidence
 
-Run `tools/sim.py` with the profile and preferred GPU Python. Require a normal
-completion and record:
+The protected pipeline runs `tools/sim.py` with the profile and preferred GPU
+Python. Require a normal completion and record:
 
 - frame count and effective source fps;
 - configured cold cap, realized timed maximum cold, number of frames at that
@@ -142,9 +175,9 @@ run or missing decision data. Band divides useful bytes by each slot's actual
 physical CD read time, so it must stay at or below CD 1x (150 KiB/s); pad is
 shown as unused bandwidth.
 
-Run the bundled cold-delivery reporter immediately after simulation. It reads
-the frozen physical transfer trace, excludes boot-loaded frame 0, and prevents
-the configured cap from being mistaken for the realized maximum:
+After the protected pipeline returns, run the bundled cold-delivery reporter.
+It reads the frozen physical transfer trace, excludes boot-loaded frame 0, and
+prevents the configured cap from being mistaken for the realized maximum:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
@@ -159,7 +192,8 @@ analysis MP4 yet. The emulator recording must first receive `PASS` or
 
 ## Stage 3: Pack, Prove, and Build the DEBUG Disc
 
-Build the disc against the same profile:
+Require the protected pipeline's disc stage to build against the same profile.
+The child command it owns is:
 
 ```sh
 make disc CONFIG=configs/PROFILE.toml DEBUG=1
@@ -175,18 +209,18 @@ reuse files left by an older format.
 
 ## Stage 4: Record and Verify Playback
 
-Use `record` with the same profile and the exact DEBUG disc just proved in
-Stage 3. Pass `--no-build` only for that exact current disc so the recorder does
-not repeat the already-completed verified pack. Keep the Plane A HUD,
-and retain the full Mega-CD startup. Choose a launch-to-tail duration at least
-30 seconds longer than the source when using the default
-`original/jp_mcd2_9212.bin`, so its roughly 21-second verified startup plus a
-short ending margin are both retained. `record`
-uses the qualified fixed-Replay offline FFV1/FLAC path by default. Use:
+The protected pipeline invokes `record` with the same profile and the exact
+DEBUG disc just proved in Stage 3. Its `--no-build` refers only to that exact
+current disc so the recorder does not repeat the already-completed verified
+pack. Keep the Plane A HUD and retain the full Mega-CD startup. Choose a
+launch-to-tail duration at least 30 seconds longer than the source when using
+the default `original/jp_mcd2_9212.bin`, so its roughly 21-second verified
+startup plus a short ending margin are both retained. `record` uses the
+qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 
 - `ffv1-flac`;
 - `--record-size 256x224` for H32 or `320x224` for H40;
-- an unused X display;
+- automatic private X-display allocation;
 - the canonical `videos/<stem>_emu_lossless.mkv` and preview paths.
 
 Record emulator-synchronized A/V. "Offline" means unpaced emulation, not an
@@ -328,9 +362,10 @@ returned URL.
 
 ## Failure and Resume Policy
 
-Stop before the next source whenever a stage fails. Preserve logs and evidence,
-identify the failing layer, fix it when the requested scope permits, and rerun
-the failed stage plus every downstream stage whose inputs changed.
+Stop downstream work for a source whenever its stage fails, without cancelling
+unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
+fix it when the requested scope permits, and rerun the failed stage plus every
+downstream stage whose inputs changed.
 
 An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. A `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
@@ -347,6 +382,9 @@ encoder `e` version match and it has already passed the relevant gate.
 Individual code-file hashes are deliberately not an identity input;
 output-affecting changes must bump the encoder version. Rebuild every public
 upload artifact from current inputs, as required by `AGENTS.md`.
+Resume Stages 2 through 4 by rerunning the same `parallel_run.py --through hud`
+invocation; authenticated sim reuse avoids unnecessary re-encoding while the
+outer lock and tmpfs lease remain continuous.
 
 ## Completion Report
 

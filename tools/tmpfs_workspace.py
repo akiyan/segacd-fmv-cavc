@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import argparse
+from contextlib import contextmanager
 import ctypes
+import fcntl
 import hashlib
 import json
 import os
@@ -21,6 +23,8 @@ import shutil
 import subprocess
 import time
 import uuid
+
+from atomic_paths import replace_symlink
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -100,6 +104,19 @@ def ensure_root(root: Path | None = None) -> Path:
     return root
 
 
+@contextmanager
+def _workspace_lock(root: Path):
+    """Serialize eviction, allocation, lease publication, and alias changes."""
+
+    descriptor = os.open(
+        root / ".workspace.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def _slug(value: str, limit: int = 72) -> str:
     clean = re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-._")
     return (clean or "artifact")[:limit]
@@ -136,6 +153,34 @@ def _lease_records(root: Path) -> list[tuple[Path, dict]]:
 
 def _active_entries(root: Path) -> set[Path]:
     return {Path(record["entry"]) for _marker, record in _lease_records(root)}
+
+
+def _allocated_bytes(entry: Path) -> int:
+    total = 0
+    try:
+        paths = [entry, *entry.rglob("*")]
+    except FileNotFoundError:
+        return 0
+    for path in paths:
+        try:
+            if not path.is_symlink():
+                total += path.stat().st_blocks * 512
+        except FileNotFoundError:
+            continue
+    return total
+
+
+def _active_reservation_bytes(root: Path) -> int:
+    required_by_entry: dict[Path, int] = {}
+    for _marker, record in _lease_records(root):
+        entry = Path(record["entry"])
+        required = max(0, int(record.get("required_bytes", 0)))
+        required_by_entry[entry] = max(
+            required_by_entry.get(entry, 0), required)
+    return sum(
+        max(0, required - _allocated_bytes(entry))
+        for entry, required in required_by_entry.items()
+    )
 
 
 def _remove_alias_for_entry(entry: Path) -> None:
@@ -230,17 +275,17 @@ def _available_bytes(root: Path) -> int:
     return min(filesystem_free, quota_free)
 
 
-def evict_old_entries(
+def _evict_old_entries_locked(
     required_bytes: int = 0,
     *,
-    root: Path | None = None,
+    root: Path,
     exclude: tuple[Path, ...] = (),
 ) -> list[Path]:
-    """Delete oldest inactive managed entries until requested free space exists."""
+    """Locked implementation of inactive-entry eviction."""
 
-    root = ensure_root(root)
     required = max(0, int(required_bytes))
-    target_free = required + _minimum_free_bytes()
+    target_free = (
+        required + _active_reservation_bytes(root) + _minimum_free_bytes())
     usage = shutil.disk_usage(root)
     quota_free = _user_quota_available_bytes(root)
     available = (
@@ -282,6 +327,20 @@ def evict_old_entries(
     return removed
 
 
+def evict_old_entries(
+    required_bytes: int = 0,
+    *,
+    root: Path | None = None,
+    exclude: tuple[Path, ...] = (),
+) -> list[Path]:
+    """Delete oldest inactive entries while preserving concurrent reservations."""
+
+    root = ensure_root(root)
+    with _workspace_lock(root):
+        return _evict_old_entries_locked(
+            required_bytes, root=root, exclude=exclude)
+
+
 @dataclass
 class Lease:
     entry: Path
@@ -289,24 +348,46 @@ class Lease:
     reused: bool = False
 
     def release(self) -> None:
-        self.marker.unlink(missing_ok=True)
-        try:
-            os.utime(self.entry, None)
-        except FileNotFoundError:
-            pass
+        root = self.marker.parent.parent
+        root.mkdir(parents=True, exist_ok=True)
+        with _workspace_lock(root):
+            self.marker.unlink(missing_ok=True)
+            try:
+                os.utime(self.entry, None)
+            except FileNotFoundError:
+                pass
 
 
-def acquire_lease(entry: Path, *, root: Path | None = None) -> Lease:
-    root = ensure_root(root)
+def _acquire_lease_locked(
+    entry: Path,
+    *,
+    root: Path,
+    required_bytes: int = 0,
+) -> Lease:
     entry = entry.resolve()
     token = f"{os.getpid()}-{time.time_ns()}-{uuid.uuid4().hex[:8]}"
     marker = root / "leases" / f"{token}.json"
-    marker.write_text(json.dumps({
+    temporary = marker.with_suffix(".tmp")
+    temporary.write_text(json.dumps({
         "pid": os.getpid(),
         "entry": str(entry),
         "created_ns": time.time_ns(),
+        "required_bytes": max(0, int(required_bytes)),
     }, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, marker)
     return Lease(entry=entry, marker=marker)
+
+
+def acquire_lease(
+    entry: Path,
+    *,
+    root: Path | None = None,
+    required_bytes: int = 0,
+) -> Lease:
+    root = ensure_root(root)
+    with _workspace_lock(root):
+        return _acquire_lease_locked(
+            entry, root=root, required_bytes=required_bytes)
 
 
 def _validate_video_alias(alias: Path) -> None:
@@ -330,11 +411,11 @@ def is_video_alias(path: Path) -> bool:
 def _replace_alias(alias: Path, target: Path, *, directory: bool) -> None:
     _validate_video_alias(alias)
     alias.parent.mkdir(parents=True, exist_ok=True)
-    if alias.is_symlink() or alias.is_file():
-        alias.unlink()
-    elif alias.exists():
+    if alias.exists() and alias.is_dir() and not alias.is_symlink():
+        # One-time migration from an old real videos/ directory. Managed
+        # aliases are symlinks after this point and use atomic replacement.
         shutil.rmtree(alias)
-    alias.symlink_to(target.resolve(), target_is_directory=directory)
+    replace_symlink(alias, target, directory=directory)
 
 
 def activate_directory(
@@ -349,38 +430,42 @@ def activate_directory(
     """Expose a managed directory, reusing only an authenticated completion."""
 
     root = ensure_root(root)
-    entry = root / "artifacts" / _entry_key(kind, key)
-    active = _active_entries(root)
-    if entry.resolve() in active:
-        raise TmpfsWorkspaceError(f"artifact directory is already active: {entry}")
-    complete_path = entry / ".complete.json"
-    if entry.is_dir() and reuse_token is not None and complete_path.is_file():
-        try:
-            complete = json.loads(complete_path.read_text(encoding="utf-8"))
-            metadata = json.loads(
-                (entry / ".managed.json").read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            complete = {}
-            metadata = {}
-        if (complete.get("reuse_token") == reuse_token
-                and metadata.get("kind") == kind
-                and metadata.get("key") == key
-                and (entry / "data").is_dir()):
-            _replace_alias(alias, entry / "data", directory=True)
-            lease = acquire_lease(entry, root=root)
-            lease.reused = True
-            return lease
-    if entry.exists():
-        _remove_entry(entry)
-    evict_old_entries(required_bytes, root=root)
-    entry.mkdir(parents=True)
-    data = entry / "data"
-    data.mkdir()
-    (entry / ".managed.json").write_text(json.dumps({
-        "alias": str(alias.absolute()), "kind": kind, "key": key,
-    }, sort_keys=True) + "\n", encoding="utf-8")
-    _replace_alias(alias, data, directory=True)
-    return acquire_lease(entry, root=root)
+    with _workspace_lock(root):
+        entry = root / "artifacts" / _entry_key(kind, key)
+        active = _active_entries(root)
+        if entry.resolve() in active:
+            raise TmpfsWorkspaceError(
+                f"artifact directory is already active: {entry}")
+        complete_path = entry / ".complete.json"
+        if entry.is_dir() and reuse_token is not None and complete_path.is_file():
+            try:
+                complete = json.loads(complete_path.read_text(encoding="utf-8"))
+                metadata = json.loads(
+                    (entry / ".managed.json").read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                complete = {}
+                metadata = {}
+            if (complete.get("reuse_token") == reuse_token
+                    and metadata.get("kind") == kind
+                    and metadata.get("key") == key
+                    and (entry / "data").is_dir()):
+                _replace_alias(alias, entry / "data", directory=True)
+                lease = _acquire_lease_locked(
+                    entry, root=root, required_bytes=required_bytes)
+                lease.reused = True
+                return lease
+        if entry.exists():
+            _remove_entry(entry)
+        _evict_old_entries_locked(required_bytes, root=root)
+        entry.mkdir(parents=True)
+        data = entry / "data"
+        data.mkdir()
+        (entry / ".managed.json").write_text(json.dumps({
+            "alias": str(alias.absolute()), "kind": kind, "key": key,
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        _replace_alias(alias, data, directory=True)
+        return _acquire_lease_locked(
+            entry, root=root, required_bytes=required_bytes)
 
 
 def mark_directory_complete(
@@ -391,19 +476,21 @@ def mark_directory_complete(
 ) -> None:
     """Atomically mark a leased managed directory safe for later reuse."""
 
-    if not lease.marker.is_file():
-        raise TmpfsWorkspaceError("cannot complete an unleased artifact")
-    payload = {
-        "reuse_token": reuse_token,
-        "completed_ns": time.time_ns(),
-    }
-    if details:
-        payload.update(details)
-    target = lease.entry / ".complete.json"
-    temporary = lease.entry / f".complete.{os.getpid()}.tmp"
-    temporary.write_text(
-        json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
-    temporary.replace(target)
+    root = lease.marker.parent.parent
+    with _workspace_lock(root):
+        if not lease.marker.is_file():
+            raise TmpfsWorkspaceError("cannot complete an unleased artifact")
+        payload = {
+            "reuse_token": reuse_token,
+            "completed_ns": time.time_ns(),
+        }
+        if details:
+            payload.update(details)
+        target = lease.entry / ".complete.json"
+        temporary = lease.entry / f".complete.{os.getpid()}.tmp"
+        temporary.write_text(
+            json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        temporary.replace(target)
 
 
 def allocate_file(
@@ -418,47 +505,60 @@ def allocate_file(
 
     root = ensure_root(root)
     identity = key or str(alias.absolute())
-    entry = root / "artifacts" / _entry_key(kind, identity)
-    active = _active_entries(root)
-    if entry.resolve() in active:
-        raise TmpfsWorkspaceError(f"artifact file is already active: {entry}")
-    if entry.exists():
-        _remove_entry(entry)
-    evict_old_entries(required_bytes, root=root)
-    entry.mkdir(parents=True)
-    actual = entry / alias.name
-    (entry / ".managed.json").write_text(json.dumps({
-        "alias": str(alias.absolute()), "kind": kind, "key": identity,
-    }, sort_keys=True) + "\n", encoding="utf-8")
-    return actual, acquire_lease(entry, root=root)
+    with _workspace_lock(root):
+        entry = root / "artifacts" / _entry_key(kind, identity)
+        active = _active_entries(root)
+        if entry.resolve() in active:
+            raise TmpfsWorkspaceError(f"artifact file is already active: {entry}")
+        if entry.exists():
+            _remove_entry(entry)
+        _evict_old_entries_locked(required_bytes, root=root)
+        entry.mkdir(parents=True)
+        actual = entry / alias.name
+        (entry / ".managed.json").write_text(json.dumps({
+            "alias": str(alias.absolute()), "kind": kind, "key": identity,
+        }, sort_keys=True) + "\n", encoding="utf-8")
+        return actual, _acquire_lease_locked(
+            entry, root=root, required_bytes=required_bytes)
 
 
 def publish_alias(alias: Path, actual: Path) -> None:
     if not actual.is_file():
         raise TmpfsWorkspaceError(f"tmpfs artifact was not produced: {actual}")
-    _replace_alias(alias, actual, directory=False)
+    root = ensure_root()
+    with _workspace_lock(root):
+        _replace_alias(alias, actual, directory=False)
 
 
-def lease_managed_alias(alias: Path, *, root: Path | None = None) -> Lease | None:
-    """Lease an existing managed directory/file reached through its alias."""
+def lease_managed_alias(
+    alias: Path,
+    *,
+    required_bytes: int = 0,
+    root: Path | None = None,
+) -> Lease | None:
+    """Lease an existing managed artifact and reserve space for derived data."""
 
     root = ensure_root(root)
-    alias = Path(alias)
-    try:
-        target = alias.resolve(strict=True)
-    except FileNotFoundError:
-        return None
-    artifacts = (root / "artifacts").resolve()
-    try:
-        relative = target.relative_to(artifacts)
-    except ValueError:
-        return None
-    if not relative.parts:
-        return None
-    entry = artifacts / relative.parts[0]
-    if not (entry / ".managed.json").is_file():
-        return None
-    return acquire_lease(entry, root=root)
+    with _workspace_lock(root):
+        alias = Path(alias)
+        try:
+            target = alias.resolve(strict=True)
+        except FileNotFoundError:
+            return None
+        artifacts = (root / "artifacts").resolve()
+        try:
+            relative = target.relative_to(artifacts)
+        except ValueError:
+            return None
+        if not relative.parts:
+            return None
+        entry = artifacts / relative.parts[0]
+        if not (entry / ".managed.json").is_file():
+            return None
+        _evict_old_entries_locked(
+            required_bytes, root=root, exclude=(entry,))
+        return _acquire_lease_locked(
+            entry, root=root, required_bytes=required_bytes)
 
 
 def create_run_directory(
@@ -468,18 +568,22 @@ def create_run_directory(
     root: Path | None = None,
 ) -> Lease:
     root = ensure_root(root)
-    evict_old_entries(required_bytes, root=root)
-    entry = root / "runs" / (
-        f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-"
-        f"{_slug(key, 40)}-{uuid.uuid4().hex[:8]}")
-    entry.mkdir(parents=True)
-    return acquire_lease(entry, root=root)
+    with _workspace_lock(root):
+        _evict_old_entries_locked(required_bytes, root=root)
+        entry = root / "runs" / (
+            f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-"
+            f"{_slug(key, 40)}-{uuid.uuid4().hex[:8]}")
+        entry.mkdir(parents=True)
+        return _acquire_lease_locked(
+            entry, root=root, required_bytes=required_bytes)
 
 
 def remove_run_directory(lease: Lease) -> None:
-    lease.release()
-    if lease.entry.exists():
-        shutil.rmtree(lease.entry)
+    root = lease.marker.parent.parent
+    with _workspace_lock(root):
+        lease.marker.unlink(missing_ok=True)
+        if lease.entry.exists():
+            shutil.rmtree(lease.entry)
 
 
 def run_file_command(

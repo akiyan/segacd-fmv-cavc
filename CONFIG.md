@@ -26,6 +26,27 @@ The “Where” column uses these short names:
 - **sp**: `boot/movieplay_sp.s`, Sub CPU
 - **ip**: `boot/movieplay_ip.s`, Main CPU
 
+## Workstation concurrency
+
+Concurrency controls change workstation scheduling, not encoded decisions.
+`tools/resource_tokens.py` implements cross-process `flock` tokens and one
+exclusive lock per `videos/<stem>`.
+
+| Name | Default | Meaning |
+|---|---:|---|
+| `SEGACD_CPU_TOKENS` | affinity CPUs minus 2 | Shared CPU-worker capacity. |
+| `CBRSIM_WORKERS` | available CPU tokens | Worker count and exact CPU-token request for one heavy stage. |
+| `SEGACD_GPU_TOKENS` | 1 | Concurrent GPU palette/quantization or NVENC stages. |
+| `SEGACD_EMU_TOKENS` | 2 | Concurrent `run_headless.sh` emulator instances. |
+| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-ttrc/resources` | Lock-file root. |
+
+Sim acquires CPU/GPU tokens only for Extract, Palette, and Quantize.
+`render_analysis.py` and record-preview transcoding use the same token pool.
+Xvfb allocates a free display dynamically and each emulator gets a private
+RetroArch system directory. `tools/parallel_run.py` divides CPU workers across
+profiles and retains the sim tmpfs lease between stages. A second process for
+the same stem fails immediately; it never shares aliases or output files.
+
 ## Pattern supplies and quality budget
 
 The player has four physical pattern supplies. The encoder also has a
@@ -416,6 +437,27 @@ buildがplayer assembly constantとの一致を確認します。導出値を別
 - **pack**: `tools/pack_stream.py`
 - **sp**: `boot/movieplay_sp.s`、Sub CPU
 - **ip**: `boot/movieplay_ip.s`、Main CPU
+
+## Workstation concurrency
+
+concurrency controlはworkstation上のscheduleだけを変え、encode decisionは変えません。
+`tools/resource_tokens.py` はprocess間 `flock` tokenと
+`videos/<stem>` ごとのexclusive lockを実装します。
+
+| Name | default | 意味 |
+|---|---:|---|
+| `SEGACD_CPU_TOKENS` | affinity CPU数 - 2 | 共有CPU worker容量。 |
+| `CBRSIM_WORKERS` | 使用可能なCPU token数 | 1つのheavy stageのworker数かつ正確なCPU token要求数。 |
+| `SEGACD_GPU_TOKENS` | 1 | 同時GPU palette/quantizationまたはNVENC stage数。 |
+| `SEGACD_EMU_TOKENS` | 2 | 同時 `run_headless.sh` emulator instance数。 |
+| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-ttrc/resources` | lock file root。 |
+
+simはExtract、Palette、Quantizeの間だけCPU/GPU tokenを取得します。
+`render_analysis.py` とrecord preview transcodeも同じtoken poolを使います。
+Xvfbは空きdisplayを動的に割り当て、各emulatorはprivate RetroArch system directoryを
+使います。`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
+tmpfs leaseを保持します。同じstemの2つ目のprocessは即時FAILし、aliasやoutput fileを
+共有しません。
 
 ## Pattern供給とquality budget
 

@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import re
 
+from atomic_paths import replace_symlink
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AV_VERSION_PATH = Path(__file__).resolve().parent / "av_version.txt"
@@ -82,9 +84,6 @@ def publish_alias(alias: Path, log_path: Path) -> None:
     log_path = log_path.resolve()
     if alias == log_path:
         return
-    alias.parent.mkdir(parents=True, exist_ok=True)
-    if alias.is_symlink() or alias.is_file():
-        alias.unlink()
-    elif alias.exists():
+    if alias.exists() and alias.is_dir() and not alias.is_symlink():
         raise IsADirectoryError(f"analysis TSV alias is a directory: {alias}")
-    alias.symlink_to(log_path)
+    replace_symlink(alias, log_path)

@@ -50,6 +50,21 @@ class AnalysisLogTests(unittest.TestCase):
             self.assertTrue(alias.is_symlink())
             self.assertEqual(alias.read_text(encoding="utf-8"), "frame\n")
 
+    def test_alias_replacement_is_atomic_and_updates_target(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "logs" / "first.tsv"
+            second = root / "logs" / "second.tsv"
+            first.parent.mkdir()
+            first.write_text("first\n", encoding="utf-8")
+            second.write_text("second\n", encoding="utf-8")
+            alias = root / "videos" / "movie_analysis.tsv"
+            analysis_logs.publish_alias(alias, first)
+            analysis_logs.publish_alias(alias, second)
+            self.assertTrue(alias.is_symlink())
+            self.assertEqual(alias.resolve(), second)
+            self.assertEqual(alias.read_text(encoding="utf-8"), "second\n")
+
 
 if __name__ == "__main__":
     unittest.main()

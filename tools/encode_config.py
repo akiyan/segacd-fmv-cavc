@@ -145,6 +145,17 @@ class EncodeProfile:
         return stem
 
     @property
+    def sim_stem(self) -> str:
+        """Shared videos/ stem used as the parallel-run isolation key."""
+        from cbr_paths import sim_stem
+        return sim_stem(
+            self.data["source"]["path"],
+            self.data["video"]["mode"],
+            self.data["video"]["width"],
+            self.data["video"]["height"],
+        )
+
+    @property
     def artifact_dir(self) -> Path:
         return ARTIFACT_ROOT / self.artifact_stem
 

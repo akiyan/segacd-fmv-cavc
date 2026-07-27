@@ -42,6 +42,7 @@ import layout_preview as L
 import analysis_style as style
 import stream_schedule
 import analysis_logs
+import resource_tokens
 import tmpfs_workspace
 from cbr_paths import artifact_path, sim_work_dir
 
@@ -989,20 +990,20 @@ def mux(output: Path):
     subprocess.run(cmd, check=True)
 
 
-if __name__ == "__main__":
+def main():
     from multiprocessing import get_context
     rng = None
     if len(sys.argv) == 3:                     # 範囲指定(検証用): PNGのみ, mp4化しない
         rng = list(range(int(sys.argv[1]), int(sys.argv[2])))
     frames = rng if rng is not None else list(range(NF))
-    sim_lease = tmpfs_workspace.lease_managed_alias(Path(SIM))
+    # A rendered 1080p PNG is commonly around 2 MiB. Leave room for PNGs,
+    # the muxed video, and normal compression variance before workers start.
+    required = len(frames) * (5 * 1024 ** 2 // 2) + 1024 ** 3
+    sim_lease = tmpfs_workspace.lease_managed_alias(
+        Path(SIM), required_bytes=required)
     mp4_lease = None
     mp4_actual = None
     try:
-        # A rendered 1080p PNG is commonly around 2 MiB. Leave room for PNGs,
-        # the muxed video, and normal compression variance before workers start.
-        required = len(frames) * (5 * 1024 ** 2 // 2) + 1024 ** 3
-        tmpfs_workspace.evict_old_entries(required)
         if rng is None:
             if tmpfs_workspace.is_video_alias(OUT_MP4):
                 mp4_actual, mp4_lease = tmpfs_workspace.allocate_file(
@@ -1016,24 +1017,36 @@ if __name__ == "__main__":
                 mp4_actual = OUT_MP4
                 mp4_actual.parent.mkdir(parents=True, exist_ok=True)
         os.makedirs(FRAMES_DIR, exist_ok=True)
-        materialize_analysis_panels(frames)
-        print(f"analysis data -> {write_analysis_tsv()}", flush=True)
-        print(f"render {len(frames)} frames @ {W}x{H} ({TCOLS}x{TROWS}) fps={FPS} -> {FRAMES_DIR}", flush=True)
-        nw = min(max(1, len(frames)), max(1, (os.cpu_count() or 2) - 2))
-        # Python 3.14 changed POSIX's default from fork to forkserver.  This renderer
-        # deliberately loads its large read-only frame/stat tables before starting
-        # workers; Linux fork shares those pages and is the proven project path.
-        mp = get_context("fork") if sys.platform.startswith("linux") else get_context()
-        with mp.Pool(nw) as p:
-            for k, _ in enumerate(p.imap_unordered(render, frames, chunksize=8)):
-                if k % 300 == 0:
-                    print(f"  {k}/{len(frames)}", flush=True)
+        nw = resource_tokens.requested_cpu_workers(limit=len(frames))
+        print(f"Analysis: waiting for {nw} CPU token(s) ...", flush=True)
+        with resource_tokens.acquire_tokens("cpu", count=nw):
+            materialize_analysis_panels(frames)
+            print(f"analysis data -> {write_analysis_tsv()}", flush=True)
+            print(
+                f"render {len(frames)} frames @ {W}x{H} "
+                f"({TCOLS}x{TROWS}) fps={FPS} -> {FRAMES_DIR}",
+                flush=True,
+            )
+            # Python 3.14 changed POSIX's default from fork to forkserver. This
+            # renderer loads large read-only tables first so Linux fork can
+            # share those pages.
+            mp = (
+                get_context("fork")
+                if sys.platform.startswith("linux") else get_context()
+            )
+            with mp.Pool(nw) as pool:
+                for k, _ in enumerate(
+                        pool.imap_unordered(render, frames, chunksize=8)):
+                    if k % 300 == 0:
+                        print(f"  {k}/{len(frames)}", flush=True)
         if rng is None:
             location = (
                 f"tmpfs {mp4_actual}" if mp4_lease is not None
                 else str(mp4_actual))
             print(f"mux -> {OUT_MP4} ({location})", flush=True)
-            mux(mp4_actual)
+            print("Analysis mux: waiting for 1 GPU token ...", flush=True)
+            with resource_tokens.acquire_tokens("gpu"):
+                mux(mp4_actual)
             if mp4_lease is not None:
                 tmpfs_workspace.publish_alias(OUT_MP4, mp4_actual)
             print("done", OUT_MP4, flush=True)
@@ -1044,3 +1057,15 @@ if __name__ == "__main__":
             mp4_lease.release()
         if sim_lease is not None:
             sim_lease.release()
+
+
+if __name__ == "__main__":
+    try:
+        _stem_lease = resource_tokens.acquire_stem(CONFIG_PROFILE.sim_stem)
+    except resource_tokens.ResourceBusyError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(75) from exc
+    try:
+        main()
+    finally:
+        _stem_lease.release()

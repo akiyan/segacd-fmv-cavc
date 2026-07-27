@@ -14,7 +14,7 @@ PYTHON ?= tools/python.sh
 ifeq ($(strip $(MAKECMDGOALS)),)
 MOVIEPLAY_REQUESTED := all
 else
-MOVIEPLAY_REQUESTED := $(filter all disc movieplay test1m,$(MAKECMDGOALS))
+MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal test1m,$(MAKECMDGOALS))
 endif
 ifneq ($(strip $(MOVIEPLAY_REQUESTED)),)
 ifeq ($(strip $(CONFIG)),)
@@ -46,6 +46,8 @@ PLAYER_CONSTANTS := $(MOVIEPLAY_STREAM_DIR)/player_constants.inc
 SP_EXTENSION_OBJ := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.o
 SP_EXTENSION_BIN := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.bin
 SP_EXTENSION_CONSTANTS := $(MOVIEPLAY_BUILD_DIR)/sp_extension.inc
+MOVIEPLAY_SECURITY := $(MOVIEPLAY_BUILD_DIR)/security.bin
+MOVIEPLAY_DEBUG_FONT := $(MOVIEPLAY_BUILD_DIR)/dbgfont.bin
 
 MARSDEV ?= $(HOME)/toolchains/mars
 M68K_PREFIX ?= $(MARSDEV)/m68k-elf/bin/m68k-elf-
@@ -60,7 +62,7 @@ ASFLAGS := -m68000 --register-prefix-optional --bitwise-or
 CFLAGS_M68K := -m68000 -ffreestanding -fno-builtin -fomit-frame-pointer -O2 -Wall -Wextra
 LDFLAGS := -nostdlib --oformat binary
 
-.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench still256 movieplay moviepack dmabench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
+.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench still256 movieplay movieplay-internal moviepack dmabench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
 
 all: disc
 
@@ -70,8 +72,12 @@ setup:
 movieplay-setup: setup
 	@mkdir -p $(MOVIEPLAY_STREAM_DIR) $(MOVIEPLAY_BUILD_DIR) $(MOVIEPLAY_DISC)
 
-# 本番ディスク = movieplay(HEADER.DAT + BODY.DAT)。旧PROBE.BIN/CD-DA画面パスは撤去済み。
-disc: movieplay
+# Hold one output-stem lock across pack, assembly, ISO staging, and CUE
+# publication. Nested pack invocations inherit the lock marker and are
+# reentrant; a separate process targeting the same stem fails immediately.
+disc movieplay:
+	$(PYTHON) tools/resource_tokens.py run-stem --config "$(CONFIG)" -- \
+		$(MAKE) movieplay-internal
 
 check-tools:
 	@test -x "$(PYTHON)" || (echo "missing project Python launcher: $(PYTHON). Run tools/bootstrap_python.sh --cpu" && exit 1)
@@ -210,7 +216,7 @@ $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue: $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso
 
 # --- Phase B2: 差分ストリーム再生(単バッファ, BODY.DAT を連続供給) ---
 
-movieplay: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
+movieplay-internal: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 
 # A disc build must never trust stream files left by an older routing format,
 # profile, or decision log.  Pack from the authenticated current decisions on
@@ -254,9 +260,15 @@ $(SP_EXTENSION_BIN): $(SP_EXTENSION_OBJ)
 $(SP_EXTENSION_CONSTANTS): $(SP_EXTENSION_BIN) tools/sp_extension.py tools/av_config.py | movieplay-setup
 	$(PYTHON) tools/sp_extension.py $< --output $@
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(BOOT_DIR)/security.bin $(MOVIEPLAY_STREAM_DIR)/palettes.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(BOOT_DIR)/dbgfont.bin tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_SECURITY): $(BOOT_DIR)/sec_$(SECURITY_REGION).bin | movieplay-setup
+	cp $< $@
+
+$(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
+	$(PYTHON) tools/gen_debugfont.py --output $@
+
+$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/palettes.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
 	$(PYTHON) tools/gen_debugfont.py

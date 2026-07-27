@@ -19,7 +19,8 @@
 #   --boot-wait SEC   seconds to wait before the first START (default 4)
 #   --presses N       number of START presses (default 2)
 #   --press-gap SEC   seconds between/after START presses (default 2)
-#   --display :N      X display for Xvfb (default :231)
+#   --display :N      explicit X display; rejects an existing server
+#                     (default: allocate a free display with Xvfb -displayfd)
 #   --record [FILE]   record video+audio with RetroArch's FFmpeg recorder.
 #                     If FILE is omitted, writes $OUTDIR/<tag>.mkv. Normal
 #                     recording is audio-synchronised and never runs uncapped.
@@ -55,12 +56,19 @@
 #   BIOS_IMAGE  Japanese Mega-CD BIOS staged as bios_CD_J.bin
 #               (default: original/jp_mcd2_9212.bin)
 #   SYSTEM_DIR  RetroArch system dir receiving bios_CD_J.bin
+#               (default: a private per-run temporary directory)
 #   OUTDIR       capture output dir (default: <repo>/tmp/<disc-stem>/record)
 #
 # Outputs: $OUTDIR/<tag>_NN.png, $OUTDIR/<tag>_sheet.jpg, plus retroarch/xvfb logs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ "${SEGACD_EMU_TOKEN_HELD:-0}" != "1" ]; then
+  exec "$ROOT/tools/python.sh" "$ROOT/tools/resource_tokens.py" run \
+    --resource emu --count 1 -- \
+    env SEGACD_EMU_TOKEN_HELD=1 "$0" "$@"
+fi
 
 DISC=""
 TAG=""
@@ -69,7 +77,8 @@ INTERVAL=2
 BOOT_WAIT=5
 PRESSES=14
 PRESS_GAP=1.0
-DISPLAY_NUM=":231"
+DISPLAY_NUM=""
+DISPLAY_EXPLICIT=0
 RECORD=0
 RECORD_PATH=""
 RECORD_CONFIG=""
@@ -92,7 +101,7 @@ while [ $# -gt 0 ]; do
     --boot-wait) BOOT_WAIT="$2"; shift 2;;
     --presses) PRESSES="$2"; shift 2;;
     --press-gap) PRESS_GAP="$2"; shift 2;;
-    --display) DISPLAY_NUM="$2"; shift 2;;
+    --display) DISPLAY_NUM="$2"; DISPLAY_EXPLICIT=1; shift 2;;
     --record)
       RECORD=1
       if [ $# -ge 2 ] && [[ "$2" != -* ]]; then
@@ -157,12 +166,6 @@ if [ "$OFFLINE_RECORD" -eq 1 ]; then
 fi
 DISC_STEM="$(basename "${DISC%.*}")"
 [ -z "$TAG" ] && TAG="$DISC_STEM"
-DISPLAY_ID="${DISPLAY_NUM#:}"
-DISPLAY_ID="${DISPLAY_ID%%.*}"
-if [[ ! "$DISPLAY_ID" =~ ^[0-9]+$ ]]; then
-  DISPLAY_ID=231
-fi
-COMMAND_PORT=$((55355 + DISPLAY_ID % 1000))
 if [ "$REALTIME_RECORD" -eq 1 ]; then
   [ -z "$RECORD_PRESET" ] && RECORD_PRESET="flac-fast"
 fi
@@ -179,9 +182,25 @@ fi
 
 CORE="${CORE:-/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so}"
 BIOS_IMAGE="${BIOS_IMAGE:-$ROOT/original/jp_mcd2_9212.bin}"
-SYSTEM_DIR="${SYSTEM_DIR:-$HOME/.config/retroarch/system}"
 OUTDIR="${OUTDIR:-$ROOT/tmp/$DISC_STEM/record}"
 mkdir -p "$OUTDIR"
+RUNTIME_DIR="$(mktemp -d "$OUTDIR/.${TAG}.runtime.XXXXXX")"
+SYSTEM_DIR="${SYSTEM_DIR:-$RUNTIME_DIR/system}"
+RA_PID="$RUNTIME_DIR/retroarch.pid"
+XVFB_PID="$RUNTIME_DIR/xvfb.pid"
+DISPLAY_FILE="$RUNTIME_DIR/display"
+XVFB_LOG="$OUTDIR/xvfb_${TAG}.log"
+
+cleanup() {
+  if [ -s "$RA_PID" ]; then
+    kill "$(cat "$RA_PID")" 2>/dev/null || true
+  fi
+  if [ -s "$XVFB_PID" ]; then
+    kill "$(cat "$XVFB_PID")" 2>/dev/null || true
+  fi
+  rm -rf -- "$RUNTIME_DIR"
+}
+trap cleanup EXIT
 
 for tool in Xvfb retroarch xdotool import montage; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
@@ -194,13 +213,52 @@ fi
   echo "Japanese Mega-CD BIOS not found: $BIOS_IMAGE (set BIOS_IMAGE=)" >&2
   exit 1
 }
+
+if [ "$DISPLAY_EXPLICIT" -eq 1 ]; then
+  if [[ ! "$DISPLAY_NUM" =~ ^:[0-9]+$ ]]; then
+    echo "--display must be :N with a non-negative integer: $DISPLAY_NUM" >&2
+    exit 2
+  fi
+  DISPLAY_ID="${DISPLAY_NUM#:}"
+  if [ -S "/tmp/.X11-unix/X${DISPLAY_ID}" ] ||
+     [ -e "/tmp/.X${DISPLAY_ID}-lock" ]; then
+    echo "X display already active or reserved: $DISPLAY_NUM" >&2
+    exit 75
+  fi
+  Xvfb "$DISPLAY_NUM" -screen 0 800x600x24 >"$XVFB_LOG" 2>&1 &
+else
+  Xvfb -displayfd 3 -screen 0 800x600x24 \
+    3>"$DISPLAY_FILE" >"$XVFB_LOG" 2>&1 &
+fi
+echo $! > "$XVFB_PID"
+for _ in $(seq 1 100); do
+  if ! kill -0 "$(cat "$XVFB_PID")" 2>/dev/null; then
+    echo "Xvfb exited before its display became ready; see $XVFB_LOG" >&2
+    exit 1
+  fi
+  if [ "$DISPLAY_EXPLICIT" -eq 0 ] && [ -s "$DISPLAY_FILE" ]; then
+    DISPLAY_ID="$(tr -d '[:space:]' < "$DISPLAY_FILE")"
+    DISPLAY_NUM=":$DISPLAY_ID"
+  fi
+  if [ -n "$DISPLAY_NUM" ] && [ -S "/tmp/.X11-unix/X${DISPLAY_ID}" ]; then
+    break
+  fi
+  sleep 0.05
+done
+if [ -z "$DISPLAY_NUM" ] || [ ! -S "/tmp/.X11-unix/X${DISPLAY_ID}" ]; then
+  echo "Xvfb display did not become ready; see $XVFB_LOG" >&2
+  exit 1
+fi
+COMMAND_PORT=$((55355 + DISPLAY_ID % 1000))
+echo "X display: $DISPLAY_NUM command_port=$COMMAND_PORT"
+
 install -d -m 700 "$SYSTEM_DIR"
 install -m 600 "$BIOS_IMAGE" "$SYSTEM_DIR/bios_CD_J.bin"
 BIOS_SHA="$(sha256sum "$BIOS_IMAGE" | awk '{print $1}')"
 echo "BIOS: $BIOS_IMAGE sha256=$BIOS_SHA -> $SYSTEM_DIR/bios_CD_J.bin"
 
 # Portable RetroArch config generated at run time (no absolute paths committed).
-CFG="$OUTDIR/retroarch_${TAG}.cfg"
+CFG="$RUNTIME_DIR/retroarch.cfg"
 AUDIO_ENABLE=false
 AUDIO_SYNC=true
 AUDIO_RATE_CONTROL=true
@@ -244,13 +302,11 @@ genesis_plus_gx_region_detect = "ntsc-j"
 genesis_plus_gx_bios = "enabled"
 EOF
 
-RA_PID="$OUTDIR/${TAG}_ra.pid"
-XVFB_PID="$OUTDIR/${TAG}_xvfb.pid"
 if [ "$RECORD" -eq 1 ] && [ -z "$RECORD_PATH" ]; then
   RECORD_PATH="$OUTDIR/${TAG}.mkv"
 fi
 rm -f "$OUTDIR/${TAG}"_*.png "$OUTDIR/${TAG}_sheet.jpg" \
-      "$OUTDIR/retroarch_${TAG}.log" "$OUTDIR/xvfb_${TAG}.log" "$RA_PID" "$XVFB_PID"
+      "$OUTDIR/retroarch_${TAG}.log"
 if [ "$RECORD" -eq 1 ]; then
   rm -f "$RECORD_PATH"
 fi
@@ -267,7 +323,7 @@ if [ -n "$RECORD_CONFIG" ] && [ ! -f "$RECORD_CONFIG" ]; then
   exit 1
 fi
 if [ -n "$RECORD_PRESET" ]; then
-  RECORD_CONFIG="$OUTDIR/record_${TAG}_${RECORD_PRESET}.cfg"
+  RECORD_CONFIG="$RUNTIME_DIR/record_${RECORD_PRESET}.cfg"
   case "$RECORD_PRESET" in
     flac-fast)
       cat > "$RECORD_CONFIG" <<EOF
@@ -301,7 +357,6 @@ EOF
   esac
 fi
 
-cleanup() { kill "$(cat "$RA_PID" 2>/dev/null)" "$(cat "$XVFB_PID" 2>/dev/null)" 2>/dev/null || true; }
 retroarch_window() {
   DISPLAY="$DISPLAY_NUM" xdotool search --onlyvisible --class retroarch 2>/dev/null | head -n1 || true
 }
@@ -327,11 +382,6 @@ stop_retroarch() {
   done
   kill "$(cat "$RA_PID" 2>/dev/null)" 2>/dev/null || true
 }
-trap cleanup EXIT
-
-Xvfb "$DISPLAY_NUM" -screen 0 800x600x24 >"$OUTDIR/xvfb_${TAG}.log" 2>&1 &
-echo $! > "$XVFB_PID"
-sleep 0.5
 
 RA_RECORD_ARGS=()
 if [ "$RECORD" -eq 1 ]; then
@@ -419,6 +469,8 @@ RA_WALL_END_NS="$(date +%s%N)"
 RA_WALL_SECONDS="$(awk -v start="$RA_WALL_START_NS" -v end="$RA_WALL_END_NS" \
   'BEGIN { printf "%.3f", (end - start) / 1000000000 }')"
 kill "$(cat "$XVFB_PID" 2>/dev/null)" 2>/dev/null || true
+wait "$(cat "$XVFB_PID" 2>/dev/null)" 2>/dev/null || true
+rm -rf -- "$RUNTIME_DIR"
 trap - EXIT
 
 if [ "$MAX_FRAMES_TIMED_OUT" -eq 1 ]; then

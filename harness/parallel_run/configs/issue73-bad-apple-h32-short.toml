@@ -1,0 +1,28 @@
+schema_version = 3
+
+[source]
+path = "assets/BadApple.mp4"
+fps = "30"
+duration = "8.000000"
+sar = "1:1"
+
+[source.preprocess.endpoint_snap]
+black_max = 2
+white_min = 253
+
+[video]
+mode = "H32"
+width = 256
+height = 224
+active_tiles = 896
+fit = "crop"
+resize_filter = "area"
+master_denoise = false
+
+[output]
+directory = "videos/BadApple_H32_256x224_adpcm22/tmp"
+reuse = false
+emit_decisions = true
+
+[palette]
+algorithm = "mosaic-gm"

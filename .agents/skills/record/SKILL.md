@@ -35,11 +35,12 @@ explicitly asks for a movie-only clip.
 
 Require `retroarch`, the Genesis Plus GX libretro core, `Xvfb`, `xdotool`, ImageMagick,
 `ffmpeg`, `ffprobe`, and the locked `.venv`. The harness stages the default
-Japanese Mega-CD BIOS from `original/jp_mcd2_9212.bin` into RetroArch's system
-directory and prints its SHA-256. Replay generation spans the BIOS/CD-player
+Japanese Mega-CD BIOS from `original/jp_mcd2_9212.bin` into a private per-run
+RetroArch system directory and prints its SHA-256. Replay generation spans the BIOS/CD-player
 transition with one START press per second; do not replace it with a
 revision-specific fixed head cue.
-Use these overrides only when needed:
+Use these overrides only when needed. `SYSTEM_DIR` deliberately replaces the
+private default, so do not point concurrent runs at one shared directory:
 
 ```sh
 CORE=/path/to/genesis_plus_gx_libretro.so
@@ -47,9 +48,10 @@ SYSTEM_DIR=/path/to/retroarch/system
 OUTDIR=/home/akiyan/segacd-novel/videos
 ```
 
-Before recording, run the shared-machine exclusion check from `AGENTS.md`. Wait while any
-sim/render or emulator capture is active. Never kill another session's process and never run
-two captures together.
+`tools/run_headless.sh` acquires one EMU token, dynamically allocates a private
+X display and system directory, and releases them on exit. The qualified
+default permits two emulator instances. CPU-heavy preview transcoding uses CPU
+tokens. Never bypass these locks or kill another session's process.
 
 Resolve the native recording raster from the profile before constructing the
 command. This is mandatory because RetroArch may otherwise lock its recorder
@@ -98,7 +100,9 @@ Defaults and rules:
   `DEBUG=1` disc; do not trust an unknown pre-existing image.
 - Always pass `--record-size "$NATIVE_RECORD_SIZE"`. Never omit it or rely on
   RetroArch's first reported geometry. H32 is 256x224 and H40 is 320x224.
-- Use an unused display such as `--display :269`.
+- Omit `--display` for normal work; Xvfb allocates a free display with
+  `-displayfd`. An explicit `--display :N` is diagnostic-only and fails if an
+  existing server owns it.
 - Keep the preview MP4 under `videos/`. `OUTDIR` selects the raw MKV and sidecar directory;
   the high-level harness defaults it to `videos/`.
 - A direct `tools/run_headless.sh out/PROFILE.cue` call defaults its screenshots,
@@ -123,7 +127,7 @@ OUTDIR="$PWD/videos" tools/record_movie.sh \
   --config configs/PROFILE.toml --seconds 180 \
   --tag STEM_emu --preset ffv1-flac \
   --record-size "$NATIVE_RECORD_SIZE" \
-  --display :269 --out videos/STEM_emu_preview.mp4
+  --out videos/STEM_emu_preview.mp4
 ```
 
 Replace `STEM` and the mode-specific size. The harness records with a safety tail, then
@@ -135,7 +139,7 @@ For a short boot/playback check:
 
 ```sh
 tools/record_movie.sh --config configs/PROFILE.toml \
-  --seconds 30 --tag rec_check --display :269 \
+  --seconds 30 --tag rec_check \
   --out videos/rec_check_preview.mp4
 ```
 
@@ -146,7 +150,7 @@ Routine `$record` work uses faster-than-realtime FFV1/FLAC without an extra mode
 ```sh
 OUTDIR="$PWD/videos" tools/record_movie.sh \
   --config configs/PROFILE.toml --seconds 180 \
-  --tag STEM_offline --record-size 256x224 --display :269 \
+  --tag STEM_offline --record-size 256x224 \
   --out videos/STEM_offline_preview.mp4
 ```
 
@@ -166,13 +170,13 @@ REPLAY=tmp/PROFILE/record/STEM_offline_input.replay
 OUTDIR="$PWD/videos" tools/record_movie.sh \
   --disc out/PROFILE.cue --no-build --seconds 180 --realtime-lossless \
   --preset ffv1-flac --input-replay "$REPLAY" \
-  --tag STEM_realtime --record-size 256x224 --display :270 \
+  --tag STEM_realtime --record-size 256x224 \
   --out videos/STEM_realtime_preview.mp4
 
 OUTDIR="$PWD/videos" tools/record_movie.sh \
   --disc out/PROFILE.cue --no-build --seconds 180 \
   --input-replay "$REPLAY" --tag STEM_offline_ab \
-  --record-size 256x224 --display :271 \
+  --record-size 256x224 \
   --out videos/STEM_offline_ab_preview.mp4
 
 tools/python.sh tools/compare_recordings.py \
@@ -185,7 +189,9 @@ require another passing exact comparison. The comparator checks every decoded vi
 every decoded PCM sample, packet PTS/DTS/durations, stream metadata, and total counts without
 trimming or alignment. Routine captures do not repeat the three-run qualification unless
 RetroArch, the core, harness timing/recording code, or recorder settings changed, or a result
-is suspect.
+is suspect. Requalify same-Replay captures again before raising
+`SEGACD_EMU_TOKENS`; compare each concurrent capture with its one-instance
+baseline exactly.
 
 ## What the harness guarantees
 
@@ -327,13 +333,10 @@ remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
 
 ```sh
-ps -eo pid,etimes,args | grep -v grep \
-  | grep -iE "sim\.py|render_analysis\.py|retroarch|Xvfb|record_movie|run_headless"
 make disc CONFIG=configs/PROFILE.toml DEBUG=1
 OUTDIR="$PWD/videos" tools/run_headless.sh out/PROFILE.cue \
   --tag STEM_debug --record --record-preset ffv1-flac \
-  --record-size 256x224 \
-  --shots 68 --interval 2 --display :NNN
+  --record-size 256x224 --shots 68 --interval 2
 ```
 
 Confirm the contiguous top-row Plane A HUD is visible before a long OCR scan.
@@ -368,7 +371,7 @@ Run a headless smoke test without video recording:
 
 ```sh
 tools/run_headless.sh out/PROFILE.cue \
-  --tag smoke --shots 8 --interval 1 --display :250
+  --tag smoke --shots 8 --interval 1
 ```
 
 ## Audio and boot triage
@@ -381,8 +384,8 @@ claim.
 
 For boot failures, inspect frames extracted from the MKV rather than live Xvfb screenshots.
 Keep the foreground defaults for boot wait and repeated START presses. If output is missing,
-black, silent, or durationless, inspect the RetroArch/Xvfb logs, try another display number,
-and rerun one capture in the foreground.
+black, silent, or durationless, inspect the RetroArch/Xvfb logs and rerun one capture in the
+foreground. If an explicit display was used, first retry with automatic allocation.
 
 Raw FFV1 captures can be several GB. Keep the bounded upload input until publication is
 complete, then remove only artifacts created by this session when space is needed.

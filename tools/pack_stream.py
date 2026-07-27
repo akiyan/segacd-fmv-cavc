@@ -44,6 +44,8 @@ import shadow_updates
 import sp_extension
 import stream_schedule
 import ttrc_routing
+import resource_tokens
+import tmpfs_workspace
 from encode_config import load_profile
 from cbr_paths import sim_work_dir
 from quantize_global4_tiles import pals_to_bytes
@@ -1751,5 +1753,36 @@ def main():
             sp_extension_bytes=sp_extension_bytes)
 
 
+def _profile_from_command_line():
+    for index, value in enumerate(sys.argv[1:]):
+        if value == "--config":
+            try:
+                return load_profile(sys.argv[index + 2])
+            except IndexError as exc:
+                raise SystemExit("--config requires a path") from exc
+        if value.startswith("--config="):
+            return load_profile(value.split("=", 1)[1])
+    return None
+
+
 if __name__ == "__main__":
-    main()
+    _command_profile = _profile_from_command_line()
+    _stem_lease = None
+    _sim_lease = None
+    if _command_profile is not None:
+        try:
+            _stem_lease = resource_tokens.acquire_stem(
+                _command_profile.sim_stem)
+        except resource_tokens.ResourceBusyError as exc:
+            print(str(exc), file=sys.stderr)
+            raise SystemExit(75) from exc
+    try:
+        if _command_profile is not None:
+            _sim_lease = tmpfs_workspace.lease_managed_alias(
+                _command_profile.output_dir)
+        main()
+    finally:
+        if _sim_lease is not None:
+            _sim_lease.release()
+        if _stem_lease is not None:
+            _stem_lease.release()

@@ -23,7 +23,8 @@
 #   --trim SEC     seconds to drop from the front; disables auto-audio-trim
 #                  (default: 0, preserving the startup sequence)
 #   --tag NAME     work prefix under the capture dir (default: rec_<disc basename>)
-#   --display :N   X display for Xvfb (default :236)
+#   --display :N   explicit X display; rejects an existing server
+#                  (default: allocate a free display)
 #   --preset NAME  ffv1-flac (pixel-lossless default) or realtime (paced 4:2:0 check)
 #   --offline-record
 #                  explicitly select the default fixed-Replay uncapped mode
@@ -44,6 +45,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 PYTHON="${PYTHON:-$ROOT/tools/python.sh}"
 export PYTHON
+ORIGINAL_ARGS=("$@")
 
 CONFIG=""
 DISC=""
@@ -51,7 +53,7 @@ OUT=""
 REC_SECS=160
 TRIM=0
 TAG=""
-DISPLAY_NUM=":236"
+DISPLAY_NUM=""
 PRESET="ffv1-flac"
 RECORD_SIZE=""
 BUILD=1
@@ -118,6 +120,17 @@ if [ -z "$DISC" ]; then
   echo "provide --config TOML, or --disc CUE together with --no-build" >&2
   exit 2
 fi
+
+if [ "${SEGACD_RECORD_PROFILE_LOCKED:-0}" != "1" ]; then
+  if [ -n "$CONFIG" ]; then
+    STEM_ARGS=(--config "$CONFIG")
+  else
+    STEM_ARGS=(--stem "record-disc:$(realpath -m "$DISC")")
+  fi
+  exec "$PYTHON" tools/resource_tokens.py run-stem "${STEM_ARGS[@]}" -- \
+    env SEGACD_RECORD_PROFILE_LOCKED=1 "$0" "${ORIGINAL_ARGS[@]}"
+fi
+
 if [[ ! "$REC_SECS" =~ ^[1-9][0-9]*$ ]]; then
   echo "--seconds must be a positive integer: $REC_SECS" >&2
   exit 2
@@ -138,6 +151,16 @@ fi
 [ -z "$TAG" ] && TAG="rec_$(basename "${DISC%.*}")"
 [ -z "$OUT" ] && OUT="videos/${TAG}_preview.mp4"
 CAPTURE_DIR="${OUTDIR:-$ROOT/videos}"
+
+if [ "${SEGACD_RECORD_OUTPUT_LOCKED:-0}" != "1" ]; then
+  OUTPUT_LOCK="$(
+    realpath -m "$CAPTURE_DIR/${TAG}"
+  )|$(realpath -m "$OUT")"
+  exec "$PYTHON" tools/resource_tokens.py run-stem \
+    --stem "record-output:$OUTPUT_LOCK" -- \
+    env SEGACD_RECORD_OUTPUT_LOCKED=1 "$0" "${ORIGINAL_ARGS[@]}"
+fi
+
 mkdir -p "$CAPTURE_DIR" "$(dirname "$OUT")"
 command -v ffmpeg >/dev/null 2>&1 || { echo "missing ffmpeg" >&2; exit 1; }
 command -v ffprobe >/dev/null 2>&1 || { echo "missing ffprobe" >&2; exit 1; }
@@ -164,6 +187,8 @@ SHOTS=$(( (CAPTURE_LEAD + REC_SECS + 10 + INTERVAL - 1) / INTERVAL ))
 REPLAY_FILE="$INPUT_REPLAY"
 MAX_FRAMES=""
 PIPELINE_WALL_START_NS=""
+DISPLAY_ARGS=()
+[ -n "$DISPLAY_NUM" ] && DISPLAY_ARGS=(--display "$DISPLAY_NUM")
 if [ "$OFFLINE_RECORD" -eq 1 ] || [ -n "$INPUT_REPLAY" ]; then
   RAW_EMULATED_SECONDS=$((CAPTURE_LEAD + REC_SECS + 10))
   MAX_FRAMES=$((RAW_EMULATED_SECONDS * 60))
@@ -182,7 +207,7 @@ if [ "$OFFLINE_RECORD" -eq 1 ] && [ -z "$REPLAY_FILE" ]; then
   echo ">> generating input replay ($REPLAY_MAX_FRAMES frames) -> $REPLAY_FILE"
   OUTDIR="$REPLAY_DIR" tools/run_headless.sh "$DISC" --tag "${TAG}_replay" \
     --record-replay "$REPLAY_FILE" --max-frames "$REPLAY_MAX_FRAMES" \
-    --boot-wait 1 --presses 20 --press-gap 1 --display "$DISPLAY_NUM"
+    --boot-wait 1 --presses 20 --press-gap 1 "${DISPLAY_ARGS[@]}"
   [ -s "$REPLAY_FILE" ] || { echo "input replay not produced: $REPLAY_FILE" >&2; exit 1; }
 fi
 
@@ -194,29 +219,29 @@ RECORD_SIZE_ARGS=()
 if [ "$OFFLINE_RECORD" -eq 1 ]; then
   OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
     --record-offline --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
-    --display "$DISPLAY_NUM" \
+    "${DISPLAY_ARGS[@]}" \
     "${RECORD_SIZE_ARGS[@]}"
 elif [ -n "$INPUT_REPLAY" ] && [ "$PRESET" = "realtime" ]; then
   OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
     --record-realtime \
     --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
-    --shots "$SHOTS" --interval "$INTERVAL" --display "$DISPLAY_NUM" \
+    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
     "${RECORD_SIZE_ARGS[@]}"
 elif [ -n "$INPUT_REPLAY" ]; then
   OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
     --record --record-preset "$PRESET" \
     --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
-    --shots "$SHOTS" --interval "$INTERVAL" --display "$DISPLAY_NUM" \
+    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
     "${RECORD_SIZE_ARGS[@]}"
 elif [ "$PRESET" = "realtime" ]; then
   OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
     --record-realtime \
-    --shots "$SHOTS" --interval "$INTERVAL" --display "$DISPLAY_NUM" \
+    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
     "${RECORD_SIZE_ARGS[@]}"
 else
   OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
     --record --record-preset "$PRESET" \
-    --shots "$SHOTS" --interval "$INTERVAL" --display "$DISPLAY_NUM" \
+    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
     "${RECORD_SIZE_ARGS[@]}"
 fi
 
@@ -290,16 +315,24 @@ ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
 
 echo ">> transcoding verification preview -> $OUT"
 OUT_ABS="$(realpath -m "$OUT")"
+RECORD_CPU_WORKERS="$(
+  "$PYTHON" tools/resource_tokens.py cpu-workers
+)"
+echo ">> preview CPU tokens: $RECORD_CPU_WORKERS"
 if [[ "$OUT_ABS" == "$ROOT/videos/"* ]]; then
-  "$PYTHON" tools/tmpfs_workspace.py run-file \
-    --output "$OUT" --kind record-preview-mp4 --required-gb 1 -- \
-    ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-      -c:v libx264 -crf 18 -pix_fmt yuv420p \
-      -c:a aac -b:a 128k -movflags +faststart '{output}'
+  "$PYTHON" tools/resource_tokens.py run \
+    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
+    "$PYTHON" tools/tmpfs_workspace.py run-file \
+      --output "$OUT" --kind record-preview-mp4 --required-gb 1 -- \
+      ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
+        -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
+        -c:a aac -b:a 128k -movflags +faststart '{output}'
 else
-  ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-    -c:v libx264 -crf 18 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -movflags +faststart "$OUT"
+  "$PYTHON" tools/resource_tokens.py run \
+    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
+    ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
+      -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
+      -c:a aac -b:a 128k -movflags +faststart "$OUT"
 fi
 
 if [ -n "$PIPELINE_WALL_START_NS" ]; then
