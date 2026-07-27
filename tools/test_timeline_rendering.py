@@ -57,10 +57,10 @@ class TimelineRenderingTests(unittest.TestCase):
     def test_word_banks_are_combined_before_pixel_scaling(self):
         capacities = {"Prg": 60, "Wr0": 20, "Wr1": 20}
         remaining = {"Prg": 60, "Wr0": 6, "Wr1": 6}
-        segments = dict(
-            style.meter_supply_segments(remaining, capacities, height=10)
-        )
-        self.assertEqual(segments, {"Prg": 6, "Wrd": 1})
+        raw_segments = style.meter_supply_segments(
+            remaining, capacities, height=10)
+        self.assertEqual(raw_segments[0][0], "Wrd")
+        self.assertEqual(dict(raw_segments), {"Wrd": 1, "Prg": 6})
 
     def test_positive_combined_word_balance_stays_visible(self):
         capacities = {"Prg": 60, "Wr0": 20, "Wr1": 20}
