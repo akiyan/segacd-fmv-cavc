@@ -105,7 +105,12 @@ format_contract = {
     "ROUTING_MAX_FRAMES": ttrc_routing.MAX_FRAMES,
     "ROUTING_SECTOR_BYTES": ttrc_routing.SECTOR_BYTES,
     "ROUTING_CTRL_MASK": ttrc_routing.CTRL_MASK,
+    "ROUTING_CTRL_COUNT_MASK": ttrc_routing.CTRL_COUNT_MASK,
+    "ROUTING_WORD4_FLAG": ttrc_routing.WORD4_FLAG,
     "ROUTING_TOTAL_SHIFT": ttrc_routing.TOTAL_SHIFT,
+    "ROUTING_TOTAL_MASK": ttrc_routing.CTRL_MASK << ttrc_routing.TOTAL_SHIFT,
+    "ROUTING_WORD_SHIFT": ttrc_routing.WORD_SHIFT,
+    "ROUTING_WORD_MASK": ttrc_routing.WORD_MASK,
     "ROUTING_MAX_ENTRY": ttrc_routing.MAX_ENTRY,
     "FEATURE_COLD_RUNS_BIT": ttrc_routing.FEATURE_COLD_RUNS.bit_length() - 1,
     "FEATURE_FIXED_N_BIT": ttrc_routing.FEATURE_FIXED_N.bit_length() - 1,
@@ -119,6 +124,8 @@ format_contract = {
         ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS.bit_length() - 1),
     "FEATURE_BOOT_VRAM_SIDECAR_BIT": (
         ttrc_routing.FEATURE_BOOT_VRAM_SIDECAR.bit_length() - 1),
+    "FEATURE_WORDBUF_RING_BIT": (
+        ttrc_routing.FEATURE_WORDBUF_RING.bit_length() - 1),
 }
 for name, expected in format_contract.items():
     actual = equ(sp_text, name, SP)
@@ -227,10 +234,11 @@ print(
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
 
 
-# TTRC v17 has one startup command. HEADER contains only static boot state;
+# TTRC v17+ has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
-# after publishing frame 0.
+# after publishing frame 0. PCM must then wait for the first timed control
+# sector, so ROM_READN startup latency remains outside the movie clock.
 for removed in ("STAT_BOOT_VRAM", "arm_body_after_frame0", "body_start_pending"):
     if removed in sp_text or removed in ip_text:
         sys.exit(
@@ -247,7 +255,8 @@ for source, token, description in (
          "BODY-arm frame-0 pattern drain"),
         (sp_text, "frame0_ready_wait:", "untimed frame-0 handoff wait"),
         (sp_text, "timed_suffix_start:", "post-frame-0 timed start"),
-        (sp_text, "bsr\tpcm_on", "single playback-start PCM edge"),
+        (sp_text, "startup_ready:", "post-first-slot startup release"),
+        (sp_text, "bsr\tpcm_on", "first-sector playback-start PCM edge"),
         (ip_text, "bsr\tshow_frame_minus_one", "frame -1 display"),
         (ip_text, "move.w\t#-1, frame_no", "F=FFFF HUD sentinel"),
         (ip_text, "bsr\tstart_playback", "post-frame-0 command clear"),
@@ -260,12 +269,14 @@ startup_order = (
     "move.w\t#STAT_READY, (COMSTAT0).l",
     "frame0_ready_wait:",
     "tst.w\t(COMCMD0).l",
-    "bsr\tpcm_on",
-    "move.w\t#0, (COMSTAT0).l",
     "timed_suffix_start:",
     "bsr\tissue_file_readn",
     "arm_frame1:",
+    "bsr\tpump1_core",
+    "bsr\tpcm_on",
     "timed_suffix_armed:",
+    "startup_ready:",
+    "move.w\t#0, (COMSTAT0).l",
 )
 cursor = 0
 for token in startup_order:
@@ -285,8 +296,9 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v17 BODY arm and one-command "
-    "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge")
+    "check_player_ring: OK  v18 BODY arm and one-command "
+    "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
+    "and PCM begins on its first control sector")
 
 
 # Boot stage is consumed through an explicit give/copy/take-back handshake.
@@ -431,8 +443,10 @@ max_f0_bytes = (
     // ttrc_routing.SECTOR_BYTES
     * ttrc_routing.SECTOR_BYTES
 )
-if ring_base + ring_size != apply_base:
-    sys.exit("check_player_ring: PrgBuf does not end at APPLY")
+if ring_base + ring_size + ttrc_routing.SECTOR_BYTES != apply_base:
+    sys.exit(
+        "check_player_ring: PrgBuf plus fourth pending Word sector "
+        "does not end at APPLY")
 if f0pat_tmp + max_f0_bytes != routing_tmp:
     sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
 if routing_tmp + ttrc_routing.ROUTE_BYTES > apply_base + apply_size:
@@ -489,10 +503,12 @@ if not (
 ):
     sys.exit("check_player_ring: persistent Sub PRG PCM/table allocations overlap")
 if not (
-        ring_base <= adpcm_boot_copy
-        and adpcm_boot_copy + extension_values.size <= ring_base + ring_size
+        adpcm_boot_copy == ring_base + ring_size
+        and adpcm_boot_copy + extension_values.size <= apply_base
 ):
-    sys.exit("check_player_ring: boot-only Sub extension exceeds PrgBuf")
+    sys.exit(
+        "check_player_ring: boot-only Sub extension exceeds the later "
+        "fourth pending Word sector")
 if (
         extension_values.load_base
         != routing_tmp + ima_adpcm.FULL_TABLE_BYTES
@@ -637,6 +653,116 @@ for token in (
     if token not in pump:
         sys.exit(f"check_player_ring: route-aware pump is missing {token!r}")
 
+if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
+    if equ(ip_text, "FEATURE_WORDBUF_RING_BIT", IP) != (
+            ttrc_routing.FEATURE_WORDBUF_RING.bit_length() - 1):
+        sys.exit("check_player_ring: Main WordBuf-ring feature bit differs")
+    for source, token, description in (
+            (sp_text, ".equ INCLUDE_WORDBUF_RING, 1",
+             "specialized WordBuf-ring build switch"),
+            (sp_text, "move.l\td0, word_write_ptr0",
+             "Wr0 timed write cursor initialization"),
+            (sp_text, "move.l\td0, word_write_ptr1",
+             "Wr1 timed write cursor initialization"),
+            (sp_text, "cmp.w\tframe_idx, d0",
+             "current-frame-only Word refill guard"),
+            (sp_text, "cmp.w\tword_owned_bank, d1",
+             "physical Word-RAM ownership guard"),
+            (sp_text, "word_pending_count:",
+             "bounded pending Word-sector state"),
+            (sp_text, "word_pending2:",
+             "third resident pending Word-sector buffer"),
+            (sp_text, "bsr\tflush_word_pending",
+             "post-swap pending Word-sector commit"),
+            (sp_text, "addi.w\t#64, word_level0",
+             "Wr0 sector occupancy accounting"),
+            (sp_text, "addi.w\t#64, word_level1",
+             "Wr1 sector occupancy accounting"),
+            (sp_text, "sub.w\td3, word_level0",
+             "Wr0 source-run retirement"),
+            (sp_text, "sub.w\td3, word_level1",
+             "Wr1 source-run retirement"),
+            (ip_text, "cmpa.l\t#PROBE_BANK+WR0_END, a3",
+             "Main Wr0 ring-end normalization"),
+            (ip_text, "cmpa.l\t#PROBE_BANK+WR1_END, a3",
+             "Main Wr1 ring-end normalization"),
+    ):
+        if token not in source:
+            sys.exit(
+                f"check_player_ring: missing {description}: {token!r}")
+    blocking_pump = sp_text[
+        sp_text.index("pump1_core:"):sp_text.index("p1_drain:")
+    ]
+    opportunistic_pump = sp_text[
+        sp_text.index("pump_poll_core:"):sp_text.index("pp_not_word:")
+    ]
+    if "bsr\tword_accept_guard" not in blocking_pump:
+        sys.exit(
+            "check_player_ring: blocking pump does not reserve a bounded "
+            "Word-sector destination")
+    if "bsr\tword_accept_guard" not in opportunistic_pump:
+        sys.exit(
+            "check_player_ring: opportunistic pump does not reserve a bounded "
+            "Word-sector destination")
+    pending_dispatch = sp_text[
+        sp_text.index("p1_word_pending:"):sp_text.index("p1_ring:")
+    ]
+    for pattern, description in (
+            (
+                r"movea\.l\s+#WORD_PENDING0,\s*a1\s+"
+                r"move\.w\s+drain_frame,\s*word_pending_frame\s+"
+                r"bra\.s\s+4f",
+                "first pending Word sector -> WORD_PENDING0",
+            ),
+            (
+                r"cmpi\.w\s+#1,\s*d0.*?"
+                r"movea\.l\s+#WORD_PENDING1,\s*a1\s+"
+                r"bra\.s\s+4f",
+                "second pending Word sector -> WORD_PENDING1",
+            ),
+            (
+                r"cmpi\.w\s+#2,\s*d0.*?"
+                r"lea\s+word_pending2,\s*a1\s+"
+                r"bra\.s\s+4f",
+                "third pending Word sector -> word_pending2",
+            ),
+            (
+                r"3:\s+movea\.l\s+#WORD_PENDING3,\s*a1\s+4:",
+                "fourth pending Word sector -> WORD_PENDING3",
+            ),
+    ):
+        if not re.search(pattern, pending_dispatch, re.DOTALL):
+            sys.exit(
+                "check_player_ring: pending Word-sector dispatch does not "
+                f"preserve {description}")
+    word_pending0 = equ(sp_text, "WORD_PENDING0", SP)
+    word_pending1 = equ(sp_text, "WORD_PENDING1", SP)
+    word_pending_end = equ(sp_text, "WORD_PENDING_SAFE_END", SP)
+    word_pending3 = equ(sp_text, "WORD_PENDING3", SP)
+    if not (
+            word_pending0 == pcm_dec_buf_end
+            and word_pending1 == word_pending0 + ttrc_routing.SECTOR_BYTES
+            and word_pending_end
+            == word_pending1 + ttrc_routing.SECTOR_BYTES
+            and word_pending_end <= sub_prg_safe_end
+            and word_pending3 == ring_base + ring_size
+            and word_pending3 + ttrc_routing.SECTOR_BYTES == apply_base):
+        sys.exit(
+            "check_player_ring: pending Word sectors overlap or exceed their "
+            "two safe-PRG, resident-tail, and PrgBuf-tail allocations")
+    process = sp_text[
+        sp_text.index("pf_pump:"):sp_text.index("pf_ready:")
+    ]
+    for token in (
+            "andi.w\t#ROUTING_WORD_MASK, d2",
+            "lsr.w\t#ROUTING_WORD_SHIFT, d2",
+            "add.w\td2, d1",
+    ):
+        if token not in process:
+            sys.exit(
+                "check_player_ring: frame readiness does not include the "
+                f"Word payload prefix: {token!r}")
+
 ip_max_seg = equ(ip_text, "PALTAB_MAX_SEG", IP)
 if ip_max_seg != av_config.PALTAB_MAX_SEG:
     sys.exit("check_player_ring: Main palette-table capacity differs from config")
@@ -644,5 +770,5 @@ if ip_max_seg != av_config.PALTAB_MAX_SEG:
 print(
     "check_player_ring: OK  PrgBuf, APPLY, PRG PCM/hot ADPCM, "
     "BIOS-loaded resident Sub image, HEADER-preloaded boot extension, "
-    "Word delta, DicBuf, palette and "
+    "refillable parity WordBuf, Word delta, DicBuf, palette and "
     "route-aware pump contracts")

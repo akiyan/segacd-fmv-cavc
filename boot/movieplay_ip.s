@@ -100,6 +100,7 @@
 .equ FEATURE_FIXED_N_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
+.equ FEATURE_WORDBUF_RING_BIT, 8
 .equ SHADOW_UPDATE_LIST_BIT, 15
 .equ SHADOW_UPDATE_COUNT_MASK, 0x7FFF
 .equ SHADOW_OFFSET_MASK, 0x0FFE	/* 4KB physical shadow, even word offsets */
@@ -357,7 +358,7 @@ ip_entry:
 	lsr.w	#1, d2
 	move.w	d2, md_row0
 	/* Generic DEBUG builds need the same fps-scaled normal PrgBuf ceiling as
-	   generated players: (424-ceil(600/fps)) KiB, then KiB -> patterns. */
+	   generated players: (422-6-ceil(600/fps)) KiB, then KiB -> patterns. */
 	moveq	#0, d2
 	move.w	56(a0), d2			/* integer content fps */
 	bne.s	1f
@@ -374,7 +375,7 @@ ip_entry:
 2:
 	swap	d3				/* exact quotient */
 3:
-	move.w	#424, d2
+	move.w	#416, d2
 	sub.w	d3, d2
 	lsl.w	#5, d2				/* 1 KiB = 32 patterns */
 	move.w	d2, md_prg_buf_cap_patterns
@@ -737,6 +738,23 @@ bf_stage_preload:
 	lsl.w	#2, d3
 	lea	wr_ptr0, a1
 	movea.l	(a1,d3.w), a3
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0100)
+	/* The source run never crosses a ring end. Normalize the next run's
+	   cursor only after the previous run ended exactly at that boundary. */
+	tst.w	d3
+	bne.s	1f
+	cmpa.l	#PROBE_BANK+WR0_END, a3
+	bne.s	2f
+	movea.l	#PROBE_BANK+WR0_OFF, a3
+	bra.s	2f
+1:
+	cmpa.l	#PROBE_BANK+WR1_END, a3
+	bne.s	2f
+	movea.l	#PROBE_BANK+WR1_OFF, a3
+2:
+.endif
+.endif
 	move.l	a3, d5
 	add.l	d2, d5
 	tst.w	d3

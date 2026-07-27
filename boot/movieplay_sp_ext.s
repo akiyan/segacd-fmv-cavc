@@ -24,8 +24,13 @@
 .equ ADPCM_OUTPUT_LUT_LONGS,  ADPCM_OUTPUT_LUT_BYTES/4
 .equ ADPCM_BANK_COPIES,       2
 .equ ROUTING_CTRL_MASK,       0x0007
+.equ ROUTING_CTRL_COUNT_MASK, 0x0003
+.equ ROUTING_WORD4_FLAG,      0x0004
 .equ ROUTING_TOTAL_SHIFT,     3
-.equ ROUTING_MAX_ENTRY,       0x002D
+.equ ROUTING_TOTAL_MASK,      0x0038
+.equ ROUTING_WORD_SHIFT,      6
+.equ ROUTING_WORD_MASK,       0x00C0
+.equ ROUTING_MAX_ENTRY,       0x00ED
 .equ ROUTING_BANK_COPIES,     2
 
 .text
@@ -83,18 +88,34 @@ routing_prepare:
 	movea.l	a0, a2
 	movea.l	a1, a3
 	tst.b	(a0)
-	bne.s	routing_invalid
+	bne	routing_invalid
 	subq.w	#1, d7
 1:
 	moveq	#0, d0
 	move.b	(a0)+, d0
 	cmpi.b	#ROUTING_MAX_ENTRY, d0
-	bhi.s	routing_invalid
+	bhi	routing_invalid
 	move.w	d0, d2
+	move.w	d0, d3
 	andi.w	#ROUTING_CTRL_MASK, d0
+	andi.w	#ROUTING_TOTAL_MASK, d2
 	lsr.w	#ROUTING_TOTAL_SHIFT, d2
+	cmpi.w	#5, d2
+	bhi	routing_invalid
 	cmp.w	d2, d0
-	bhi.s	routing_invalid
+	bhi	routing_invalid
+	andi.w	#ROUTING_WORD_MASK, d3
+	lsr.w	#ROUTING_WORD_SHIFT, d3
+	btst	#2, d0
+	beq.s	2f
+	cmpi.w	#3, d3
+	bne	routing_invalid
+	andi.w	#ROUTING_CTRL_COUNT_MASK, d0
+	addq.w	#1, d3
+2:
+	sub.w	d0, d2
+	cmp.w	d2, d3
+	bhi	routing_invalid
 	dbra	d7, 1b
 
 	moveq	#ROUTING_BANK_COPIES-1, d1

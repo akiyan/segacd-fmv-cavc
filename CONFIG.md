@@ -151,10 +151,13 @@ packed bytes. The 24–30 fps specialized path omits that counter and call.
 Startup reads static HEADER through PREBUFFER, reads the finite untimed BODY
 arm, expands frame 0, and hands it to Main while the timed reader remains
 stopped. After Main displays frame 0, the original `CMD_STREAM` clear edge
-starts one continuous timed BODY read at frame 1. Sub pre-drains frame 1 while
-Main displays frame 0 and waits through the ordinary `CMD_SWAP`. Timed BODY
-delivers 75 sectors per second, so Sub drains ready sectors throughout timed
-frame expansion and idle time.
+starts one continuous timed BODY read at frame 1. PCM remains stopped through
+the first `ROM_READN` latency, starts on the first frame-1 control sector, and
+Main remains blocked until Sub finishes that physical slot. This keeps the CD
+startup interval out of the audio clock while preserving the ordinary
+frame-0-to-frame-1 slot/VBlank phase. Timed BODY delivers 75 sectors per
+second, so Sub drains ready sectors throughout timed frame expansion and idle
+time.
 
 Back-pressure depends on the next sector's destination:
 
@@ -563,9 +566,11 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 startupはstatic HEADERからPREBUFFERまでを読み、有限でuntimedなBODY armを読んで
 frame 0を展開し、timed readerを停止したままMainへ渡します。Mainがframe 0を表示した
 後、元の `CMD_STREAM` をclearするedgeでframe 1を起点とするtimed BODYの連続readを
-開始します。SubはMainがframe 0を表示し、通常の `CMD_SWAP` で待っている間にframe 1を
-先読みします。Timed BODYは毎秒75 sectorを届けるため、Subはtimed frame展開中とidle中
-の両方でready sectorをdrainします。
+開始します。最初の `ROM_READN` latency中はPCMを停止し、最初のframe-1 control sectorで
+PCMを開始し、そのphysical slotが完了するまでMainを待たせます。これによりCD起動待ちは
+audio clockへ入らず、通常のframe-0-to-frame-1 slot/VBlank位相を維持します。Timed
+BODYは毎秒75 sectorを届けるため、Subはtimed frame展開中とidle中の両方でready
+sectorをdrainします。
 
 back-pressureは次sectorの行き先で決まります。
 

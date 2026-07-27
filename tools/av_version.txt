@@ -11,6 +11,46 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p106: Keep PCM stopped through the first timed ROM_READN startup interval.
+#         Start it when frame 1's first control sector arrives, then finish that
+#         physical slot before releasing Main. The remaining slot time restores
+#         the ordinary frame-0 audio/display interval without moving timed BODY
+#         service into player-only frame -1 or changing encoded image settings.
+#   e147: Keep the final source-aware run trace in the named dma_runs analysis
+#         column and prove that WordBuf replanning cannot overwrite the
+#         independent timed raw-prefetch trace shown by Pre.
+#   p105: Preserve the pending Word-sector index after adding the fourth
+#         scratch destination. The first sector now remains in WORD_PENDING0
+#         for the matching post-swap flush instead of being redirected to the
+#         fourth slot and flushing stale bytes into WordBuf.
+#   e146: Treat WordBuf as a forward-moving backup for predicted Prg low-water
+#         points. Place the boot turn at the first pressure suffix, refill only
+#         when Prg cannot accept a complete sector, replay every accepted
+#         sector exactly, and encode a fourth Word-prefix sector through the
+#         routing control-field escape. Reserve its 2 KiB pending destination
+#         by reducing the physical PrgBuf ring from 424 to 422 KiB.
+#   p104: Decode the fourth-Word-sector routing escape, queue up to four
+#         not-yet-owned-bank sectors, and use the boot-only extension tail as
+#         the fourth pending destination. Match the 422 KiB physical PrgBuf
+#         ring and its fps-derived normal ceiling.
+#   e145: Keep the refill planner's useful payload plus control within the
+#         routing byte's five-sector ceiling even when a 15 fps physical CD
+#         slot lasts six sectors. Preserve the sixth sector as rate padding
+#         and prove that distinction again when materializing the stream.
+#   e144: Select timed WordBuf0/1 refill runs from proven per-slot spare
+#         capacity instead of fixing one refill turn at startup. Reserve only
+#         complete future runs that also finish inside the current refill
+#         sector, keep Prg delivery first, and let exact Prg/Word deadline
+#         replays determine the useful refill count for streams of any length.
+#   p103: Consume v18 WordBuf0/1 as refillable parity rings. Drain routed Word
+#         sectors continuously into up to three bounded Sub-PRG pending slots
+#         while the target physical bank is not owned, then commit them after
+#         the swap. Retire occupancy per complete source run and wrap Main's
+#         parity cursor only at a proven ring end.
+#   e142: Plan WordBuf0/1 as refillable parity rings. Assign complete physical
+#         runs so Word sourcing does not add Main transfer runs, charge timed
+#         refill sectors as ordinary BODY payload, and freeze independent Prg
+#         and Word occupancy/deadline proofs in the decision log.
 #   p102: Give specialized H32 DEBUG playback the same 46-cell Q/V/O/E/G/K
 #         diagnostics as H40. The logical HUD stream wraps after 32 cells on
 #         H32 and 40 cells on H40, and OCR selects the matching two-row layout
@@ -920,5 +960,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260727
-e=141
-p=102
+e=147
+p=106

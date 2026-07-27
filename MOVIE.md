@@ -77,9 +77,14 @@ stops the read at the declared arm boundary, and expands frame 0. Sub hands the
 completed frame-0 bank to Main with `STAT_READY` while the timed suffix remains
 stopped. Main shows the black player-only frame -1 (`F=FFFF`) and builds frame
 0. Once frame 0 is visible as `F=0000`, Main clears the original `CMD_STREAM`.
-That single edge starts PCM and the continuous timed BODY read. Sub pre-drains
-frame 1 while Main displays frame 0 and waits through the ordinary `CMD_SWAP`
-handshake; no second startup-only handshake exists.
+That edge launches the continuous timed BODY read, but PCM remains stopped
+during the initial `ROM_READN` latency. Sub starts PCM as soon as the first
+frame-1 control sector proves that the 75-sector/s stream is flowing, drains
+the remainder of frame 1's physical slot, and then clears `STAT_READY`. The
+slot remainder plus the next VBlank places frame 1 at its ordinary
+source-audio position instead of charging the CD startup interval to audio.
+This is the delayed acknowledgement of the original command, not a second
+startup-only handshake.
 
 Frame 0 has no timed delivery budget. Its visible name table uses exact target
 patterns only. Remaining resident VRAM slots may receive future patterns
@@ -265,8 +270,10 @@ and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
 Each ARM_AUDIO sector at the start of `BODY.DAT` begins with one decoded
 `audio_bytes` PCM chunk and is zero-padded. Sub appends these source-leading
 chunks to wave RAM at `SYNC_LEAD` while PCM is stopped. Live controls continue
-the shifted source order. PCM starts after frame 0 is displayed, so source
-sample zero aligns with the first visible movie frame.
+the shifted source order. Frame 0 may already be visible while the first timed
+`ROM_READN` is starting, but PCM remains stopped. Source sample zero starts
+when the first frame-1 control sector arrives; the rest of that physical slot
+positions frame 1 one source frame later.
 
 ## Routing table
 
@@ -498,9 +505,12 @@ BODY armを読み、PCM停止中にdecoded audioをwave RAMへ書き、宣言済
 停止してframe 0を展開します。完成したframe-0 bankを `STAT_READY` でMainへ渡しますが、
 この時点ではtimed suffixを停止したままにします。Mainはplayer-onlyの黒いframe -1
 （`F=FFFF`）を表示し、frame 0を構築します。frame 0が `F=0000` として表示された時点で
-Mainが元の `CMD_STREAM` をclearします。この1回のedgeがPCMとtimed BODYの連続readを
-開始します。SubはMainがframe 0を表示し、通常の `CMD_SWAP` handshakeで待っている間に
-frame 1を先読みします。2個目のstartup専用handshakeはありません。
+Mainが元の `CMD_STREAM` をclearします。このedgeでtimed BODYの連続readを起動しますが、
+最初の `ROM_READN` latency中はPCMを停止したままにします。最初のframe-1 control
+sectorが到着して75 sector/sのstream開始を確認した時点でPCMを開始し、frame 1の
+physical slotの残りをdrainしてから `STAT_READY` をclearします。slotの残り時間と次の
+VBlankにより、CD起動待ちを音声へ加算せず、frame 1を通常のsource-audio位置へ置きます。
+これは元commandへの遅延acknowledgementであり、2個目のstartup専用handshakeではありません。
 
 frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
 patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
@@ -679,7 +689,9 @@ entryを参照します。
 `BODY.DAT` 先頭の各ARM_AUDIO sectorは、先頭にdecoded `audio_bytes` PCM chunkを
 1個置き、残りをzero padします。SubはPCM停止中にsource先頭のchunkを
 `SYNC_LEAD` からwave RAMへ追記します。live controlは続くsource順を維持します。
-PCMはframe 0表示後に始まるため、source sample 0は最初のmovie表示frameと揃います。
+最初のtimed `ROM_READN` 起動中にはframe 0が先に表示されることがありますが、PCMは停止した
+ままです。最初のframe-1 control sector到着時にsource sample 0を開始し、そのphysical
+slotの残り時間でframe 1を1 source frame後へ配置します。
 
 ## Routing table
 
