@@ -92,6 +92,34 @@ class SimMultiprocessingTests(unittest.TestCase):
             (1, 2),
         )
 
+    def test_postplan_runs_do_not_overwrite_raw_prefetch(self) -> None:
+        stats = np.zeros((3, len(sim.STAT_COLUMNS)), np.float64)
+        stats[:, sim.STAT_COLUMN_INDEX["prefetch"]] = [0, 4, 7]
+        sim.apply_postplan_transfer_stats(
+            stats,
+            dma_runs=[9, 8, 6],
+            prefetch_cold=[0, 4, 7],
+        )
+        np.testing.assert_array_equal(
+            stats[:, sim.STAT_COLUMN_INDEX["dma_runs"]],
+            [9, 8, 6],
+        )
+        np.testing.assert_array_equal(
+            stats[:, sim.STAT_COLUMN_INDEX["prefetch"]],
+            [0, 4, 7],
+        )
+
+    def test_postplan_rejects_a_changed_raw_prefetch_trace(self) -> None:
+        stats = np.zeros((2, len(sim.STAT_COLUMNS)), np.float64)
+        stats[:, sim.STAT_COLUMN_INDEX["prefetch"]] = [0, 3]
+        with self.assertRaisesRegex(
+                AssertionError, "raw-prefetch trace"):
+            sim.apply_postplan_transfer_stats(
+                stats,
+                dma_runs=[1, 2],
+                prefetch_cold=[0, 0],
+            )
+
     def test_resident_distance_luts_match_direct_f3_math(self) -> None:
         rng = np.random.default_rng(7)
         candidates = sim.MD_LEVELS[

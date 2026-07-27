@@ -44,6 +44,7 @@ import shadow_updates
 import sp_extension
 import stream_schedule
 import ttrc_routing
+import wordbuf_ring
 import resource_tokens
 import tmpfs_workspace
 from encode_config import load_profile
@@ -100,6 +101,7 @@ FEATURE_SHADOW_UPDATE_LISTS = ttrc_routing.FEATURE_SHADOW_UPDATE_LISTS
 FEATURE_VRAM_RAW_PREFETCH = ttrc_routing.FEATURE_VRAM_RAW_PREFETCH
 FEATURE_DICBUF_INDEXED_RUNS = ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS
 FEATURE_BOOT_VRAM_SIDECAR = ttrc_routing.FEATURE_BOOT_VRAM_SIDECAR
+FEATURE_WORDBUF_RING = ttrc_routing.FEATURE_WORDBUF_RING
 ADPCM_TABLE_SECTORS = math.ceil(ima_adpcm.FULL_TABLE_BYTES / SECTOR)
 ROUTING_MAX_FRAMES = ttrc_routing.MAX_FRAMES
 
@@ -549,7 +551,7 @@ def verify_sim_pattern_transfers(
         print("  pattern transfer照合: 旧decision logのため省略 (再simで有効化)")
         return False
     schema = int(frozen.get("schema_version", 0))
-    if schema not in (1, 2):
+    if schema not in (1, 2, 3):
         raise SystemExit(
             "pack: unsupported pattern_transfers schema "
             f"{frozen.get('schema_version')!r}")
@@ -569,6 +571,9 @@ def verify_sim_pattern_transfers(
             "wr1": np.asarray(supply_plan.wr1_loads, np.int64),
             "dic": np.asarray(supply_plan.dic_loads, np.int64),
         })
+    if schema >= 3:
+        expected["word_stage_sectors"] = np.asarray(
+            supply_plan.word_stage_sectors, np.int64)
     for name, actual in expected.items():
         simulated = np.asarray(frozen.get(name, ()), np.int64)
         if simulated.shape != actual.shape:
@@ -617,18 +622,35 @@ def verify_sim_stream_schedule(log, packed_schedule):
         "body_physical_bytes": np.asarray(
             packed_schedule["body_physical_bytes"], np.int64),
     }
+    if "word_stage_sectors" in frozen:
+        expected["word_stage_sectors"] = np.asarray(
+            packed_schedule.get(
+                "word_stage_sectors",
+                np.zeros(len(expected["payload_sectors"]), np.int64),
+            ),
+            np.int64,
+        )
+    if "word_occupancy" in frozen:
+        expected["word_occupancy"] = np.asarray(
+            packed_schedule.get(
+                "word_occupancy",
+                np.zeros((len(expected["payload_sectors"]), 2), np.int64),
+            ),
+            np.int64,
+        )
     for name, actual in expected.items():
         simulated = np.asarray(frozen.get(name, ()), np.int64)
         if simulated.shape != actual.shape:
             raise SystemExit(
                 f"pack: sim/pack {name} length mismatch: "
                 f"sim={simulated.shape} pack={actual.shape}")
-        mismatch = np.flatnonzero(simulated != actual)
+        mismatch = np.argwhere(simulated != actual)
         if mismatch.size:
-            frame = int(mismatch[0])
+            frame = int(mismatch[0, 0])
+            index = tuple(int(value) for value in mismatch[0])
             raise SystemExit(
                 f"pack: sim/pack {name} mismatch at frame {frame}: "
-                f"sim={int(simulated[frame])} pack={int(actual[frame])}. "
+                f"sim={int(simulated[index])} pack={int(actual[index])}. "
                 "Control layout or delivery scheduling changed after simulation; "
                 "re-run sim.")
     print(f"  BODY配送/RING照合: {len(expected['ring_occupancy'])} slots exact")
@@ -637,16 +659,26 @@ def verify_sim_stream_schedule(log, packed_schedule):
 
 def verify_body_delivery_file(
         body_path, body_arm, stream_ctrl, stream_pay, schedule, *,
+        stream_word=(b"", b""),
         prebuf_patterns):
     """Check the BODY arm prefix and every timed slot byte-for-byte."""
     n_pay = np.asarray(schedule["n_pay_sec"], np.int64)
     n_ctrl = np.asarray(schedule["n_ctrl_sec"], np.int64)
+    n_word = np.asarray(
+        schedule.get("word_stage_sectors", np.zeros(len(n_pay), np.int64)),
+        np.int64,
+    )
     fsec = np.asarray(schedule["fsec"], np.int64)
     useful_pay = np.asarray(schedule["body_useful_payload_bytes"], np.int64)
     useful_ctrl = np.asarray(schedule["body_useful_control_bytes"], np.int64)
     pad = np.asarray(schedule["body_pad_bytes"], np.int64)
+    if len(fsec) > 1 and int(n_ctrl[1]) < 1:
+        raise AssertionError(
+            "BODY.DAT frame 1 must start with a control sector so the "
+            "player can anchor PCM start to its arrival")
     cc = 0
     pc = int(prebuf_patterns) * PAT
+    wc = [0, 0]
     seen_pay = np.zeros(len(fsec), np.int64)
     seen_ctrl = np.zeros(len(fsec), np.int64)
     seen_pad = np.zeros(len(fsec), np.int64)
@@ -656,31 +688,48 @@ def verify_body_delivery_file(
             raise AssertionError("BODY.DAT arm prefix differs from packed input")
         for i in range(1, len(fsec)):
             ncb = int(n_ctrl[i]) * SECTOR
-            npb = int(n_pay[i]) * SECTOR
+            nwb = int(n_word[i]) * SECTOR
+            npb = (int(n_pay[i]) - int(n_word[i])) * SECTOR
             slot_size = int(fsec[i]) * SECTOR
             slot = body.read(slot_size)
             if len(slot) != slot_size:
                 raise AssertionError(f"BODY.DAT slot {i} is truncated")
 
             ctrl_src = stream_ctrl[cc:cc + ncb]
+            parity = i & 1
+            word_src = stream_word[parity][wc[parity]:wc[parity] + nwb]
             pay_src = stream_pay[pc:pc + npb]
             ctrl_area = slot[:ncb]
-            pay_area = slot[ncb:ncb + npb]
-            rate_area = slot[ncb + npb:]
+            word_area = slot[ncb:ncb + nwb]
+            pay_area = slot[ncb + nwb:ncb + nwb + npb]
+            rate_area = slot[ncb + nwb + npb:]
             if ctrl_area[:len(ctrl_src)] != ctrl_src or any(ctrl_area[len(ctrl_src):]):
                 raise AssertionError(f"BODY.DAT control bytes/pad mismatch at slot {i}")
+            if (
+                word_area[:len(word_src)] != word_src
+                or any(word_area[len(word_src):])
+            ):
+                raise AssertionError(
+                    f"BODY.DAT WordBuf bytes/pad mismatch at slot {i}")
             if pay_area[:len(pay_src)] != pay_src or any(pay_area[len(pay_src):]):
                 raise AssertionError(f"BODY.DAT payload bytes/pad mismatch at slot {i}")
             if any(rate_area):
                 raise AssertionError(f"BODY.DAT rate-match pad is nonzero at slot {i}")
 
             seen_ctrl[i] = len(ctrl_src)
-            seen_pay[i] = len(pay_src)
-            seen_pad[i] = slot_size - len(ctrl_src) - len(pay_src)
+            seen_pay[i] = len(word_src) + len(pay_src)
+            seen_pad[i] = (
+                slot_size - len(ctrl_src) - len(word_src) - len(pay_src))
             cc += ncb
+            wc[parity] += nwb
             pc += npb
         if body.read(1):
             raise AssertionError("BODY.DAT has bytes beyond the slot schedule")
+    for parity in (0, 1):
+        if wc[parity] < len(stream_word[parity]):
+            raise AssertionError(
+                f"BODY.DAT omitted {len(stream_word[parity]) - wc[parity]} "
+                f"WordBuf{parity} refill bytes")
     for name, actual, traced in (
             ("useful control", seen_ctrl, useful_ctrl),
             ("useful payload", seen_pay, useful_pay),
@@ -914,6 +963,10 @@ def decode_verify(
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     seg_pals = log["seg_pals"]
     n_pay_sec = sc["n_pay_sec"]; blk_len = sc["blk_len"]; B = sc["prebuf_pat"]
+    word_stage_sec = np.asarray(
+        sc.get("word_stage_sectors", np.zeros(len(per), np.int64)),
+        np.int64,
+    )
     ctrl = b"".join(blocks)
     POOL = int(log["vram_tiles"])
     cmp = Path(compare_dir) if compare_dir else None
@@ -934,6 +987,11 @@ def decode_verify(
     f0_ring = deque(prg_patterns[:f0_inline])
     ring = deque(prg_patterns[nl0:nl0 + B]); pc = nl0 + B; cc = 0
     word = [deque(supply_plan.wr0_patterns), deque(supply_plan.wr1_patterns)]
+    word_refill = [
+        supply_plan.wr0_refill_patterns,
+        supply_plan.wr1_refill_patterns,
+    ]
+    word_refill_cursor = [0, 0]
     dic = tuple(supply_plan.dic_patterns)
     tile = [None] * (POOL + BASE + 2)
     sidecar_patterns = prg_patterns[f0_inline:nl0]
@@ -947,7 +1005,20 @@ def decode_verify(
     nt_slot = np.zeros(C_CELLS, np.int64); nt_pal = np.zeros(C_CELLS, np.int64)
     diffs = []; ring_peak = len(ring); bad = 0
     for i in range(len(per)):
-        add = int(n_pay_sec[i]) * PAT_PER_SEC
+        parity = i & 1
+        stage = int(word_stage_sec[i]) * PAT_PER_SEC
+        if stage:
+            start = word_refill_cursor[parity]
+            stop = start + stage
+            staged = word_refill[parity][start:stop]
+            if len(staged) != stage:
+                raise ValueError(
+                    f"frame {i}: WordBuf{parity} refill stream is truncated")
+            word[parity].extend(staged)
+            word_refill_cursor[parity] = stop
+        add = (
+            int(n_pay_sec[i]) - int(word_stage_sec[i])
+        ) * PAT_PER_SEC
         prg_src = f0_ring if (f0h and i == 0) else ring
         # The live player may pump this BODY payload while Main still displays
         # frame i-1. Append before consuming frame i so the verifier measures
@@ -1002,7 +1073,7 @@ def decode_verify(
             if source == pattern_supply.SOURCE_PRG:
                 src = prg_src
             elif source == pattern_supply.SOURCE_WR:
-                src = word[i & 1]
+                src = word[parity]
             elif source == pattern_supply.SOURCE_DIC:
                 src = dic[dic_index:dic_index + count]
             else:
@@ -1042,6 +1113,10 @@ def decode_verify(
                 diffs.append((i, int(np.abs(fr.astype(np.int32) - ref.astype(np.int32)).max())))
         if (i + 1) % 400 == 0:
             print(f"  decode {i+1}/{len(per)}", flush=True)
+    if any(
+            word_refill_cursor[parity] != len(word_refill[parity])
+            for parity in (0, 1)):
+        raise ValueError("WordBuf refill stream was not fully staged")
     cache_left = len(word[0]) + len(word[1])
     if cache_left:
         bad += cache_left
@@ -1078,6 +1153,10 @@ def write_stream(
     BOOT_STAGE = 全区間パレット(n_seg×128B)と任意の裏VRAMパターン。
     Mainはboot時に前者をMain-RAM表へ、後者をVRAMの指定slotへコピーする。"""
     n_pay_sec = sc["n_pay_sec"]; n_ctrl_sec = sc["n_ctrl_sec"]
+    word_stage_sec = np.asarray(
+        sc.get("word_stage_sectors", np.zeros(len(per), np.int64)),
+        np.int64,
+    )
     Bpat = int(sc["prebuf_pat"])
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     seg0 = pals_to_bytes_128(log["seg_pals"][int(frame_seg[0])])
@@ -1096,6 +1175,10 @@ def write_stream(
     payload = b"".join(supply_plan.prg_patterns)
     wr0_blob = b"".join(supply_plan.wr0_patterns)
     wr1_blob = b"".join(supply_plan.wr1_patterns)
+    word_refill = (
+        b"".join(supply_plan.wr0_refill_patterns),
+        b"".join(supply_plan.wr1_refill_patterns),
+    )
     dic_blob = b"".join(supply_plan.dic_patterns)
     wr0_sec = -(-len(wr0_blob) // SECTOR)
     wr1_sec = -(-len(wr1_blob) // SECTOR)
@@ -1162,9 +1245,11 @@ def write_stream(
             f"routing array length mismatch: frames={nfr}, "
             f"pay={len(n_pay_sec)}, ctrl={len(n_ctrl_sec)}")
     routing = bytearray()
-    for frame, (n_pay, n_ctrl) in enumerate(zip(n_pay_sec, n_ctrl_sec)):
+    for frame, (n_pay, n_ctrl, n_word) in enumerate(zip(
+            n_pay_sec, n_ctrl_sec, word_stage_sec, strict=True)):
         try:
-            routing.append(ttrc_routing.encode_route(n_pay, n_ctrl))
+            routing.append(
+                ttrc_routing.encode_route(n_pay, n_ctrl, n_word))
         except ValueError as exc:
             raise SystemExit(f"pack: invalid routing at frame {frame}: {exc}") from exc
     routing_sec = ttrc_routing.routing_sector_count(nfr)
@@ -1265,6 +1350,8 @@ def write_stream(
         features |= FEATURE_VRAM_RAW_PREFETCH
     if sidecar_count:
         features |= FEATURE_BOOT_VRAM_SIDECAR
+    if any(word_stage_sec):
+        features |= FEATURE_WORDBUF_RING
     header = struct.pack(">4sHHHHHHHHH", MAGIC, VERSION, nfr, TCOLS, TROWS, C_CELLS,
                          POOL, BASE, FRAME_SECTORS, len(log["seg_pals"]))
     header += struct.pack(">LLLL", Bpat, routing_sec, prebuf_sec, ring_peak)
@@ -1333,6 +1420,7 @@ def write_stream(
     if len(body_arm) % SECTOR:
         raise AssertionError("BODY.DAT arm is not sector aligned")
     pc = Bpat * PAT; cc = 0
+    wc = [0, 0]
     fsec_schedule = sc["fsec"]
     with body_path.open("wb") as f:
         f.write(body_arm)
@@ -1348,11 +1436,19 @@ def write_stream(
                 continue                              # frame0 は FRAMES に出さない(ヘッダ側)
             fsec = int(fsec_schedule[i])
             fsec_list.append(fsec)
-            npb = int(n_pay_sec[i]) * SECTOR
+            nwb = int(word_stage_sec[i]) * SECTOR
+            npb = (
+                int(n_pay_sec[i]) - int(word_stage_sec[i])
+            ) * SECTOR
             ncb = int(n_ctrl_sec[i]) * SECTOR
             # v6+ physical order: complete the current control first, then
-            # carry only payload that has been armed for future frames.
+            # stage the parity WordBuf prefix, then carry ordinary Prg payload.
             fr = stream_ctrl[cc:cc + ncb].ljust(ncb, b"\0"); cc += ncb
+            parity = i & 1
+            fr += word_refill[parity][
+                wc[parity]:wc[parity] + nwb
+            ].ljust(nwb, b"\0")
+            wc[parity] += nwb
             fr += stream_pay[pc:pc + npb].ljust(npb, b"\0"); pc += npb
             fr = fr.ljust(fsec * SECTOR, b"\0")       # レートマッチpad(超過ぶんは捨てセクタ)
             f.write(fr)
@@ -1360,6 +1456,11 @@ def write_stream(
         raise AssertionError(f"BODY.DAT omitted {len(stream_ctrl) - cc} control bytes")
     if pc < len(stream_pay):
         raise AssertionError(f"BODY.DAT omitted {len(stream_pay) - pc} payload bytes")
+    for parity in (0, 1):
+        if wc[parity] < len(word_refill[parity]):
+            raise AssertionError(
+                f"BODY.DAT omitted {len(word_refill[parity]) - wc[parity]} "
+                f"WordBuf{parity} refill bytes")
     frames_stream_sec = int(sum(fsec_list))
     if body_path.stat().st_size != (arm_sectors + frames_stream_sec) * SECTOR:
         raise AssertionError("BODY.DAT size disagrees with frame sector schedule")
@@ -1369,6 +1470,7 @@ def write_stream(
         stream_ctrl,
         stream_pay,
         sc,
+        stream_word=word_refill,
         prebuf_patterns=Bpat,
     )
 
@@ -1500,14 +1602,23 @@ def main():
         enabled=supply_enabled,
         wr0_patterns=wordram_layout.wr0_patterns,
         wr1_patterns=wordram_layout.wr1_patterns)
-    if int(supply_meta.get("schema_version", 0)) != 3:
+    supply_schema = int(supply_meta.get("schema_version", 0))
+    if supply_schema not in (3, 4):
         raise SystemExit(
-            "pack v17 requires a current Word-RAM decision log; re-run sim")
+            "pack requires a current Word-RAM decision log; re-run sim")
+    word_ring_meta = supply_meta.get("word_ring") or {}
+    word_ring_enabled = (
+        supply_schema >= 4
+        and bool(word_ring_meta.get("enabled", False))
+    )
     print(f"  pattern supply: enabled={int(supply_plan.enabled)} "
           f"Prg={len(supply_plan.prg_patterns)} "
           f"Wr0={len(supply_plan.wr0_patterns)}/{wordram_layout.wr0_patterns} "
           f"Wr1={len(supply_plan.wr1_patterns)}/{wordram_layout.wr1_patterns} "
-          f"Dic={len(supply_plan.dic_patterns)}/{pattern_supply.DIC_BUF_PATTERNS}")
+          f"Dic={len(supply_plan.dic_patterns)}/{pattern_supply.DIC_BUF_PATTERNS} "
+          f"ring={int(word_ring_enabled)} "
+          f"refill={len(supply_plan.wr0_refill_patterns)}/"
+          f"{len(supply_plan.wr1_refill_patterns)}")
     # 不変条件(単一真実源 av_config): 実配信(pack)の1コマ cold が drop-safe 上限を超えたら失敗。
     # sim のモデル cap が pack の連続スロット割当に対して高すぎる兆候(=解析は合うが実機で滑る)。
     # frame0(完全ロードのヘッダ)は除外。
@@ -1601,7 +1712,7 @@ def main():
     if frozen_physical_budget:
         physical_budget_schema = int(
             frozen_physical_budget.get("schema_version", 0))
-        if physical_budget_schema not in (1, 2, 3, 4):
+        if physical_budget_schema not in (1, 2, 3, 4, 5):
             raise SystemExit(
                 "pack: unsupported physical-budget schema "
                 f"{frozen_physical_budget.get('schema_version')!r}")
@@ -1617,14 +1728,15 @@ def main():
             raise SystemExit(
                 "pack: physical Prg limit length differs")
         packed_prg = np.asarray(supply_plan.prg_loads, np.int64)
-        prg_over = np.flatnonzero(
-            (np.arange(len(packed_prg)) > 0)
-            & (packed_prg > frozen_prg_limits))
-        if prg_over.size:
-            frame = int(prg_over[0])
-            raise AssertionError(
-                f"pack: frame {frame} Prg loads exceed the construction "
-                "limit frozen by sim")
+        if not word_ring_enabled:
+            prg_over = np.flatnonzero(
+                (np.arange(len(packed_prg)) > 0)
+                & (packed_prg > frozen_prg_limits))
+            if prg_over.size:
+                frame = int(prg_over[0])
+                raise AssertionError(
+                    f"pack: frame {frame} Prg loads exceed the construction "
+                    "limit frozen by sim")
         if physical_budget_schema >= 2:
             frozen_cold_limits = np.asarray(
                 frozen_physical_budget.get("cold_pattern_limits", ()),
@@ -1656,7 +1768,7 @@ def main():
             raise AssertionError(
                 f"pack: frame {frame} control block exceeds the construction "
                 "limit frozen by sim")
-        if physical_budget_schema >= 3:
+        if physical_budget_schema >= 3 and not word_ring_enabled:
             physical_budget.verify_shared_sector_prefix(
                 packed_prg,
                 actual_block_lengths,
@@ -1698,12 +1810,49 @@ def main():
                     "pack: shared-sector realized cold trace differs from sim")
             print(
                 "  cadence-sector prefix照合: control/payload deadlines exact")
-    sc = schedule(
-        per,
-        supply_plan.prg_loads,
-        blocks,
-        control_sector_envelope=frozen_control_envelope,
-    )
+    if word_ring_enabled:
+        frozen_schedule = log.get("stream_schedule") or {}
+        try:
+            sc = wordbuf_ring.replay_frozen_schedule(
+                prg_loads=supply_plan.prg_loads,
+                wr0_loads=supply_plan.wr0_loads,
+                wr1_loads=supply_plan.wr1_loads,
+                block_lengths=np.asarray(
+                    [len(block) for block in blocks], np.int64),
+                payload_sectors=np.asarray(
+                    frozen_schedule.get("payload_sectors", ()), np.int64),
+                control_sectors=np.asarray(
+                    frozen_schedule.get("control_sectors", ()), np.int64),
+                word_stage_sectors=np.asarray(
+                    word_ring_meta.get("stage_sectors", ()), np.int64),
+                fps=FPS,
+                prebuffer_patterns=int(np.asarray(
+                    frozen_schedule.get("ring_occupancy", ()),
+                    np.int64,
+                )[0]),
+                prg_capacity_patterns=RING_CAP_PAT,
+                word_capacities=(
+                    wordram_layout.wr0_patterns,
+                    wordram_layout.wr1_patterns,
+                ),
+                boot_patterns=tuple(
+                    int(value)
+                    for value in word_ring_meta.get("boot_patterns", ())
+                ),
+                f0_cold=int(n_load[0]),
+            )
+        except (IndexError, TypeError, ValueError) as exc:
+            raise SystemExit(
+                f"pack: frozen WordBuf ring proof failed: {exc}") from exc
+        print(
+            "  WordBuf ring再証明: Prg/Wr0/Wr1 deadlines and capacities exact")
+    else:
+        sc = schedule(
+            per,
+            supply_plan.prg_loads,
+            blocks,
+            control_sector_envelope=frozen_control_envelope,
+        )
     if supply_plan.enabled and log.get("pattern_supply") is None:
         frozen_lengths = np.asarray(
             (log.get("stream_schedule") or {}).get("block_lengths", ()), np.int64)

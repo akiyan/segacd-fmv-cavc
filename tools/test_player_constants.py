@@ -85,8 +85,8 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual((values.sec_base, values.sec_rem), (5, 1))
         self.assertEqual(values.pump_mask, 0x003F)
         self.assertEqual(values.wave_pump_mask, 0x00FF)
-        self.assertEqual(values.prg_buf_cap_patterns, 378 * 1024 // 32)
-        self.assertEqual(values.prg_delivery_cap_patterns, 378 * 1024 // 32)
+        self.assertEqual(values.prg_buf_cap_patterns, 376 * 1024 // 32)
+        self.assertEqual(values.prg_delivery_cap_patterns, 376 * 1024 // 32)
         self.assertEqual(values.jitter_headroom_kb, 40)
 
     def test_h40_centers_a_36x25_stream_without_expanding_its_grid(self):
@@ -99,9 +99,9 @@ class PlayerConstantsTest(unittest.TestCase):
 
     def test_prg_jitter_constants_follow_content_fps(self):
         expected = {
-            15: (378, 378, 40),
-            24: (393, 393, 25),
-            30: (398, 398, 20),
+            15: (376, 376, 40),
+            24: (391, 391, 25),
+            30: (396, 396, 20),
         }
         for fps, (normal_kb, delivery_kb, jitter_kb) in expected.items():
             with self.subTest(fps=fps):
@@ -217,9 +217,9 @@ class PlayerConstantsTest(unittest.TestCase):
             self.assertIn(".equ PC_BODY_ARM_SEC, 0x002E", text)
             self.assertIn(".equ PC_SEC_REM, 0x00C9", text)
             self.assertIn(
-                ".equ PC_PRG_BUF_CAP_PATTERNS, 0x31C0", text)
+                ".equ PC_PRG_BUF_CAP_PATTERNS, 0x3180", text)
             self.assertIn(
-                ".equ PC_PRG_DELIVERY_CAP_PATTERNS, 0x31C0", text)
+                ".equ PC_PRG_DELIVERY_CAP_PATTERNS, 0x3180", text)
             self.assertIn(".equ PC_JITTER_HEADROOM_KB, 0x0014", text)
 
 

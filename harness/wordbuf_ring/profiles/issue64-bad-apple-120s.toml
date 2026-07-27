@@ -1,0 +1,31 @@
+schema_version = 3
+
+[source]
+path = "assets/BadApple.mp4"
+fps = "30"
+duration = "120.000000"
+sar = "1:1"
+
+[source.preprocess.endpoint_snap]
+black_max = 2
+white_min = 253
+
+[video]
+mode = "H40"
+width = 320
+height = 224
+fit = "crop"
+resize_filter = "area"
+master_denoise = false
+
+[output]
+directory = "videos/BadApple_H40_320x224_adpcm22_issue64_120s/tmp"
+reuse = false
+emit_decisions = true
+
+[encoder]
+raw_prefetch = true
+cold_cap = 210
+
+[palette]
+algorithm = "mosaic-gm"

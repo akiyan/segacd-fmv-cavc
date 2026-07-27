@@ -189,9 +189,9 @@ that intentionally have no profile.
 After completion:
 
 - Confirm the fps-derived Prg geometry printed by sim: normal prebuffer /
-  runtime-only jitter headroom / scheduled delivery is 378/40/378 KiB at
-  15fps, 393/25/393 KiB at 24fps, or 398/20/398 KiB at 30fps. The physical
-  ring is 424 KiB and player pump back-pressure is 420 KiB.
+  runtime-only jitter headroom / scheduled delivery is 376/40/376 KiB at
+  15fps, 391/25/391 KiB at 24fps, or 396/20/396 KiB at 30fps. The physical
+  ring is 422 KiB and player pump back-pressure is 418 KiB.
 - Confirm that the construction log identifies the one-pass shared-sector
   prefix ledger, and that the final line reports exact Prg/control totals plus
   a non-negative minimum cumulative spare-sector count. Final sim and pack
