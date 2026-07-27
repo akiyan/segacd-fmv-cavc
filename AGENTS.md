@@ -285,6 +285,25 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
   not consume the current fixed-cadence display deadline.
 - `total_len` fields in apply/control blocks must stay even.
 
+### CD 1x deadline invariant
+
+- Treat the timed BODY read as an absolute 75-sector/s physical service clock
+  at every point in playback. CD 1x is not a whole-movie average budget.
+- Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
+  display deadline, including only startup lead that the model explicitly
+  proves. A routing-table slot limit is a format capacity, not proof that the
+  slot can be delivered by its deadline.
+- Never accept a heavy slot that creates positive rate lead on the assumption
+  that a later light slot, omitted pad, or a zero final average will repay it.
+  Later work can repair byte accounting; it cannot return display time that
+  has already elapsed. Exact finite-buffer schedules therefore require zero
+  rate lead at every prefix, not merely at the end.
+- Prove three conditions separately for any delivery change: on-disc route
+  capacity, cumulative physical delivery by every deadline, and finite
+  producer/consumer-buffer bounds. Fix a violated construction condition
+  before considering a larger APPLY ring, a smaller PrgBuf, or another buffer
+  trade that would only absorb the invalid lead.
+
 ### VDP DMA rules (measured)
 
 - Enable DMA first: VDP reg 1 bit 4 (M1, e.g. `0x8174`). The BIOS default
@@ -391,6 +410,29 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
 
 ## Debugging Method — additions
 
+- **Identify the owner before optimizing work.** State the object, operation,
+  CPU, and memory domain. Main-CPU run/locality work does not remove a
+  Sub-CPU pump, audio, copy, or handoff bottleneck, and player optimization
+  does not repair an encoder schedule that exceeds a physical deadline.
+- **Keep target quality fixed while testing a regression.** Resolution, fps,
+  cold cap, filters, palette policy, and other target-quality settings stay
+  fixed. Encoder decisions and concrete sim results may change when the model
+  is corrected. Lowering workload until a failure disappears measures a
+  workaround, not the original regression.
+- **A graph near zero is not proof of zero.** Fixed whole-movie scales can hide
+  a small positive balance. Add an exact signed diagnostic when zero,
+  underflow, wraparound, or debt matters, and preserve its per-frame minimum
+  rather than inferring it from a circular pointer distance.
+- **Use HUD fields to falsify hypotheses, then follow transitions.** Add the
+  smallest measurement that can disprove the current explanation. Correlation
+  at one low-water interval is not causation; align encoder decisions, live
+  balances, queue guards, displayed-frame cadence, and cumulative recovery
+  transitions on one frame axis before naming the cause.
+- **Derive resources from cadence, then qualify each cadence.** Control size,
+  PCM work, routing lifetime, PrgBuf ceiling, jitter, and resident-code margin
+  differ with fps. Use one fps-derived source of truth rather than a 15fps or
+  30fps exception, and run representative full-playback checks for both slow
+  and fast cadences after shared player or scheduler changes.
 - **Treat failures near the first frames as startup-sequence failures until
   proven otherwise.** The boot/header drain, frame-0 expansion, PrgBuf
   prebuffer, Word-RAM handoff, continuous `BODY.DAT` read start, first routing
