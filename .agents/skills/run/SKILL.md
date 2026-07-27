@@ -187,8 +187,8 @@ tools/python.sh .agents/skills/run/scripts/report_cold.py \
 Write the persistent TSV immediately with the zero-frame analysis-data mode,
 run the `timeline` skill, inspect the PNG, publish it to a public Gist, and show
 it to the user. Do not render, mux, verify, or upload the full 1920x1080
-analysis MP4 yet. The emulator recording must first receive `PASS` or
-`WARNING` from the complete HUD gate.
+analysis MP4 yet. The emulator recording must first receive gate `PASS` from
+the complete HUD result; alert may be `NONE` or `WARNING`.
 
 ## Stage 3: Pack, Prove, and Build the DEBUG Disc
 
@@ -260,16 +260,17 @@ previous capture.
 Immediately after the HUD TSV and gate JSON exist, invoke the `hudline` skill
 with those exact sidecars and the same profile. Inspect and show its complete
 first-loop PNG, publish it to a public Gist, and preserve the image, layout
-receipt, and Gist receipt beside the recording. Do this for PASS, WARNING, and
-FAIL results; a FAIL is still published as diagnostic evidence but stops Stage 5.
+receipt, and Gist receipt beside the recording. Do this for alert `NONE`,
+`WARNING`, and `FAIL`; gate `FAIL` is still published as diagnostic evidence
+but stops Stage 5.
 `hudline` shares `/timeline`'s frame x-coordinate contract so a future
 `/mixline` can combine both without resampling.
 
 Immediately after the hudline PNG and receipts exist, invoke the `mixline`
 skill with the matching Stage 2 timeline and this hudline. Inspect and show the
 combined image, publish it to a public Gist, and preserve its layout and Gist
-receipts. Do this for PASS, WARNING, and FAIL results so a failed recording
-still has aligned codec/HUD evidence. A FAIL stops Stage 5 only after the
+receipts. Do this for every alert so a failed recording still has aligned
+codec/HUD evidence. Gate `FAIL` stops Stage 5 only after the
 hudline and mixline evidence has been published.
 
 Do not apply waveform-threshold gates to routine recordings; legitimate source
@@ -280,14 +281,14 @@ recording, not a physical hardware recording.
 Use full HUD OCR only for requested diagnostics or to investigate a failure.
 Never use HUD OCR to choose a publication head cue or chapter offset.
 
-Do not enter Stage 5 when the HUD gate is missing or has status `FAIL`, or when the
+Do not enter Stage 5 when the HUD result is missing or gate is `FAIL`, or when the
 matching hudline or mixline image/Gist receipt is absent. Never waive or edit
 the sidecars.
 
 ## Stage 5: Render and Upload the Analysis
 
-Only after Stage 4 produced a matching `PASS` or `WARNING` gate JSON
-(`pass: true`), render the full
+Only after Stage 4 produced a matching gate `PASS` JSON, with alert `NONE` or
+`WARNING`, render the full
 canonical 1920x1080 analysis with `tools/render_analysis.py`. Verify its video,
 audio, duration, and selected frames. Confirm the source aspect, content,
 category/miss panels, and layout are visually credible.
@@ -313,7 +314,9 @@ analysis upload rather than the pre-recording TSV.
 Generate CRAM chapters with `tools/youtube_chapters.py`. Build the title and
 English-then-Japanese description from the current `AGENTS.md` convention,
 including the repository URL in both language sections and never adding source
-bitrate or angle brackets. Save the exact description to a UTF-8 text file and
+bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
+public codec name; never expose the binary magic as a codec or format name.
+Save the exact description to a UTF-8 text file and
 measure it before upload. YouTube's description limit is 5,000 characters:
 target 4,800 or fewer and hard-fail above 5,000. If it is too long, shorten
 explanatory prose without removing CRAM chapters, required specs/layout/
@@ -356,7 +359,9 @@ Extract startup/movie/tail stills with `tools/extract_verification_frames.sh`, u
 `CHECK_DIR`; do not mix files from an older compilation.
 
 Generate boot-aware CRAM chapters and current bilingual metadata according to
-`AGENTS.md`. Save and measure the exact UTF-8 description before upload using
+`AGENTS.md`. Use **Sega CD Constraint-Aware Video Codec** as the public codec
+name and never use the binary magic as a codec or format name. Save and measure
+the exact UTF-8 description before upload using
 the same 5,000-character hard gate as Stage 5 (target 4,800 or fewer). Never
 send an over-limit description and wait for YouTube to reject it. Upload as
 unlisted, category 20. Use `--force` only for a re-upload and retain the
@@ -369,9 +374,9 @@ unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
 fix it when the requested scope permits, and rerun the failed stage plus every
 downstream stage whose inputs changed.
 
-An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. A `WARNING`
+An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. Alert `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
-public MP4 until a complete loop returns `PASS` or `WARNING`.
+public MP4 until a complete loop returns gate `PASS`.
 
 For new frame rates such as 24 fps, do not hide a player, recorder, or encoder
 defect by changing fps, shrinking the raster, loosening checks blindly, or

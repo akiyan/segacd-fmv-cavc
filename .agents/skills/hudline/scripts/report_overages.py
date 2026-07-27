@@ -18,6 +18,7 @@ REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 import av_config  # noqa: E402
+import hud_gate  # noqa: E402
 
 
 GATE_COLUMNS = {
@@ -184,7 +185,11 @@ def load_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
 
 
 def load_gate(path: Path) -> dict:
-    gate = json.loads(path.read_text(encoding="utf-8"))
+    raw_gate = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        gate = hud_gate.normalize_result(raw_gate)
+    except ValueError as exc:
+        raise SystemExit(f"invalid HUD gate JSON: {exc}") from exc
     for key in (
         "content_fps",
         "expected_frames",
@@ -201,13 +206,9 @@ def load_gate(path: Path) -> dict:
         raise SystemExit("gate JSON lacks diagnostic C maximum")
     if int(gate.get("schema_version", 0)) >= 5:
         if "C" in gate["limits"]:
-            raise SystemExit("schema-5 gate must not define a C limit")
+            raise SystemExit("schema-5+ gate must not define a C limit")
         if list(gate.get("gate_fields", ())) != list(GATE_COLUMNS):
-            raise SystemExit("schema-5 gate_fields do not match the HUD gate")
-    status = gate.get("status", "PASS" if gate.get("pass", False) else "FAIL")
-    if status not in {"PASS", "WARNING", "FAIL"}:
-        raise SystemExit(f"invalid gate status: {status!r}")
-    gate["status"] = status
+            raise SystemExit("schema-5+ gate_fields do not match the HUD gate")
     return gate
 
 
@@ -218,7 +219,7 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
     expected = int(gate["expected_frames"])
     if expected != frames:
         incomplete_failure = (
-            gate["status"] == "FAIL"
+            gate["gate"] == "FAIL"
             and frames < expected
             and any(
                 "first loop is incomplete" in str(message)
@@ -337,6 +338,9 @@ def render_markdown(
         for triggers in events.values()
         for severity, *_rest in triggers
     )
+    alert = str(gate["alert"])
+    if alert == "NONE" and vblank_warning_count:
+        alert = "WARNING"
     available_hud = [
         (name, column, digits)
         for name, column, digits in HUD_COLUMNS
@@ -357,6 +361,7 @@ def render_markdown(
         )
     ]
     summary = []
+    summary.append(f"HUD gate: {gate['gate']}; alert: {alert}.")
     summary.append(
         "Frame 0 is untimed boot staging and is excluded from every metric, "
         "gate, scale, and VBLANK statistic."

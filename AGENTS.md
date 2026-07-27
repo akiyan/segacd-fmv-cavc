@@ -88,11 +88,13 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     code), `p` = player (`boot/movieplay_*.s`). Bump `e` and/or `p` whenever
     that side's output-affecting params or code change; never decrease either.
     When bumping, set the date to today if it differs. This is the title build
-    version only — the TTRC `HEADER.DAT` format-version field is separate and must NOT
-    be touched. Update `tools/av_version.txt` whenever you bump.
+    version only — the on-disc `HEADER.DAT` format-version field is separate
+    and must NOT be touched. Update `tools/av_version.txt` whenever you bump.
   - Example: `SEGA-CD FMV of <Work> - mode4 max resolution 256x176/32x22 20260710.e1.p1`.
 - **Description structure** (in both languages, in this order):
   1. Overview — one or two lines on what the video is.
+     Name the codec **Sega CD Constraint-Aware Video Codec**. Do not use the
+     current binary magic as a public codec or format name.
   2. Output and source specs — the SEGA-CD output (mode, grid WxH, tile count,
      fps, audio, Prg/Wr0/Wr1/Dic capacities) and the Source
      (resolution, fps, audio).
@@ -155,7 +157,8 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
 - These dedicated reference docs are sanctioned and must be kept current:
   - [`ANALYSIS.md`](ANALYSIS.md) - the analysis-overlay reference (every meter/category/metric).
     Updated via the `/analysis` skill together with the layout code.
-  - [`MOVIE.md`](MOVIE.md) - the `HEADER.DAT` + `BODY.DAT` (TTRC) on-disc stream format. Keep in sync with
+  - [`MOVIE.md`](MOVIE.md) - the `HEADER.DAT` + `BODY.DAT` on-disc stream
+    format. Keep in sync with
     `tools/pack_stream.py` and the `boot/movieplay_*.s` player.
   - [`CONFIG.md`](CONFIG.md) - the tunable settings, throttles and buffers
     (PrgBuf, boot preloads, quality budget, cold cap, audio sync, CD pump, DMA
@@ -195,8 +198,9 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
 
 ## Canonical Path
 
-This project is the **Tile Texture Reuse Codec** (name may change; file names
-are kept generic). The current encoder/player path is:
+This project is the **Sega CD Constraint-Aware Video Codec**. Generic file
+names keep implementation details independent from the public codec name. The
+current encoder/player path is:
 
 ```text
 tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
@@ -215,10 +219,11 @@ within Sega CD limits, not fixed presets:
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
   CPU through full lookup tables duplicated in both physical 1M Word-RAM
-  banks. It is the only TTRC v17 audio format. Physical hardware and additional
-  modes/cadences are broader compatibility checks rather than implementation
-  blockers (see [ADPCM.md](ADPCM.md)). Z80 offload remains shelved because
-  BUSREQ-based feeding contends with Main CPU video work.
+  banks. It is the only audio format in on-disc format version 17. Physical
+  hardware and additional modes/cadences are broader compatibility checks
+  rather than implementation blockers (see [ADPCM.md](ADPCM.md)). Z80 offload
+  remains shelved because BUSREQ-based feeding contends with Main CPU video
+  work.
 
 The old `OP.STR` / RLE and `PROBE.BIN` bring-up paths have been removed.
 `make disc CONFIG=profiles/PROFILE.toml` builds the `HEADER.DAT` + `BODY.DAT`
@@ -524,11 +529,13 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   exact sim decision log, then immediately render, inspect, show, and publicly
   publish `/mixline`. Generate and publish the timeline first when it is
   absent. Preserve all three images, their layout JSON files, and Gist receipts
-  next to the recording. The HUD gate has `PASS`, `WARNING`, and `FAIL`
-  results. `C` is diagnostic only and never changes the gate result; report its
+  next to the recording. The HUD result has a binary `gate` (`PASS` or `FAIL`)
+  and a separate `alert` (`NONE`, `WARNING`, or `FAIL`). `NONE` and `WARNING`
+  keep the gate at `PASS`; only alert `FAIL` makes the gate `FAIL`. `C` is
+  diagnostic only and never changes either result; report its
   minimum, mean, median, and maximum together with the same `A` statistics.
   Publish failed gates and their mixlines too as diagnostic evidence, but do
-  not proceed to analysis/playback uploads after `FAIL`.
+  not proceed to analysis/playback uploads when `gate` is `FAIL`.
 - Extract visual-check stills with `tools/extract_verification_frames.sh`. It
   creates a never-reused directory and a source-hashed manifest for each
   invocation, then builds the montage from that invocation's explicit frame

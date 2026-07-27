@@ -272,8 +272,9 @@ Check the raw MKV and reports before trusting a capture:
    recordings. Use `--combined-fields` only when the profile is unavailable.
 
    The profile is mandatory and positional because the M/J limits follow the
-   packed player's cadence. The gate result is `PASS`, `WARNING`, or `FAIL`.
-   `WARNING` exits zero and remains upload-capable; `FAIL` exits nonzero.
+   packed player's cadence. The result contains gate `PASS`/`FAIL` and alert
+   `NONE`/`WARNING`/`FAIL`. Alert `WARNING` keeps gate `PASS`, exits zero, and
+   remains upload-capable; alert `FAIL` makes gate `FAIL` and exits nonzero.
    The first loop must contain every frame. Thresholds are:
 
    - fixed-N2: `S/D/R=00`, `M<=01`;
@@ -303,7 +304,7 @@ Check the raw MKV and reports before trusting a capture:
    also report its signed logical minimum and peak underflow debt. The analyzer must store
    these statistics in the gate JSON so `hudline` can validate and preserve
    them. When `G` is present, also report and preserve its minimum, mean,
-   median, and maximum after separating `B`. On PASS or WARNING, also report all five gate maxima and the
+   median, and maximum after separating `B`. On gate `PASS`, also report all five gate maxima and the
    diagnostic C maximum. A standalone `record` request ends with the
    verified recording because it did not authorize publication. Under `$run`,
    the existing upload authorization is sufficient; continue without asking
@@ -317,8 +318,8 @@ Check the raw MKV and reports before trusting a capture:
    inspect and show the aligned combined PNG, and publish it to a public Gist.
    Preserve the timeline, hudline, and mixline PNGs, layout receipts, and Gist
    receipts next to the recording. A `FAIL` still stops compilation and uploads
-   after both diagnostic images have been published. Under `$run`, `PASS` and
-   `WARNING` continue without another approval pause.
+   after both diagnostic images have been published. Under `$run`, gate `PASS`
+   continues without another approval pause, including alert `WARNING`.
 
 Structural audio presence is not a substitute for listening. Claim that the
 sound is clean or free of audible clicks only after listening to the final file.
@@ -351,7 +352,8 @@ time in 30.72 us Mega-CD stopwatch ticks, `N` is the packed cold-run count's low
 byte, and `J` is the sticky ceil-KiB streamed PrgBuf excess above the
 fps-derived normal ceiling. `Q` is a signed exact-pattern balance: values with
 the high bit set are negative underflow, not a large positive occupancy. A
-`PASS` or `WARNING` `S/D/R/M/J` gate JSON is the required handoff condition;
+Gate `PASS` in the `S/D/R/M/J` result JSON is the required handoff condition;
+alert may be `NONE` or `WARNING`;
 `C/A/Q` remain recorded diagnostics. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication

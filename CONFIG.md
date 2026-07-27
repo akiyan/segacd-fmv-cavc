@@ -2,7 +2,7 @@ EN / [JP](#jp)
 
 # Tunable settings, throttles, and buffers
 
-This is the numeric-settings reference for the Tile Texture Reuse Codec
+This is the numeric-settings reference for the Sega CD Constraint-Aware Video Codec
 pipeline:
 
 ```text
@@ -126,7 +126,7 @@ playback.
 
 ## Audio
 
-TTRC v17 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+On-disc format version 17 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
@@ -422,7 +422,7 @@ not timed playback.
 
 # 調整可能な設定、throttle、buffer
 
-Tile Texture Reuse Codec pipelineの数値設定リファレンスです。
+Sega CD Constraint-Aware Video Codec pipelineの数値設定リファレンスです。
 
 ```text
 tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
@@ -538,7 +538,7 @@ untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-TTRC v17のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+On-disc format version 17のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |

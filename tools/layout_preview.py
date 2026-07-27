@@ -49,7 +49,7 @@ COL_WRD = style.COL_WRD
 COL_DIC = style.COL_DIC
 SUPPLY_COLORS = style.SUPPLY_COLORS
 DISPLAY_SOURCE_ORDER = style.DISPLAY_SOURCE_ORDER
-METER_SUPPLY_ORDER = style.METER_SUPPLY_ORDER
+METER_SUPPLY_SOURCE_ORDER = style.METER_SUPPLY_SOURCE_ORDER
 
 # Category is now based on display-time behavior and physical supply. Raw is a
 # same-frame CD load used immediately. The four supply categories replace the
@@ -565,11 +565,15 @@ def draw_status(w, h, data):
                 if seg > 0:
                     d.line([(X, yb - seg), (X, yb)], fill=col); yb -= seg
             ys = y_supply + H_supply
-            total_capacity = max(
-                sum(data["supply_capacities"][name]
-                    for name in METER_SUPPLY_ORDER), 1)
-            for name in METER_SUPPLY_ORDER:
-                hs = int(H_supply * supply[name][fi] / total_capacity)
+            supply_remaining = {
+                name: supply[name][fi]
+                for name in METER_SUPPLY_SOURCE_ORDER
+            }
+            for name, hs in style.meter_supply_segments(
+                supply_remaining,
+                data["supply_capacities"],
+                H_supply,
+            ):
                 if hs > 0:
                     d.line([(X, ys - hs), (X, ys)], fill=SUPPLY_COLORS[name])
                     ys -= hs

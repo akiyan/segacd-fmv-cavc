@@ -313,8 +313,8 @@ Important rendering notes:
 ### 5. Upload If Requested
 
 Under `$run`, this section is forbidden until the matching DEBUG recording has
-a complete `PASS` or `WARNING` HUD gate JSON (`pass: true`). Standalone `/sim`
-uploads are unaffected.
+a complete HUD result with gate `PASS`. Alert may be `NONE` or `WARNING`.
+Standalone `/sim` uploads are unaffected.
 
 ```sh
 PY=~/.config/youtube/venv/bin/python
@@ -340,6 +340,9 @@ Shorten optional explanatory prose first; preserve the mandatory CRAM
 chapters, specs/layout/technique sections, both project links, and current
 timeline links. Upload as unlisted, category 20. See
 `[[youtube-upload-convention]]`.
+
+Use **Sega CD Constraint-Aware Video Codec** as the public codec name in both
+language sections. Never use the binary magic as a codec or format name.
 
 ## Cautions
 

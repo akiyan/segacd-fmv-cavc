@@ -1,11 +1,11 @@
 EN / [JP](#jp)
 
-# HEADER.DAT / BODY.DAT binary format (TTRC)
+# Sega CD Constraint-Aware Video Codec binary format
 
-`HEADER.DAT` and `BODY.DAT` are the two on-disc files of the **Tile Texture
-Reuse Codec**. `tools/pack_stream.py` writes them from the `tools/sim.py`
-decision log. `boot/movieplay_sp.s` streams them and `boot/movieplay_ip.s`
-displays them.
+`HEADER.DAT` and `BODY.DAT` are the two on-disc files of the **Sega CD
+Constraint-Aware Video Codec**. `tools/pack_stream.py` writes them from the
+`tools/sim.py` decision log. `boot/movieplay_sp.s` streams them and
+`boot/movieplay_ip.s` displays them.
 
 The packer also writes `MOVIE.DAT = HEADER.DAT || BODY.DAT` for off-disc
 analysis and regression tools. The disc contains only `HEADER.DAT` and
@@ -423,11 +423,12 @@ frame boundaries.
 
 <a id="jp"></a>
 
-# HEADER.DAT / BODY.DAT バイナリ形式（TTRC）
+# Sega CD Constraint-Aware Video Codec バイナリ形式
 
-`HEADER.DAT` と `BODY.DAT` は **Tile Texture Reuse Codec** のディスク上の
-2ファイルです。`tools/pack_stream.py` が `tools/sim.py` の判断ログから生成し、
-`boot/movieplay_sp.s` がストリーミング、`boot/movieplay_ip.s` が表示を担当します。
+`HEADER.DAT` と `BODY.DAT` は **Sega CD Constraint-Aware Video Codec** の
+ディスク上の2ファイルです。`tools/pack_stream.py` が `tools/sim.py` の判断ログから
+生成し、`boot/movieplay_sp.s` がストリーミング、`boot/movieplay_ip.s` が表示を
+担当します。
 
 packer はディスク外の解析・回帰確認用に
 `MOVIE.DAT = HEADER.DAT || BODY.DAT` も生成します。ディスクに収録するのは

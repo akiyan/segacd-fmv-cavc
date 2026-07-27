@@ -45,7 +45,7 @@ BAND_HEIGHT = 32
 
 REQ_ORDER = tuple(style.REQ_TIMELINE_CATS)
 REQ_COLORS = {name: style.CATEGORY_COLORS[name] for name in REQ_ORDER}
-SUPPLY_ORDER = tuple(style.METER_SUPPLY_ORDER)
+SUPPLY_SOURCE_ORDER = tuple(style.METER_SUPPLY_SOURCE_ORDER)
 REQ_LEGEND_ORDER = ("Raw", "Prg", "Wrd", "Dic", "Near", "Flbk", "Miss")
 
 REQUIRED_COLUMNS = {
@@ -104,6 +104,14 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray]]:
     }
     arrays["frame"] = frames
     return rows, arrays
+
+
+def run_scale_max(values: np.ndarray) -> float:
+    """Return the observed timed RUN maximum; frame 0 is boot-only."""
+
+    timed = np.asarray(values, dtype=np.float64)[1:]
+    timed = timed[np.isfinite(timed)]
+    return max(float(timed.max(initial=0)), 1.0)
 
 
 def load_toml(path: Path | None) -> dict:
@@ -548,10 +556,10 @@ def draw_timeline(
     cells = max(float(data["cells"][0]), 1.0)
     capacities = {
         name: max(float(data[f"status_{name.lower()}"] .max()), 1.0)
-        for name in SUPPLY_ORDER
+        for name in SUPPLY_SOURCE_ORDER
     }
     total_capacity = sum(capacities.values())
-    run_capacity = max(float(data["cold_cap_tiles"].max()), 1.0)
+    run_capacity = run_scale_max(data["status_run"])
     for frame_index in range(n):
         x0 = left + frame_index * ppf
         x1 = x0 + ppf - 1
@@ -564,9 +572,15 @@ def draw_timeline(
                 y -= height
 
         y = supply_top + supply_h
-        for name in SUPPLY_ORDER:
-            value = data[f"status_{name.lower()}"][frame_index]
-            height = int(supply_h * value / total_capacity)
+        supply_remaining = {
+            name: data[f"status_{name.lower()}"][frame_index]
+            for name in SUPPLY_SOURCE_ORDER
+        }
+        for name, height in style.meter_supply_segments(
+            supply_remaining,
+            capacities,
+            supply_h,
+        ):
             if height:
                 draw.rectangle(
                     (x0, y - height, x1, y - 1),
@@ -813,6 +827,7 @@ def main() -> None:
         "frame_label_format": "f0xHEX",
         "evaluation_end_frame": evaluation_end,
         "cold_cap_tiles": measured_cold_cap,
+        "run_max": run_scale_max(data["status_run"]),
         "prg_cap_summary": prg_cap_summary(measured_cold_cap),
         "rows": [
             {

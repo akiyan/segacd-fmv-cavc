@@ -50,6 +50,7 @@ import read_frameno  # noqa: E402
 import av_config  # noqa: E402
 import encode_config  # noqa: E402
 import analysis_logs  # noqa: E402
+import hud_gate  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -689,7 +690,7 @@ def evaluate_upload_gate(
     content_fps: float = 30.0,
     profile: encode_config.EncodeProfile | None = None,
 ) -> dict:
-    """Classify a complete first loop as PASS, WARNING, or FAIL."""
+    """Classify a complete first loop with a binary gate and tri-state alert."""
     first_loop = [group for group in groups if group.loop == 0]
     # Frame 0 is assembled during untimed boot staging.  Keep it in the
     # sequence-completeness proof, but never let its placeholder/startup HUD
@@ -737,12 +738,16 @@ def evaluate_upload_gate(
             )
 
     stat = recording.stat()
-    status = "FAIL" if failures else "WARNING" if warnings else "PASS"
+    alert = hud_gate.classify_alert(failures, warnings)
+    gate = hud_gate.gate_for_alert(alert)
+    status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 5,
-        # WARNING remains upload-capable. Keep the compatibility boolean so
-        # older consumers only stop for a real FAIL.
-        "pass": status != "FAIL",
+        "schema_version": 6,
+        "gate": gate,
+        "alert": alert,
+        # Keep the old fields while stored schema-5 results and external
+        # consumers migrate. WARNING remains upload-capable.
+        "pass": gate == "PASS",
         "status": status,
         "recording": str(recording.resolve()),
         "recording_size": stat.st_size,
@@ -807,10 +812,11 @@ def standard_combined_fields(
 def write_gate_json(path: Path, result: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-    state = result["status"]
+    gate = result["gate"]
+    alert = result["alert"]
     maxima = result["maxima"]
     print(
-        f"HUD record gate: {state}  "
+        f"HUD record gate: {gate}  alert={alert}  "
         + " ".join(f"{field}{maxima[field]:02X}" for field in "SDRMJ")
         + f"  C diagnostic max={maxima['C']:02X}"
         + f"  frames={result['observed_first_loop_frames']}/"
@@ -856,7 +862,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--gate-json", type=Path,
-        help="write the mandatory PASS/WARNING/FAIL pre-upload review",
+        help="write the mandatory PASS/FAIL gate and NONE/WARNING/FAIL alert",
     )
     parser.add_argument(
         "--expected-frames", type=int,
@@ -993,7 +999,7 @@ def main() -> int:
                 "frame_minus_one_capture_last": sentinel.capture_last,
             })
         write_gate_json(args.gate_json, result)
-        if not result["pass"]:
+        if result["gate"] == "FAIL":
             return 1
     return 0
 

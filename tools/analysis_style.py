@@ -45,7 +45,12 @@ COL_BORDER_BLACK: RGB = (15, 15, 15)
 COL_BORDER_WHITE: RGB = (235, 235, 235)
 
 DISPLAY_SOURCE_ORDER = ("Prg", "Wr0", "Wr1", "Dic")
-METER_SUPPLY_ORDER = ("Prg", "Wr0", "Wr1")
+METER_SUPPLY_SOURCE_ORDER = ("Prg", "Wr0", "Wr1")
+METER_SUPPLY_GROUPS = {
+    "Prg": ("Prg",),
+    "Wrd": ("Wr0", "Wr1"),
+}
+METER_SUPPLY_ORDER = tuple(METER_SUPPLY_GROUPS)
 REQ_TIMELINE_CATS = (
     "Raw", "Prg", "Wr0", "Wr1", "Dic", "Near", "Flbk", "Miss")
 LEGEND_ORDER = (
@@ -64,7 +69,8 @@ CATEGORY_COLORS: dict[str, RGB] = {
     "Dic": COL_DIC,
 }
 SUPPLY_COLORS = {
-    name: CATEGORY_COLORS[name] for name in DISPLAY_SOURCE_ORDER
+    name: CATEGORY_COLORS[name]
+    for name in (*DISPLAY_SOURCE_ORDER, *METER_SUPPLY_ORDER)
 }
 QUALITY_CATS = tuple(
     (name, CATEGORY_COLORS[name])
@@ -77,6 +83,45 @@ CATS = QUALITY_CATS + SOURCE_CATS
 LEGEND_CATS = tuple(
     (name, CATEGORY_COLORS[name]) for name in LEGEND_ORDER
 )
+
+
+def meter_supply_amount(values, meter: str):
+    """Combine physical source traces into the displayed supply meter."""
+
+    try:
+        sources = METER_SUPPLY_GROUPS[meter]
+    except KeyError as exc:
+        raise ValueError(f"unknown supply meter: {meter}") from exc
+    return sum(values[source] for source in sources)
+
+
+def meter_supply_segments(
+    remaining,
+    capacities,
+    height: int,
+) -> tuple[tuple[str, int], ...]:
+    """Scale Prg and combined Wrd without hiding a positive sub-pixel value."""
+
+    if height < 0:
+        raise ValueError("supply meter height must be non-negative")
+    total_capacity = sum(
+        max(0, int(capacities[source]))
+        for source in METER_SUPPLY_SOURCE_ORDER
+    )
+    if not total_capacity or not height:
+        return tuple((meter, 0) for meter in METER_SUPPLY_ORDER)
+
+    segments: list[tuple[str, int]] = []
+    used = 0
+    for meter in METER_SUPPLY_ORDER:
+        value = max(0, int(meter_supply_amount(remaining, meter)))
+        pixels = int(height * value / total_capacity)
+        if value:
+            pixels = max(1, pixels)
+        pixels = min(pixels, height - used)
+        segments.append((meter, pixels))
+        used += pixels
+    return tuple(segments)
 
 
 @dataclass(frozen=True)

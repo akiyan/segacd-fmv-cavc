@@ -1,6 +1,6 @@
 ---
 name: timeline
-description: Render and show one large, detailed whole-movie timeline PNG from a codec-analysis TSV, with the canonical Req/supply/run/Band heatmaps and fixed scales. Use after every encoder adjustment or comparison, when the user asks for a timeline, heatmap, TSV visualization, or a visual A/B summary.
+description: Render and show one large, detailed whole-movie timeline PNG from a codec-analysis TSV, with canonical Req/supply/Band scales and a measured RUN scale. Use after every encoder adjustment or comparison, when the user asks for a timeline, heatmap, TSV visualization, or a visual A/B summary.
 ---
 
 # Analysis Timeline
@@ -77,7 +77,8 @@ Keep these parts in every image:
 
 - The canonical four whole-movie rows, using the analysis colours and fixed
   scales: Req categories; physical Prg plus combined Wrd remaining; physical
-  cold-run count versus the fixed effective cold cap; and useful BODY delivery split into Raw payload, Prg
+  cold-run count scaled to the timed RUN maximum actually present in the TSV;
+  and useful BODY delivery split into Raw payload, Prg
   charge, and control versus physical slot bytes. Raw is the bottom Band
   segment, matching its leftmost position in the status bar. State above the
   timeline that Prg limits are constructed from the physical sector envelope
@@ -96,9 +97,9 @@ Keep these parts in every image:
   exact frame-per-pixel mapping, and a clearly shaded excluded tail when
   requested.
 
-Use at least two pixels per frame when practical. Do not normalize each run to
-its own observed peak: fixed scales are what make successive images visually
-comparable.
+Use at least two pixels per frame when practical. Req, Supply, and Band retain
+their fixed comparison scales. RUN intentionally uses the current TSV's timed
+maximum so its fragmentation remains legible.
 
 Write a `<output>.json` layout receipt with the input hashes, frame mapping,
 row geometry, and evaluation boundary. `/mixline` must consume this receipt

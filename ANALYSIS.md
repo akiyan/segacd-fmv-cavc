@@ -4,7 +4,7 @@ EN / [JP](#jp)
 
 This document defines, exactly and completely, every element drawn in the
 1920x1080 analysis frame produced by `tools/render_analysis.py` for the
-**Tile Texture Reuse Codec**. The layout "source of truth" is
+**Sega CD Constraint-Aware Video Codec**. The layout "source of truth" is
 `tools/layout_preview.py` (dummy data); `render_analysis` runs the same drawing
 functions on real encoder output.
 `tools/render_analysis.py` replays `decisions.pkl` and materializes the
@@ -300,7 +300,7 @@ physical BODY slots. The input Raw/Prg counts and every slot's total payload
 remain exact; the Raw/Prg split across the prebuffer boundary and BODY slots is
 a visualization because the discarded sub-frame ordering was not logged.
 
-For TTRC v17, the control contribution includes whichever shadow-update
+For on-disc format version 17, the control contribution includes whichever shadow-update
 representation was selected for that frame: the bitmap plus name
 entries, or the completed offset/entry list. The analysis does not add a
 separate meter for this internal representation; its exact byte cost is already
@@ -401,11 +401,13 @@ Req occupies half the height, Supply one quarter, and Run/Band split the final
 quarter. All rows share the whole clip on the x-axis with a white playhead:
 1. **Req heatmap** - `Raw / Prg / Wr0 / Wr1 / Dic / Near / Flbk / Miss`
    stacked per frame. `Same` is omitted so the changing load remains visible.
-2. **Pattern supply** - `Prg / Wr0 / Wr1` remaining counts stacked per
-   frame. All three use one scale: the sum of their capacities. Wr0 and Wr1
-   use the shared Wrd cyan colour while remaining separate internally. The
-   persistent DicBuf has no remaining count and is therefore omitted.
-3. **Run** - physical source-aware cold-run count up to the measured cold cap.
+2. **Pattern supply** - `Prg / Wrd` remaining counts stacked per frame.
+   Wrd combines the separate Wr0 and Wr1 traces before pixel scaling, so a
+   positive combined balance remains visible down to one pixel. The scale is
+   the sum of the Prg, Wr0, and Wr1 capacities. The persistent DicBuf has no
+   remaining count and is therefore omitted.
+3. **Run** - physical source-aware cold-run count scaled to the timed maximum
+   actually present in this TSV. Frame 0 does not set the scale.
 4. **Band** - useful Raw payload (light grey), Prg charge (purple), and control
    (blue-grey) as a fraction of the physical bytes in each delivery slot. Pad
    remains blank and the row top marks CD 1x (150 KiB/sec).
@@ -433,7 +435,7 @@ semantic colours and border styles from `tools/analysis_style.py`.
 
 # 解析overlay reference
 
-この文書は、**Tile Texture Reuse Codec**用の`tools/render_analysis.py`が生成する
+この文書は、**Sega CD Constraint-Aware Video Codec**用の`tools/render_analysis.py`が生成する
 1920x1080解析frameの全要素を定義します。Layoutの正本はdummy dataを使う
 `tools/layout_preview.py`で、`render_analysis`も実encoder outputに対して同じ描画関数を
 実行します。
@@ -681,7 +683,7 @@ Physical delivery traceはtotal payloadを正確に持ちますが、1 frame内�
 残りをphysical BODY slotへ対応付けます。Total payloadとinput countは正確ですが、
 prebuffer境界・slot間のRaw/Prg splitはvisualizationです。
 
-TTRC v17のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
+On-disc format version 17のcontrolには、そのframeで選んだshadow-update表現、つまりbitmap +
 name entryまたはcompleted offset/entry listのbyte costを含みます。独立meterは作らず、
 dim control部分へ含めます。
 
@@ -749,9 +751,12 @@ white playheadを共有します。
 
 1. **Req heatmap**: `Raw / Prg / Wr0 / Wr1 / Dic / Near / Flbk / Miss`。
    `Same`は省略します。
-2. **Pattern supply**: `Prg / Wr0 / Wr1` remaining countをcapacity合計のscaleでstack。
-   Persistent DicBufにはremaining countがないため省略します。
-3. **Run**: physical source-aware cold-run count。
+2. **Pattern supply**: `Prg / Wrd` remaining countをstackします。Wrdは別々のWr0/Wr1
+   traceをpixel scale前に合算するため、合算値が正なら最低1pxまで表示されます。
+   scaleはPrg、Wr0、Wr1のcapacity合計です。Persistent DicBufにはremaining countが
+   ないため省略します。
+3. **Run**: このTSVのtimed実測最大を上端にしたphysical source-aware cold-run count。
+   Frame 0はscaleに含めません。
 4. **Band**: physical slot byteに対するRaw payload、Prg charge、controlの割合。
    Padはblankで、row topがCD 1xです。
 

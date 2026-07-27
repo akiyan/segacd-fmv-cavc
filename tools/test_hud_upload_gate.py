@@ -66,6 +66,8 @@ class HudUploadGateTests(unittest.TestCase):
     def test_clean_complete_loop_passes(self):
         result = self.evaluate(groups(4, M=1, J=25), 4)
         self.assertTrue(result["pass"], result["failures"])
+        self.assertEqual(result["gate"], "PASS")
+        self.assertEqual(result["alert"], "NONE")
         self.assertEqual(result["status"], "PASS")
         self.assertEqual(result["warnings"], [])
         self.assertFalse(result["requires_explicit_upload_approval"])
@@ -143,7 +145,7 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 5)
+        self.assertEqual(result["schema_version"], 6)
         self.assertEqual(result["gate_fields"], ["S", "D", "R", "M", "J"])
         self.assertEqual(result["diagnostic_fields"], ["C", "A"])
         self.assertEqual(result["c_statistics"], c_stats)
@@ -155,6 +157,8 @@ class HudUploadGateTests(unittest.TestCase):
             with self.subTest(field=field):
                 result = self.evaluate(groups(4, **{field: value}), 4)
                 self.assertFalse(result["pass"])
+                self.assertEqual(result["gate"], "FAIL")
+                self.assertEqual(result["alert"], "FAIL")
                 self.assertEqual(result["status"], "FAIL")
                 self.assertTrue(any(text.startswith(field) for text in result["failures"]))
 

@@ -22,6 +22,7 @@ TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 import analysis_style as style  # noqa: E402
 import av_config  # noqa: E402
+import hud_gate  # noqa: E402
 import layout_preview as layout  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 
@@ -139,7 +140,11 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray], l
 
 
 def load_gate(path: Path) -> dict:
-    gate = json.loads(path.read_text(encoding="utf-8"))
+    raw_gate = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        gate = hud_gate.normalize_result(raw_gate)
+    except ValueError as exc:
+        raise SystemExit(f"invalid HUD gate JSON: {exc}") from exc
     for key in (
         "expected_frames", "observed_first_loop_frames", "maxima", "limits",
         "pass", "recording", "recording_size", "recording_mtime_ns",
@@ -147,19 +152,13 @@ def load_gate(path: Path) -> dict:
     ):
         if key not in gate:
             raise SystemExit(f"gate JSON lacks {key}")
-    status = gate.get("status", "PASS" if gate["pass"] else "FAIL")
-    if status not in {"PASS", "WARNING", "FAIL"}:
-        raise SystemExit(f"invalid gate status: {status!r}")
-    if bool(gate["pass"]) != (status != "FAIL"):
-        raise SystemExit("gate pass boolean disagrees with status")
-    gate["status"] = status
     if "C" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks diagnostic C maximum")
     if int(gate.get("schema_version", 0)) >= 5:
         if "C" in gate["limits"]:
-            raise SystemExit("schema-5 gate must not define a C limit")
+            raise SystemExit("schema-5+ gate must not define a C limit")
         if list(gate.get("gate_fields", ())) != list(GATE_COLUMN):
-            raise SystemExit("schema-5 gate_fields do not match the HUD gate")
+            raise SystemExit("schema-5+ gate_fields do not match the HUD gate")
     return gate
 
 
@@ -213,7 +212,7 @@ def validate(
     expected = int(gate["expected_frames"])
     if expected != frames:
         incomplete_failure = (
-            gate["status"] == "FAIL"
+            gate["gate"] == "FAIL"
             and frames < expected
             and any(
                 "first loop is incomplete" in str(message)
@@ -489,8 +488,14 @@ def row_specs(
                 (218, 112, 171), eight_bit_scale=True),
         RowSpec("main_pattern_ms", "U  PATTERN", "ms, 12-bit wrap", 125.83,
                 (81, 202, 211)),
-        RowSpec("cold_runs_low8", "N  COLD RUNS", "runs, low byte", 255,
-                style.COL_RUN, eight_bit_scale=True, show_zero=False),
+        RowSpec(
+            "cold_runs_low8",
+            "N  COLD RUNS",
+            "runs, low byte",
+            max(1, timed_max("cold_runs_low8")),
+            style.COL_RUN,
+            show_zero=False,
+        ),
     ])
     optional = (
         ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",
@@ -757,9 +762,10 @@ def main() -> None:
     image = Image.new("RGBA", (width, height), BG + (255,))
     draw = ImageDraw.Draw(image)
     title = args.label or tsv_path.stem
-    state = str(gate["status"])
-    if state == "PASS" and display_vblank_warning_count:
-        state = "WARNING"
+    alert = str(gate["alert"])
+    if alert == "NONE" and display_vblank_warning_count:
+        alert = "WARNING"
+    state = hud_gate.legacy_status_for_alert(alert)
     state_color = {
         "PASS": DIM,
         "WARNING": WARN,
@@ -929,7 +935,7 @@ def main() -> None:
             lease.release()
 
     receipt = {
-        "schema_version": 3,
+        "schema_version": 4,
         "kind": "hudline",
         "label": title,
         "image": str(output),
@@ -956,6 +962,8 @@ def main() -> None:
         "base_row_height": 46,
         "frame_x": "plot_left + frame * pixels_per_frame",
         "frame_label_format": "f0xHEX",
+        "gate": str(gate["gate"]),
+        "alert": alert,
         "gate_pass": bool(gate["pass"]),
         "gate_status": str(gate["status"]),
         "status": state,
