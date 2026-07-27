@@ -176,6 +176,14 @@ def main() -> None:
             f"{timeline['pixels_per_frame']} px/frame | "
             f"x = {timeline['plot_left']} + frame * "
             f"{timeline['pixels_per_frame']}"
+            + (
+                f" | HUD observed "
+                f"{int(hudline.get('observed_frames', hudline['frames']))}/"
+                f"{int(hudline['frames'])}"
+                if int(hudline.get("observed_frames", hudline["frames"]))
+                != int(hudline["frames"])
+                else ""
+            )
         ),
         fill=DIM,
         font=font(20),
@@ -299,6 +307,9 @@ def main() -> None:
         "hudline_layout": str(hudline_layout_path),
         "hudline_layout_sha256": digest(hudline_layout_path),
         "frames": int(timeline["frames"]),
+        "hud_observed_frames": int(
+            hudline.get("observed_frames", hudline["frames"])
+        ),
         "fps": float(timeline["fps"]),
         "status": state,
         "gate_pass": bool(hudline["gate_pass"]),

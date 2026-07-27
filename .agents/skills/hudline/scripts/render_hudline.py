@@ -37,6 +37,7 @@ FAIL = (244, 87, 87)
 PASS_GUIDE = (84, 204, 139)
 LIMIT = (248, 174, 58)
 NORMAL_LIMIT = (246, 220, 96)
+INCOMPLETE_TAIL = (92, 25, 31, 150)
 
 
 @dataclass(frozen=True)
@@ -570,10 +571,13 @@ def draw_rows(
     left: int,
     top: int,
     ppf: int,
+    axis_frames: int,
 ) -> int:
     draw = ImageDraw.Draw(image)
-    frames = len(data["frame"])
-    plot_width = frames * ppf
+    observed_frames = len(data["frame"])
+    if axis_frames < observed_frames:
+        raise SystemExit("HUD frame axis is shorter than the observed prefix")
+    plot_width = axis_frames * ppf
     right = left + plot_width - 1
     label_font = font(16)
     unit_font = font(13)
@@ -582,7 +586,7 @@ def draw_rows(
         row_height = spec.height
         y1 = y0 + row_height - 1
         draw.rectangle((left, y0, right, y1), fill=PANEL, outline=GRID)
-        values = data.get(spec.key, np.zeros(frames))
+        values = data.get(spec.key, np.zeros(observed_frames))
         for frame_index, raw in enumerate(values):
             if frame_index == 0:
                 continue
@@ -670,9 +674,9 @@ def draw_rows(
 
     bottom = y0
     fps = float(gate["content_fps"])
-    duration = frames / fps
+    duration = axis_frames / fps
     for second in range(0, math.ceil(duration) + 1):
-        frame_index = min(round(second * fps), frames - 1)
+        frame_index = min(round(second * fps), axis_frames - 1)
         x = left + frame_index * ppf
         major = second % 5 == 0
         draw.line(
@@ -684,12 +688,12 @@ def draw_rows(
             draw.text((x + 3, bottom + 9), f"{second}s", fill=DIM, font=font(18))
             draw.text(
                 (x + 3, bottom + 32),
-                fmt_frame(frame_index, frames),
+                fmt_frame(frame_index, axis_frames),
                 fill=(115, 117, 126),
                 font=font(15),
             )
 
-    palette = data.get("palette", np.zeros(frames)).astype(np.int64)
+    palette = data.get("palette", np.zeros(observed_frames)).astype(np.int64)
     switches = np.flatnonzero(np.r_[False, palette[1:] != palette[:-1]])
     for frame_index in switches:
         x = left + int(frame_index) * ppf
@@ -731,14 +735,18 @@ def main() -> None:
         else None
     )
 
-    frames = len(rows)
-    ppf = args.pixels_per_frame or max(1, min(4, math.ceil(4200 / frames)))
+    observed_frames = len(rows)
+    axis_frames = int(gate["expected_frames"])
+    ppf = (
+        args.pixels_per_frame
+        or max(1, min(4, math.ceil(4200 / axis_frames)))
+    )
     if ppf <= 0:
         raise SystemExit("pixels per frame must be positive")
     specs = row_specs(data, gate, display_vblank_expected)
     left = 220
     timeline_top = 172
-    plot_width = frames * ppf
+    plot_width = axis_frames * ppf
     width = left + plot_width + 45
     height = timeline_top + sum(spec.height for spec in specs) + 82
     output = (
@@ -763,8 +771,8 @@ def main() -> None:
         f"{key} {int(maxima[key])}/{int(limits[key])}"
         for key in ("S", "D", "R", "M", "J")
     )
-    confidence = data.get("confidence", np.ones(frames))[1:]
-    sample_count = data.get("sample_count", np.ones(frames))[1:]
+    confidence = data.get("confidence", np.ones(observed_frames))[1:]
+    sample_count = data.get("sample_count", np.ones(observed_frames))[1:]
     c_stats = c_statistics(data)
     a_stats = a_statistics(data)
     g_stats = (
@@ -802,13 +810,21 @@ def main() -> None:
         if g_stats is not None
         else "V/O on frame F describe the flip for F-1; "
     )
+    coverage_text = (
+        f"Complete DEBUG HUD timeline | {axis_frames} frames | "
+        if observed_frames == axis_frames
+        else (
+            "Observed DEBUG HUD prefix | "
+            f"{observed_frames} / {axis_frames} frames | "
+        )
+    )
     draw.text((24, 16), title, fill=TEXT, font=font(36))
     draw.text((width - 24, 18), state, fill=state_color, font=font(34), anchor="ra")
     draw.text(
         (24, 64),
         (
-            f"Complete DEBUG HUD timeline | {frames} frames | "
-            f"{float(gate['content_fps']):g} fps | {ppf} px/frame"
+            coverage_text
+            + f"{float(gate['content_fps']):g} fps | {ppf} px/frame"
         ),
         fill=DIM,
         font=font(20),
@@ -851,7 +867,31 @@ def main() -> None:
         left=left,
         top=timeline_top,
         ppf=ppf,
+        axis_frames=axis_frames,
     )
+    if observed_frames < axis_frames:
+        missing_x = left + observed_frames * ppf
+        overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+        odraw = ImageDraw.Draw(overlay)
+        odraw.rectangle(
+            (missing_x, timeline_top, left + plot_width - 1, bottom - 1),
+            fill=INCOMPLETE_TAIL,
+        )
+        odraw.line(
+            (missing_x, timeline_top, missing_x, bottom - 1),
+            fill=FAIL,
+            width=3,
+        )
+        odraw.text(
+            (missing_x + 8, timeline_top + 7),
+            (
+                f"not observed from "
+                f"{fmt_frame(observed_frames, axis_frames)}"
+            ),
+            fill=FAIL,
+            font=font(16),
+        )
+        image.alpha_composite(overlay)
     draw = ImageDraw.Draw(image)
     draw.text(
         (left, bottom + 64),
@@ -902,9 +942,12 @@ def main() -> None:
         "recording_size": gate["recording_size"],
         "recording_mtime_ns": gate["recording_mtime_ns"],
         "profile_sha256": gate["profile_sha256"],
-        "frames": frames,
+        "frames": axis_frames,
+        "observed_frames": observed_frames,
+        "expected_frames": axis_frames,
+        "incomplete": observed_frames < axis_frames,
         "evaluation_first_frame": 1,
-        "evaluated_timed_frames": max(0, frames - 1),
+        "evaluated_timed_frames": max(0, observed_frames - 1),
         "fps": float(gate["content_fps"]),
         "pixels_per_frame": ppf,
         "plot_left": left,

@@ -22,8 +22,10 @@ tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
 ```
 
 3. The renderer must reject mismatched frame count, fps, pixels per frame,
-   plot-left coordinate, plot width, or source image hash. Never resize,
-   stretch, or shift one graph to force a match.
+   plot-left coordinate, plot width, or source image hash. An explicitly
+   failed incomplete HUD uses the full expected frame axis and records its
+   shorter observed prefix separately. Never resize, stretch, or shift one
+   graph to force a match.
 4. Inspect the PNG with `view_image`. The codec timeline must be directly
    above the HUD timeline, and the same frame/time gridline must have the same
    x coordinate in both panels.

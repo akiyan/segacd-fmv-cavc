@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 import numpy as np
+from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -126,6 +127,45 @@ class HudlineFrameZeroTests(unittest.TestCase):
             report.has_values(rows, "prgbuf_min_patterns_signed")
         )
         self.assertTrue(report.has_values(rows, "sub_poll_gap_ticks"))
+
+    def test_incomplete_prefix_keeps_the_expected_frame_axis(self):
+        image = Image.new("RGBA", (32, 16), (0, 0, 0, 255))
+        spec = render.RowSpec(
+            "metric",
+            "METRIC",
+            "units",
+            1,
+            (255, 255, 255),
+            height=10,
+        )
+        bottom = render.draw_rows(
+            image,
+            {
+                "frame": np.asarray([0, 1, 2], np.int64),
+                "metric": np.asarray([0, 1, 1], np.float64),
+            },
+            [spec],
+            {"content_fps": 30, "limits": {}},
+            left=5,
+            top=0,
+            ppf=2,
+            axis_frames=5,
+        )
+        self.assertEqual(bottom, 10)
+        self.assertEqual(image.getpixel((14, 5))[:3], render.GRID)
+        with self.assertRaisesRegex(
+            SystemExit, "shorter than the observed prefix"
+        ):
+            render.draw_rows(
+                image,
+                {"frame": np.asarray([0, 1, 2], np.int64)},
+                [spec],
+                {"content_fps": 30, "limits": {}},
+                left=5,
+                top=0,
+                ppf=2,
+                axis_frames=2,
+            )
 
 
 if __name__ == "__main__":
