@@ -213,9 +213,10 @@ The protected pipeline invokes `record` with the same profile and the exact
 DEBUG disc just proved in Stage 3. Its `--no-build` refers only to that exact
 current disc so the recorder does not repeat the already-completed verified
 pack. Keep the Plane A HUD and retain the full Mega-CD startup. Choose a
-launch-to-tail duration at least 30 seconds longer than the source when using
-the default `original/jp_mcd2_9212.bin`, so its roughly 21-second verified
-startup plus a short ending margin are both retained. `record` uses the
+launch-to-tail duration at least 45 seconds longer than the source when using
+the default `original/jp_mcd2_9212.bin`, so its measured 31-33 second startup
+before the visible frame-0 flip plus a short ending margin are both retained.
+`record` uses the
 qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 
 - `ffv1-flac`;

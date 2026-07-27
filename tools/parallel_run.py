@@ -33,6 +33,13 @@ import tmpfs_workspace  # noqa: E402
 
 
 STAGES = ("sim", "disc", "record", "hud")
+
+# Default launch-to-tail margin added to the source duration for recordings.
+# The Mega-CD startup before the visible frame-0 flip measures about 31-33
+# seconds with the default jp_mcd2_9212.bin BIOS, so the margin must cover
+# that startup plus a short ending tail.
+RECORD_MARGIN_SECONDS = 45
+
 _PRINT_LOCK = threading.Lock()
 
 
@@ -86,7 +93,8 @@ def _say(message: str) -> None:
 def _record_seconds(profile: EncodeProfile, override: int | None) -> int:
     if override is not None:
         return override
-    return math.ceil(float(profile.data["source"]["duration"])) + 30
+    return (math.ceil(float(profile.data["source"]["duration"]))
+            + RECORD_MARGIN_SECONDS)
 
 
 def _native_record_size(profile: EncodeProfile) -> str:
