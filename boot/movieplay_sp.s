@@ -49,13 +49,12 @@
 .ifdef DEBUG
 .ifdef PLAYER_SPECIALIZED
 .if PC_MODE == 1
-.ifdef SUB_POLL_GAP_DIAG
-.equ DEBUG_SUB_POLL_GAP, 1
-.else
 .equ DEBUG_PRGBUF_Q, 1
 .if PC_PUMP_MASK == 0x03FF
 .equ DEBUG_PRGMIN_DIRECT, 1
 .endif
+.ifdef SUB_POLL_GAP_DIAG
+.equ DEBUG_SUB_POLL_GAP, 1
 .endif
 .endif
 .endif
@@ -268,10 +267,11 @@
 .equ O_AUDIOLEFT,O_STATUS+0x1C
 .equ O_RESYNC, O_STATUS+0x20
 .equ O_LEAD,   O_STATUS+0x22
-.ifdef DEBUG_SUB_POLL_GAP
-.equ O_PUMPGAP,O_STATUS+0x24
-.else
+.ifdef DEBUG_PRGBUF_Q
 .equ O_PRGMIN, O_STATUS+0x24
+.endif
+.ifdef DEBUG_SUB_POLL_GAP
+.equ O_PUMPGAP,O_STATUS+0x26
 .endif
 .equ O_HDR,    O_STATUS+0x80
 .equ PALTAB_STAGE_OFF, 0x0000

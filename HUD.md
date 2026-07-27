@@ -34,8 +34,9 @@ For the opt-in H40 Sub-pump diagnostic, build:
 make disc CONFIG=configs/PROFILE.toml DEBUG=1 SUB_POLL_GAP_DIAG=1
 ```
 
-That layout replaces `Q/V` with `G/K`, retains `O/E`, and keeps the same
-40-cell row. It is excluded from release and ordinary DEBUG builds.
+That experimental layout keeps the complete 40-cell `Q/V/O/E` row and adds
+`G/K` in the first six cells of row 1. It is excluded from release and
+ordinary DEBUG builds.
 
 `tools/record_movie.sh` uses a DEBUG disc by default. Release builds omit the
 HUD and use a slip-triggered CRAM0 red indicator. DEBUG builds keep the HUD
@@ -47,7 +48,9 @@ The hardware draws hexadecimal values only. There are no labels, spaces, or
 separators in the actual image. Spaces below show the field boundaries:
 
 ```text
-H32/H40: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
+row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
+row 0 H40:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
+row 1 diagnostic: GGGG KK
 ```
 
 The fixed interpretation order is:
@@ -58,37 +61,41 @@ F / P / S / D / R / L / C / W / M / A / U / N / J
 
 H32 and H40 use the same common layout. Every digit occupies one 8x8 cell.
 H40 DEBUG builds additionally append the four-digit signed PrgBuf minimum `Q`
-and three flip-phase fields, extending the order to
+and three flip-phase fields, extending row 0 to
 `... / J / Q / V / O / E` (40 cells). H32 keeps the 30-cell layout; its
-32-cell row has no room for the extension. An H40 `SUB_POLL_GAP_DIAG=1`
-build uses `... / J / G / K / O / E`: `G/K` replace `Q/V` without changing
-the width.
+32-cell row has no room for the extension. An experimental H40
+`SUB_POLL_GAP_DIAG=1` build preserves that row and writes `G/K` to cells 0-5
+of row 1.
 
-| Field | Cell columns | Native pixel range | Digits |
-|---|---:|---:|---:|
-| `F` | 0-3 | x=0-31 | 4 |
-| `P` | 4-5 | x=32-47 | 2 |
-| `S` | 6-7 | x=48-63 | 2 |
-| `D` | 8-9 | x=64-79 | 2 |
-| `R` | 10-11 | x=80-95 | 2 |
-| `L` | 12-13 | x=96-111 | 2 |
-| `C` | 14-15 | x=112-127 | 2 |
-| `W` | 16-17 | x=128-143 | 2 |
-| `M` | 18-19 | x=144-159 | 2 |
-| `A` | 20-21 | x=160-175 | 2 |
-| `U` | 22-25 | x=176-207 | 4 |
-| `N` | 26-27 | x=208-223 | 2 |
-| `J` | 28-29 | x=224-239 | 2 |
-| `Q` or `G` (H40 only) | 30-33 | x=240-271 | 4 |
-| `V` or `K` (H40 only) | 34-35 | x=272-287 | 2 |
-| `O` (H40 only) | 36-37 | x=288-303 | 2 |
-| `E` (H40 only) | 38-39 | x=304-319 | 2 |
+| Field | HUD row | Cell columns | Native pixel range | Digits |
+|---|---:|---:|---:|---:|
+| `F` | 0 | 0-3 | x=0-31 | 4 |
+| `P` | 0 | 4-5 | x=32-47 | 2 |
+| `S` | 0 | 6-7 | x=48-63 | 2 |
+| `D` | 0 | 8-9 | x=64-79 | 2 |
+| `R` | 0 | 10-11 | x=80-95 | 2 |
+| `L` | 0 | 12-13 | x=96-111 | 2 |
+| `C` | 0 | 14-15 | x=112-127 | 2 |
+| `W` | 0 | 16-17 | x=128-143 | 2 |
+| `M` | 0 | 18-19 | x=144-159 | 2 |
+| `A` | 0 | 20-21 | x=160-175 | 2 |
+| `U` | 0 | 22-25 | x=176-207 | 4 |
+| `N` | 0 | 26-27 | x=208-223 | 2 |
+| `J` | 0 | 28-29 | x=224-239 | 2 |
+| `Q` (H40 only) | 0 | 30-33 | x=240-271 | 4 |
+| `V` (H40 only) | 0 | 34-35 | x=272-287 | 2 |
+| `O` (H40 only) | 0 | 36-37 | x=288-303 | 2 |
+| `E` (H40 only) | 0 | 38-39 | x=304-319 | 2 |
+| `G` (diagnostic) | 1 | 0-3 | x=0-31 | 4 |
+| `K` (diagnostic) | 1 | 4-5 | x=32-47 | 2 |
 
 The common part covers 30 cells or 240 pixels. H32's rightmost 2 cells
 remain movie-visible; the extended H40 HUD covers all 40 cells.
 
-The HUD always occupies row 0 of the native 256x224 or 320x224 raster. It can
-cover active picture content; it is not repositioned around letterboxing.
+The ordinary HUD occupies row 0 of the native 256x224 or 320x224 raster. The
+experimental combined H40 diagnostic also occupies the first six cells of row
+1. It can cover active picture content; it is not repositioned around
+letterboxing.
 
 For any recording that can proceed to compilation or upload, the complete first
 movie loop is a mandatory gate with three results: `PASS`, `WARNING`, and
@@ -407,14 +414,16 @@ the packed stream when investigating a regression.
 The HUD does not use the Window plane. For each frame the Main CPU:
 
 1. builds the complete next movie name table in the inactive Plane A table;
-2. formats the HUD into a 60-byte Main-RAM row (80 bytes with
-   `Q/V/O/E` or `G/K/O/E`);
-3. overwrites only the first 30 name-table cells (40 on H40 DEBUG builds);
+2. formats the HUD into a 60-byte Main-RAM row (80 bytes with `Q/V/O/E`, or
+   92 bytes when the second-row `G/K` diagnostic is enabled);
+3. overwrites only the first 30 name-table cells (40 on H40 DEBUG builds),
+   plus the first six cells of row 1 for the combined diagnostic;
 4. selects that completed table with the same register-2 flip as the movie.
 
 The inactive tables are at VRAM `0xC000` and `0xE000`. Publishing the HUD uses
-15 longword writes (20 with either H40 extension) and no DMA. Unoccupied H32 cells
-retain their movie entries, which avoids exposing an unrelated Plane B frame.
+15 longword writes, 20 with the ordinary H40 extension, or 23 with the combined
+diagnostic, and no DMA. Unoccupied cells retain their movie entries, which
+avoids exposing an unrelated Plane B frame.
 
 The final flip has a terminal-VBlank guard: V-counter lines `FC` through `FF`
 are rejected so the table is not selected at the end-of-blank race.
@@ -453,10 +462,9 @@ frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
 
 `read_frameno.py` decodes the barcode and checks the lower glyph with normalized
 correlation. The common H32/H40 prefix uses `HUD_LAYOUT`; the extended H40
-row uses `HUD_H40_FLIP_LAYOUT` for `Q/V/O/E` or
-`HUD_H40_POLL_GAP_LAYOUT` for `G/K/O/E`. Pass `--flip-fields` or
-`--poll-gap-fields`, respectively, to the recording analyzer; the options are
-mutually exclusive.
+row uses `HUD_H40_FLIP_LAYOUT` for `Q/V/O/E`. Legacy one-row `G/K/O/E`
+recordings use `HUD_H40_POLL_GAP_LAYOUT`. The combined two-row diagnostic uses
+`HUD_H40_COMBINED_LAYOUT`; pass `--combined-fields` to the recording analyzer.
 
 For a complete recording, `harness/startup_resync/analyze.py` groups repeated
 60 Hz capture frames by `F`, retains per-field confidence, and reports counter
@@ -483,7 +491,7 @@ never comma-delimited.
 For H40 extended HUDs, the TSV preserves `Q` as
 `prgbuf_min_patterns_raw16`, decodes its signed value into
 `prgbuf_min_patterns_signed`, and writes the positive debt magnitude as
-`prgbuf_underflow_patterns`. The pump diagnostic instead writes
+`prgbuf_underflow_patterns`. The combined pump diagnostic also writes
 `sub_poll_gap_ticks`, `sub_poll_gap_ms`, `apply_guard_blocked`,
 `slip_msf_gap_count`, and `slip_trn_retry_count`. `/hudline` and `/mixline`
 always include those rows and G/B summaries when the columns are present.
@@ -544,8 +552,8 @@ H40のopt-in Sub-pump diagnosticは次でbuildします。
 make disc CONFIG=configs/PROFILE.toml DEBUG=1 SUB_POLL_GAP_DIAG=1
 ```
 
-このlayoutは`Q/V`を`G/K`へ置き換え、`O/E`と同じ40-cell rowを維持します。
-Releaseと通常DEBUG buildには入りません。
+この実験layoutは完全な40-cell `Q/V/O/E` rowを維持し、row 1の先頭6 cellへ
+`G/K`を追加します。Releaseと通常DEBUG buildには入りません。
 
 `tools/record_movie.sh`は既定でDEBUG discを使います。Release buildはHUDを省き、
 slip-triggered CRAM0 red indicatorを使います。DEBUG buildはHUD colourを固定し、
@@ -557,7 +565,9 @@ Hardware上はhex valueだけを描き、label、space、separatorはありま�
 field boundaryを示します。
 
 ```text
-H32/H40: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
+row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
+row 0 H40:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
+row 1 diagnostic: GGGG KK
 ```
 
 固定解釈順は次のとおりです。
@@ -569,34 +579,38 @@ F / P / S / D / R / L / C / W / M / A / U / N / J
 H32とH40は同じ共通layoutです。1 digitは1つの8x8 cellを使います。H40 DEBUG buildは
 4桁のsigned PrgBuf minimum `Q`と3つのflip-phase fieldを追加し、
 `... / J / Q / V / O / E`の40 cellになります。H32は30-cell layoutを使い、
-32-cell rowにはextensionの余地がありません。H40 `SUB_POLL_GAP_DIAG=1` buildは
-`... / J / G / K / O / E`を使い、幅を変えずに`Q/V`を`G/K`へ置き換えます。
+32-cell rowにはextensionの余地がありません。実験用H40
+`SUB_POLL_GAP_DIAG=1` buildはそのrowを維持し、row 1のcell 0-5へ`G/K`を書きます。
 
-| Field | Cell columns | Native pixel range | Digits |
-|---|---:|---:|---:|
-| `F` | 0-3 | x=0-31 | 4 |
-| `P` | 4-5 | x=32-47 | 2 |
-| `S` | 6-7 | x=48-63 | 2 |
-| `D` | 8-9 | x=64-79 | 2 |
-| `R` | 10-11 | x=80-95 | 2 |
-| `L` | 12-13 | x=96-111 | 2 |
-| `C` | 14-15 | x=112-127 | 2 |
-| `W` | 16-17 | x=128-143 | 2 |
-| `M` | 18-19 | x=144-159 | 2 |
-| `A` | 20-21 | x=160-175 | 2 |
-| `U` | 22-25 | x=176-207 | 4 |
-| `N` | 26-27 | x=208-223 | 2 |
-| `J` | 28-29 | x=224-239 | 2 |
-| `Q`または`G`（H40のみ） | 30-33 | x=240-271 | 4 |
-| `V`または`K`（H40のみ） | 34-35 | x=272-287 | 2 |
-| `O`（H40のみ） | 36-37 | x=288-303 | 2 |
-| `E`（H40のみ） | 38-39 | x=304-319 | 2 |
+| Field | HUD row | Cell columns | Native pixel range | Digits |
+|---|---:|---:|---:|---:|
+| `F` | 0 | 0-3 | x=0-31 | 4 |
+| `P` | 0 | 4-5 | x=32-47 | 2 |
+| `S` | 0 | 6-7 | x=48-63 | 2 |
+| `D` | 0 | 8-9 | x=64-79 | 2 |
+| `R` | 0 | 10-11 | x=80-95 | 2 |
+| `L` | 0 | 12-13 | x=96-111 | 2 |
+| `C` | 0 | 14-15 | x=112-127 | 2 |
+| `W` | 0 | 16-17 | x=128-143 | 2 |
+| `M` | 0 | 18-19 | x=144-159 | 2 |
+| `A` | 0 | 20-21 | x=160-175 | 2 |
+| `U` | 0 | 22-25 | x=176-207 | 4 |
+| `N` | 0 | 26-27 | x=208-223 | 2 |
+| `J` | 0 | 28-29 | x=224-239 | 2 |
+| `Q`（H40のみ） | 0 | 30-33 | x=240-271 | 4 |
+| `V`（H40のみ） | 0 | 34-35 | x=272-287 | 2 |
+| `O`（H40のみ） | 0 | 36-37 | x=288-303 | 2 |
+| `E`（H40のみ） | 0 | 38-39 | x=304-319 | 2 |
+| `G`（diagnostic） | 1 | 0-3 | x=0-31 | 4 |
+| `K`（diagnostic） | 1 | 4-5 | x=32-47 | 2 |
 
 共通部は30 cell、240 pixelです。H32右端の2 cellはmovie表示のままです。
-Extended H40 HUDは40 cellすべてを使います。
+Extended H40 HUDはrow 0の40 cellすべてを使います。Combined diagnosticはさらに
+row 1の先頭6 cellを使い、その後のcellはmovie entryのままです。
 
-HUDはnative 256x224または320x224 rasterのrow 0を常に使います。Active pictureを
-覆う場合があり、letterboxに合わせて移動しません。
+通常HUDはnative 256x224または320x224 rasterのrow 0を使います。実験用combined
+H40 diagnosticはrow 1の先頭6 cellも使います。Active pictureを覆う場合があり、
+letterboxに合わせて移動しません。
 
 Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体を必須gateとし、
 結果は`PASS`、`WARNING`、`FAIL`です。`WARNING`はupload可能です。`S/D/R`は0を
@@ -869,13 +883,15 @@ streamを使います。
 HUDはWindow planeを使いません。各frameでMain CPUは次を行います。
 
 1. inactive Plane A tableへcomplete next movie name tableを構築
-2. 60-byte Main-RAM row（`Q/V/O/E`または`G/K/O/E`付きは80 byte）へHUDをformat
-3. 最初の30 name-table cell（H40 DEBUGは40）だけ上書き
+2. 60-byte Main-RAM row（`Q/V/O/E`付きは80 byte、2行目の`G/K`
+   diagnostic有効時は92 byte）へHUDをformat
+3. 最初の30 name-table cell（H40 DEBUGは40）と、combined diagnosticでは
+   row 1の先頭6 cellだけを上書き
 4. Movieと同じregister-2 flipでcompleted tableを選択
 
 Inactive tableはVRAM `0xC000`と`0xE000`です。HUD publicationは15 longword write、
-どちらのH40 extensionも20 write、DMAなしです。H32の未使用cellはmovie entryを保持し、無関係な
-Plane B frameを露出しません。
+通常H40 extensionは20 write、combined diagnosticは23 write、DMAなしです。
+未使用cellはmovie entryを保持し、無関係なPlane B frameを露出しません。
 
 Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで
 tableを選びません。
@@ -910,9 +926,9 @@ frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
 
 `read_frameno.py`はbarcodeをdecodeし、lower glyphをnormalized correlationでcheckします。
 共通H32/H40 prefixは`HUD_LAYOUT`、`Q/V/O/E` extended rowは
-`HUD_H40_FLIP_LAYOUT`、`G/K/O/E`は`HUD_H40_POLL_GAP_LAYOUT`を使います。
-Recording analyzerにはそれぞれ`--flip-fields`または`--poll-gap-fields`を渡します。
-両optionは同時に使えません。
+`HUD_H40_FLIP_LAYOUT`を使います。旧1行`G/K/O/E` recordingは
+`HUD_H40_POLL_GAP_LAYOUT`を使います。Combined 2行diagnosticは
+`HUD_H40_COMBINED_LAYOUT`を使い、recording analyzerへ`--combined-fields`を渡します。
 
 Complete recordingでは`harness/startup_resync/analyze.py`が`F`ごとにrepeated 60 Hz
 capture frameをgroup化し、field別confidenceとcounter transitionを報告します。

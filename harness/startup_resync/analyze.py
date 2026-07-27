@@ -7,11 +7,13 @@ The player renders values only in one fixed 30-cell order in both modes:
 
 The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Specialized H40
 DEBUG builds append Q/V/O/E; Q is the signed minimum logical PrgBuf balance
-observed during that frame, in exact 32-byte patterns. SUB_POLL_GAP_DIAG builds
-append G/K/O/E instead; G is the maximum time spent outside the Sub CDC pump
-between service opportunities in 30.72 us stopwatch ticks, and K is the
-cumulative MSF sequence-gap recovery count. G bit 15 is a packed per-frame B
-marker showing that APPLY back-pressure rejected a control-sector pump.
+observed during that frame, in exact 32-byte patterns. A two-row
+SUB_POLL_GAP_DIAG build keeps that first row and appends G/K on row 1. G is the
+maximum time spent outside the Sub CDC pump between service opportunities in
+30.72 us stopwatch ticks, and K is the cumulative MSF sequence-gap recovery
+count. G bit 15 is a packed per-frame B marker showing that APPLY back-pressure
+rejected a control-sector pump. Legacy one-row G/K/O/E recordings remain
+readable through their explicit layout option.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -128,13 +130,18 @@ def iter_samples(
     crop_x: int,
     flip_fields: bool = False,
     poll_gap_fields: bool = False,
+    combined_fields: bool = False,
 ) -> Iterable[Sample]:
     # Only the top-left HUD area is sent through the pipe.  Decoding still sees
     # every source frame, while pipe traffic stays small even for an upscaled MP4.
     available_width = probe.width - crop_x
     layout = read_frameno.hud_layout_for_width(available_width)
-    if flip_fields and poll_gap_fields:
-        raise SystemExit("--flip-fields and --poll-gap-fields are mutually exclusive")
+    selected_layouts = sum((flip_fields, poll_gap_fields, combined_fields))
+    if selected_layouts > 1:
+        raise SystemExit(
+            "--flip-fields, --poll-gap-fields, and --combined-fields "
+            "are mutually exclusive"
+        )
     if flip_fields:
         if layout is not read_frameno.HUD_H40_LAYOUT:
             raise SystemExit("--flip-fields requires a native H40 recording")
@@ -143,24 +150,26 @@ def iter_samples(
         if layout is not read_frameno.HUD_H40_LAYOUT:
             raise SystemExit("--poll-gap-fields requires a native H40 recording")
         layout = read_frameno.HUD_H40_POLL_GAP_LAYOUT
+    elif combined_fields:
+        if layout is not read_frameno.HUD_H40_LAYOUT:
+            raise SystemExit("--combined-fields requires a native H40 recording")
+        layout = read_frameno.HUD_H40_COMBINED_LAYOUT
     fields = tuple(name for name, _col, _digits in layout)
-    hud_cells = (
-        read_frameno.HUD_H40_FLIP_CELLS
-        if layout is read_frameno.HUD_H40_FLIP_LAYOUT
-        else read_frameno.HUD_H40_POLL_GAP_CELLS
-        if layout is read_frameno.HUD_H40_POLL_GAP_LAYOUT
-        else read_frameno.HUD_H40_CELLS
-        if layout is read_frameno.HUD_H40_LAYOUT
-        else read_frameno.HUD_CELLS
+    hud_width_cells, hud_height_cells = read_frameno.hud_layout_dimensions(
+        layout
     )
-    crop_w = min(hud_cells * read_frameno.CELL, available_width)
-    crop_h = min(32, probe.height)
+    crop_w = min(hud_width_cells * read_frameno.CELL, available_width)
+    crop_h = min(max(32, hud_height_cells * read_frameno.CELL), probe.height)
     if crop_x < 0 or crop_x >= probe.width:
         raise SystemExit(f"--crop-x must be within 0..{probe.width - 1}")
-    if crop_w < hud_cells * read_frameno.CELL or crop_h < 8:
+    if (
+        crop_w < hud_width_cells * read_frameno.CELL
+        or crop_h < hud_height_cells * read_frameno.CELL
+    ):
         raise SystemExit(
             f"HUD crop is too small ({crop_w}x{crop_h}); "
-            f"need at least {hud_cells * read_frameno.CELL}x8"
+            f"need at least {hud_width_cells * read_frameno.CELL}x"
+            f"{hud_height_cells * read_frameno.CELL}"
         )
 
     vf = f"crop={crop_w}:{crop_h}:{crop_x}:0,format=gray"
@@ -840,7 +849,13 @@ def parse_args() -> argparse.Namespace:
              "maximum time outside the Sub CDC pump in exact 30.72 us ticks; "
              "G bit 15 carries B, a per-frame APPLY back-pressure marker; "
              "K is the cumulative MSF-gap recovery count "
-             "(SUB_POLL_GAP_DIAG builds only)",
+             "(legacy SUB_POLL_GAP_DIAG builds only)",
+    )
+    parser.add_argument(
+        "--combined-fields", action="store_true",
+        help="parse the two-row H40 diagnostic layout: common+Q/V/O/E on "
+             "row 0 and G/K on row 1; G bit 15 carries B and K is the "
+             "cumulative MSF-gap recovery count",
     )
     parser.add_argument(
         "--max-gap", type=int, default=3,
@@ -868,8 +883,11 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must be at least 1")
     if args.context < 0:
         parser.error("--context must not be negative")
-    if args.flip_fields and args.poll_gap_fields:
-        parser.error("--flip-fields and --poll-gap-fields are mutually exclusive")
+    if sum((args.flip_fields, args.poll_gap_fields, args.combined_fields)) > 1:
+        parser.error(
+            "--flip-fields, --poll-gap-fields, and --combined-fields "
+            "are mutually exclusive"
+        )
     if args.gate_json and not args.expected_frames:
         parser.error("--gate-json requires --expected-frames")
     if args.gate_json and args.profile is None:
@@ -896,7 +914,8 @@ def main() -> int:
     )
     raw_groups = group_samples(
         iter_samples(args.recording, probe, args.confidence, args.crop_x,
-                     args.flip_fields, args.poll_gap_fields),
+                     args.flip_fields, args.poll_gap_fields,
+                     args.combined_fields),
         args.max_gap,
     )
     groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)

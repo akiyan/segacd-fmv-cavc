@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""実機/エミュ録画のデバッグHUD(左上端・1行)から各値を読む。
+"""実機/エミュ録画のデバッグHUD（左上端、H40 diagnosticは最大2行）から各値を読む。
 
 HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値だけを描く:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
@@ -10,16 +10,16 @@ HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値�
 streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
 H40 DEBUG は Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
 最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
-SUB_POLL_GAP_DIAG buildは同じ幅でG/K/O/Eを出す。Gはframe内でSub CDC
-pump外にいた最大時間を30.72 us stopwatch tick単位で示し、KはMSF連番gapから
-再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureがcontrol sector
-pumpを拒否したframeを示すB markerである。
+SUB_POLL_GAP_DIAG buildはその40-cell rowを維持し、2行目の先頭6 cellへG/Kを追加する。
+Gはframe内でSub CDC pump外にいた最大時間を30.72 us stopwatch tick単位で示し、
+KはMSF連番gapから再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureが
+control sector pumpを拒否したframeを示すB markerである。
 各8x8セルの上段バーコードを直接4-bitとして読み、下段の小型hex字形とのNCCで
 信頼度を確認する。ネイティブ録画の原点(0,0)は即時判定し、位置がずれた画像だけ
 先頭4桁で原点を探索する。
 
-このモジュールの HUD_LAYOUT/HUD_H40_LAYOUT は boot/movieplay_ip.s の
-prepare_dbg と一致させること(HUDレイアウトを変えたら両方直す)。
+このモジュールの各HUD layoutは boot/movieplay_ip.s のprepare_dbgと一致させること
+（HUDレイアウトを変えたら両方直す）。
 
 使い方:
     from read_frameno import read_frameno, read_hud
@@ -76,6 +76,10 @@ HUD_H40_POLL_GAP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
     ("O", 2),
     ("E", 2),
 )
+HUD_H40_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
+    ("G", 4),
+    ("K", 2),
+)
 
 
 def _make_layout(field_digits):
@@ -99,7 +103,35 @@ HUD_H40_POLL_GAP_LAYOUT, HUD_H40_POLL_GAP_CELLS = _make_layout(
 HUD_H40_POLL_GAP_FIELDS = tuple(
     name for name, _col, _digits in HUD_H40_POLL_GAP_LAYOUT
 )
+HUD_H40_COMBINED_LAYOUT, HUD_H40_COMBINED_CELLS = _make_layout(
+    HUD_H40_COMBINED_FIELD_DIGITS
+)
+HUD_H40_COMBINED_FIELDS = tuple(
+    name for name, _col, _digits in HUD_H40_COMBINED_LAYOUT
+)
+HUD_H40_COMBINED_ROW_CELLS = 40
 H40_NATIVE_WIDTH = 320
+
+
+def hud_layout_field_position(layout, logical_col):
+    """Return the physical cell column and row for one layout field."""
+    if layout == HUD_H40_COMBINED_LAYOUT:
+        return (
+            logical_col % HUD_H40_COMBINED_ROW_CELLS,
+            logical_col // HUD_H40_COMBINED_ROW_CELLS,
+        )
+    return logical_col, 0
+
+
+def hud_layout_dimensions(layout):
+    """Return the physical width and height of a HUD layout in cells."""
+    width = 0
+    height = 1
+    for _name, logical_col, digits in layout:
+        col, row = hud_layout_field_position(layout, logical_col)
+        width = max(width, col + digits)
+        height = max(height, row + 1)
+    return width, height
 
 
 def hud_layout_for_width(width):
@@ -199,18 +231,24 @@ def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
     Pass ``HUD_H40_LAYOUT`` when the image has already been cropped narrower
-    than its native 320-pixel frame; the 28-cell H40 row itself also fits in an
+    than its native 320-pixel frame; the 30-cell H40 row itself also fits in an
     H32-width crop and therefore cannot identify the mode.
     """
     gray = _gray(img)
     if layout is None:
         layout = hud_layout_for_width(gray.shape[1])
-    cells = max(col + digits for _name, col, digits in layout)
-    x0, y, fconf = _find_origin(gray, cells * CELL)
+    width_cells, height_cells = hud_layout_dimensions(layout)
+    x0, y, fconf = _find_origin(gray, width_cells * CELL)
+    if y + height_cells * CELL > gray.shape[0]:
+        raise ValueError(
+            f"HUD image is too short for {height_cells} rows: "
+            f"{gray.shape[0]} pixels"
+        )
     out = {}
-    for name, col, digits in layout:
+    for name, logical_col, digits in layout:
+        col, row = hud_layout_field_position(layout, logical_col)
         gx = x0 + col * CELL
-        val, minsc = _read_hex(gray, gx, y, digits)
+        val, minsc = _read_hex(gray, gx, y + row * CELL, digits)
         out[name] = (val, round(min(fconf, minsc), 3))
     return out
 

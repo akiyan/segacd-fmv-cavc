@@ -237,13 +237,14 @@ class HudUploadGateTests(unittest.TestCase):
             {field: 0 for field in "SDRCMJ"},
         )
 
-    def test_h40_sub_poll_gap_is_preserved_as_diagnostic_ticks(self):
+    def test_h40_combined_diagnostics_preserve_q_g_b_k(self):
         rows = groups(3)
-        for row, gap, slip, msf_gap in zip(
+        for row, gap, slip, msf_gap, prg_min in zip(
             rows,
             (0x0FFF, 0x8000 | 120, 240),
             (0, 3, 5),
             (0, 2, 4),
+            (64, 32, 16),
             strict=True,
         ):
             row.values.update({
@@ -252,6 +253,7 @@ class HudUploadGateTests(unittest.TestCase):
                 "L": 0,
                 "W": 0,
                 "A": 0,
+                "Q": prg_min,
                 "G": gap,
                 "K": msf_gap,
             })
@@ -279,8 +281,9 @@ class HudUploadGateTests(unittest.TestCase):
             row.values["K"] = 0
         result = self.evaluate(rows, 3)
         self.assertEqual(
-            result["diagnostic_fields"], ["C", "A", "G", "B", "K"]
+            result["diagnostic_fields"], ["C", "A", "Q", "G", "B", "K"]
         )
+        self.assertEqual(result["prgbuf_minimum_patterns"], 16)
         self.assertEqual(result["apply_guard_blocked_frames"], 1)
         self.assertEqual(
             result["sub_poll_gap_statistics"],

@@ -226,8 +226,9 @@ $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT: moviepack
 # 既定はリリースビルド。DEBUG=1 でデバッグオーバーレイを有効化する。
 DEBUG ?= 0
 ISO_HOLD_N ?= 0
-# H40-only DEBUG diagnostic. Replaces Q/V with G/K while keeping O/E.
-# G is the maximum time outside the Sub CDC pump between service opportunities.
+# Experimental H40-only DEBUG diagnostic. Keeps Q/V/O/E on row 0 and appends
+# G/K on row 1. G is the maximum time outside the Sub CDC pump between service
+# opportunities.
 SUB_POLL_GAP_DIAG ?= 0
 # Issue #27 Main-CPU straight-line bitmap handlers and fixed-geometry NT
 # blitters. H32/H40 full-playback validation is complete; MAIN_CODEGEN=0 keeps

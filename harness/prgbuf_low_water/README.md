@@ -29,7 +29,7 @@ rejected without changing playback scheduling or image-quality settings.
 ## Usage
 
 Analyze the timed part of H40 Bad Apple while excluding the terminal drain.
-For a `G/K/O/E` recording, include the expected 30 fps cadence:
+For a recording containing `G/K`, include the expected 30 fps cadence:
 
 ```sh
 tools/python.sh harness/prgbuf_low_water/analyze.py \

@@ -114,8 +114,8 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   recorder's terminal hold, not playback cadence. For 24 fps, retain the
   measured row but defer its normal-line and warning rule until its 2/3 cadence
   is specified.
-- Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J` and either
-  `Q/V/O/E` or `G/K/O/E` when present. Decode packed `G` bit 15 into a
+- Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J`, plus
+  `Q/V/O/E` and/or `G/K` whenever present. Decode packed `G` bit 15 into a
   separate `B` row. `F` is the x-axis. Do not allocate a separate `P` row: palette is
   represented by the `Pxx` switch labels and vertical boundaries on the shared
   horizontal axis.
