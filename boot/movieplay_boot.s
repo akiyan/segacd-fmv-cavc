@@ -23,7 +23,7 @@ IP_Entry:
 IP_WorkRAM:
 	.long 0x00000000
 SP_Addr:
-	.long 0x00007000
+	.long 0x00006000
 SP_Size:
 	.long SPEnd-SPStart
 SP_Entry:
@@ -66,9 +66,9 @@ IPStart:
 	.incbin "movieplay_ip.bin"
 IPEnd:
 
-	/* The BIOS boot module remains a single 4 KiB resident image. Extra Sub
-	   code is preloaded later from HEADER.DAT, not appended here. */
-	.org 0x7000
+	/* The BIOS can load a multi-sector SP directly. Keep it sector-aligned
+	   after the IP and leave the final 8 KiB of the 32 KiB system area for it. */
+	.org 0x6000
 SPStart:
 	.incbin "movieplay_sp.bin"
 SPEnd:

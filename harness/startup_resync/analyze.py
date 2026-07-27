@@ -5,15 +5,15 @@ The player renders values only in one fixed 30-cell order in both modes:
 
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
-The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Specialized H40
-DEBUG builds append Q/V/O/E; Q is the signed minimum logical PrgBuf balance
-observed during that frame, in exact 32-byte patterns. A two-row
-SUB_POLL_GAP_DIAG build keeps that first row and appends G/K on row 1. G is the
-maximum time spent outside the Sub CDC pump between service opportunities in
-30.72 us stopwatch ticks, and K is the cumulative MSF sequence-gap recovery
-count. G bit 15 is a packed per-frame B marker showing that APPLY back-pressure
-rejected a control-sector pump. Legacy one-row G/K/O/E recordings remain
-readable through their explicit layout option.
+The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H40
+DEBUG builds append Q/V/O/E on row 0 and G/K on row 1; Q is the signed minimum
+logical PrgBuf balance observed during that frame, in exact 32-byte patterns.
+G is the maximum time spent outside the Sub CDC pump between service
+opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
+sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
+that APPLY back-pressure rejected a control-sector pump. A supplied H40
+profile selects this combined layout automatically. Legacy one-row recordings
+remain readable through their explicit layout options.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -771,6 +771,21 @@ def evaluate_upload_gate(
     return result
 
 
+def standard_combined_fields(
+    profile: encode_config.EncodeProfile | None,
+    *,
+    flip_fields: bool,
+    poll_gap_fields: bool,
+    combined_fields: bool,
+) -> bool:
+    """Select the standard two-row layout for an H40 profile."""
+    if combined_fields:
+        return True
+    if flip_fields or poll_gap_fields or profile is None:
+        return False
+    return profile.data["video"]["mode"] == "H40"
+
+
 def write_gate_json(path: Path, result: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
@@ -849,13 +864,12 @@ def parse_args() -> argparse.Namespace:
              "maximum time outside the Sub CDC pump in exact 30.72 us ticks; "
              "G bit 15 carries B, a per-frame APPLY back-pressure marker; "
              "K is the cumulative MSF-gap recovery count "
-             "(legacy SUB_POLL_GAP_DIAG builds only)",
+             "(legacy one-row poll-gap builds only)",
     )
     parser.add_argument(
         "--combined-fields", action="store_true",
-        help="parse the two-row H40 diagnostic layout: common+Q/V/O/E on "
-             "row 0 and G/K on row 1; G bit 15 carries B and K is the "
-             "cumulative MSF-gap recovery count",
+        help="force the standard two-row H40 layout when no profile is "
+             "supplied; H40 profiles select it automatically",
     )
     parser.add_argument(
         "--max-gap", type=int, default=3,
@@ -907,6 +921,12 @@ def main() -> int:
         encode_config.load_profile(args.profile)
         if args.profile is not None else None
     )
+    combined_fields = standard_combined_fields(
+        profile,
+        flip_fields=args.flip_fields,
+        poll_gap_fields=args.poll_gap_fields,
+        combined_fields=args.combined_fields,
+    )
     probe = probe_video(args.recording)
     print(
         f"input: {args.recording} ({probe.width}x{probe.height}, "
@@ -915,7 +935,7 @@ def main() -> int:
     raw_groups = group_samples(
         iter_samples(args.recording, probe, args.confidence, args.crop_x,
                      args.flip_fields, args.poll_gap_fields,
-                     args.combined_fields),
+                     combined_fields),
         args.max_gap,
     )
     groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)

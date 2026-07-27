@@ -9,7 +9,7 @@ The conservative answer is:
 
 | Domain | Unconditional fixed space | Conditional space |
 |---|---:|---:|
-| Sub PRG-RAM | 1.313 KiB | 0 bytes in the 4 KiB resident Sub base image |
+| Sub PRG-RAM | 1.379 KiB | unused bytes in the 8 KiB SP reservation are not generic scratch; extend only the linked image with a size assertion and full qualification |
 | each physical Word-RAM bank | 0 B | sector-rounding guard below the fixed tail; not allocatable |
 | Main RAM | 2.627 KiB | generated-code and RUN_TABLE tails only with profile-specific assertions |
 | Main CPU | 0 guaranteed cycles | measured profile evidence is not a reusable allowance |
@@ -56,36 +56,34 @@ sector-arrival variation and is not encoder Supply.
 | Address | Size | Owner | New feature use |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | No |
-| `0x06000..0x06FFF` | 4.00 KiB | resident specialized Sub base image | No |
-| `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratch and BIOS-unsafe streaming range | No |
+| `0x06000..0x07FFF` | 8.00 KiB | BIOS-loaded resident specialized Sub allocation; only the exact linked prefix is qualified | No |
 | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer | No |
 | `0x08600..0x097FF` | **4.50 KiB** | unassigned marker-verified scratch range; not persistent across startup reads | **Yes, for rewritten scratch only** |
 | `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads | No |
 | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table | No |
 | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table | No |
-| `0x0CC20..0x0CC63` | 68 B | persistent position-independent DEBUG helper and its two state words | No |
-| `0x0CC64..0x0CFFF` | **924 B** | unused tail of the reserved hot-table page | **Yes, after an overlap check** |
+| `0x0CC20..0x0CFFF` | **992 B** | unused tail of the reserved hot-table page | **Yes, after an overlap check** |
 | `0x0D000..0x707FF` | 398.00 KiB | normal PrgBuf capacity at 30 fps | No |
 | `0x70800..0x757FF` | 20.00 KiB | delivery-jitter headroom at 30 fps | No |
 | `0x75800..0x75FFF` | 2.00 KiB | observation guard before pump back-pressure | No |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; `0x76800..0x76857` executes the qualified ADPCM entry, and longer-route builds may use through `0x76943` | No |
+| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; `0x76800..0x76857` executes the qualified ADPCM entry, and longer-route builds may use the 216-byte extension through `0x768D7` | No |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | No |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | No |
 | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top | No |
 
-The BIOS boot source remains at disc offset `0x07000` and contains only the
-4 KiB resident Sub module loaded at PRG `0x06000`. The packer places the exact
-324-byte hash-bound extension after the 8,800-byte ADPCM table in its existing
-five-sector padding. Sub stages that image at `0x7B000`, copies the extension
-from `0x7D260` in two ways: its qualified first 88 bytes run from the unused
-timed-ring tail at `0x76800`; when routing is at most 8 KiB, the second entry
-runs in place at `0x7D2B8` after prebuffer, while longer-route builds copy the
-complete extension first. These boot-only entries install ADPCM tables,
-prepare routing and the initial ring/APPLY/frame state, and copy a 68-byte
-position-independent DEBUG helper to `0x0CC20..0x0CC63`. Timed code calls that
-helper only for the combined H40 HUD. Frame-0 staging may then overwrite both
-temporary extension locations. The persistent hot-table page and DEBUG helper
-remain immediately before PrgBuf.
+The 32 KiB disc system area places the SP source at offset `0x06000` and
+reserves its final 8 KiB. The BIOS loads the exact linked size contiguously at
+Sub PRG `0x06000`; it is not limited to one 4 KiB sector pair. The packer
+places the exact 216-byte hash-bound extension after the 8,800-byte ADPCM
+table in its existing five-sector padding. Sub stages that image at `0x7B000`
+and copies the extension from `0x7D260` in two ways: its qualified first
+88 bytes run from the unused timed-ring tail at `0x76800`; when routing is at
+most 8 KiB, the second entry runs in place at `0x7D2B8` after prebuffer, while
+longer-route builds copy the complete extension first. These boot-only entries
+install ADPCM tables and prepare routing plus the initial ring/APPLY/frame
+state. Frame-0 staging may then overwrite both temporary extension locations.
+The H40 G measurement and its two state words remain inline in the resident SP;
+the full `0x0CC20..0x0CFFF` hot-table tail is unused.
 
 The physical PrgBuf ring is 424 KiB. At 30 fps its normal and scheduled cap is
 below the 418 KiB observation boundary by a 20 KiB cadence reserve. At 15 fps
@@ -93,9 +91,11 @@ the normal and scheduled cap is 378 KiB, leaving 40 KiB for live jitter. Pump
 back-pressure begins at 420 KiB, and the remaining 4 KiB is a separate
 overflow guard. None of these differences is feature memory.
 
-During boot only, frame-0 pattern staging uses
-`0x72000..0x7AFFF`. It may overlap the timed ring tail and APPLY because those
-owners are inactive in that phase; it does not change the timed 30 fps map.
+During ISO discovery only, a 64 KiB scratch image uses
+`0x67000..0x76FFF`. Frame-0 pattern staging later uses
+`0x72000..0x7AFFF`. Both may overlap the timed ring tail, and frame-0 staging
+may also overlap APPLY, because those timed owners are inactive in each boot
+phase. Neither overlay changes the timed map.
 
 The APPLY queue also retains deliberate back-pressure headroom. Its unused
 instantaneous occupancy is not a fixed allocation.
@@ -219,7 +219,7 @@ Use low-risk space in this order:
 2. Use generated-code or RUN_TABLE tails only with profile-specific end
    symbols and bounds.
 3. Use PRG `0x08600..0x097FF` only for scratch that is rewritten after startup,
-   or the checked `0x0CC64..0x0CFFF` hot-table tail for persistent data, and
+   or the checked `0x0CC20..0x0CFFF` hot-table tail for persistent data, and
    only after adding the allocation to `tools/check_player_ring.py`.
 
 Never allocate from payload jitter, PrgBuf overflow, APPLY back-pressure,
@@ -270,7 +270,7 @@ before revising any elapsed-time or memory-headroom claim.
 
 | Domain | 無条件に固定利用できる領域 | 条件付き領域 |
 |---|---:|---:|
-| Sub PRG-RAM | 1.313 KiB | 4 KiB resident Sub base image内の余り0 byte |
+| Sub PRG-RAM | 1.379 KiB | 8 KiB SP予約内の未使用byteは汎用scratchではない。size assertとfull qualification付きでlinked imageだけを拡張する |
 | 各physical Word-RAM bank | 0 B | fixed tail直下のsector丸めguard。割り当て不可 |
 | Main RAM | 2.627 KiB | generated-codeとRUN_TABLEのtailはprofile固有assert付きのみ |
 | Main CPU | 保証cycle 0 | Profile実測は再利用可能なallowanceではない |
@@ -312,43 +312,42 @@ sector到着変動専用で、encoder Supplyではありません。
 | Address | Size | Owner | New featureでの利用 |
 |---|---:|---|---|
 | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | 不可 |
-| `0x06000..0x06FFF` | 4.00 KiB | resident specialized Sub base image | 不可 |
-| `0x07000..0x07FFF` | 4.00 KiB | boot ISO scratchとBIOS-unsafe streaming range | 不可 |
+| `0x06000..0x07FFF` | 8.00 KiB | BIOS-loaded resident specialized Sub allocation。正確なlinked prefixだけを検証済み | 不可 |
 | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer | 不可 |
 | `0x08600..0x097FF` | **4.50 KiB** | 未割当のmarker検証済みscratch range。startup readを越える永続保持は不可 | **毎回書き直すscratchのみ利用可** |
 | `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 | 不可 |
 | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table | 不可 |
 | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table | 不可 |
-| `0x0CC20..0x0CC63` | 68 B | persistentなposition-independent DEBUG helperと2つのstate word | 不可 |
-| `0x0CC64..0x0CFFF` | **924 B** | hot-table予約pageの未使用tail | **overlap check追加後に利用可** |
+| `0x0CC20..0x0CFFF` | **992 B** | hot-table予約pageの未使用tail | **overlap check追加後に利用可** |
 | `0x0D000..0x707FF` | 398.00 KiB | 30 fpsのnormal PrgBuf capacity | 不可 |
 | `0x70800..0x757FF` | 20.00 KiB | 30 fpsのdelivery-jitter headroom | 不可 |
 | `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard | 不可 |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。`0x76800..0x76857`でqualified済みADPCM入口を実行し、長いroutingのbuildは`0x76943`まで使用可能 | 不可 |
+| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。`0x76800..0x76857`でqualified済みADPCM入口を実行し、長いroutingのbuildは216-byte extensionを`0x768D7`まで使用可能 | 不可 |
 | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | 不可 |
 | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | 不可 |
 | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 | 不可 |
 
-BIOS boot sourceはdisc offset `0x07000`のままで、PRG `0x06000`へloadする4 KiB
-resident Sub moduleだけを持ちます。Packerはhashで固定した324-byte extensionを
-8,800-byte ADPCM table直後の既存5-sector paddingへ配置します。Subはそのimageを
-`0x7B000`へstageします。Qualified済み先頭88 byteは未使用timed-ring tailの
+32 KiB disc system areaはSP sourceをoffset `0x06000`へ置き、最後の8 KiBを予約します。
+BIOSは正確なlinked sizeをSub PRG `0x06000`へ連続loadし、1組の4 KiB sectorには
+制限されません。Packerはhashで固定した216-byte extensionを8,800-byte ADPCM table
+直後の既存5-sector paddingへ配置します。Subはそのimageを`0x7B000`へstageし、
+`0x7D260`から2通りに使います。Qualified済み先頭88 byteは未使用timed-ring tailの
 `0x76800`で実行します。routingが8 KiB以下なら第2入口をprebuffer後に`0x7D2B8`で
 そのまま実行し、長いroutingのbuildはextension全体を先にcopyします。これらの
-boot-only入口がADPCM install、routing prepare、初期ring/APPLY/frame state設定を行い、
-68-byteのposition-independent DEBUG helperを`0x0CC20..0x0CC63`へcopyします。
-Timed codeがこのhelperをcallするのはcombined H40 HUDだけです。その後はframe-0
-stagingが両temporary extension locationを上書きできます。Persistent hot-table pageと
-DEBUG helperはPrgBuf直前に残ります。
+boot-only入口がADPCM install、routing prepare、初期ring/APPLY/frame stateを設定します。
+その後はframe-0 stagingが両temporary extension locationを上書きできます。H40のG測定と
+2つのstate wordはresident SP内にinlineで残り、hot-table tail
+`0x0CC20..0x0CFFF`全体は未使用です。
 
 Physical PrgBuf ringは424 KiBです。30 fpsではnormal・scheduled capが20 KiBのcadence
 reserve分だけ418 KiB観測境界より小さくなります。15 fpsのnormal・scheduled capは
 378 KiBで、live jitter用に40 KiBを残します。Pump back-pressureは420 KiBで始まり、
 残る4 KiBは別のoverflow guardです。これらの差分はfeature memoryではありません。
 
-boot中だけ、frame-0 pattern stagingは `0x72000..0x7AFFF` を使います。そのphaseでは
-timed ring tailとAPPLYのownerがinactiveなので重複できます。timed 30 fps mapは
-変わりません。
+ISO discovery中だけ64 KiB scratchが`0x67000..0x76FFF`を使います。その後のframe-0
+pattern stagingは`0x72000..0x7AFFF`を使います。各boot phaseではtimed ownerがinactive
+なので両方ともtimed ring tailと重複でき、frame-0 stagingはAPPLYとも重複できます。
+どちらのoverlayもtimed mapを変えません。
 
 APPLY queueにも意図的なback-pressure headroomがあります。瞬間的な未使用occupancyは
 固定allocationではありません。
@@ -465,7 +464,7 @@ RF5C164 write、BIOS call、CDC poll、bank settle、shared-memory waitがある
 2. Generated-codeまたはRUN_TABLE tailは、profile固有のend symbolとbound付きでだけ
    使います。
 3. PRG `0x08600..0x097FF`はstartup後に書き直すscratchだけに使います。Persistent
-   dataには検査済み`0x0CC64..0x0CFFF` hot-table tailを使えます。どちらも
+   dataには検査済み`0x0CC20..0x0CFFF` hot-table tailを使えます。どちらも
    `tools/check_player_ring.py`へ追加した後に使います。
 
 Payload jitter、PrgBuf overflow、APPLY back-pressure、stack、VBlank、DMAの

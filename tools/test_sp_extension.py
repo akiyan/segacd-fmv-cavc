@@ -16,16 +16,7 @@ class SpExtensionTests(unittest.TestCase):
         self.assertEqual(values.longs, 16)
         rendered = sp_extension.render_include(values)
         self.assertEqual(sp_extension.parse_include(rendered), values)
-        self.assertIn(
-            ".equ SP_RUNTIME_DIAG_BASE, 0x0000CC20", rendered)
-        self.assertIn(
-            ".equ SP_RUNTIME_DIAG_SAMPLE, 0x0000CC20", rendered)
-        self.assertIn(
-            ".equ SP_RUNTIME_DIAG_FRAME_START, 0x0000CC4C", rendered)
-        self.assertIn(
-            ".equ SP_RUNTIME_DIAG_MAX, 0x0000CC62", rendered)
-        self.assertIn(
-            ".equ SP_RUNTIME_DIAG_BYTES, 0x0044", rendered)
+        self.assertNotIn("SP_RUNTIME_DIAG", rendered)
 
     def test_generate_writes_a_stable_include(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -10,7 +10,7 @@ HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値�
 streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
 H40 DEBUG は Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
 最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
-SUB_POLL_GAP_DIAG buildはその40-cell rowを維持し、2行目の先頭6 cellへG/Kを追加する。
+標準H40 DEBUGはその40-cell rowを維持し、2行目の先頭6 cellへG/Kを追加する。
 Gはframe内でSub CDC pump外にいた最大時間を30.72 us stopwatch tick単位で示し、
 KはMSF連番gapから再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureが
 control sector pumpを拒否したframeを示すB markerである。

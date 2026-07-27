@@ -12,9 +12,12 @@ import av_config
 class RingGeometryTests(unittest.TestCase):
     def test_sub_boot_and_adpcm_hot_data_use_only_verified_prg(self) -> None:
         self.assertEqual(av_config.BOOT_IMAGE_BYTES, 0x08000)
-        self.assertEqual(av_config.SUB_BOOT_SOURCE_BASE, 0x07000)
-        self.assertEqual(av_config.SUB_BOOT_BASE_BYTES, 0x01000)
+        self.assertEqual(av_config.SUB_BOOT_SOURCE_BASE, 0x06000)
+        self.assertEqual(av_config.SUB_BOOT_IMAGE_MAX_BYTES, 0x02000)
         self.assertEqual(av_config.SUB_BOOT_EXTENSION_LOAD_BASE, 0x7D260)
+        self.assertEqual(av_config.SUB_BOOT_ISO_BUF_BASE, 0x67000)
+        self.assertEqual(av_config.SUB_BOOT_ISO_BUF_BYTES, 0x10000)
+        self.assertEqual(av_config.SUB_BOOT_ISO_BUF_END, 0x77000)
         self.assertEqual(av_config.SUB_PRG_SAFE_BASE, 0x08000)
         self.assertEqual(av_config.SUB_PRG_SAFE_END, 0x09800)
         self.assertEqual(av_config.PCM_DEC_BUF_BASE, 0x08000)
@@ -28,16 +31,6 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.ADPCM_OUTPUT_LUT_END, 0x0CC20)
         self.assertEqual(av_config.SUB_BOOT_EXTENSION_EXEC_BASE, 0x76800)
         self.assertEqual(av_config.SUB_BOOT_EXTENSION_MAX_BYTES, 0x05A0)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_BASE, 0x0CC20)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_IMAGE_OFFSET, 0x0100)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_SAMPLE_OFFSET, 0x00)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_RESET_OFFSET, 0x20)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_FRAME_START_OFFSET, 0x2C)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_GET_OFFSET, 0x38)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_LAST_OFFSET, 0x40)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_MAX_OFFSET, 0x42)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_BYTES, 0x44)
-        self.assertEqual(av_config.SUB_RUNTIME_DIAG_END, 0x0CC64)
         self.assertEqual(av_config.PRG_BUF_BASE, 0x0D000)
 
     def test_full_reclaimed_ring_geometry(self) -> None:

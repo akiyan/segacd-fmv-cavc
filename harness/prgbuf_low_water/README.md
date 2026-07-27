@@ -5,7 +5,7 @@ This harness separates two similarly shaped but different measurements:
 - Timeline `status_prg` is the packer's modeled end-of-frame PrgBuf occupancy.
 - H40 DEBUG HUD `Q` is the player's live signed minimum logical balance reached
   during that frame, in exact 32-byte patterns.
-- H40 `SUB_POLL_GAP_DIAG` HUD `G` measures the longest interval outside a Sub
+- H40 HUD `G` measures the longest interval outside a Sub
   CDC pump opportunity; `B` proves APPLY control-queue back-pressure rejected
   a pump, and `K` identifies the MSF-gap subset of `S`.
 

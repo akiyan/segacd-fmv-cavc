@@ -254,17 +254,15 @@ Check the raw MKV and reports before trusting a capture:
    Use the persistent `logs/` path for comparisons and keep the symlink beside
    the recording for downstream tools.
 
-   Add `--flip-fields` for a specialized H40 DEBUG build so its appended
-   `Q/V/O/E` fields are preserved in the TSV. `Q` is the raw signed 16-bit
-   per-frame minimum streamed-PrgBuf balance in exact 32-byte patterns:
-   `0000` means truly empty and `FFFF` means one pattern of underflow. All four
-   appended fields are diagnostic and do not change the five-field upload gate.
-   For an H40 `SUB_POLL_GAP_DIAG=1` build, use `--combined-fields` instead.
-   It preserves `Q/V/O/E` from row 0 and `G/K` from row 1, decodes `G` low
+   An H40 profile automatically selects the standard two-row layout. It
+   preserves `Q/V/O/E` from row 0 and `G/K` from row 1, decodes `G` low
    12 bits as the longest interval outside the Sub CDC pump in 30.72 us ticks,
    separates `G` bit 15 as the per-frame APPLY back-pressure marker `B`, and
-   records `K` as the cumulative MSF-gap recovery count. Keep
-   `--poll-gap-fields` only for legacy one-row `G/K/O/E` recordings.
+   records `K` as the cumulative MSF-gap recovery count. `Q` is the raw signed
+   16-bit per-frame minimum streamed-PrgBuf balance in exact 32-byte patterns:
+   `0000` means truly empty and `FFFF` means one pattern of underflow. Keep
+   `--flip-fields` and `--poll-gap-fields` only for legacy one-row H40
+   recordings. Use `--combined-fields` only when the profile is unavailable.
 
    The profile is mandatory and positional because the M/J limits follow the
    packed player's cadence. The gate result is `PASS`, `WARNING`, or `FAIL`.
@@ -321,11 +319,11 @@ sound is clean or free of audible clicks only after listening to the final file.
 ## Required upload HUD gate and optional diagnostics
 
 The standard capture already builds DEBUG. The HUD omits category glyphs and
-uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` order in H32 and H40. A
-specialized H40 build appends `Q/V/O/E` for a 40-cell first row; the opt-in
-`SUB_POLL_GAP_DIAG=1` layout keeps it and appends `G/K` on row 1. Parse
-the complete first loop whenever the capture can be uploaded; for a local-only
-recording, full OCR remains optional unless diagnostics were requested. Keep
+uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` prefix in H32 and H40.
+Standard H40 adds `Q/V/O/E` to complete row 0 and `G/K` on row 1. Its profile
+selects the combined OCR layout automatically. Parse the complete first loop
+whenever the capture can be uploaded; for a local-only recording, full OCR
+remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
 
 ```sh

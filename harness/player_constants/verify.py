@@ -145,7 +145,7 @@ def symbol_address(objdump: Path, obj: Path, name: str) -> int:
 def verify_boot_image(
     case_dir: Path, *, assembler: Path, objcopy: Path, objdump: Path,
 ) -> None:
-    """Prove the 4 KiB BIOS module and HEADER-preloaded extension split."""
+    """Prove the multi-sector BIOS module and HEADER extension split."""
     ip = (case_dir / "ip-specialized.bin").read_bytes()
     sp = (case_dir / "sp-specialized.bin").read_bytes()
     extension = (case_dir / "sp-ext-specialized.bin").read_bytes()
@@ -171,11 +171,11 @@ def verify_boot_image(
     }
     if struct.unpack_from(">L", boot, symbols["SP_Addr"])[0] != (
             av_config.SUB_BOOT_SOURCE_BASE):
-        raise AssertionError("boot header SP source is not 0x7000")
+        raise AssertionError("boot header SP source differs from av_config")
     if struct.unpack_from(">L", boot, symbols["SP_Size"])[0] != len(sp):
         raise AssertionError("boot header SP size is not the resident base only")
     if symbols["SPStart"] != av_config.SUB_BOOT_SOURCE_BASE:
-        raise AssertionError("resident Sub source does not start at 0x7000")
+        raise AssertionError("resident Sub source differs from av_config")
     if symbols["SPEnd"] != symbols["SPStart"] + len(sp):
         raise AssertionError("resident Sub source end is inconsistent")
     if boot[symbols["SPStart"]:symbols["SPStart"] + len(sp)] != sp:
@@ -490,7 +490,10 @@ def main() -> None:
                 if build.ip_bin > 18688:
                     raise AssertionError(
                         f"{case.name}: {label} IP is {build.ip_bin} bytes")
-                if label == "specialized" and build.sp_bin > 4096:
+                if (
+                    label == "specialized"
+                    and build.sp_bin > av_config.SUB_BOOT_IMAGE_MAX_BYTES
+                ):
                     raise AssertionError(
                         f"{case.name}: {label} SP is {build.sp_bin} bytes")
                 if build.sp_extension_bin > av_config.SUB_BOOT_EXTENSION_MAX_BYTES:

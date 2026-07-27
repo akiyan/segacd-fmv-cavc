@@ -8,9 +8,8 @@ common H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 extended H40:   xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx xxxx xx xx xx
 ```
 
-The common order is `F/P/S/D/R/L/C/W/M/A/U/N/J`. Ordinary extended H40
-appends `Q/V/O/E` on row 0; an opt-in `SUB_POLL_GAP_DIAG=1` build keeps that
-row and appends `G/K` in the first six cells of row 1. `F/U/Q/G` contain four
+The common order is `F/P/S/D/R/L/C/W/M/A/U/N/J`. Standard H40 DEBUG appends
+`Q/V/O/E` on row 0 and `G/K` in the first six cells of row 1. `F/U/Q/G` contain four
 hexadecimal digits. `L` is the high byte of the audio lead;
 `P`, `S`, `D`, `R`, `C`, `W`, `M`, `A`, and `N` show two hexadecimal digits. There
 `U` is the Main pattern-transfer time in 30.72 us Mega-CD stopwatch ticks, and

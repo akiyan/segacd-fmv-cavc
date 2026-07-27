@@ -43,6 +43,23 @@ class HudUploadGateTests(unittest.TestCase):
             return analyze.evaluate_upload_gate(
                 rows, expected, Path(recording.name), content_fps)
 
+    def test_h40_profile_selects_combined_layout_by_default(self):
+        class Profile:
+            data = {"video": {"mode": "H40"}}
+
+        self.assertTrue(analyze.standard_combined_fields(
+            Profile(),
+            flip_fields=False,
+            poll_gap_fields=False,
+            combined_fields=False,
+        ))
+        self.assertFalse(analyze.standard_combined_fields(
+            Profile(),
+            flip_fields=True,
+            poll_gap_fields=False,
+            combined_fields=False,
+        ))
+
     def test_clean_complete_loop_passes(self):
         result = self.evaluate(groups(4, M=1, J=25), 4)
         self.assertTrue(result["pass"], result["failures"])

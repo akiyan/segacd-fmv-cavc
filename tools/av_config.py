@@ -32,15 +32,18 @@ import os
 import sys
 from dataclasses import dataclass
 
-# The outer boot image occupies the first 32 KiB of the data track.  Its Sub
-# source remains at disc offset 0x7000 and the resident image remains limited
-# to 4 KiB at Sub PRG 0x6000.  Extra position-fixed code is carried in the
-# unused padding after the 8,800-byte ADPCM table image inside its existing
-# five HEADER.DAT sectors, then copied to the unused timed-ring tail.
+# The outer boot image occupies the first 32 KiB of the data track. The BIOS
+# supports a multi-sector Sub program; this project reserves its final 8 KiB at
+# disc offset 0x6000 and loads it contiguously at Sub PRG 0x6000. Boot-only ISO
+# directory scratch lives in the inactive timed-ring tail rather than directly
+# after the program, so the resident image is not artificially capped at 4 KiB.
 BOOT_IMAGE_BYTES = 0x00008000
-SUB_BOOT_SOURCE_BASE = 0x00007000
-SUB_BOOT_BASE_BYTES = 0x00001000
+SUB_BOOT_SOURCE_BASE = 0x00006000
+SUB_BOOT_IMAGE_MAX_BYTES = 0x00002000
 SUB_BOOT_EXTENSION_LOAD_BASE = 0x0007D260
+SUB_BOOT_ISO_BUF_BASE = 0x00067000
+SUB_BOOT_ISO_BUF_BYTES = 0x00010000
+SUB_BOOT_ISO_BUF_END = SUB_BOOT_ISO_BUF_BASE + SUB_BOOT_ISO_BUF_BYTES
 
 # Marker tests prove this PRG-RAM interval remains writable by the Sub program
 # during continuous CD reads. It holds per-frame decoded-PCM scratch; persistent
@@ -58,28 +61,16 @@ ADPCM_OUTPUT_LUT_BYTES = 0x00000100
 ADPCM_OUTPUT_LUT_END = ADPCM_OUTPUT_LUT_BASE + ADPCM_OUTPUT_LUT_BYTES
 SUB_BOOT_EXTENSION_EXEC_BASE = 0x00076800
 SUB_BOOT_EXTENSION_MAX_BYTES = 0x000005A0
-# The boot extension copies this position-independent DEBUG helper into the
-# unused tail of the persistent hot-table page.  Keeping it outside the
-# BIOS-loaded 4 KiB resident image lets the same two-row HUD fit slow-cadence
-# builds without taking any PrgBuf or APPLY capacity.
-SUB_RUNTIME_DIAG_BASE = ADPCM_OUTPUT_LUT_END
-SUB_RUNTIME_DIAG_IMAGE_OFFSET = 0x00000100
-SUB_RUNTIME_DIAG_SAMPLE_OFFSET = 0x0000
-SUB_RUNTIME_DIAG_RESET_OFFSET = 0x0020
-SUB_RUNTIME_DIAG_FRAME_START_OFFSET = 0x002C
-SUB_RUNTIME_DIAG_GET_OFFSET = 0x0038
-SUB_RUNTIME_DIAG_LAST_OFFSET = 0x0040
-SUB_RUNTIME_DIAG_MAX_OFFSET = 0x0042
-SUB_RUNTIME_DIAG_BYTES = 0x0044
-SUB_RUNTIME_DIAG_END = SUB_RUNTIME_DIAG_BASE + SUB_RUNTIME_DIAG_BYTES
 PRG_BUF_BASE = 0x0000D000
 
 assert SUB_PRG_SAFE_BASE <= PCM_DEC_BUF_BASE
 assert PCM_DEC_BUF_END <= SUB_PRG_SAFE_END
 assert ADPCM_INDEX_TABLE_END == ADPCM_OUTPUT_LUT_BASE
-assert SUB_RUNTIME_DIAG_BASE == ADPCM_OUTPUT_LUT_END
-assert SUB_RUNTIME_DIAG_END <= PRG_BUF_BASE
-assert SUB_BOOT_SOURCE_BASE + SUB_BOOT_BASE_BYTES <= BOOT_IMAGE_BYTES
+assert ADPCM_OUTPUT_LUT_END <= PRG_BUF_BASE
+assert (
+    SUB_BOOT_SOURCE_BASE + SUB_BOOT_IMAGE_MAX_BYTES
+    <= BOOT_IMAGE_BYTES)
+assert SUB_BOOT_ISO_BUF_END <= 0x00077000
 
 # Physical PRG-RAM ring in the player. MUST equal boot/movieplay_sp.s
 # `.equ RING_SIZE` (0x6A000 = 424 KB). Build-time assertion enforces it.

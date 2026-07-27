@@ -25,14 +25,15 @@ The startup-specific fields are:
 The startup fields use two hexadecimal digits. `U` uses four digits and `N`
 uses two. The extra counters exist only in a `DEBUG=1` player and add no DMA.
 
-Specialized H40 DEBUG builds extend row 0 to 40 cells. Use `--flip-fields` for
-`Q/V/O/E`. An experimental `SUB_POLL_GAP_DIAG=1` build keeps that row and
-adds `G/K` in the first six cells of row 1; use `--combined-fields`. `G` is
-the longest interval outside a Sub CDC pump opportunity in 30.72 us ticks;
-its bit 15 becomes the separate per-frame APPLY back-pressure field `B`. `K`
-is the cumulative MSF-gap recovery count, and the TSV derives CDC_TRN retry
-exhaustion as `(S-K) & 0xFF`. `--poll-gap-fields` remains available for legacy
-one-row `G/K/O/E` recordings.
+Standard H40 DEBUG builds use 40 cells on row 0 for `Q/V/O/E` and the first
+six cells of row 1 for `G/K`. Supplying an H40 profile selects that combined
+layout automatically. `G` is the longest interval outside a Sub CDC pump
+opportunity in 30.72 us ticks; its bit 15 becomes the separate per-frame APPLY
+back-pressure field `B`. `K` is the cumulative MSF-gap recovery count, and the
+TSV derives CDC_TRN retry exhaustion as `(S-K) & 0xFF`. Keep `--flip-fields`
+and `--poll-gap-fields` only for legacy one-row H40 recordings; use
+`--combined-fields` only when parsing a standard H40 recording without a
+profile.
 
 Every capture frame is decoded by `ffmpeg` as a small grayscale rawvideo crop.
 `tools/read_frameno.py:read_hud` reads all visible fields.  A sample is accepted only
@@ -54,8 +55,8 @@ decimal, and the surrounding `L/C/W/M/A` values. It always reports the
 minimum, mean, median, and maximum of both `C` and `A` across the timed first
 loop; untimed frame 0 and later loops are excluded. The same statistics are
 stored in the gate JSON. `C` is diagnostic only and does not affect the gate
-status. With `--combined-fields` or legacy `--poll-gap-fields`, the report and
-gate JSON also preserve G minimum/mean/median/maximum and the B frame count;
+status. Standard H40 parsing and legacy `--poll-gap-fields` both preserve G
+minimum/mean/median/maximum and the B frame count in the report and gate JSON;
 `/hudline` and `/mixline` render G/B/K permanently. The TSV contains one row
 per aggregated movie frame.
 Transition rows additionally carry the previous and next lead, which makes

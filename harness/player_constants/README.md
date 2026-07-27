@@ -9,7 +9,8 @@ specialized DEBUG players.
 For every case it requires:
 
 - specialized IP and SP binaries do not grow relative to the generic build;
-- the specialized resident SP binary stays within 4,096 bytes;
+- the specialized resident SP binary stays within the 8,192-byte disc-system
+  allocation and the boot header names its exact linked size;
 - the extension is linked into the boot-only timed-ring tail, its generated
   size/hash/address contract matches, and its bytes fit after the 8,800-byte
   ADPCM table inside the existing five-sector HEADER preload;

@@ -53,16 +53,8 @@
 .if PC_PUMP_MASK == 0x03FF
 .equ DEBUG_PRGMIN_DIRECT, 1
 .endif
-.ifdef SUB_POLL_GAP_DIAG
 .equ DEBUG_SUB_POLL_GAP, 1
 .endif
-.endif
-.endif
-.endif
-
-.ifdef SUB_POLL_GAP_DIAG
-.ifndef DEBUG_SUB_POLL_GAP
-.error "SUB_POLL_GAP_DIAG requires a specialized H40 DEBUG build"
 .endif
 .endif
 
@@ -122,6 +114,9 @@
 .equ COMSTAT1,    SUB_GA_BASE+0x0022
 .equ COMSTAT2,    SUB_GA_BASE+0x0024
 .equ GA_STOPWATCH,SUB_GA_BASE+0x000C    /* 12-bit, 30.72us/tick */
+/* The 68000 absolute-word form sign-extends 0x800C to the same 24-bit bus
+   address and saves two bytes in the DEBUG diagnostic image. */
+.equ GA_STOPWATCH_ABS_W,GA_STOPWATCH-0x01000000
 
 .equ SUB_BANK_1M, 0x000C0000
 
@@ -156,10 +151,11 @@
 .equ ROUTING_BANK_COPIES,   2
 
 /* --- PRG-RAM layout --- */
-/* The resident image remains within 0x6000..0x6FFF. Extra one-shot code is
-   carried in existing HEADER preload padding and copied to the timed-ring tail
-   before frame-0 scratch reuses that range. */
-.equ ISO_BUF,     0x00007000        /* ISO初期化用(streaming前のみ・BIOS領域を一時利用) */
+/* The BIOS loads this resident image at 0x6000. ISO directory discovery uses
+   the timed-ring tail only during boot, before any PrgBuf/frame-0 owner exists,
+   so the initial SP may extend beyond the former 4 KiB project layout. */
+.equ ISO_BUF,     0x00067000
+.equ ISO_BUF_BYTES, 0x00010000
 .equ SUB_PRG_SAFE_BASE, 0x00008000
 .equ SUB_PRG_SAFE_END,  0x00009800
 .equ PCM_DEC_BUF,       0x00008000  /* Sub専用decoded PCM scratch。Word-RAM DMAと競合させない */
@@ -183,11 +179,11 @@
 .if ADPCM_INDICES_END != ADPCM_LUT
 .error "ADPCM output LUT does not follow the index table"
 .endif
-.if SP_RUNTIME_DIAG_BASE != ADPCM_LUT_END
-.error "runtime diagnostic does not follow the hot ADPCM tables"
+.if ADPCM_LUT_END > 0x0000D000
+.error "hot ADPCM tables exceed their reserved PrgBuf page"
 .endif
-.if SP_RUNTIME_DIAG_BASE+SP_RUNTIME_DIAG_BYTES > 0x0000D000
-.error "hot ADPCM tables and runtime diagnostic exceed their reserved page"
+.if ISO_BUF+ISO_BUF_BYTES > 0x00077000
+.error "boot ISO directory scratch overlaps timed APPLY"
 .endif
 .if SP_EXTENSION_EXEC_BASE != ADPCM_BOOT_COPY
 .error "loaded Sub extension address differs from ADPCM_BOOT_COPY"
@@ -1238,7 +1234,8 @@ p1_ret:
 .ifdef DEBUG_SUB_POLL_GAP
 	/* Exclude all time spent in CDC_STAT/READ/TRN, stage copy, and slip
 	   recovery from the next outside-pump interval. */
-	bsr.w	SP_RUNTIME_DIAG_RESET
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (poll_last_tick).w
 .endif
 	rts
 
@@ -1304,10 +1301,14 @@ pump_poll_core:
 	/* Time spent outside the CDC pump: from the end of the previous
 	   pump/service call to this poll entry.  pump1_core refreshes the origin
 	   again after a blocking transfer or recovery, so G does not mistake the
-	   recovery itself for the delay that caused it. The HEADER-preloaded
-	   helper lives in the persistent hot-table tail so this measurement fits
-	   the 4 KiB resident image at every supported cadence. */
-	bsr.w	SP_RUNTIME_DIAG_SAMPLE
+	   recovery itself for the delay that caused it. */
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	sub.w	poll_last_tick, d0
+	andi.w	#0x0FFF, d0
+	cmp.w	poll_max_gap, d0
+	bls.s	9f
+	move.w	d0, (poll_max_gap).w
+9:
 .endif
 	move.w	drain_frame, d0
 	beq.s	pp_done				/* v2: frame0展開中は drain_frame=0。ここで pump すると
@@ -1370,7 +1371,8 @@ pp_done:
 .ifdef DEBUG_SUB_POLL_GAP
 	/* Start the next outside-pump interval only after all guard and CDC
 	   polling work in this call has finished. */
-	bsr.w	SP_RUNTIME_DIAG_RESET
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (poll_last_tick).w
 .endif
 	rts
 
@@ -1381,7 +1383,9 @@ process_frame:
 	clr.w	pf_ctrl_wait
 	clr.w	pf_body_wait
 .ifdef DEBUG_SUB_POLL_GAP
-	bsr.w	SP_RUNTIME_DIAG_FRAME_START
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (poll_last_tick).w
+	clr.w	(poll_max_gap).w
 .endif
 .ifdef DEBUG_PRGBUF_Q
 .ifdef DEBUG_PRGMIN_DIRECT
@@ -1547,7 +1551,7 @@ ef_bm:
 	bne.s	ef_list_audio
 	/* v16 aligns the 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
-	   runtime branch or code-size cost to the resident 4 KiB Sub base image. */
+	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
 	move.w	#((PC_BMBYTES+1)&0xFFFE), d0
 	adda.w	d0, a0				/* entries */
@@ -1831,8 +1835,7 @@ ef_store:
 	move.w	pf_ctrl_wait, (O_CTRLWAIT).l
 	move.w	pf_body_wait, (O_BODYWAIT).l
 .ifdef DEBUG_SUB_POLL_GAP
-	bsr.w	SP_RUNTIME_DIAG_GET
-	move.w	d0, (O_PUMPGAP).l
+	move.w	poll_max_gap, (O_PUMPGAP).l
 .endif
 .ifdef DEBUG_PRGBUF_Q
 .ifndef DEBUG_PRGMIN_DIRECT
@@ -2422,6 +2425,12 @@ pf_ctrl_wait:
 	.word	0				/* current-frame control wait pumps */
 pf_body_wait:
 	.word	0				/* prior BODY frame wait pumps */
+.ifdef DEBUG_SUB_POLL_GAP
+poll_last_tick:
+	.word	0				/* stopwatch tick at previous poll entry or pump return */
+poll_max_gap:
+	.word	0				/* maximum outside-pump gap in 30.72 us ticks */
+.endif
 .ifdef DEBUG_PRGBUF_Q
 ring_level:
 	.word	0				/* signed logical PrgBuf balance in 32-byte patterns */

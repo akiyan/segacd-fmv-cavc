@@ -136,20 +136,12 @@
 .if PC_MODE == 1
 /* H40 DEBUG builds fill the four cells left after the common HUD with the
    signed per-frame PrgBuf minimum, then append the three flip-phase fields.
-   SUB_POLL_GAP_DIAG keeps that complete 40-cell first row and appends G/K in
-   the first six cells of a second row. G is the maximum time spent outside the
-   Sub CDC pump and K is the cumulative MSF-gap recovery count.
+   The standard second row adds G/K in its first six cells. G is the maximum
+   time spent outside the Sub CDC pump and K is the cumulative MSF-gap recovery
+   count.
    H32's 32-cell row has no room for these H40-only fields. */
 .equ HUD_FLIP_FIELDS, 1
-.ifdef SUB_POLL_GAP_DIAG
 .equ HUD_SUB_POLL_GAP, 1
-.endif
-.endif
-.endif
-
-.ifdef SUB_POLL_GAP_DIAG
-.ifndef HUD_SUB_POLL_GAP
-.error "SUB_POLL_GAP_DIAG requires a specialized H40 DEBUG build"
 .endif
 .endif
 
