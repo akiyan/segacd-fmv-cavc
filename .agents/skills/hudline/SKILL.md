@@ -63,8 +63,8 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
    different from the normal cadence as a warning: 15 fps expects 4 and 30 fps expects 2.
    Report VBLANK only as `warning rate / warning count / evaluated total`; do
    not add individual VBLANK-warning frames to the event table. This warning
-   does not turn an otherwise passing upload gate into a failure; report the
-   overall HUD state as `WARNING`. Do not apply this generic rule to 24 fps: its
+   does not turn an otherwise passing upload gate into a failure; keep gate
+   `PASS` and report alert `WARNING`. Do not apply this generic rule to 24 fps: its
    expected 2/3 cadence needs a separate profile-specific rule when a 24 fps
    work is tuned.
 
@@ -180,8 +180,8 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 - When a gate fails, never report only the maximum. Include the over-limit
   table from `report_overages.py` so the exact workload and phase values at
   each gate event are preserved. Keep VBLANK warnings aggregate-only.
-- `C` is diagnostic only: it has no gate line and never changes PASS/WARNING/
-  FAIL. Nonzero `M` is not automatically a failure; compare it with the
+- `C` is diagnostic only: it has no gate line and never changes gate or alert.
+  Nonzero `M` is not automatically a failure; compare it with the
   cadence-specific gate line.
 - `V` and `O` displayed on frame F describe the flip that published frame
   F-1. `E` belongs to frame F.

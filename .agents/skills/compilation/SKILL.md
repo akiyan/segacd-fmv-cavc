@@ -29,16 +29,16 @@ description: Prepare and upload an existing, verified record lossless playback c
 ## 入力
 
 - `record` が作成したネイティブ解像度のロスレスMKV
-- 同じMKVを直接OCRして作られた、statusが`PASS`または`WARNING`で
-  `pass: true`の`S/D/R/M/J` HUD gate JSON（`C/A`はdiagnostic）
+- 同じMKVを直接OCRして作られた、gateが`PASS`でalertが`NONE`または
+  `WARNING`の`S/D/R/M/J` HUD result JSON（`C/A`はdiagnostic）
 - 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
 - 対応するsim出力ディレクトリ（CRAMチャプター用）
 - `tools/av_version.txt` の現行ビルド版
 
 アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
 `recording`、`recording_size`、`recording_mtime_ns`が入力MKVと一致しない、全映画
-フレームを含まない、statusが`FAIL`、または`pass`がfalseなら変換・アップロード前に停止して
-`record`へ戻る。`pass`がtrueでも、そのJSONの`S/D/R/M/J` gate maximum、diagnostic C
+フレームを含まない、またはgateが`FAIL`なら変換・アップロード前に停止して
+`record`へ戻る。Gateが`PASS`でも、そのJSONの`S/D/R/M/J` gate maximum、diagnostic C
 maximum、`C/A`のminimum/mean/median/maximumを提示した後のユーザーの明示承認が
 無ければ停止する。HUD時刻を頭出しやチャプターには使わない。
 
@@ -65,7 +65,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    `record`の既定である固定Replay高速録画は、要求されたpacket/decoded-frame数、
    正常終了、非空の音声ストリーム、代表フレーム確認を通ったFFV1/FLACなら
    正式な入力として使う。加えて対応するHUD gate JSONが入力MKVのpath・size・mtimeと
-   一致し、statusが`PASS`または`WARNING`かつ`pass: true`であることと、その結果に
+   一致し、gateが`PASS`でalertが`NONE`または`WARNING`であることと、その結果に
    対するユーザーの明示承認を確認する。
    一致または承認が無ければここで停止する。
    音声波形のしきい値判定は入力条件にしない。

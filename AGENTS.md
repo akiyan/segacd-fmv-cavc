@@ -524,11 +524,13 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   exact sim decision log, then immediately render, inspect, show, and publicly
   publish `/mixline`. Generate and publish the timeline first when it is
   absent. Preserve all three images, their layout JSON files, and Gist receipts
-  next to the recording. The HUD gate has `PASS`, `WARNING`, and `FAIL`
-  results. `C` is diagnostic only and never changes the gate result; report its
+  next to the recording. The HUD result has a binary `gate` (`PASS` or `FAIL`)
+  and a separate `alert` (`NONE`, `WARNING`, or `FAIL`). `NONE` and `WARNING`
+  keep the gate at `PASS`; only alert `FAIL` makes the gate `FAIL`. `C` is
+  diagnostic only and never changes either result; report its
   minimum, mean, median, and maximum together with the same `A` statistics.
   Publish failed gates and their mixlines too as diagnostic evidence, but do
-  not proceed to analysis/playback uploads after `FAIL`.
+  not proceed to analysis/playback uploads when `gate` is `FAIL`.
 - Extract visual-check stills with `tools/extract_verification_frames.sh`. It
   creates a never-reused directory and a source-hashed manifest for each
   invocation, then builds the montage from that invocation's explicit frame

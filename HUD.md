@@ -94,9 +94,12 @@ It can cover active picture content; it is not repositioned around
 letterboxing.
 
 For any recording that can proceed to compilation or upload, the complete first
-movie loop is a mandatory gate with three results: `PASS`, `WARNING`, and
-`FAIL`. `WARNING` remains upload-capable. `S/D/R` must remain zero. `M` and
-`J` thresholds follow the profile's player cadence. Fixed-N allows the `N-1`
+movie loop produces a binary `gate` (`PASS` or `FAIL`) and a separate
+three-state `alert` (`NONE`, `WARNING`, or `FAIL`). Alerts `NONE` and `WARNING`
+are upload-capable and map to gate `PASS`; alert `FAIL` maps to gate `FAIL`.
+The deprecated `status` and `pass` fields remain in gate JSON for compatibility.
+`S/D/R` must remain zero. `M` and `J` thresholds follow the profile's player
+cadence. Fixed-N allows the `N-1`
 intervening pattern-work fields: fixed N2 fails when `M>01`, while fixed N4
 fails when `M>03`. Delivery-paced content may use all display fields in one
 content frame; 24 fps fails when `M>03`. The largest passing `J` is
@@ -108,7 +111,7 @@ boundary and entered the final physical guard left outside the schedule.
 Report the value, but a `J` within the cadence-specific passing limit does not
 by itself require another confirmation or fail the recording. `C` has no gate
 threshold and never changes the gate result; it remains a diagnostic measure
-of Sub-side CD work. Report all `S/D/R/M/J` gate maxima on PASS or WARNING and
+of Sub-side CD work. Report all `S/D/R/M/J` gate maxima when gate is `PASS` and
 report the diagnostic C maximum. When the enclosing task already authorizes
 publication, continue without requesting another approval merely because the
 gate ran.
@@ -620,9 +623,12 @@ row 1へ続けます。H40はrow 0へ`Q/V/O/E`、row 1へ`G/K`を書きます。
 14 cell、H40ではrow 0の40 cellとrow 1の6 cellを使います。Active pictureを
 覆う場合があり、letterboxに合わせて移動しません。
 
-Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体を必須gateとし、
-結果は`PASS`、`WARNING`、`FAIL`です。`WARNING`はupload可能です。`S/D/R`は0を
-維持する必要があります。`M`と`J` thresholdはprofileのplayer cadenceに従います。
+Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体から2値の
+`gate`（`PASS`または`FAIL`）と、別の3段階`alert`（`NONE`、`WARNING`、`FAIL`）を
+生成します。Alert `NONE`と`WARNING`はupload可能でgate `PASS`へ、alert `FAIL`は
+gate `FAIL`へ対応します。Deprecatedな`status`と`pass` fieldは互換性のためgate
+JSONに残します。`S/D/R`は0を維持する必要があります。`M`と`J` thresholdは
+profileのplayer cadenceに従います。
 
 Fixed-Nは介在する`N-1`個のpattern-work fieldを使えます。Fixed N2は`M>01`でfail、
 fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは`M>03`でfailです。
@@ -634,7 +640,7 @@ physical guardへ入ったことを示します。値は報告しますが、cad
 passing limit内の`J`だけで再確認やfailにはしません。`C`にはgate thresholdがなく、
 gate結果を変えません。Sub側CD workのdiagnosticとして保持します。
 
-PASS/WARNINGでは全`S/D/R/M/J` gate maximumとdiagnostic C maximumを報告します。
+Gate `PASS`では全`S/D/R/M/J` gate maximumとdiagnostic C maximumを報告します。
 Taskがpublicationを許可済みなら、gate実行だけを理由に追加approvalは求めません。
 すべてのgate結果で、analyzerと`/hudline`はtimed first loopにおける`C`と`A`それぞれの
 minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。

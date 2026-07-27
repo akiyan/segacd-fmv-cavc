@@ -17,6 +17,7 @@ REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 import tmpfs_workspace  # noqa: E402
+import hud_gate  # noqa: E402
 
 
 BG = (12, 12, 14)
@@ -152,14 +153,22 @@ def main() -> None:
     combined = Image.new("RGB", (width, height), BG)
     draw = ImageDraw.Draw(combined)
     title = timeline.get("label") or timeline_path.stem
-    state = str(
+    alert = str(
         hudline.get(
-            "status",
-            "PASS" if hudline["gate_pass"] else "FAIL",
+            "alert",
+            "FAIL" if not hudline["gate_pass"] else (
+                "WARNING"
+                if hudline.get("status") in {"WARNING", "WARN"}
+                else "NONE"
+            ),
         )
     )
-    if state == "WARN":
-        state = "WARNING"
+    gate = str(
+        hudline.get("gate", hud_gate.gate_for_alert(alert))
+    )
+    if gate != hud_gate.gate_for_alert(alert):
+        raise SystemExit("hudline gate and alert disagree")
+    state = hud_gate.legacy_status_for_alert(alert)
     state_color = {
         "PASS": DIM,
         "WARNING": WARN,
@@ -294,7 +303,7 @@ def main() -> None:
             lease.release()
 
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "mixline",
         "image": str(output),
         "image_sha256": digest(output.resolve()),
@@ -312,6 +321,8 @@ def main() -> None:
         ),
         "fps": float(timeline["fps"]),
         "status": state,
+        "gate": gate,
+        "alert": alert,
         "gate_pass": bool(hudline["gate_pass"]),
         "gate_status": str(hudline.get("gate_status", state)),
         "pixels_per_frame": int(timeline["pixels_per_frame"]),
