@@ -1,178 +1,198 @@
 EN / [JP](#jp)
 
-# Player Memory and CPU Headroom
+# Player Memory Maps and Runtime Sequence
 
-This document answers one planning question: **what memory and CPU time can a
-live-playback feature use without consuming an existing safety margin?**
+This document describes the player as currently built: the Sub PRG-RAM,
+Word RAM 1M/1M, and Main RAM maps, the startup sequence, and the per-frame
+CPU handoff. Each map row carries a short range name (shown as `CODE`) so a
+range can be referenced unambiguously in issues, commits, and reviews.
 
-The conservative answer is:
+**fps dependence.** Between 15 fps and 30 fps content, the only address-map
+difference is the `PRG-BUF` / `JITTER` split inside the fixed
+`0x0D000..0x757FF` region; that split is the one place below where both
+values are listed side by side. Every other row of every map, and the whole
+startup / per-frame sequence, are identical at 15 fps and 30 fps, so a single
+value there applies to both rates. Word-RAM WordBuf and routing sizes vary by
+profile (frame count, cell count, cold cap), not by fps.
 
-| Domain | Unconditional fixed space | Conditional space |
-|---|---:|---:|
-| Sub PRG-RAM | 1.379 KiB | unused bytes in the 8 KiB SP reservation are not generic scratch; extend only the linked image with a size assertion and full qualification |
-| each physical Word-RAM bank | 0 B | sector-rounding guard below the fixed tail; not allocatable |
-| Main RAM | 2.627 KiB | generated-code and RUN_TABLE tails only with profile-specific assertions |
-| Main CPU | 0 guaranteed cycles | measured profile evidence is not a reusable allowance |
-| Sub CPU | 0 guaranteed cycles | measured decode time excludes variable BIOS, CD, bus, and bank waits |
+## Unallocated Space Summary
 
-“Unconditional” means that the range survives frame 0, movie replay, the
-largest supported control block, the physical run-table limit, and both
-Word-RAM bank parities. The packed Word-RAM map assigns all remaining complete
-sectors to WordBuf, so it exposes no general-purpose free range.
+These are the only ranges with no live owner data. Guards, reserves, and
+jitter ranges elsewhere in the maps are allocated to their protective role
+and are listed in place.
 
-## Safety Rules
-
-- Do not count PrgBuf jitter, overflow, APPLY back-pressure, stack, or
-  generated-code guards as free memory.
-- Do not add Main and Sub arithmetic remainders together. They execute
-  concurrently and synchronize at the Word-RAM handoff.
-- BIOS calls, CDC readiness, VBlank phase, DMA completion, shared-memory
-  access, and bank settling have no finite instruction-only bound.
-- Treat a successful recording as evidence for that exact stream and build,
-  not as a general CPU budget.
-- Give every new allocation a named address range and a build-time overlap
-  assertion.
+| Domain | Unallocated ranges |
+|---|---|
+| Sub PRG-RAM | `SCRATCH` 4.50 KiB (rewritten-scratch use is marker-qualified); `HOT-TAIL` 992 B; the `SP-RES` tail, currently 4,032–4,128 B with no loaded content (not qualified as scratch) |
+| Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
+| Main RAM | `M-FREE` 2,690 B (2.627 KiB) |
 
 ## Sub PRG-RAM Map
 
 PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 
-The address split below uses 30 fps as the primary example. The physical ring,
-back-pressure, and overflow guard stay fixed, while the normal PrgBuf and
-scheduled Supply ceiling follow the content cadence:
+| Name | Address | Size | Contents |
+|---|---|---:|---|
+| `BIOS-LOW` | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area |
+| `SP-RES` | `0x06000..0x07FFF` | 8.00 KiB | BIOS-loaded resident specialized SP image; current builds load 4,064–4,160 B, the tail has no loaded content (see below) |
+| `PCM-BUF` | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer |
+| `SCRATCH` | `0x08600..0x097FF` | 4.50 KiB | unassigned marker-verified scratch range; not persistent across startup reads |
+| `BIOS-CD` | `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads |
+| `ADP-IDX` | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table |
+| `ADP-OUT` | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table |
+| `HOT-TAIL` | `0x0CC20..0x0CFFF` | 992 B | unused tail of the reserved hot-table page |
+| `PRG-BUF` | fps split, see next table | 378 / 398 KiB | streamed PrgBuf normal ceiling |
+| `JITTER` | fps split, see next table | 40 / 20 KiB | live delivery-jitter reserve above the scheduled ceiling |
+| `OBS-GUARD` | `0x75800..0x75FFF` | 2.00 KiB | observation guard below pump back-pressure |
+| `OVF-GUARD` | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; the boot-only ADPCM entry executes at `0x76800..0x76857`, longer-route builds also use the 216-byte extension through `0x768D7` |
+| `APPLY` | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue |
+| `SUB-STACK` | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve |
+| `STACK-TOP` | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top |
+
+### `PRG-BUF` / `JITTER` fps split
+
+The physical bounds are fixed at every fps: the PrgBuf ring is 424 KiB at
+`0x0D000..0x76FFF`, pump back-pressure begins at 420 KiB, and the delivery
+observation boundary is 418 KiB (`..0x757FF`). Inside that fixed region the
+normal/scheduled ceiling and the jitter reserve move with content cadence:
 
 ```text
 normal PrgBuf KiB = 418 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
-These values come from `cadence_jitter_reserve_kb()`, `prg_buf_cap_kb()`, and
-`scheduled_delivery_cap_kb()` in `tools/av_config.py`; this document does not
-define an independent capacity. The exact schedule stops at the normal ceiling:
-378 KiB at 15 fps, 393 KiB at 24 fps, and 398 KiB at 30 fps. The remaining
-40/25/20 KiB up to the 418 KiB observation boundary is reserved for live
-sector-arrival variation and is not encoder Supply.
+| Item | 15 fps | 30 fps |
+|---|---|---|
+| cadence reserve | 40 KiB | 20 KiB |
+| `PRG-BUF` normal / scheduled ceiling | 378 KiB | 398 KiB |
+| `PRG-BUF` address | `0x0D000..0x6B7FF` | `0x0D000..0x707FF` |
+| `JITTER` address | `0x6B800..0x757FF` | `0x70800..0x757FF` |
 
-| Address | Size | Owner | New feature use |
-|---|---:|---|---|
-| `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | No |
-| `0x06000..0x07FFF` | 8.00 KiB | BIOS-loaded resident specialized Sub allocation; only the exact linked prefix is qualified | No |
-| `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer | No |
-| `0x08600..0x097FF` | **4.50 KiB** | unassigned marker-verified scratch range; not persistent across startup reads | **Yes, for rewritten scratch only** |
-| `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads | No |
-| `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table | No |
-| `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table | No |
-| `0x0CC20..0x0CFFF` | **992 B** | unused tail of the reserved hot-table page | **Yes, after an overlap check** |
-| `0x0D000..0x707FF` | 398.00 KiB | normal PrgBuf capacity at 30 fps | No |
-| `0x70800..0x757FF` | 20.00 KiB | delivery-jitter headroom at 30 fps | No |
-| `0x75800..0x75FFF` | 2.00 KiB | observation guard before pump back-pressure | No |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; `0x76800..0x76857` executes the qualified ADPCM entry, and longer-route builds may use the 216-byte extension through `0x768D7` | No |
-| `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | No |
-| `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | No |
-| `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top | No |
+Other rates follow the same formula (24 fps: reserve 25 KiB, ceiling 393 KiB,
+`PRG-BUF` = `0x0D000..0x6F3FF`). The values come from
+`cadence_jitter_reserve_kb()`, `prg_buf_cap_kb()`, and
+`scheduled_delivery_cap_kb()` in `tools/av_config.py`; this document defines
+no independent capacity. The `JITTER` reserve is kept for live sector-arrival
+variation and is never encoder Supply.
+
+### `SP-RES` usage
 
 The 32 KiB disc system area places the SP source at offset `0x06000` and
-reserves its final 8 KiB. The BIOS loads the exact linked size contiguously at
-Sub PRG `0x06000`; it is not limited to one 4 KiB sector pair. The packer
-places the exact 216-byte hash-bound extension after the 8,800-byte ADPCM
-table in its existing five-sector padding. Sub stages that image at `0x7B000`
-and copies the extension from `0x7D260` in two ways: its qualified first
-88 bytes run from the unused timed-ring tail at `0x76800`; when routing is at
-most 8 KiB, the second entry runs in place at `0x7D2B8` after prebuffer, while
-longer-route builds copy the complete extension first. These boot-only entries
-install ADPCM tables and prepare routing plus the initial ring/APPLY/frame
-state. Frame-0 staging may then overwrite both temporary extension locations.
-The H40 G measurement and its two state words remain inline in the resident SP;
-the full `0x0CC20..0x0CFFF` hot-table tail is unused.
+reserves its final 8 KiB. The BIOS loads the exact linked size contiguously
+at Sub PRG `0x06000`; it is not limited to one 4 KiB sector pair. The image
+is profile-specialized (`PLAYER_SPECIALIZE`), so its exact size is per build;
+the current profile builds measure 4,064–4,160 bytes
+(`tmp/PROFILE/build/movieplay_sp.bin`). The remaining 4,032–4,128 bytes of
+the reservation receive no loaded content: the BIOS load writes only the
+linked prefix, and only that prefix is playback-qualified.
 
-The physical PrgBuf ring is 424 KiB. At 30 fps its normal and scheduled cap is
-below the 418 KiB observation boundary by a 20 KiB cadence reserve. At 15 fps
-the normal and scheduled cap is 378 KiB, leaving 40 KiB for live jitter. Pump
-back-pressure begins at 420 KiB, and the remaining 4 KiB is a separate
-overflow guard. None of these differences is feature memory.
+The packer places the exact 216-byte hash-bound extension after the
+8,800-byte ADPCM table in its existing five-sector padding. Sub stages that
+image at `SP-STAGE` (`0x7B000`) and runs the extension from `0x7D260` in two
+ways: its qualified first 88 bytes run from `EXT-RUN` (`0x76800`, the unused
+timed-ring tail); when routing is at most 8 KiB, the second entry runs in
+place at `0x7D2B8` after prebuffer, while longer-route builds copy the
+complete extension first. These boot-only entries install ADPCM tables and
+prepare routing plus the initial ring/APPLY/frame state. Frame-0 staging may
+then overwrite both temporary extension locations. The H40 G measurement and
+its two state words remain inline in the resident SP; the full `HOT-TAIL`
+range is unused.
 
-During ISO discovery only, a 64 KiB scratch image uses
-`0x67000..0x76FFF`. Frame-0 pattern staging later uses
-`0x72000..0x7AFFF`. Both may overlap the timed ring tail, and frame-0 staging
-may also overlap APPLY, because those timed owners are inactive in each boot
+### Boot-only overlays
+
+| Name | Address | Phase |
+|---|---|---|
+| `ISO-SCR` | `0x67000..0x76FFF` | 64 KiB scratch image during ISO discovery only |
+| `F0-STAGE` | `0x72000..0x7AFFF` | frame-0 pattern staging |
+| `SP-STAGE` | `0x7B000..` | staged SP image containing the extension source |
+| `EXT-RUN` | `0x76800..0x768D7` | boot-only extension execution window inside `OVF-GUARD` |
+
+`ISO-SCR` and `F0-STAGE` may overlap the timed ring tail, and `F0-STAGE` may
+also overlap `APPLY`, because those timed owners are inactive in each boot
 phase. Neither overlay changes the timed map.
 
-The APPLY queue also retains deliberate back-pressure headroom. Its unused
+The APPLY queue retains deliberate back-pressure headroom; its unused
 instantaneous occupancy is not a fixed allocation.
 
 ## Word RAM 1M/1M Map
 
-There are two independent 128 KiB physical banks. Sub owns one bank while Main
-owns the other. A bank swap exchanges ownership; it does not make one copy
-simultaneously visible to both CPUs.
+There are two independent 128 KiB physical banks. Sub owns one bank while
+Main owns the other. A bank swap exchanges ownership; it does not make one
+copy simultaneously visible to both CPUs. This map varies by profile, not by
+fps.
 
-`tools/pattern_supply.py` derives the map from frame count, cell count, and cold
-cap. Routing occupies `ceil(frames / 2048) * 2048` bytes at the bank end. The
-fixed tail is packed immediately below routing:
+`tools/pattern_supply.py` derives the map from frame count, cell count, and
+cold cap. Routing occupies `ceil(frames / 2048) * 2048` bytes at the bank
+end. The fixed tail is packed immediately below routing:
 
-| Relative order, high to low | Size | Owner |
-|---|---:|---|
-| bank end | variable, sector-rounded | resident routing table |
-| below routing | 1,536 B | unallocated A/B-stable guard; not feature memory |
-| next | 8,800 B | A/B-stable ADPCM reservation; only the 5,696-byte signed-delta portion is populated |
-| next | 2,048 B | CD-sector stage / pad discard |
-| next | 8,192 B | linear control scratch |
-| next | 256 B | DEBUG counters and copied header |
+| Name | Relative order, high to low | Size | Contents |
+|---|---|---:|---|
+| `ROUTE` | bank end | variable, sector-rounded | resident routing table |
+| `TAIL-GAP` | below routing | 1,536 B | unallocated A/B-stable guard; not feature memory |
+| `ADP-TBL` | next | 8,800 B | A/B-stable ADPCM reservation; only the 5,696-byte signed-delta portion is populated |
+| `SECT-STG` | next | 2,048 B | CD-sector stage / pad discard |
+| `CTRL-SCR` | next | 8,192 B | linear control scratch |
+| `DBG-HDR` | next | 256 B | DEBUG counters and copied header |
 
-The front of each bank starts with `O_PALW` and `O_NLOAD` (four bytes total),
-followed by `O_LOADS`. Main reads name updates directly from the control
-scratch; `O_CRAM`, `O_NUPD`, and `O_UPDS` do not exist.
+The front of each bank starts with `W-HDR` (`O_PALW` and `O_NLOAD`, four
+bytes total), followed by `LOADS` (`O_LOADS`). Main reads name updates
+directly from `CTRL-SCR`; `O_CRAM`, `O_NUPD`, and `O_UPDS` do not exist.
 
-WordBuf starts after the parity-specific `O_LOADS` envelope and ends before the
-fixed tail. Wr0 reserves one frame-0 run containing every encoded cell. Wr1
-reserves 32 pattern bytes plus one four-byte descriptor for every allowed timed
-cold pattern. Each capacity is rounded down to complete 2 KiB preload sectors,
-so disc-sector padding cannot overwrite the fixed tail.
+`WORDBUF` starts after the parity-specific `LOADS` envelope and ends before
+the fixed tail. Wr0 reserves one frame-0 run containing every encoded cell.
+Wr1 reserves 32 pattern bytes plus one four-byte descriptor for every allowed
+timed cold pattern. Each capacity is rounded down to complete 2 KiB preload
+sectors, so disc-sector padding cannot overwrite the fixed tail; the rounding
+remainder is `WB-GAP`.
 
 For a 6,576-frame, 40x28-cell, cold-180 example:
 
 | Bank item | Wr0 / frame-0 bank | Wr1 / timed-only bank |
 |---|---:|---:|
-| `O_LOADS` envelope | 35,844 B | 6,480 B |
-| WordBuf range | `+0x08C20..+0x18C1F` | `+0x01960..+0x1895F` |
-| WordBuf capacity | 2,048 patterns | 2,944 patterns |
-| sector-rounding guard below status | 640 B | 1,344 B |
+| `LOADS` envelope | 35,844 B | 6,480 B |
+| `WORDBUF` range | `+0x08C20..+0x18C1F` | `+0x01960..+0x1895F` |
+| `WORDBUF` capacity | 2,048 patterns | 2,944 patterns |
+| `WB-GAP` sector-rounding remainder | 640 B | 1,344 B |
 
-Routing is 8 KiB in this example and starts at `+0x1E000`. The combined
-WordBuf capacity is 4,992 patterns. The two regions contain different
+`ROUTE` is 8 KiB in this example and starts at `+0x1E000`. The combined
+`WORDBUF` capacity is 4,992 patterns. The two regions contain different
 parity-selected streams.
 
-During boot, BOOT_STAGE uses `+0x0000..+0x5FFF` with PALTAB at `+0x1000`;
-DicBuf staging uses `+0x6000..+0x7FFF`. Sub gives that bank to Main, Main copies
-the palette, dictionary, and optional VRAM sidecar to their persistent homes,
-and Main returns the bank. Sub stops `HEADER.DAT` before this handoff and
-restarts at the exact first unread sector after the return, so the copy
-interval cannot create a sector slip. Sub then reads the finite untimed BODY
-arm and expands frame 0; frame 0 and WordBuf may overwrite the temporary
-staging range safely. Dump diagnostics write list-form updates into control
-scratch.
+During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` with PALTAB at `+0x1000`;
+`DIC-STG` uses `+0x6000..+0x7FFF` for DicBuf staging. Sub gives that bank to
+Main, Main copies the palette, dictionary, and optional VRAM sidecar to their
+persistent homes, and Main returns the bank. Sub stops `HEADER.DAT` before
+this handoff and restarts at the exact first unread sector after the return,
+so the copy interval cannot create a sector slip. Sub then reads the finite
+untimed BODY arm and expands frame 0; frame 0 and `WORDBUF` may overwrite the
+temporary staging range safely. Dump diagnostics write list-form updates into
+`CTRL-SCR`.
 
 ## Main RAM Map
 
-Main RAM is `0xFF0000..0xFFFFFF`. Generated code grows upward and is build-time
-checked against the persistent DicBuf boundary.
+Main RAM is `0xFF0000..0xFFFFFF`. This map is identical at every fps.
+Generated code grows upward and is build-time checked against the persistent
+DicBuf boundary.
 
-| Address | Size | Owner | Fixed headroom |
-|---|---:|---|---:|
-| `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player, transient boot UI, generated handlers and guard | 0 without build-specific proof |
-| `0xFF6600..0xFF85FF` | 8.00 KiB | persistent DicBuf | 0 |
-| `0xFF8600..0xFFAFFF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE | 0 |
-| `0xFFB000..0xFFCFFF` | 8.00 KiB | 64-entry PALTAB | 0 |
-| `0xFFD000..0xFFF07D` | 8,318 B | BSS, shadow, DEBUG HUD row, name-table stage, state | 0 |
-| `0xFFF07E..0xFFFAFF` | **2.627 KiB** | unused below stack guard | **2.627 KiB** |
-| `0xFFFB00..0xFFFCFF` | 512 B | stack and interrupt reserve | 0 |
-| `0xFFFD00..0xFFFFFF` | 768 B | area above stack top / BIOS reserve | 0 |
+| Name | Address | Size | Contents |
+|---|---|---:|---|
+| `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player, transient boot UI, generated handlers and guard |
+| `M-DIC` | `0xFF6600..0xFF85FF` | 8.00 KiB | persistent DicBuf |
+| `M-RUNTBL` | `0xFF8600..0xFFAFFF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
+| `M-PALTAB` | `0xFFB000..0xFFCFFF` | 8.00 KiB | 64-entry PALTAB |
+| `M-STATE` | `0xFFD000..0xFFF07D` | 8,318 B | BSS, shadow, DEBUG HUD row, name-table stage, state |
+| `M-FREE` | `0xFFF07E..0xFFFAFF` | 2,690 B | unallocated, below the stack guard |
+| `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stack and interrupt reserve |
+| `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | area above stack top / BIOS reserve |
 
-RUN_TABLE space beyond a profile's realized maximum and any gap below
-generated code are conditional. They may be used only with symbols and
-assertions that preserve the supported cold cap and maximum generated output.
+The realized generated-code end inside `M-CODE` and the realized RUN_TABLE
+maximum inside `M-RUNTBL` vary per profile; build-time assertions keep each
+inside its range.
 
 ## Startup and Per-Frame CPU Sequence
+
+The sequences below are identical at 15 fps and 30 fps; only the frame period
+differs.
 
 ### Startup
 
@@ -182,9 +202,9 @@ palette, dictionary, and sidecar data before Sub reuses that physical bank.
 There is no separate frame-0/BODY-start handshake.
 
 `STAT_READY` exposes the completed frame-0 bank while the timed CD reader is
-still stopped. Clearing the original command after the visible frame-0 flip is
-both the acknowledgement and the exact physical start of PCM and timed BODY
-service. Frame -1 therefore creates no unplanned PrgBuf lead.
+still stopped. Clearing the original command after the visible frame-0 flip
+is both the acknowledgement and the exact physical start of PCM and timed
+BODY service. Frame -1 therefore creates no unplanned PrgBuf lead.
 
 ```mermaid
 sequenceDiagram
@@ -251,42 +271,11 @@ sequenceDiagram
     M->>S: Next CMD_SWAP
 ```
 
-Sub wait loops service a pending `CMD_SWAP` before another opportunistic sector
-pump. CD pumping continues while Main is genuinely idle, but future payload
-work cannot delay an already-pending handoff.
+Sub wait loops service a pending `CMD_SWAP` before another opportunistic
+sector pump. CD pumping continues while Main is genuinely idle, but future
+payload work cannot delay an already-pending handoff.
 
-The Main and Sub stopwatches cover selected phases, not the complete deadline.
-DMA, RF5C164 writes, BIOS calls, CDC polls, bank settling, and shared-memory
-waits keep the unconditional spendable CPU remainder at zero.
-
-## Allocation Order
-
-Use low-risk space in this order:
-
-1. Use Main RAM `0xFFF07E..0xFFFAFF` for Main-only state and keep the stack
-   guard.
-2. Use generated-code or RUN_TABLE tails only with profile-specific end
-   symbols and bounds.
-3. Use PRG `0x08600..0x097FF` only for scratch that is rewritten after startup,
-   or the checked `0x0CC20..0x0CFFF` hot-table tail for persistent data, and
-   only after adding the allocation to `tools/check_player_ring.py`.
-
-Never allocate from payload jitter, PrgBuf overflow, APPLY back-pressure,
-stack, VBlank, DMA safety reserves, or WordBuf sector-rounding guards.
-
-## CPU Qualification
-
-A sustained new path needs:
-
-- a Sub stopwatch around its work;
-- a pack-time Main guard for its worst run or transfer cost;
-- full-length recordings for every supported cadence and display mode it
-  affects;
-- HUD gates with no stream slip, desync, recovery, or unplanned cadence wait;
-- stable audio lead and exact decoded frame counts; and
-- cycle and memory assertions in the same change as the allocation.
-
-## Reproducing the Audit
+## Reproducing the Map Measurements
 
 Use the managed Python environment and an explicit profile:
 
@@ -303,183 +292,211 @@ make movieplay CONFIG=profiles/PROFILE.toml \
   tmp/PROFILE/build/movieplay_sp.o
 ```
 
-Rebuild, pack with verification, and complete the DEBUG recording and HUD gate
-before revising any elapsed-time or memory-headroom claim.
+The `SP-RES` loaded size is the linked size of
+`tmp/PROFILE/build/movieplay_sp.bin`. Rebuild, pack with verification, and
+complete the DEBUG recording and HUD gate before revising any address or
+size in this document.
 
 ---
 
 <a id="jp"></a>
 
-# Player memoryとCPU余裕
+# Player memory mapとruntime sequence
 
-この文書は、**既存の安全余裕を消費せずにlive-playback featureが使えるmemoryとCPU
-時間はどれだけか**、というplanning上の問いに答えます。
+この文書は、現在ビルドされているplayerをそのまま記述します。Sub PRG-RAM、
+Word RAM 1M/1M、Main RAMのmap、startup sequence、frameごとのCPU handoffが
+対象です。各map行には短いrange名（`CODE`表記）を付けており、issue・commit・
+reviewでrangeを曖昧さなく参照できます。
 
-保守的な回答は次のとおりです。
+**fps依存について。** 15 fpsと30 fpsのcontentの間でaddress mapが変わるのは、
+固定領域`0x0D000..0x757FF`内部の`PRG-BUF` / `JITTER`分割だけです。その分割
+だけを後述の表で両値併記します。それ以外のすべてのmap行とstartup / per-frame
+sequence全体は15 fpsと30 fpsで同一なので、単一値はそのまま両方に適用されます。
+Word RAMのWordBufとrouting sizeはprofile（frame数、cell数、cold cap）で変わる
+ものであり、fpsでは変わりません。
 
-| Domain | 無条件に固定利用できる領域 | 条件付き領域 |
-|---|---:|---:|
-| Sub PRG-RAM | 1.379 KiB | 8 KiB SP予約内の未使用byteは汎用scratchではない。size assertとfull qualification付きでlinked imageだけを拡張する |
-| 各physical Word-RAM bank | 0 B | fixed tail直下のsector丸めguard。割り当て不可 |
-| Main RAM | 2.627 KiB | generated-codeとRUN_TABLEのtailはprofile固有assert付きのみ |
-| Main CPU | 保証cycle 0 | Profile実測は再利用可能なallowanceではない |
-| Sub CPU | 保証cycle 0 | Decode実測は可変のBIOS、CD、bus、bank waitを含まない |
+## 未割当領域の要約
 
-「無条件」とは、frame 0、movie replay、最大対応control block、物理run-table上限、
-両方のWord-RAM bank parityを通して使えることです。Packed Word-RAM mapは残る完全な
-sectorをすべてWordBufへ割り当てるため、汎用free rangeはありません。
+live ownerのdataを持たないrangeは次だけです。map中のguard・reserve・jitter
+rangeは保護役として割り当て済みであり、各mapの該当行に記載しています。
 
-## 安全規則
-
-- PrgBuf jitter、overflow、APPLY back-pressure、stack、generated-code guardを
-  free memoryとして数えません。
-- MainとSubの算術上の余りを合算しません。両者は並列実行し、Word-RAM handoffで同期します。
-- BIOS call、CDC readiness、VBlank phase、DMA completion、shared-memory access、
-  bank settleには有限のinstruction-only boundがありません。
-- 成功したrecordingはそのstreamとbuildの証拠であり、一般的なCPU予算ではありません。
-- 新allocationには名前付きaddress rangeとbuild-time overlap assertionを付けます。
+| Domain | 未割当range |
+|---|---|
+| Sub PRG-RAM | `SCRATCH` 4.50 KiB（書き直しscratch利用はmarker検証済み）。`HOT-TAIL` 992 B。`SP-RES`のtail、現在4,032–4,128 Bでloaded contentなし（scratchとしては未検証） |
+| Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
+| Main RAM | `M-FREE` 2,690 B（2.627 KiB） |
 
 ## Sub PRG-RAM map
 
 PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 
-次のaddress分割は30 fpsを主例にしています。Physical ring、back-pressure、
-overflow guardは固定ですが、normal PrgBufとscheduled Supply上限は
-content cadenceに応じて動きます。
+| Name | Address | Size | 内容 |
+|---|---|---:|---|
+| `BIOS-LOW` | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area |
+| `SP-RES` | `0x06000..0x07FFF` | 8.00 KiB | BIOS-loadされるresident specialized SP image。現在のbuildは4,064–4,160 Bをloadし、tailにはloaded contentがない（後述） |
+| `PCM-BUF` | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer |
+| `SCRATCH` | `0x08600..0x097FF` | 4.50 KiB | 未割当のmarker検証済みscratch range。startup readを越える永続保持は不可 |
+| `BIOS-CD` | `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 |
+| `ADP-IDX` | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table |
+| `ADP-OUT` | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table |
+| `HOT-TAIL` | `0x0CC20..0x0CFFF` | 992 B | hot-table予約pageの未使用tail |
+| `PRG-BUF` | fps分割、次表参照 | 378 / 398 KiB | streamed PrgBufのnormal上限 |
+| `JITTER` | fps分割、次表参照 | 40 / 20 KiB | scheduled上限より上のlive delivery-jitter予約 |
+| `OBS-GUARD` | `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard |
+| `OVF-GUARD` | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。boot-onlyのADPCM入口を`0x76800..0x76857`で実行し、長いroutingのbuildは216-byte extensionを`0x768D7`まで使用 |
+| `APPLY` | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue |
+| `SUB-STACK` | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve |
+| `STACK-TOP` | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 |
+
+### `PRG-BUF` / `JITTER`のfps分割
+
+物理境界はすべてのfpsで固定です。PrgBuf ringは`0x0D000..0x76FFF`の424 KiB、
+pump back-pressureは420 KiBで始まり、delivery観測境界は418 KiB
+（`..0x757FF`）です。この固定領域の内部で、normal/scheduled上限とjitter予約
+がcontent cadenceに応じて動きます。
 
 ```text
 normal PrgBuf KiB = 418 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
-数値は `tools/av_config.py` の `cadence_jitter_reserve_kb()`、
-`prg_buf_cap_kb()`、`scheduled_delivery_cap_kb()` から得ます。この文書では独立した
-容量を定義しません。正確なscheduleは通常上限、つまり15 fpsで378 KiB、24 fpsで
-393 KiB、30 fpsで398 KiBに止めます。418 KiB観測境界までの40/25/20 KiBはliveの
-sector到着変動専用で、encoder Supplyではありません。
+| 項目 | 15 fps | 30 fps |
+|---|---|---|
+| cadence reserve | 40 KiB | 20 KiB |
+| `PRG-BUF` normal / scheduled上限 | 378 KiB | 398 KiB |
+| `PRG-BUF` address | `0x0D000..0x6B7FF` | `0x0D000..0x707FF` |
+| `JITTER` address | `0x6B800..0x757FF` | `0x70800..0x757FF` |
 
-| Address | Size | Owner | New featureでの利用 |
-|---|---:|---|---|
-| `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area | 不可 |
-| `0x06000..0x07FFF` | 8.00 KiB | BIOS-loaded resident specialized Sub allocation。正確なlinked prefixだけを検証済み | 不可 |
-| `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer | 不可 |
-| `0x08600..0x097FF` | **4.50 KiB** | 未割当のmarker検証済みscratch range。startup readを越える永続保持は不可 | **毎回書き直すscratchのみ利用可** |
-| `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 | 不可 |
-| `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table | 不可 |
-| `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table | 不可 |
-| `0x0CC20..0x0CFFF` | **992 B** | hot-table予約pageの未使用tail | **overlap check追加後に利用可** |
-| `0x0D000..0x707FF` | 398.00 KiB | 30 fpsのnormal PrgBuf capacity | 不可 |
-| `0x70800..0x757FF` | 20.00 KiB | 30 fpsのdelivery-jitter headroom | 不可 |
-| `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard | 不可 |
-| `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。`0x76800..0x76857`でqualified済みADPCM入口を実行し、長いroutingのbuildは216-byte extensionを`0x768D7`まで使用可能 | 不可 |
-| `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue | 不可 |
-| `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve | 不可 |
-| `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 | 不可 |
+他のrateも同じ式に従います（24 fps: reserve 25 KiB、上限393 KiB、
+`PRG-BUF` = `0x0D000..0x6F3FF`）。数値は`tools/av_config.py`の
+`cadence_jitter_reserve_kb()`、`prg_buf_cap_kb()`、
+`scheduled_delivery_cap_kb()`から得ます。この文書では独立した容量を定義
+しません。`JITTER`予約はliveのsector到着変動のために保持され、encoder
+Supplyになることはありません。
 
-32 KiB disc system areaはSP sourceをoffset `0x06000`へ置き、最後の8 KiBを予約します。
-BIOSは正確なlinked sizeをSub PRG `0x06000`へ連続loadし、1組の4 KiB sectorには
-制限されません。Packerはhashで固定した216-byte extensionを8,800-byte ADPCM table
-直後の既存5-sector paddingへ配置します。Subはそのimageを`0x7B000`へstageし、
-`0x7D260`から2通りに使います。Qualified済み先頭88 byteは未使用timed-ring tailの
-`0x76800`で実行します。routingが8 KiB以下なら第2入口をprebuffer後に`0x7D2B8`で
-そのまま実行し、長いroutingのbuildはextension全体を先にcopyします。これらの
-boot-only入口がADPCM install、routing prepare、初期ring/APPLY/frame stateを設定します。
-その後はframe-0 stagingが両temporary extension locationを上書きできます。H40のG測定と
-2つのstate wordはresident SP内にinlineで残り、hot-table tail
-`0x0CC20..0x0CFFF`全体は未使用です。
+### `SP-RES`の使用量
 
-Physical PrgBuf ringは424 KiBです。30 fpsではnormal・scheduled capが20 KiBのcadence
-reserve分だけ418 KiB観測境界より小さくなります。15 fpsのnormal・scheduled capは
-378 KiBで、live jitter用に40 KiBを残します。Pump back-pressureは420 KiBで始まり、
-残る4 KiBは別のoverflow guardです。これらの差分はfeature memoryではありません。
+32 KiB disc system areaはSP sourceをoffset `0x06000`へ置き、最後の8 KiBを
+予約します。BIOSは正確なlinked sizeをSub PRG `0x06000`へ連続loadし、
+1組の4 KiB sectorには制限されません。imageはprofile-specialized
+（`PLAYER_SPECIALIZE`）なので正確なsizeはbuildごとに決まり、現在のprofile
+buildでは4,064–4,160 byteです（`tmp/PROFILE/build/movieplay_sp.bin`）。
+予約の残り4,032–4,128 byteにはloaded contentが入りません。BIOS loadは
+linked prefixだけを書き込み、そのprefixだけがplayback-qualifiedです。
 
-ISO discovery中だけ64 KiB scratchが`0x67000..0x76FFF`を使います。その後のframe-0
-pattern stagingは`0x72000..0x7AFFF`を使います。各boot phaseではtimed ownerがinactive
-なので両方ともtimed ring tailと重複でき、frame-0 stagingはAPPLYとも重複できます。
-どちらのoverlayもtimed mapを変えません。
+Packerはhashで固定した216-byte extensionを8,800-byte ADPCM table直後の既存
+5-sector paddingへ配置します。Subはそのimageを`SP-STAGE`（`0x7B000`）へ
+stageし、`0x7D260`のextensionを2通りに使います。qualified済み先頭88 byteは
+`EXT-RUN`（未使用timed-ring tailの`0x76800`）で実行します。routingが8 KiB
+以下なら第2入口をprebuffer後に`0x7D2B8`でそのまま実行し、長いroutingの
+buildはextension全体を先にcopyします。これらのboot-only入口がADPCM install、
+routing prepare、初期ring/APPLY/frame stateを設定します。その後はframe-0
+stagingが両temporary extension locationを上書きできます。H40のG測定と2つの
+state wordはresident SP内にinlineで残り、`HOT-TAIL` range全体は未使用です。
 
-APPLY queueにも意図的なback-pressure headroomがあります。瞬間的な未使用occupancyは
-固定allocationではありません。
+### Boot-only overlay
+
+| Name | Address | Phase |
+|---|---|---|
+| `ISO-SCR` | `0x67000..0x76FFF` | ISO discovery中だけの64 KiB scratch image |
+| `F0-STAGE` | `0x72000..0x7AFFF` | frame-0 pattern staging |
+| `SP-STAGE` | `0x7B000..` | extension sourceを含むstaged SP image |
+| `EXT-RUN` | `0x76800..0x768D7` | `OVF-GUARD`内部のboot-only extension実行window |
+
+各boot phaseではtimed ownerがinactiveなので、`ISO-SCR`と`F0-STAGE`はtimed
+ring tailと重複でき、`F0-STAGE`は`APPLY`とも重複できます。どちらのoverlayも
+timed mapを変えません。
+
+APPLY queueには意図的なback-pressure headroomがあります。瞬間的な未使用
+occupancyは固定allocationではありません。
 
 ## Word RAM 1M/1M map
 
-128 KiBの独立したphysical bankが2つあります。Subが一方を所有するときMainは他方を
-所有します。Bank swapはownershipを交換するだけで、同じcopyを両CPUへ同時公開しません。
+128 KiBの独立したphysical bankが2つあります。Subが一方を所有するときMainは
+他方を所有します。Bank swapはownershipを交換するだけで、同じcopyを両CPUへ
+同時公開しません。このmapはprofileで変わり、fpsでは変わりません。
 
-`tools/pattern_supply.py` がframe数、cell数、cold capからmapを導出します。Routingは
-bank末尾に `ceil(frames / 2048) * 2048` byteを使います。Fixed tailはroutingの直下へ
-次の順で詰めます。
+`tools/pattern_supply.py`がframe数、cell数、cold capからmapを導出します。
+Routingはbank末尾に`ceil(frames / 2048) * 2048` byteを使います。Fixed tail
+はroutingの直下へ次の順で詰めます。
 
-| 上から下への相対順 | Size | Owner |
-|---|---:|---|
-| bank末尾 | 可変、sector丸め | resident routing table |
-| routing直下 | 1,536 B | 未割当のA/B-stable guard。feature memoryではない |
-| 次 | 8,800 B | A/B-stable ADPCM予約。実際に配置するのは5,696-byte signed-delta部分だけ |
-| 次 | 2,048 B | CD-sector stage / pad discard |
-| 次 | 8,192 B | linear control scratch |
-| 次 | 256 B | DEBUG counterとcopied header |
+| Name | 上から下への相対順 | Size | 内容 |
+|---|---|---:|---|
+| `ROUTE` | bank末尾 | 可変、sector丸め | resident routing table |
+| `TAIL-GAP` | routing直下 | 1,536 B | 未割当のA/B-stable guard。feature memoryではない |
+| `ADP-TBL` | 次 | 8,800 B | A/B-stable ADPCM予約。実際に配置するのは5,696-byte signed-delta部分だけ |
+| `SECT-STG` | 次 | 2,048 B | CD-sector stage / pad discard |
+| `CTRL-SCR` | 次 | 8,192 B | linear control scratch |
+| `DBG-HDR` | 次 | 256 B | DEBUG counterとcopied header |
 
-各bankの先頭は `O_PALW` と `O_NLOAD`（合計4 byte）、続いて `O_LOADS` です。Mainは
-name updateをcontrol scratchから直接読むため、`O_CRAM`、`O_NUPD`、`O_UPDS` は
-存在しません。
+各bankの先頭は`W-HDR`（`O_PALW`と`O_NLOAD`、合計4 byte）、続いて`LOADS`
+（`O_LOADS`）です。Mainはname updateを`CTRL-SCR`から直接読むため、
+`O_CRAM`、`O_NUPD`、`O_UPDS`は存在しません。
 
-WordBufはparity別 `O_LOADS` envelopeの直後からfixed tailの手前までです。Wr0は全encoded
-cellを含むframe-0の1 runを予約します。Wr1はtimed cold上限の各patternにつき32 pattern
-byteと4 byte descriptorを予約します。容量は完全な2 KiB preload sectorへ切り下げるため、
-disk sectorのpadはfixed tailを上書きしません。
+`WORDBUF`はparity別`LOADS` envelopeの直後からfixed tailの手前までです。Wr0
+は全encoded cellを含むframe-0の1 runを予約します。Wr1はtimed cold上限の各
+patternにつき32 pattern byteと4 byte descriptorを予約します。容量は完全な
+2 KiB preload sectorへ切り下げるため、disc sectorのpadはfixed tailを上書き
+しません。丸めの余りが`WB-GAP`です。
 
 6,576 frame、40x28 cell、cold 180の例は次のとおりです。
 
 | Bank item | Wr0 / frame-0 bank | Wr1 / timed-only bank |
 |---|---:|---:|
-| `O_LOADS` envelope | 35,844 B | 6,480 B |
-| WordBuf range | `+0x08C20..+0x18C1F` | `+0x01960..+0x1895F` |
-| WordBuf capacity | 2,048 patterns | 2,944 patterns |
-| status直下のsector丸めguard | 640 B | 1,344 B |
+| `LOADS` envelope | 35,844 B | 6,480 B |
+| `WORDBUF` range | `+0x08C20..+0x18C1F` | `+0x01960..+0x1895F` |
+| `WORDBUF` capacity | 2,048 patterns | 2,944 patterns |
+| `WB-GAP` sector丸めの余り | 640 B | 1,344 B |
 
-この例のroutingは8 KiBで、`+0x1E000`から始まります。WordBuf合計容量は4,992
-patternsです。2つのregionにはparity別の異なるstreamが入ります。
+この例の`ROUTE`は8 KiBで、`+0x1E000`から始まります。`WORDBUF`合計容量は
+4,992 patternsです。2つのregionにはparity別の異なるstreamが入ります。
 
-Boot中はBOOT_STAGEが `+0x0000..+0x5FFF`、その中のPALTABが `+0x1000`、DicBuf stageが
-`+0x6000..+0x7FFF` を使います。SubがそのbankをMainへ渡し、Mainはpalette、dictionary、
-任意のVRAM sidecarをpersistentな保存先へcopyしてbankを返します。Subはhandoff前に
-`HEADER.DAT` を停止し、返却後に正確な最初の未読sectorから再開するため、copy intervalが
-sector slipを発生させません。続いてSubは有限でuntimedなBODY armを読み、frame 0を
-展開します。その後はframe 0とWordBufがtemporary stage rangeを安全に上書きできます。
-Dump diagnosticはlist形式のupdateをcontrol scratchへ書きます。
+Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（PALTABは`+0x1000`）、`DIC-STG`が
+`+0x6000..+0x7FFF`をDicBuf stagingに使います。SubがそのbankをMainへ渡し、
+Mainはpalette、dictionary、任意のVRAM sidecarをpersistentな保存先へcopyして
+bankを返します。Subはhandoff前に`HEADER.DAT`を停止し、返却後に正確な最初の
+未読sectorから再開するため、copy intervalがsector slipを発生させません。
+続いてSubは有限でuntimedなBODY armを読み、frame 0を展開します。その後は
+frame 0と`WORDBUF`がtemporary stage rangeを安全に上書きできます。Dump
+diagnosticはlist形式のupdateを`CTRL-SCR`へ書きます。
 
 ## Main RAM map
 
-Main RAMは`0xFF0000..0xFFFFFF`です。Generated codeは上方向へ伸び、persistent DicBuf
-boundaryに対してbuild-time checkされます。
+Main RAMは`0xFF0000..0xFFFFFF`です。このmapはすべてのfpsで同一です。
+Generated codeは上方向へ伸び、persistent DicBuf boundaryに対してbuild-time
+checkされます。
 
-| Address | Size | Owner | 固定headroom |
-|---|---:|---|---:|
-| `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player、transient boot UI、generated handler、guard | build固有proofなしでは0 |
-| `0xFF6600..0xFF85FF` | 8.00 KiB | persistent DicBuf | 0 |
-| `0xFF8600..0xFFAFFF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE | 0 |
-| `0xFFB000..0xFFCFFF` | 8.00 KiB | 64-entry PALTAB | 0 |
-| `0xFFD000..0xFFF07D` | 8,318 B | BSS、shadow、DEBUG HUD row、name-table stage、state | 0 |
-| `0xFFF07E..0xFFFAFF` | **2.627 KiB** | stack guard下の未使用領域 | **2.627 KiB** |
-| `0xFFFB00..0xFFFCFF` | 512 B | stackとinterrupt reserve | 0 |
-| `0xFFFD00..0xFFFFFF` | 768 B | stack topより上 / BIOS reserve | 0 |
+| Name | Address | Size | 内容 |
+|---|---|---:|---|
+| `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player、transient boot UI、generated handler、guard |
+| `M-DIC` | `0xFF6600..0xFF85FF` | 8.00 KiB | persistent DicBuf |
+| `M-RUNTBL` | `0xFF8600..0xFFAFFF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
+| `M-PALTAB` | `0xFFB000..0xFFCFFF` | 8.00 KiB | 64-entry PALTAB |
+| `M-STATE` | `0xFFD000..0xFFF07D` | 8,318 B | BSS、shadow、DEBUG HUD row、name-table stage、state |
+| `M-FREE` | `0xFFF07E..0xFFFAFF` | 2,690 B | stack guard下の未割当領域 |
+| `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stackとinterrupt reserve |
+| `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | stack topより上 / BIOS reserve |
 
-Profileの実maximumを超えるRUN_TABLE領域やgenerated code下のgapは条件付きです。
-対応cold capと最大generated outputを守るsymbolとassertionがある場合だけ使えます。
+`M-CODE`内の実generated-code末尾と`M-RUNTBL`内の実RUN_TABLE最大値はprofile
+ごとに変わり、build-time assertionが各rangeの内側に保ちます。
 
 ## StartupとframeごとのCPU sequence
 
+以下のsequenceは15 fpsと30 fpsで同一で、frame周期だけが異なります。
+
 ### Startup
 
-1個の `CMD_STREAM` commandがstartup全体を通してassertされたままです。BOOT_STAGEの
-ownership交換には引き続き `STAT_BOOT_STAGE` と `COMCMD1` を使います。Subが同じ物理
-bankを再利用する前に、Mainがpalette、dictionary、sidecar dataをcopyする必要がある
-ためです。frame-0/BODY-start専用の2個目のhandshakeはありません。
+1個の`CMD_STREAM` commandがstartup全体を通してassertされたままです。
+BOOT_STAGEのownership交換には引き続き`STAT_BOOT_STAGE`と`COMCMD1`を使います。
+Subが同じ物理bankを再利用する前に、Mainがpalette、dictionary、sidecar data
+をcopyする必要があるためです。frame-0/BODY-start専用の2個目のhandshakeは
+ありません。
 
-`STAT_READY` は完成したframe-0 bankを公開しますが、この時点ではtimed CD readerを
-停止したままにします。frame 0を実際にflipした後で元のcommandをclearする操作が、
-acknowledgementであると同時にPCMとtimed BODY serviceの正確な物理開始点になります。
-したがってframe -1は計画外のPrgBuf先行量を作りません。
+`STAT_READY`は完成したframe-0 bankを公開しますが、この時点ではtimed CD
+readerを停止したままにします。frame 0を実際にflipした後で元のcommandを
+clearする操作が、acknowledgementであると同時にPCMとtimed BODY serviceの
+正確な物理開始点になります。したがってframe -1は計画外のPrgBuf先行量を
+作りません。
 
 ```mermaid
 sequenceDiagram
@@ -512,12 +529,13 @@ sequenceDiagram
     end
 ```
 
-frame -1はplayer/HUDだけのstateです。sim frame、control block、routing entry、
-HUD TSV rowは追加しません。
+frame -1はplayer/HUDだけのstateです。sim frame、control block、routing
+entry、HUD TSV rowは追加しません。
 
 ### Timed playback
 
-Bank swap後、Mainはframe `N`を消費し、Subは他方のbankでframe `N+1`を準備します。
+Bank swap後、Mainはframe `N`を消費し、Subは他方のbankでframe `N+1`を準備
+します。
 
 ```mermaid
 sequenceDiagram
@@ -546,40 +564,11 @@ sequenceDiagram
     M->>S: 次のCMD_SWAP
 ```
 
-Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を処理します。
-Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理がpending handoffを
-遅らせることはできません。
+Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
+処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が
+pending handoffを遅らせることはできません。
 
-MainとSubのstopwatchは選択phaseだけを測り、deadline全体ではありません。DMA、
-RF5C164 write、BIOS call、CDC poll、bank settle、shared-memory waitがあるため、
-無条件に支出できるCPU余りは0です。
-
-## Allocation順
-
-低risk領域を次の順で使います。
-
-1. Main-only stateにはMain RAM `0xFFF07E..0xFFFAFF`を使い、stack guardを残します。
-2. Generated-codeまたはRUN_TABLE tailは、profile固有のend symbolとbound付きでだけ
-   使います。
-3. PRG `0x08600..0x097FF`はstartup後に書き直すscratchだけに使います。Persistent
-   dataには検査済み`0x0CC20..0x0CFFF` hot-table tailを使えます。どちらも
-   `tools/check_player_ring.py`へ追加した後に使います。
-
-Payload jitter、PrgBuf overflow、APPLY back-pressure、stack、VBlank、DMAの
-safety reserve、WordBufのsector丸めguardからは割り当てません。
-
-## CPU qualification
-
-継続的なnew pathには次が必要です。
-
-- その処理を囲むSub stopwatch
-- worst runまたはtransfer costに対するpack-time Main guard
-- 影響する全cadenceとdisplay modeのfull-length recording
-- stream slip、desync、recovery、予定外cadence waitがないHUD gate
-- stable audio leadと正確なdecoded frame count
-- allocationと同じ変更に含めるcycle・memory assertion
-
-## Auditの再現
+## Map測定値の再現
 
 Managed Python環境と明示的なprofileを使います。
 
@@ -596,5 +585,6 @@ make movieplay CONFIG=profiles/PROFILE.toml \
   tmp/PROFILE/build/movieplay_sp.o
 ```
 
-経過時間やmemory headroomの記述を変更する前に、rebuild、verify付きpack、DEBUG
-recording、HUD gateを完了します。
+`SP-RES`のloaded sizeは`tmp/PROFILE/build/movieplay_sp.bin`のlinked size
+です。この文書のaddressやsizeを改訂する前に、rebuild、verify付きpack、
+DEBUG recording、HUD gateを完了します。
