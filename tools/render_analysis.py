@@ -269,25 +269,38 @@ def _balanced_raw_flags(raw_count, total_count):
     )
 
 
-if "prg_loads" not in BUF:
-    raise SystemExit("analysis PrgBuf load trace is missing; re-run sim")
-_prg_loads = BUF["prg_loads"].astype(np.int64)
-if len(_prg_loads) != NF:
-    raise SystemExit("analysis PrgBuf load trace has the wrong frame count")
-_payload_raw_flags = np.concatenate([
-    _balanced_raw_flags(Raw[i], _prg_loads[i])
-    for i in range(1, NF)
-])
-_delivered_payload_patterns = (
-    int(BODY_PAYLOAD_BYTES.sum()) // stream_schedule.PATTERN_BYTES)
-_prebuffer_patterns = len(_payload_raw_flags) - _delivered_payload_patterns
-BODY_RAW_PAYLOAD_BYTES, BODY_PRG_PAYLOAD_BYTES = (
-    stream_schedule.split_body_payload_classes(
-        _payload_raw_flags,
-        BODY_PAYLOAD_BYTES,
-        prebuffer_patterns=_prebuffer_patterns,
+if "body_raw_payload_bytes" in BUF:
+    BODY_RAW_PAYLOAD_BYTES = BUF[
+        "body_raw_payload_bytes"].astype(np.int64)
+    if BODY_RAW_PAYLOAD_BYTES.shape != BODY_PAYLOAD_BYTES.shape:
+        raise SystemExit(
+            "analysis Raw payload trace has the wrong frame count; re-run sim")
+    BODY_PRG_PAYLOAD_BYTES = (
+        BODY_PAYLOAD_BYTES - BODY_RAW_PAYLOAD_BYTES)
+    if np.any(BODY_PRG_PAYLOAD_BYTES < 0):
+        raise SystemExit(
+            "analysis Raw payload exceeds useful payload; re-run sim")
+else:
+    if "prg_loads" not in BUF:
+        raise SystemExit("analysis PrgBuf load trace is missing; re-run sim")
+    _prg_loads = BUF["prg_loads"].astype(np.int64)
+    if len(_prg_loads) != NF:
+        raise SystemExit("analysis PrgBuf load trace has the wrong frame count")
+    _payload_raw_flags = np.concatenate([
+        _balanced_raw_flags(Raw[i], _prg_loads[i])
+        for i in range(1, NF)
+    ])
+    _delivered_payload_patterns = (
+        int(BODY_PAYLOAD_BYTES.sum()) // stream_schedule.PATTERN_BYTES)
+    _prebuffer_patterns = (
+        len(_payload_raw_flags) - _delivered_payload_patterns)
+    BODY_RAW_PAYLOAD_BYTES, BODY_PRG_PAYLOAD_BYTES = (
+        stream_schedule.split_body_payload_classes(
+            _payload_raw_flags,
+            BODY_PAYLOAD_BYTES,
+            prebuffer_patterns=_prebuffer_patterns,
+        )
     )
-)
 if not np.array_equal(
         BODY_RAW_PAYLOAD_BYTES + BODY_PRG_PAYLOAD_BYTES,
         BODY_PAYLOAD_BYTES,
