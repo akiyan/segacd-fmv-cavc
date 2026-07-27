@@ -32,4 +32,13 @@ if grep -Eq '^include-system-site-packages[[:space:]]*=[[:space:]]*true' "$ENV_D
   exit 1
 fi
 
+# Project tools intentionally import their siblings as top-level modules
+# (for example, ``import av_config``).  Make that contract independent of the
+# caller's working directory and preserve any caller-supplied search path.
+PROJECT_PYTHONPATH="$ROOT/tools:$ROOT"
+if [ -n "${PYTHONPATH:-}" ]; then
+  PROJECT_PYTHONPATH="$PROJECT_PYTHONPATH:$PYTHONPATH"
+fi
+export PYTHONPATH="$PROJECT_PYTHONPATH"
+
 exec "$PYTHON" "$@"
