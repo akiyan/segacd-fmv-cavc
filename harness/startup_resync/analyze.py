@@ -5,14 +5,15 @@ The player renders values only in one fixed 30-cell order in both modes:
 
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
-The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H40
-DEBUG builds append Q/V/O/E on row 0 and G/K on row 1; Q is the signed minimum
-logical PrgBuf balance observed during that frame, in exact 32-byte patterns.
+The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H32 and
+H40 DEBUG builds append Q/V/O/E/G/K as one 46-cell logical sequence, wrapped
+after 32 or 40 cells respectively. Q is the signed minimum logical PrgBuf
+balance observed during that frame, in exact 32-byte patterns.
 G is the maximum time spent outside the Sub CDC pump between service
 opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
 sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
-that APPLY back-pressure rejected a control-sector pump. A supplied H40
-profile selects this combined layout automatically. Legacy one-row recordings
+that APPLY back-pressure rejected a control-sector pump. A supplied H32 or H40
+profile selects its combined layout automatically. Legacy one-row recordings
 remain readable through their explicit layout options.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
@@ -139,7 +140,7 @@ def iter_samples(
     # Only the top-left HUD area is sent through the pipe.  Decoding still sees
     # every source frame, while pipe traffic stays small even for an upscaled MP4.
     available_width = probe.width - crop_x
-    layout = read_frameno.hud_layout_for_width(available_width)
+    layout = read_frameno.hud_common_layout_for_width(available_width)
     selected_layouts = sum((flip_fields, poll_gap_fields, combined_fields))
     if selected_layouts > 1:
         raise SystemExit(
@@ -155,9 +156,7 @@ def iter_samples(
             raise SystemExit("--poll-gap-fields requires a native H40 recording")
         layout = read_frameno.HUD_H40_POLL_GAP_LAYOUT
     elif combined_fields:
-        if layout is not read_frameno.HUD_H40_LAYOUT:
-            raise SystemExit("--combined-fields requires a native H40 recording")
-        layout = read_frameno.HUD_H40_COMBINED_LAYOUT
+        layout = read_frameno.hud_layout_for_width(available_width)
     fields = tuple(name for name, _col, _digits in layout)
     hud_width_cells, hud_height_cells = read_frameno.hud_layout_dimensions(
         layout
@@ -797,12 +796,12 @@ def standard_combined_fields(
     poll_gap_fields: bool,
     combined_fields: bool,
 ) -> bool:
-    """Select the standard two-row layout for an H40 profile."""
+    """Select the standard two-row layout for an H32 or H40 profile."""
     if combined_fields:
         return True
     if flip_fields or poll_gap_fields or profile is None:
         return False
-    return profile.data["video"]["mode"] == "H40"
+    return profile.data["video"]["mode"] in {"H32", "H40"}
 
 
 def write_gate_json(path: Path, result: dict) -> None:
@@ -887,8 +886,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--combined-fields", action="store_true",
-        help="force the standard two-row H40 layout when no profile is "
-             "supplied; H40 profiles select it automatically",
+        help="force the standard two-row H32/H40 layout when no profile is "
+             "supplied; H32/H40 profiles select it automatically",
     )
     parser.add_argument(
         "--max-gap", type=int, default=3,

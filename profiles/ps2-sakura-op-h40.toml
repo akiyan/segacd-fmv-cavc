@@ -1,0 +1,23 @@
+schema_version = 3
+
+[source]
+path = "assets/ps2_sakura_op.mp4"
+fps = "30"
+duration = "102.524400"
+sar = "1:1"
+
+[video]
+mode = "H40"
+width = 320
+height = 224
+fit = "pad"
+master_filter = "setsar=1,crop=640:376:0:52,scale=1280:752:flags=lanczos,hqdn3d=6:6:8:8,gblur=sigma=1.6,scale=320:172:flags=lanczos,pad=320:224:0:26:color=black,setsar=1"
+raw_filter = "setsar=1,crop=640:376:0:52,scale=320:172:flags=lanczos,pad=320:224:0:26:color=black,setsar=1"
+
+[output]
+directory = "videos/ps2_sakura_op_H40_320x224_adpcm22/tmp"
+reuse = false
+emit_decisions = true
+
+[palette]
+algorithm = "mosaic-gm"

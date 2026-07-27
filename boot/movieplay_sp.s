@@ -48,13 +48,11 @@
 
 .ifdef DEBUG
 .ifdef PLAYER_SPECIALIZED
-.if PC_MODE == 1
 .equ DEBUG_PRGBUF_Q, 1
 .if PC_PUMP_MASK == 0x03FF
 .equ DEBUG_PRGMIN_DIRECT, 1
 .endif
 .equ DEBUG_SUB_POLL_GAP, 1
-.endif
 .endif
 .endif
 

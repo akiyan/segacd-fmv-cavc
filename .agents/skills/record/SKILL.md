@@ -260,8 +260,9 @@ Check the raw MKV and reports before trusting a capture:
    Use the persistent `logs/` path for comparisons and keep the symlink beside
    the recording for downstream tools.
 
-   An H40 profile automatically selects the standard two-row layout. It
-   preserves `Q/V/O/E` from row 0 and `G/K` from row 1, decodes `G` low
+   An H32 or H40 profile automatically selects its standard two-row layout.
+   Both preserve `Q/V/O/E/G/K`; H32 wraps the logical stream after 32 cells
+   and H40 after 40 cells. The analyzer decodes `G` low
    12 bits as the longest interval outside the Sub CDC pump in 30.72 us ticks,
    separates `G` bit 15 as the per-frame APPLY back-pressure marker `B`, and
    records `K` as the cumulative MSF-gap recovery count. `Q` is the raw signed
@@ -326,8 +327,9 @@ sound is clean or free of audible clicks only after listening to the final file.
 
 The standard capture already builds DEBUG. The HUD omits category glyphs and
 uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` prefix in H32 and H40.
-Standard H40 adds `Q/V/O/E` to complete row 0 and `G/K` on row 1. Its profile
-selects the combined OCR layout automatically. Parse the complete first loop
+Both modes append `Q/V/O/E/G/K` and wrap the same 46-cell logical stream at
+their native 32- or 40-cell width. The profile selects the matching combined
+OCR layout automatically. Parse the complete first loop
 whenever the capture can be uploaded; for a local-only recording, full OCR
 remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:

@@ -395,8 +395,8 @@ copies its qualified 88-byte entry from the five-sector stage to the unused
 timed-ring tail. The routing entry executes after prebuffer from the protected
 stage tail when the route is at most 8 KiB; longer-route builds copy the
 complete extension before staging routing. That entry also initializes the
-ring, APPLY, and frame-0 queue state. Standard H40 DEBUG keeps its G state and
-measurement inline in the resident SP. Startup shows four hexadecimal digits containing safe PrgBuf
+ring, APPLY, and frame-0 queue state. Standard specialized H32/H40 DEBUG keeps
+its G state and measurement inline in the resident SP. Startup shows four hexadecimal digits containing safe PrgBuf
 preload KiB; a failure shows `BADx`.
 
 ## DEBUG HUD limits
@@ -791,7 +791,7 @@ ADPCM lookup data直後にある未使用padding
 tailへcopyします。routingが8 KiB以下ならrouting入口はprebuffer後に保護済みstage
 tailから実行し、長いroutingのbuildはrouting stage前にextension全体をcopyします。
 同じ入口がtimed playback前にring、APPLY、frame-0 queue stateを初期化します。
-Standard H40 DEBUGのG stateとmeasurementはresident SP内にinlineで保持します。
+Standard specialized H32/H40 DEBUGのG stateとmeasurementはresident SP内にinlineで保持します。
 startupは安全に受信済みのPrgBuf preload
 KiBを4桁hexで表示し、failureは`BADx`を表示します。
 
