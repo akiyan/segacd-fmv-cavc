@@ -259,7 +259,12 @@ WordBuf0 and WordBuf1 have generated, parity-specific starts and capacities.
 Wr0 starts after the frame-0 `O_LOADS` envelope; Wr1 starts after the timed
 cold/run envelope. Both capacities are rounded down to complete preload
 sectors. Even timed frames consume WordBuf0 and odd timed frames consume
-WordBuf1. Their sequences advance monotonically and are never refilled.
+WordBuf1. Each preload is the initial content of that parity's WordBuf ring.
+When the stream carries the WordBuf-ring feature, a slot's leading
+`n_word_sec` payload sectors append 64 patterns each to the arriving frame's
+parity ring; write and read cursors both advance forward and wrap at the
+declared capacity, and the packer's replay proves every refill sector commits
+before its frame begins expanding.
 
 DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0x6000`
 and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
@@ -281,12 +286,14 @@ ROUTING contains one byte per frame:
 
 | Bits | Field | Meaning |
 |---|---|---|
-| 0-2 | `n_ctrl_sec` | control sectors at the start of the BODY slot |
+| 0-2 | `n_ctrl_sec` | control sectors at the start of the BODY slot; bit 2 is the WordBuf-4 escape, which narrows the control count to bits 0-1 |
 | 3-5 | `total_sec` | useful control plus payload sectors |
-| 6-7 | reserved | zero |
+| 6-7 | `n_word_sec` | leading payload sectors staged to the arriving frame's parity WordBuf ring (0-3; with the escape set these bits carry 3 and the staged count is 4) |
 
-The byte is `(total_sec << 3) | n_ctrl_sec`; `n_pay_sec = total_sec -
-n_ctrl_sec`. The player requires
+The byte is `(n_word_field << 6) | (total_sec << 3) | n_ctrl_field`;
+`n_pay_sec = total_sec - n_ctrl_sec` and `n_word_sec <= n_pay_sec`. A stream
+without the WordBuf-ring feature always encodes `n_word_sec = 0`. The player
+requires
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` and
 `routing_sec = ceil(nfr / 2048)`. Frame 0's entry and unused tail bytes are
 zero. The resident copy uses exactly `routing_sec` sectors and supports at most
@@ -678,7 +685,11 @@ handoffでfront-of-bankのtemporary dataをすべてMainが消費できるよう
 WordBuf0とWordBuf1はgenerated parity別startとcapacityを持ちます。Wr0はframe-0
 `O_LOADS` envelopeの直後、Wr1はtimed cold/run envelopeの直後から始まります。
 両capacityとも完全なpreload sectorへ切り下げます。偶数timed frameはWordBuf0、
-奇数timed frameはWordBuf1を消費します。sequenceは単調に進み、補充しません。
+奇数timed frameはWordBuf1を消費します。各preloadは、そのparityのWordBuf ringの
+初期内容です。WordBuf-ring featureを持つstreamでは、slot先頭の `n_word_sec`
+payload sectorが到着frameのparity ringへ64 patternずつ追記されます。writeと
+readのcursorはともに前進のみで宣言capacityでwrapし、packerのreplayは全refill
+sectorがそのframeの展開開始前にcommitされることを証明します。
 
 DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0x6000` に一時配置し、
 Main RAM `0xFF6600..0xFF8600` へ起動時に1回copyします。controlは8-bit indexで
@@ -699,12 +710,14 @@ ROUTINGはframeごとに1 byteです。
 
 | Bits | Field | 意味 |
 |---|---|---|
-| 0-2 | `n_ctrl_sec` | BODY slot先頭のcontrol sector数 |
+| 0-2 | `n_ctrl_sec` | BODY slot先頭のcontrol sector数。bit 2はWordBuf-4 escapeで、この場合control数はbits 0-1 |
 | 3-5 | `total_sec` | 有効なcontrol + payload sector数 |
-| 6-7 | reserved | zero |
+| 6-7 | `n_word_sec` | 到着frameのparity WordBuf ringへstageする先頭payload sector数（0〜3。escape設定時はこのbitsに3を置き、実stage数は4） |
 
-byte値は `(total_sec << 3) | n_ctrl_sec` で、
-`n_pay_sec = total_sec - n_ctrl_sec` です。playerは
+byte値は `(n_word_field << 6) | (total_sec << 3) | n_ctrl_field` で、
+`n_pay_sec = total_sec - n_ctrl_sec`、`n_word_sec <= n_pay_sec` です。
+WordBuf-ring featureを持たないstreamは常に `n_word_sec = 0` をencodeします。
+playerは
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` と
 `routing_sec = ceil(nfr / 2048)` を要求します。frame 0のentryと末尾の未使用byteは
 zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大16,384 frameに
