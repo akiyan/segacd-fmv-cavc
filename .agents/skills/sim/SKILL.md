@@ -139,7 +139,7 @@ Rules:
 
 This can take about 10-13 minutes for 2700-3100 frames.
 
-Create one strict `schema_version = 3` profile under `configs/` for each
+Create one strict `schema_version = 3` profile under `profiles/` for each
 source/mode combination. Use the schema in `CONFIG.md`; the checked-in Bad
 Apple H32/H40 profiles are complete examples. The profile must name the source,
 native fps, exact duration, full mode raster, HAR-aware `fit`, the selected
@@ -177,7 +177,7 @@ controls decoded-input reuse inside an in-progress encode; automatic reuse of
 a fully completed, authenticated sim artifact is independent of it.
 
 ```sh
-tools/python.sh --gpu tools/sim.py configs/<source>-<mode>.toml
+tools/python.sh --gpu tools/sim.py profiles/<source>-<mode>.toml
 ```
 
 TOML values replace inherited per-source `CBRSIM_*` values. `sim.py` freezes
@@ -242,7 +242,7 @@ function on real data.
 ```sh
 CBRSIM_SRCLABEL="Source (<source name>, <platform/year>)" \
 ANALYSIS_OUT=videos/<stem>_analysis.mp4 \
-tools/python.sh --gpu tools/render_analysis.py configs/<source>-<mode>.toml
+tools/python.sh --gpu tools/render_analysis.py profiles/<source>-<mode>.toml
 ```
 
 Every invocation first writes the complete per-frame numeric sidecar to a
@@ -260,7 +260,7 @@ tmpfs workspace even though their public symlinks remain below `videos/`.
 Frame-range check only:
 
 ```sh
-tools/python.sh tools/render_analysis.py configs/<source>-<mode>.toml <A> <B>
+tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml <A> <B>
 ```
 
 For `$run`'s pre-recording TSV handoff, use `0 0`; this writes all numeric data

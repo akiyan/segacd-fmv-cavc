@@ -56,25 +56,23 @@ def run_pack(
 
 
 def check_profiles() -> None:
-    for name, mode, width in (
-            ("bad-apple-h32.toml", "H32", "256"),
-            ("bad-apple-h40.toml", "H40", "320")):
-        profile = load_profile(ROOT / "configs" / name)
+    for name, fps, mode, width, cold_cap in (
+            ("bad-apple.toml", "30", "H40", "320", "210"),
+            ("lunar-sss-op-h32.toml", "24", "H32", "256", "225")):
+        profile = load_profile(ROOT / "profiles" / name)
         env = {"CBRSIM_FPS": "999", "CBRSIM_MODE": "wrong", "CBRSIM_W": "1"}
         apply_profile_env(profile, env)
-        assert env["CBRSIM_FPS"] == "30"
+        assert env["CBRSIM_FPS"] == fps
         assert env["CBRSIM_MODE"] == mode
         assert env["CBRSIM_W"] == width
         assert env["CBRSIM_PAL_ALGO"] == "mosaic-gm"
-        expected_cap = av_config.baseline_cold_cap_for_fps(
-            float(profile.data["source"]["fps"]))
-        assert env["CBRSIM_COLD_CAP"] == str(expected_cap)
-    sonic = load_profile(ROOT / "configs" / "sonic-jam-op-h40.toml")
+        assert env["CBRSIM_COLD_CAP"] == cold_cap
+    sonic = load_profile(ROOT / "profiles" / "sonic-jam-op.toml")
     sonic_env = {"CBRSIM_COLD_CAP": "1"}
     apply_profile_env(sonic, sonic_env)
-    assert sonic_env["CBRSIM_COLD_CAP"] == "190"
+    assert sonic_env["CBRSIM_COLD_CAP"] == "210"
 
-    source = (ROOT / "configs" / "sonic-jam-op-h40.toml").read_text(
+    source = (ROOT / "profiles" / "sonic-jam-op.toml").read_text(
         encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="cold-cap-profile-") as td:
         temp = Path(td)

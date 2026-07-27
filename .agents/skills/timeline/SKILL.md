@@ -24,7 +24,7 @@ and include the settings that explain the result.
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
   logs/YYYYMMDD-HHMMSS-ffffff_PROFILE_SHA10_eNN_pNN_timeline.tsv \
-  --config configs/PROFILE.toml \
+  --config profiles/PROFILE.toml \
   --sim-out videos/STEM/ADJUSTMENT \
   --label "short adjustment label" \
   --evaluation-end-frame FRAME \

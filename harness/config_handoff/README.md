@@ -13,8 +13,8 @@ Run it against an existing full decision log:
 
 ```sh
 tools/python.sh harness/config_handoff/verify.py \
-  videos/SonicJamOp_H32_256x224_adpcm22_mosaic_gm/decisions.pkl \
-  --sp-extension tmp/sonic-jam-op-h32/build/movieplay_sp_ext.bin
+  videos/SonicJamOp_H40_288x200_adpcm22_cold210/tmp/decisions.pkl \
+  --sp-extension tmp/sonic-jam-op/build/movieplay_sp_ext.bin
 ```
 
 The test uses temporary output directories and does not modify `out/movieplay`.

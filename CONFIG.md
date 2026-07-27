@@ -12,7 +12,7 @@ tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
 It describes shared defaults, hardware limits, and the per-source TOML schema.
 Pure register addresses and fixed memory-map details belong in the source and
 [`MOVIE.md`](MOVIE.md). A movie's settings belong in a versioned file under
-[`configs/`](configs/).
+[`profiles/`](profiles/).
 
 Streaming geometry has one source of truth:
 [`tools/av_config.py`](tools/av_config.py). The build checks the player's
@@ -324,9 +324,9 @@ materialized by `tools/stream_schedule.py`.
 Use one `schema_version = 3` file per source/mode combination.
 
 ```sh
-tools/python.sh tools/sim.py configs/<profile>.toml
-tools/python.sh tools/render_analysis.py configs/<profile>.toml
-make disc CONFIG=configs/<profile>.toml DEBUG=1
+tools/python.sh tools/sim.py profiles/<profile>.toml
+tools/python.sh tools/render_analysis.py profiles/<profile>.toml
+make disc CONFIG=profiles/<profile>.toml DEBUG=1
 ```
 
 `sim.py` resolves the profile once and stores the effective settings and TOML
@@ -424,7 +424,7 @@ tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
 
 共通default、hardware limit、sourceごとのTOML schemaを扱います。純粋なregister
 addressと固定memory mapの詳細はsource codeと [`MOVIE.md`](MOVIE.md) に置きます。
-movie固有の設定は [`configs/`](configs/) 以下のversion管理されたfileに置きます。
+movie固有の設定は [`profiles/`](profiles/) 以下のversion管理されたfileに置きます。
 
 streaming geometryの正本は [`tools/av_config.py`](tools/av_config.py) だけです。
 buildがplayer assembly constantとの一致を確認します。導出値を別の場所で再定義しては
@@ -719,9 +719,9 @@ scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py`
 source/modeの組み合わせごとに `schema_version = 3` のfileを1つ使います。
 
 ```sh
-tools/python.sh tools/sim.py configs/<profile>.toml
-tools/python.sh tools/render_analysis.py configs/<profile>.toml
-make disc CONFIG=configs/<profile>.toml DEBUG=1
+tools/python.sh tools/sim.py profiles/<profile>.toml
+tools/python.sh tools/render_analysis.py profiles/<profile>.toml
+make disc CONFIG=profiles/<profile>.toml DEBUG=1
 ```
 
 `sim.py` はprofileを1回解決し、effective settingとTOML SHA-256を `decisions.pkl` に

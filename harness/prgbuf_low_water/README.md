@@ -37,8 +37,8 @@ tools/python.sh harness/prgbuf_low_water/analyze.py \
   --evaluation-end-frame 6422 \
   --low-patterns 256 \
   --normal-vblanks 2 \
-  --ranges-tsv tmp/bad-apple-h40/prgbuf_low_ranges.tsv \
-  --events-tsv tmp/bad-apple-h40/prgbuf_slip_events.tsv
+  --ranges-tsv tmp/bad-apple/prgbuf_low_ranges.tsv \
+  --events-tsv tmp/bad-apple/prgbuf_slip_events.tsv
 ```
 
 The range table reports each modeled low-water interval and the next cumulative

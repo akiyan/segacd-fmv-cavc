@@ -22,7 +22,7 @@ the matching packed `HEADER.DAT`:
 ```sh
 tools/python.sh harness/frame_cadence/verify.py \
   videos/BadApple_H40_320x224_pcm_emu_lossless.mkv \
-  --header out/bad-apple-h40/HEADER.DAT
+  --header out/bad-apple/HEADER.DAT
 ```
 
 Override the required interval explicitly when diagnosing a different target:
@@ -37,7 +37,7 @@ movie-frame number:
 
 ```sh
 tools/python.sh harness/frame_cadence/verify.py RECORDING.mkv \
-  --header out/bad-apple-h40/HEADER.DAT --through-frame 0x0386
+  --header out/bad-apple/HEADER.DAT --through-frame 0x0386
 ```
 
 Once the requested final F first appears, later recording frames are outside

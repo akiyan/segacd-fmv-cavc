@@ -11,9 +11,9 @@
 # audio the build produces) - not an offline re-mux of PROBE.BIN.
 #
 # Usage:
-#   tools/record_movie.sh --config configs/bad-apple-h32.toml --seconds 160
-#   tools/record_movie.sh --config configs/bad-apple-h32.toml --seconds 30
-#   tools/record_movie.sh --disc out/bad-apple-h32.cue --no-build --seconds 160
+#   tools/record_movie.sh --config profiles/bad-apple.toml --seconds 250
+#   tools/record_movie.sh --config profiles/bad-apple.toml --seconds 30
+#   tools/record_movie.sh --disc out/bad-apple.cue --no-build --seconds 250
 #
 # Options:
 #   --config TOML  profile used by make; also derives out/<toml-stem>.cue

@@ -70,7 +70,7 @@ class ParallelRunTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "summary.tsv"
             result = parallel_run.JobResult(
-                Path("configs/a.toml"),
+                Path("profiles/a.toml"),
                 "movie_H32_256x224_adpcm22",
                 "PASS",
                 "",

@@ -18,7 +18,7 @@ MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal test1m,$(M
 endif
 ifneq ($(strip $(MOVIEPLAY_REQUESTED)),)
 ifeq ($(strip $(CONFIG)),)
-$(error CONFIG is required; for example: make disc CONFIG=configs/bad-apple-h32.toml)
+$(error CONFIG is required; for example: make disc CONFIG=profiles/bad-apple.toml)
 endif
 endif
 

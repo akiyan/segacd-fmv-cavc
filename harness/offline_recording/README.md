@@ -43,7 +43,7 @@ One-command default capture:
 
 ```sh
 OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --config configs/ps2-sakura-op-h32.toml \
+  --config profiles/ps2-sakura-op-h32.toml \
   --seconds 140 \
   --tag offline_record --record-size 256x224 --display :299 \
   --out videos/offline_record_preview.mp4
