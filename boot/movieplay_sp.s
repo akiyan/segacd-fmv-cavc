@@ -1576,12 +1576,17 @@ pp_done:
 .ifdef INCLUDE_WORDBUF_RING
 /* Return d0=1 iff the next Word sector has a bounded destination. Direct
    writes require the current parity bank. A not-yet-owned bank reserves up to
-   four sectors without making those queued patterns logically resident. */
+   four sectors without making those queued patterns logically resident.
+   Accept the sector's frame at or ahead of the expanding frame: the packer's
+   replay commits every refill sector at its arrival slot, and the CD keeps
+   delivering while frame_idx catches up, so demanding equality stalls the
+   only CDC service path at a mid-stream refill turn until sectors slip.
+   Reject only a sector whose frame already began expanding. */
 word_accept_guard:
 	moveq	#0, d0
 	move.w	drain_frame, d0
 	cmp.w	frame_idx, d0
-	bne.s	wag_no			/* never refill a bank after its frame began expanding */
+	blo.s	wag_no			/* too late: that frame already began expanding */
 	move.w	d0, d1
 	andi.w	#1, d1
 	tst.w	d1

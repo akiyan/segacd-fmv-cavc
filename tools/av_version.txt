@@ -11,6 +11,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p107: Accept a Word refill sector whose frame is at or ahead of the
+#         expanding frame instead of demanding equality. A mid-stream refill
+#         turn arrives with residual drain lead, and the equality gate stalled
+#         both CDC service paths until sectors slipped (Machi ED frame 451,
+#         S=1..2 MSF-gap recoveries in every run). Late sectors whose frame
+#         already began expanding remain rejected.
 #   p106: Keep PCM stopped through the first timed ROM_READN startup interval.
 #         Start it when frame 1's first control sector arrives, then finish that
 #         physical slot before releasing Main. The remaining slot time restores
@@ -961,4 +967,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260727
 e=147
-p=106
+p=107
