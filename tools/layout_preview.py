@@ -8,10 +8,11 @@ render_analysis.py が同じ描画関数と定数を実データに使う。
   右  = Source / Category(Miss赤塗り) / 全編カテゴリ合計 / Audio波形
   下  = Req/Cold/Band/DMA/Run/Prg/Wrd/Pre、パレット、4段タイムライン
         ※ Miss&MissCarryパネルと per-metric flow は廃止。
-出力: tmp/layout_preview.png
+既定出力: tmp/layout_preview.png
 
-usage: python3 tools/layout_preview.py
+usage: python3 tools/layout_preview.py [--output PATH]
 """
+import argparse
 import math
 import random
 from pathlib import Path
@@ -699,6 +700,10 @@ def draw_waveform_placeholder(w, h):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path, default=Path("tmp/layout_preview.png"))
+    args = parser.parse_args()
     load_fonts()
 
     data = dummy_data()
@@ -765,8 +770,8 @@ def main():
     # 共通フッター(status帯 + カテゴリ合計バー)
     draw_footer(cv, data)
 
-    out = Path("tmp/layout_preview.png")
-    out.parent.mkdir(exist_ok=True)
+    out = args.output
+    out.parent.mkdir(parents=True, exist_ok=True)
     cv.save(out)
     print("wrote", out)
 

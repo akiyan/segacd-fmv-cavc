@@ -567,37 +567,46 @@ tools/record_movie.sh --config configs/PROFILE.toml \
   recording gate.
 - The default keeps the Mega-CD startup. Use trimming only when the user
   explicitly asks for a movie-only clip.
-- Run one RetroArch/Xvfb recording at a time.
+- Run RetroArch/Xvfb through `tools/run_headless.sh`; it acquires an EMU token,
+  allocates a private X display and RetroArch system directory, and cleans up
+  only its own processes.
 - If a run is black, silent, or has no duration, treat it as failed and rerun
   after checking `retroarch_<tag>.log` and `xvfb_<tag>.log` in the selected
   `OUTDIR` (`videos/` by default for `record_movie.sh`).
 
-## Shared-Machine Exclusion (sim/render ↔ emulator)
+## Shared-Machine Resource Tokens and Profile Isolation
 
-This is a shared machine. The encoder passes and the emulator runs are both
-CPU-heavy, and the headless emulator is timing-sensitive, so overlapping them
-corrupts both (a slow sim starves the emulator's real-time capture; the
-emulator steals cores from the sim). They MUST be mutually exclusive:
+Independent profiles may run concurrently. Do not use process-name scans as a
+scheduler; the project tools coordinate their heavy stages through Linux
+`flock` tokens in `tools/resource_tokens.py`:
 
-- **Before starting a sim/render** (`tools/sim.py`,
-  `tools/render_analysis.py`), verify no emulator run is active.
-- **Before starting an emulator run** (`tools/record_movie.sh`,
-  `tools/run_headless.sh`, i.e. `retroarch` / `Xvfb`), verify no sim/render is
-  active.
-- If the other side is running, **wait for it to finish** before starting.
-  Do not start concurrently.
-- **Never kill another session's processes** — only stop what this session
-  started. Other sessions' emulator/sim runs are theirs to finish.
+- **CPU**: `SEGACD_CPU_TOKENS`, defaulting to affinity CPUs minus two.
+  `CBRSIM_WORKERS` is both the worker count and the exact CPU-token request.
+  Sim holds these tokens only for Extract, Palette, and Quantize; analysis
+  rendering and record-preview transcoding also honor them.
+- **GPU**: `SEGACD_GPU_TOKENS`, default 1. GPU palette/quantization and NVENC
+  muxing acquire it only while using the device.
+- **EMU**: `SEGACD_EMU_TOKENS`, default 2. Every `run_headless.sh` invocation
+  acquires one. The two-instance default is qualified by same-Replay H32/H40
+  FFV1/FLAC comparisons with exact decoded video, PCM, timestamps, packet
+  durations, and metadata.
+- **output stem**: one exclusive lock covers a complete profile pipeline. A
+  second process targeting the same `videos/<stem>` fails immediately rather
+  than sharing aliases, packed files, or recording paths.
 
-One check covers both sides:
+Use `tools/parallel_run.py` for a multi-profile local pipeline through the HUD
+gate. It divides CPU workers across jobs, keeps each sim tmpfs entry leased
+across stage boundaries, isolates failures, and writes per-profile logs plus a
+TSV summary. `--sequential` retains a reproducible comparison mode.
 
-```sh
-ps -eo pid,etimes,args | grep -v grep \
-  | grep -iE "sim\.py|render_analysis\.py|retroarch|Xvfb|record_movie|run_headless"
-```
+Xvfb normally allocates a free display with `-displayfd`; `--display :N` is an
+explicit diagnostic override and fails if that display is already active.
+RetroArch's system directory and generated configs are private to one run.
+tmpfs eviction, reservations, lease changes, and public alias replacement are
+serialized and atomic.
 
-Any match on the *other* kind of work means wait. This extends the sim-only
-coordination rule (previously in the `/sim` skill) to cover the emulator too.
+Never bypass these locks for a normal run, never kill another session's
+processes, and only stop processes started by the current session.
 
 ### Project Python environments
 

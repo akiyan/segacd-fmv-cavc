@@ -159,7 +159,8 @@ Before every `/sim`, perform these steps in this exact order:
    interpreted. This explanation is the user's preflight record of the run.
 2. Validate the profile with `tools/encode_config.py` and identify its exact
    `[output].directory`.
-3. Check the shared-machine exclusion rule below.
+3. Confirm the profile's output stem and let the built-in stem/resource locks
+   coordinate it with other jobs.
 4. Do not manually clean the simulation output directory. Let `sim.py` inspect
    its authenticated completed-artifact cache. It reuses only when source
    bytes, effective encoder/TOML settings, and the encoder `e` version match;
@@ -342,19 +343,14 @@ timeline links. Upload as unlisted, category 20. See
 
 ## Cautions
 
-- Shared machine: before starting sim/render, always check for other heavy
-  processes and wait. Do not run heavy jobs in parallel without coordination.
-
-```sh
-ps -eo pid,etimes,args | grep -E "sim\\.py|render_analysis\\.py" | grep -v grep
-```
-
-- If another user's simulation is running, wait until it finishes.
+- Sim and render acquire shared CPU/GPU tokens only around their heavy parallel
+  stages. `CBRSIM_WORKERS` controls both worker width and CPU-token demand.
+  Different stems may overlap; a duplicate `videos/<stem>` fails immediately.
+- For a multi-profile local run, use `tools/parallel_run.py`. Do not hand-start
+  commands that bypass its pipeline-wide stem lock or tmpfs lease handoff.
 - Never kill another session's process. Kill only jobs you started.
-- Other simulations can often be identified through env choices such as
-  `CBRSIM_EMIT_DEC`, and through their profile-specific
-  `videos/<stem>/tmp` working directory. Do not use a shared `tmp/sim` for
-  player decision output. See `[[shared-machine-sim-coordination]]`.
+- Keep every profile in its own `videos/<stem>/tmp` working directory. Do not
+  use a shared `tmp/sim` for player decision output.
 - The analysis layout is consolidated into:
   - `tools/layout_preview.py`: canonical layout
   - `tools/render_analysis.py`: render real data using that layout
@@ -363,6 +359,6 @@ ps -eo pid,etimes,args | grep -E "sim\\.py|render_analysis\\.py" | grep -v grep
 - Never set `CBRSIM_REUSE=1` manually for `/sim`. Completed-artifact reuse is
   automatic and authenticated; use `CBRSIM_FORCE_REENCODE=1` for an explicitly
   requested clean run.
-- `render_analysis.py` is heavy for 3000-frame PIL rendering. It uses `nproc-2`
-  parallelism. For long videos, run in the background or delegate to a forked
-  context to avoid filling the main conversation context.
+- `render_analysis.py` is heavy for 3000-frame PIL rendering. It uses the
+  granted CPU-token count. For long videos, run in the background or delegate
+  to a forked context to avoid filling the main conversation context.

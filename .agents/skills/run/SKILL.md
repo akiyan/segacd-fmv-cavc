@@ -7,13 +7,14 @@ description: >-
   complete HUD gate to be upload-capable, then render/upload the analysis and create/upload
   the boot-preserving square-pixel compilation. Use when the user invokes
   "$run", says "same as usual", or asks for /sim, /record, and /compilation as
-  one end-to-end job, including sequential batches.
+  one end-to-end job, including parallel profile batches.
 ---
 
 # run: Complete FMV Pipeline
 
-Take each source from inspection through both YouTube uploads. Finish and verify
-one source completely before starting the next source.
+Take each source from inspection through both YouTube uploads. Independent
+profiles may overlap through the local HUD gate; publication remains
+source-specific and proceeds only after that source passes its gates.
 
 Expected invocation:
 
@@ -80,12 +81,14 @@ would make public metadata materially wrong.
 Use one profile and one stem throughout sim, pack, record, and compilation.
 Never hand-copy different geometry or timing into a later stage.
 
-## Enforce Shared-Machine and CUDA Safety
+## Enforce Resource Tokens and CUDA Safety
 
-Before every sim, analysis render, pack/build, or emulator capture, run the
-shared-machine process check from `AGENTS.md`. Wait while the other kind of
-heavy work is active. Never overlap sim/render with an emulator capture, never
-run two captures together, and never kill another session's process.
+Use the CPU/GPU/EMU tokens and output-stem lock from `AGENTS.md`; do not
+schedule by process-name scans. For multiple existing profiles, prefer
+`tools/parallel_run.py --through hud`. It keeps one stem lock and tmpfs lease
+across sim, verified disc build, recording, and HUD extraction, assigns CPU
+workers per job, and lets an unrelated profile continue when one fails.
+Never bypass the locks or kill another session's process.
 
 Use the locked GPU Python environment without a system or legacy fallback:
 
@@ -328,9 +331,10 @@ returned URL.
 
 ## Failure and Resume Policy
 
-Stop before the next source whenever a stage fails. Preserve logs and evidence,
-identify the failing layer, fix it when the requested scope permits, and rerun
-the failed stage plus every downstream stage whose inputs changed.
+Stop downstream work for a source whenever its stage fails, without cancelling
+unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
+fix it when the requested scope permits, and rerun the failed stage plus every
+downstream stage whose inputs changed.
 
 An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. A `WARNING`
 remains upload-capable and must be reported. Do not create or upload either

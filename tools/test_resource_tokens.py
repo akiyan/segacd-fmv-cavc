@@ -32,6 +32,10 @@ class ResourceTokenTests(unittest.TestCase):
             second.release()
             first.release()
 
+    def test_default_emu_capacity_is_qualified_two(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(resource_tokens.resource_capacity("emu"), 2)
+
     def test_release_makes_slots_available(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp)):
             lease = resource_tokens.acquire_tokens("cpu", count=2)

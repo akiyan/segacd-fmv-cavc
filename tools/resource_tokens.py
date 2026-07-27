@@ -56,7 +56,7 @@ def resource_capacity(resource: str) -> int:
     defaults = {
         "cpu": max(1, available_cpu_count() - 2),
         "gpu": 1,
-        "emu": 1,
+        "emu": 2,
     }
     if resource not in env_names:
         raise ResourceTokenError(

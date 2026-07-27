@@ -131,6 +131,8 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
   `BODY.DAT`, off-disc `MOVIE.DAT`, and `palettes.bin`.
 - `tools/render_analysis.py`: materializes analysis PNGs, TSV, and video from a
   completed sim result.
+- `tools/parallel_run.py`: runs independent profile pipelines concurrently
+  through verified disc, lossless recording, and the local HUD gate.
 - `tools/layout_preview.py`: shared analysis layout and graph rendering.
 - `tools/physical_budget.py`: per-frame control/Prg ceilings and prefix ledger.
 - `tools/stream_schedule.py`: exact BODY routing and physical slot schedule.
@@ -145,6 +147,11 @@ derived videos use the managed tmpfs workspace behind `videos/`; native
 lossless emulator captures remain ordinary files. Per-frame codec timeline and
 playback HUD TSVs remain under `logs/`, with encoder and player versions in
 every filename.
+
+Heavy stages share CPU, GPU, and emulator tokens. Different profile stems may
+overlap, while the same `videos/<stem>` is rejected immediately. Xvfb displays,
+RetroArch system directories, build intermediates, tmpfs leases, and public
+aliases are isolated per run.
 
 ## Build targets
 
@@ -214,14 +221,13 @@ make check-tools CONFIG=configs/PROFILE.toml
 The Japanese Mega-CD BIOS is user-supplied and git-ignored:
 
 ```sh
-install -d -m 700 ~/.config/retroarch/system
-install -m 600 original/jp_mcd2_9212.bin \
-  ~/.config/retroarch/system/bios_CD_J.bin
+test -f original/jp_mcd2_9212.bin
 ```
 
 The recording harness defaults to
 `/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so`. `CORE`,
-`BIOS_IMAGE`, and `SYSTEM_DIR` override host-specific layouts.
+`BIOS_IMAGE`, and `SYSTEM_DIR` override host-specific layouts. Normally the
+harness copies the BIOS into a private per-run system directory.
 
 ## Build
 
@@ -248,6 +254,16 @@ Transient objects, disc staging, and direct-emulator scratch files live under
 `tmp/PROFILE/`. `HEADER.DAT` contains startup state, exact frame 0, boot VRAM
 prefetch, and the PrgBuf prebuffer. `BODY.DAT` starts at frame 1 and is read
 continuously.
+
+Run multiple prepared profiles concurrently through the local HUD gate with:
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
+  configs/PROFILE_A.toml configs/PROFILE_B.toml
+```
+
+Use `--sequential` for an A/B timing or determinism baseline. Public timeline,
+Gist, and upload stages remain interactive.
 
 ## Recording
 
@@ -425,6 +441,8 @@ timed-work valueとgraph maximumから除外します。
 - `tools/pack_stream.py`: decisionを検証し、`HEADER.DAT`、`BODY.DAT`、ディスク外の
   `MOVIE.DAT`、`palettes.bin` を書きます。
 - `tools/render_analysis.py`: completed sim resultからanalysis PNG、TSV、videoを生成します。
+- `tools/parallel_run.py`: 独立profileをverified disc、lossless recording、local HUD
+  gateまで並列実行します。
 - `tools/layout_preview.py`: 共通analysis layoutとgraph rendering。
 - `tools/physical_budget.py`: frame別control/Prg ceilingとprefix ledger。
 - `tools/stream_schedule.py`: 正確なBODY routingと物理slot schedule。
@@ -436,6 +454,10 @@ completed sim artifactはsource byte、effective setting、outputに影響する
 tmpfs workspaceを使い、native lossless emulator captureは通常fileとして保持します。
 Frame別codec timeline TSVとplayback HUD TSVは、encoder/player versionをfilenameへ
 入れて`logs/`に保持します。
+
+heavy stageはCPU、GPU、emulator tokenを共有します。異なるprofile stemは重ねられますが、
+同じ `videos/<stem>` は即時拒否します。Xvfb display、RetroArch system directory、
+build intermediate、tmpfs lease、public aliasはrunごとに分離します。
 
 ## Build target
 
@@ -504,14 +526,13 @@ make check-tools CONFIG=configs/PROFILE.toml
 Japanese Mega-CD BIOSはuser suppliedかつgit-ignoredです。
 
 ```sh
-install -d -m 700 ~/.config/retroarch/system
-install -m 600 original/jp_mcd2_9212.bin \
-  ~/.config/retroarch/system/bios_CD_J.bin
+test -f original/jp_mcd2_9212.bin
 ```
 
 recording harnessのdefault coreは
 `/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so` です。
-host固有layoutは `CORE`、`BIOS_IMAGE`、`SYSTEM_DIR` で上書きします。
+host固有layoutは `CORE`、`BIOS_IMAGE`、`SYSTEM_DIR` で上書きします。通常はharnessが
+BIOSをrunごとのprivate system directoryへcopyします。
 
 ## Build
 
@@ -537,6 +558,16 @@ out/PROFILE.cue
 transient object、disc staging、direct-emulator scratch fileは `tmp/PROFILE/` に置きます。
 `HEADER.DAT` はstartup state、正確なframe 0、boot VRAM prefetch、PrgBuf prebufferを
 持ちます。`BODY.DAT` はframe 1から始まり、連続して読みます。
+
+準備済みの複数profileをlocal HUD gateまで並列実行します。
+
+```sh
+tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
+  configs/PROFILE_A.toml configs/PROFILE_B.toml
+```
+
+A/B timingまたはdeterminism baselineには `--sequential` を使います。public timeline、
+Gist、upload stageは対話的に実行します。
 
 ## Recording
 
