@@ -12,6 +12,14 @@ back toward the old game-specific port unless the user explicitly asks for it.
 - The priority is that the explanation is understandable, not that it uses the
   most formal vocabulary.
 
+## Chat Media Links
+
+- In Codex chat responses, never use inline embedding syntax for video or
+  audio, including Markdown image syntax such as `![...](...)`.
+- Present local media artifacts and uploaded video or audio as ordinary
+  clickable Markdown links only. This applies even when the client supports
+  inline playback, because embedded media can make the Codex app unstable.
+
 ## Terminology and Intent Checks
 
 This project has several similarly named objects whose substitution changes the
