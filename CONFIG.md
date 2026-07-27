@@ -115,7 +115,7 @@ chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 | `audio_fd` | header offset 58 | cfg / pack / sp | RF5C164 frequency delta derived from chunk size and playback cadence. |
 | ADPCM table image | 8,800 B in five sectors | pack / sp | Unchanged lookup bytes: next-index at Sub PRG `0x0C000`, output LUT at `0x0CB20`, signed deltas in both Word-RAM banks; existing sector padding carries the extension. |
 | PCM work buffer | 1,536 B at Sub PRG `0x08000..0x085FF` | sp | Reconstructed chunk; the generated Word-RAM tail keeps an equally sized non-allocatable A/B guard. |
-| Sub preload extension | 216 B staged at Sub PRG `0x7D260` | make / pack / sp | Position-fixed boot-only ADPCM install, routing-prepare, and queue-initialization routines in existing five-sector padding. The qualified first 88 B execute at `0x76800`; with routing up to 8 KiB the second entry executes in place at `0x7D2B8` after prebuffer, while longer-route builds copy the complete extension and use `0x76858`. Size/address/hash and overlap are checked before assembly. |
+| Sub preload extension | 324 B staged at Sub PRG `0x7D260` | make / pack / sp | Position-fixed boot ADPCM install, routing preparation, queue initialization, and a 68 B runtime DEBUG helper in existing five-sector padding. The qualified first 88 B execute at `0x76800`; with routing up to 8 KiB the second entry executes in place at `0x7D2B8` after prebuffer, while longer-route builds copy the complete extension and use `0x76858`. The second entry copies the helper to persistent Sub PRG `0x0CC20..0x0CC63`; it consumes neither PrgBuf nor APPLY. Size/address/hash and overlap are checked before assembly. |
 | `SYNC_LEAD` | `0x3000`, 12,288 B | sp | Initial write-ahead lead. |
 | startup prefetch request | 30 frames | cfg / pack / sp | Decoded PCM prefix, clamped by wave-RAM capacity and chunk size. |
 | `SYNC_MIN` | `0` | sp | Lower accepted lead. |
@@ -367,7 +367,8 @@ copies its qualified 88-byte entry from the five-sector stage to the unused
 timed-ring tail. The routing entry executes after prebuffer from the protected
 stage tail when the route is at most 8 KiB; longer-route builds copy the
 complete extension before staging routing. That entry also initializes the
-ring, APPLY, and frame-0 queue state before timed playback. Startup
+ring, APPLY, and frame-0 queue state and installs the 68-byte runtime DEBUG
+helper after the persistent ADPCM tables before timed playback. Startup
 shows four hexadecimal digits containing safe PrgBuf
 preload KiB; a failure shows `BADx`.
 
@@ -500,7 +501,7 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 | `audio_fd` | header offset 58 | cfg / pack / sp | chunk sizeとplayback cadenceから導出するRF5C164 frequency delta。 |
 | ADPCM table image | 5 sectors内の8,800 B | pack / sp | 変更しないlookup byte。next-indexはSub PRG `0x0C000`、output LUTは`0x0CB20`、signed deltaは両Word-RAM bank。既存sector paddingにextensionを置く。 |
 | PCM work buffer | Sub PRG `0x08000..0x085FF`の1,536 B | sp | 再構築chunk。Generated Word-RAM tailは同じ大きさの割当不可A/B guardを保持。 |
-| Sub preload extension | Sub PRG `0x7D260`へstageする216 B | make / pack / sp | 既存5-sector padding内のposition-fixed boot-only ADPCM install・routing-prepare・queue-initialization routine。Qualified済み先頭88 Bは`0x76800`で実行する。routingが8 KiB以下ならprebuffer後に第2入口を`0x7D2B8`でそのまま実行し、長いroutingのbuildはextension全体をcopyして`0x76858`を使う。assemble前にsize/address/hashとoverlapを検査。 |
+| Sub preload extension | Sub PRG `0x7D260`へstageする324 B | make / pack / sp | 既存5-sector padding内のposition-fixed boot ADPCM install・routing preparation・queue initializationと68 Bのruntime DEBUG helper。Qualified済み先頭88 Bは`0x76800`で実行する。routingが8 KiB以下ならprebuffer後に第2入口を`0x7D2B8`でそのまま実行し、長いroutingのbuildはextension全体をcopyして`0x76858`を使う。第2入口はhelperをpersistent Sub PRG `0x0CC20..0x0CC63`へcopyし、PrgBufもAPPLYも消費しない。assemble前にsize/address/hashとoverlapを検査する。 |
 | `SYNC_LEAD` | `0x3000`、12,288 B | sp | 初期write-ahead lead。 |
 | startup prefetch request | 30 frames | cfg / pack / sp | wave-RAM容量とchunk sizeでclampするdecoded PCM prefix。 |
 | `SYNC_MIN` | `0` | sp | 許容lead下限。 |
@@ -736,7 +737,8 @@ linker outputは4,096 byte以内を維持し、BIOS boot imageはそのresident 
 へ配置し、startupがqualified済み88-byte入口を5-sector stageから未使用timed-ring
 tailへcopyします。routingが8 KiB以下ならrouting入口はprebuffer後に保護済みstage
 tailから実行し、長いroutingのbuildはrouting stage前にextension全体をcopyします。
-同じ入口がtimed playback前にring、APPLY、frame-0 queue stateも初期化します。startupは安全に受信済みのPrgBuf preload
+同じ入口がtimed playback前にring、APPLY、frame-0 queue stateを初期化し、
+persistent ADPCM table直後へ68-byte runtime DEBUG helperもinstallします。startupは安全に受信済みのPrgBuf preload
 KiBを4桁hexで表示し、failureは`BADx`を表示します。
 
 ## DEBUG HUD limit

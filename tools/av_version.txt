@@ -15,8 +15,9 @@
 #        Q/V/O/E row and appends G/K on row 1. Q and G now use separate Word-RAM
 #        status words, so one full recording captures signed PrgBuf minimum,
 #        flip phase, Sub pump gap, APPLY back-pressure, and MSF-gap cause
-#        together. Release playback and encoded image-quality settings remain
-#        unchanged.
+#        together. A 68-byte HEADER-preloaded runtime helper keeps the 15 fps
+#        resident Sub image within 4 KiB without reducing PrgBuf or APPLY.
+#        Release playback and encoded image-quality settings remain unchanged.
 #   e139: Make fixed-cadence CD time a construction constraint rather than a
 #         whole-movie average. Every online control/Prg prefix now fits both
 #         the routing-byte useful-sector ceiling and the fps-derived cumulative

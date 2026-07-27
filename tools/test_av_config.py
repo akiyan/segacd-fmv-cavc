@@ -28,6 +28,17 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.ADPCM_OUTPUT_LUT_END, 0x0CC20)
         self.assertEqual(av_config.SUB_BOOT_EXTENSION_EXEC_BASE, 0x76800)
         self.assertEqual(av_config.SUB_BOOT_EXTENSION_MAX_BYTES, 0x05A0)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_BASE, 0x0CC20)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_IMAGE_OFFSET, 0x0100)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_SAMPLE_OFFSET, 0x00)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_RESET_OFFSET, 0x20)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_FRAME_START_OFFSET, 0x2C)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_GET_OFFSET, 0x38)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_LAST_OFFSET, 0x40)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_MAX_OFFSET, 0x42)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_BYTES, 0x44)
+        self.assertEqual(av_config.SUB_RUNTIME_DIAG_END, 0x0CC64)
+        self.assertEqual(av_config.PRG_BUF_BASE, 0x0D000)
 
     def test_full_reclaimed_ring_geometry(self) -> None:
         self.assertEqual(av_config.RING_SIZE_KB, 424)

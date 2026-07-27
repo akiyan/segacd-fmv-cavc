@@ -89,6 +89,53 @@ if (
 ):
     sys.exit(
         "check_player_ring: the qualified 88-byte ADPCM boot entry changed")
+extension_include_text = args.extension_constants.read_text()
+runtime_diag_contract = {
+    "BASE": av_config.SUB_RUNTIME_DIAG_BASE,
+    "SAMPLE": (
+        av_config.SUB_RUNTIME_DIAG_BASE
+        + av_config.SUB_RUNTIME_DIAG_SAMPLE_OFFSET),
+    "RESET": (
+        av_config.SUB_RUNTIME_DIAG_BASE
+        + av_config.SUB_RUNTIME_DIAG_RESET_OFFSET),
+    "FRAME_START": (
+        av_config.SUB_RUNTIME_DIAG_BASE
+        + av_config.SUB_RUNTIME_DIAG_FRAME_START_OFFSET),
+    "GET": (
+        av_config.SUB_RUNTIME_DIAG_BASE
+        + av_config.SUB_RUNTIME_DIAG_GET_OFFSET),
+    "LAST": (
+        av_config.SUB_RUNTIME_DIAG_BASE
+        + av_config.SUB_RUNTIME_DIAG_LAST_OFFSET),
+    "MAX": (
+        av_config.SUB_RUNTIME_DIAG_BASE
+        + av_config.SUB_RUNTIME_DIAG_MAX_OFFSET),
+    "BYTES": av_config.SUB_RUNTIME_DIAG_BYTES,
+}
+for name, expected in runtime_diag_contract.items():
+    actual = equ(
+        extension_include_text, f"SP_RUNTIME_DIAG_{name}",
+        args.extension_constants)
+    if actual != expected:
+        sys.exit(
+            "check_player_ring: generated runtime diagnostic "
+            f"{name}={actual:#x} != config {expected:#x}")
+runtime_image_end = (
+    av_config.SUB_RUNTIME_DIAG_IMAGE_OFFSET
+    + av_config.SUB_RUNTIME_DIAG_BYTES)
+if len(extension_bytes) < runtime_image_end:
+    sys.exit(
+        "check_player_ring: Sub extension does not contain the complete "
+        "runtime diagnostic image")
+runtime_image = extension_bytes[
+    av_config.SUB_RUNTIME_DIAG_IMAGE_OFFSET:runtime_image_end]
+if not any(runtime_image):
+    sys.exit("check_player_ring: runtime diagnostic image is empty")
+if runtime_image[
+        av_config.SUB_RUNTIME_DIAG_LAST_OFFSET:
+        av_config.SUB_RUNTIME_DIAG_BYTES] != b"\0\0\0\0":
+    sys.exit(
+        "check_player_ring: runtime diagnostic state words are not zero")
 
 
 def pc(name: str) -> int:
@@ -512,12 +559,63 @@ for token in (
         "move.l\t#RING_BASE, (a4)+",
         "move.l\t#APPLY_BASE, (a4)+",
         "move.w\t#1, 4(a5)",
+        "lea\truntime_diag_image(pc), a0",
+        "lea\tSUB_RUNTIME_DIAG_BASE, a1",
+        "moveq\t#SUB_RUNTIME_DIAG_BYTES/4-1, d0",
+        ".org SUB_RUNTIME_DIAG_IMAGE_OFFSET",
+        "runtime_diag_sample:",
+        "runtime_diag_reset:",
+        "runtime_diag_frame_start:",
+        "runtime_diag_get:",
+        "runtime_diag_last:",
+        "runtime_diag_max:",
 ):
     if token not in sp_ext_text:
         sys.exit(f"check_player_ring: Sub boot extension is missing {token!r}")
 if "rt_validate:" in sp_text or "rt_copy:" in sp_text:
     sys.exit(
         "check_player_ring: boot-only routing preparation returned to the "
+        "resident Sub image")
+for name, expected in (
+        ("SUB_RUNTIME_DIAG_BASE", av_config.SUB_RUNTIME_DIAG_BASE),
+        ("SUB_RUNTIME_DIAG_IMAGE_OFFSET",
+         av_config.SUB_RUNTIME_DIAG_IMAGE_OFFSET),
+        ("SUB_RUNTIME_DIAG_SAMPLE_OFF",
+         av_config.SUB_RUNTIME_DIAG_SAMPLE_OFFSET),
+        ("SUB_RUNTIME_DIAG_RESET_OFF",
+         av_config.SUB_RUNTIME_DIAG_RESET_OFFSET),
+        ("SUB_RUNTIME_DIAG_FRAME_OFF",
+         av_config.SUB_RUNTIME_DIAG_FRAME_START_OFFSET),
+        ("SUB_RUNTIME_DIAG_GET_OFF",
+         av_config.SUB_RUNTIME_DIAG_GET_OFFSET),
+        ("SUB_RUNTIME_DIAG_LAST_OFF",
+         av_config.SUB_RUNTIME_DIAG_LAST_OFFSET),
+        ("SUB_RUNTIME_DIAG_MAX_OFF",
+         av_config.SUB_RUNTIME_DIAG_MAX_OFFSET),
+        ("SUB_RUNTIME_DIAG_BYTES", av_config.SUB_RUNTIME_DIAG_BYTES)):
+    if equ(sp_ext_text, name, SP_EXT) != expected:
+        sys.exit(
+            f"check_player_ring: Sub runtime diagnostic {name} differs "
+            "from config")
+if av_config.SUB_RUNTIME_DIAG_BASE != av_config.ADPCM_OUTPUT_LUT_END:
+    sys.exit(
+        "check_player_ring: runtime diagnostic does not start after the "
+        "persistent ADPCM tables")
+if av_config.SUB_RUNTIME_DIAG_END > av_config.PRG_BUF_BASE:
+    sys.exit(
+        "check_player_ring: runtime diagnostic overlaps PrgBuf")
+for token in (
+        "bsr.w\tSP_RUNTIME_DIAG_SAMPLE",
+        "bsr.w\tSP_RUNTIME_DIAG_RESET",
+        "bsr.w\tSP_RUNTIME_DIAG_FRAME_START",
+        "bsr.w\tSP_RUNTIME_DIAG_GET",
+):
+    if token not in sp_text:
+        sys.exit(
+            f"check_player_ring: resident Sub diagnostic is missing {token!r}")
+if "poll_last_tick:" in sp_text or "poll_max_gap:" in sp_text:
+    sys.exit(
+        "check_player_ring: runtime diagnostic state returned to the "
         "resident Sub image")
 require(
     make_text,
@@ -551,5 +649,5 @@ if ip_max_seg != av_config.PALTAB_MAX_SEG:
 
 print(
     "check_player_ring: OK  PrgBuf, APPLY, PRG PCM/hot ADPCM, "
-    "HEADER-preloaded extension, Word delta, DicBuf, palette and "
+    "HEADER-preloaded boot/runtime extension, Word delta, DicBuf, palette and "
     "route-aware pump contracts")

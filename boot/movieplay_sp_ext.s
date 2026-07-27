@@ -3,9 +3,11 @@
  *
  * The packer stores these bytes in the unused padding after the 8,800-byte
  * ADPCM table. The resident base copies them from the five-sector HEADER stage
- * to the unused timed-ring tail. These entries run only during boot; frame-0
- * staging may overwrite their bytes after they return. a2 supplies the
- * profile-specific Word-RAM signed-delta destination.
+ * to the unused timed-ring tail. The two entry points run only during boot;
+ * frame-0 staging may overwrite their bytes after they return. The second
+ * entry also installs a small position-independent DEBUG helper in the unused
+ * persistent hot-table tail. a2 supplies the profile-specific Word-RAM
+ * signed-delta destination.
  */
 
 .equ MEMMODE,                 0x00FF8002
@@ -27,6 +29,16 @@
 .equ ROUTING_TOTAL_SHIFT,     3
 .equ ROUTING_MAX_ENTRY,       0x002D
 .equ ROUTING_BANK_COPIES,     2
+.equ SUB_RUNTIME_DIAG_BASE,         0x0000CC20
+.equ SUB_RUNTIME_DIAG_IMAGE_OFFSET, 0x0100
+.equ SUB_RUNTIME_DIAG_SAMPLE_OFF,   0x0000
+.equ SUB_RUNTIME_DIAG_RESET_OFF,    0x0020
+.equ SUB_RUNTIME_DIAG_FRAME_OFF,    0x002C
+.equ SUB_RUNTIME_DIAG_GET_OFF,      0x0038
+.equ SUB_RUNTIME_DIAG_LAST_OFF,     0x0040
+.equ SUB_RUNTIME_DIAG_MAX_OFF,      0x0042
+.equ SUB_RUNTIME_DIAG_BYTES,        0x0044
+.equ GA_STOPWATCH_ABS_W,            0xFFFF800C
 
 .text
 .global adpcm_boot_copy
@@ -83,18 +95,18 @@ routing_prepare:
 	movea.l	a0, a2
 	movea.l	a1, a3
 	tst.b	(a0)
-	bne.s	routing_invalid
+	bne.w	routing_invalid
 	subq.w	#1, d7
 1:
 	moveq	#0, d0
 	move.b	(a0)+, d0
 	cmpi.b	#ROUTING_MAX_ENTRY, d0
-	bhi.s	routing_invalid
+	bhi.w	routing_invalid
 	move.w	d0, d2
 	andi.w	#ROUTING_CTRL_MASK, d0
 	lsr.w	#ROUTING_TOTAL_SHIFT, d2
 	cmp.w	d2, d0
-	bhi.s	routing_invalid
+	bhi.w	routing_invalid
 	dbra	d7, 1b
 
 	moveq	#ROUTING_BANK_COPIES-1, d1
@@ -124,12 +136,62 @@ routing_prepare:
 	move.w	#1, (a4)
 	clr.w	(a5)
 	move.w	#1, 4(a5)
+
+	/* Install the position-independent runtime diagnostic after the ADPCM
+	   tables. This fixed hot-table tail survives startup and timed reads, so
+	   slow-cadence DEBUG builds do not have to enlarge the BIOS-loaded base
+	   image or consume PrgBuf. */
+	lea	runtime_diag_image(pc), a0
+	lea	SUB_RUNTIME_DIAG_BASE, a1
+	moveq	#SUB_RUNTIME_DIAG_BYTES/4-1, d0
+1:
+	move.l	(a0)+, d1
+	move.l	d1, (a1)+
+	dbra	d0, 1b
 	moveq	#0, d0
 	rts
 
 routing_invalid:
 	moveq	#1, d0
 	rts
+
+	/* This image is copied to SUB_RUNTIME_DIAG_BASE. Keep every public entry
+	   at its asserted offset so the generated resident include can use short
+	   BSR.W calls without depending on extension load location. */
+	.org SUB_RUNTIME_DIAG_IMAGE_OFFSET
+runtime_diag_image:
+runtime_diag_sample:
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	sub.w	(SUB_RUNTIME_DIAG_BASE+SUB_RUNTIME_DIAG_LAST_OFF).l, d0
+	andi.w	#0x0FFF, d0
+	cmp.w	(SUB_RUNTIME_DIAG_BASE+SUB_RUNTIME_DIAG_MAX_OFF).l, d0
+	bls.s	1f
+	move.w	d0, (SUB_RUNTIME_DIAG_BASE+SUB_RUNTIME_DIAG_MAX_OFF).l
+1:
+	rts
+
+	.org SUB_RUNTIME_DIAG_IMAGE_OFFSET+SUB_RUNTIME_DIAG_RESET_OFF
+runtime_diag_reset:
+	move.w	(GA_STOPWATCH_ABS_W).w, d0
+	move.w	d0, (SUB_RUNTIME_DIAG_BASE+SUB_RUNTIME_DIAG_LAST_OFF).l
+	rts
+
+	.org SUB_RUNTIME_DIAG_IMAGE_OFFSET+SUB_RUNTIME_DIAG_FRAME_OFF
+runtime_diag_frame_start:
+	bsr.s	runtime_diag_reset
+	clr.w	(SUB_RUNTIME_DIAG_BASE+SUB_RUNTIME_DIAG_MAX_OFF).l
+	rts
+
+	.org SUB_RUNTIME_DIAG_IMAGE_OFFSET+SUB_RUNTIME_DIAG_GET_OFF
+runtime_diag_get:
+	move.w	(SUB_RUNTIME_DIAG_BASE+SUB_RUNTIME_DIAG_MAX_OFF).l, d0
+	rts
+
+	.org SUB_RUNTIME_DIAG_IMAGE_OFFSET+SUB_RUNTIME_DIAG_LAST_OFF
+runtime_diag_last:
+	.word	0
+runtime_diag_max:
+	.word	0
 
 	.align 4
 adpcm_boot_copy_end:
