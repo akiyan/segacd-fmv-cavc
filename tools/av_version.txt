@@ -11,6 +11,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p101: Make player-only frame -1 physically untimed. Hand the completed
+#         frame-0 bank to Main with the timed BODY suffix stopped, then use the
+#         original CMD_STREAM clear after the visible frame-0 flip to start
+#         both PCM and the one continuous timed read. Pre-drain frame 1 behind
+#         the ordinary CMD_SWAP wait. This removes unmodeled startup producer
+#         lead without changing TTRC bytes, sim decisions, or image settings.
 #   e141/p100: Advance the stream to TTRC v17. Move decoded startup PCM and
 #        exact frame-0 control/pattern sectors from HEADER.DAT into a finite
 #        untimed BODY arm while keeping every timed BODY byte and sim decision
@@ -910,4 +916,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260727
 e=141
-p=100
+p=101

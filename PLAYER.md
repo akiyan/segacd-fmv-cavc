@@ -181,6 +181,11 @@ exchange still uses `STAT_BOOT_STAGE` plus `COMCMD1`, because Main must copy
 palette, dictionary, and sidecar data before Sub reuses that physical bank.
 There is no separate frame-0/BODY-start handshake.
 
+`STAT_READY` exposes the completed frame-0 bank while the timed CD reader is
+still stopped. Clearing the original command after the visible frame-0 flip is
+both the acknowledgement and the exact physical start of PCM and timed BODY
+service. Frame -1 therefore creates no unplanned PrgBuf lead.
+
 ```mermaid
 sequenceDiagram
     participant CD as CD / CDC
@@ -197,18 +202,19 @@ sequenceDiagram
     CD-->>S: Finish static HEADER
     CD-->>S: Finite BODY arm (PCM + frame 0)
     S->>S: Stop arm read and expand frame 0
-    CD-->>S: Start continuous timed suffix; pre-drain frame 1
     S->>W: Exchange completed frame-0 bank
     S-->>M: STAT_READY
-    par Main prepares first visible frame
-        M->>V: Show black frame -1 (DEBUG F=FFFF)
-        M->>V: Build and flip frame 0 (F=0000)
-    and Sub preserves continuous delivery
-        CD-->>S: Pump timed BODY into PRG-RAM
-    end
+    Note over S,CD: Timed suffix remains stopped
+    M->>V: Show black frame -1 (DEBUG F=FFFF)
+    M->>V: Build and flip frame 0 (F=0000)
     M->>S: Clear the original CMD_STREAM
-    S->>S: Start PCM and playback clock
+    S->>S: Start PCM and timed playback clock
     S-->>M: Clear STAT_READY
+    par Sub prepares frame 1
+        CD-->>S: Start continuous timed suffix; pre-drain frame 1
+    and Main waits through the normal handoff
+        M->>S: CMD_SWAP for frame 1
+    end
 ```
 
 Frame -1 is a player/HUD state only. It does not add a sim frame, a control
@@ -470,6 +476,11 @@ ownership交換には引き続き `STAT_BOOT_STAGE` と `COMCMD1` を使いま�
 bankを再利用する前に、Mainがpalette、dictionary、sidecar dataをcopyする必要がある
 ためです。frame-0/BODY-start専用の2個目のhandshakeはありません。
 
+`STAT_READY` は完成したframe-0 bankを公開しますが、この時点ではtimed CD readerを
+停止したままにします。frame 0を実際にflipした後で元のcommandをclearする操作が、
+acknowledgementであると同時にPCMとtimed BODY serviceの正確な物理開始点になります。
+したがってframe -1は計画外のPrgBuf先行量を作りません。
+
 ```mermaid
 sequenceDiagram
     participant CD as CD / CDC
@@ -486,18 +497,19 @@ sequenceDiagram
     CD-->>S: static HEADERの残り
     CD-->>S: finite BODY arm（PCM + frame 0）
     S->>S: arm readを停止しframe 0を展開
-    CD-->>S: continuous timed suffix開始、frame 1先読み
     S->>W: completed frame-0 bankを交換
     S-->>M: STAT_READY
-    par Mainが最初の表示frameを準備
-        M->>V: black frame -1を表示（DEBUG F=FFFF）
-        M->>V: frame 0を構築・flip（F=0000）
-    and Subがcontinuous deliveryを維持
-        CD-->>S: timed BODYをPRG-RAMへpump
-    end
+    Note over S,CD: timed suffixは停止したまま
+    M->>V: black frame -1を表示（DEBUG F=FFFF）
+    M->>V: frame 0を構築・flip（F=0000）
     M->>S: 元のCMD_STREAMをclear
-    S->>S: PCMとplayback clockを開始
+    S->>S: PCMとtimed playback clockを開始
     S-->>M: STAT_READYをclear
+    par Subがframe 1を準備
+        CD-->>S: continuous timed suffixを開始しframe 1を先読み
+    and Mainが通常handoffで待つ
+        M->>S: frame 1のCMD_SWAP
+    end
 ```
 
 frame -1はplayer/HUDだけのstateです。sim frame、control block、routing entry、

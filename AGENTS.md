@@ -301,6 +301,10 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 
 - Treat the timed BODY read as an absolute 75-sector/s physical service clock
   at every point in playback. CD 1x is not a whole-movie average budget.
+- Keep the player-only frame -1 outside that clock. With no simulated frame -1,
+  the timed BODY suffix must remain stopped until the visible frame-0 flip;
+  pumping future sectors during frame -1 creates unmodeled producer lead even
+  when the displayed sentinel itself is correct.
 - Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
   display deadline, including only startup lead that the model explicitly
   proves. A routing-table slot limit is a format capacity, not proof that the

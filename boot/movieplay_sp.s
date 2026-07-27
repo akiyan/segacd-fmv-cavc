@@ -711,25 +711,43 @@ arm_audio_lp:
 	bsr	expand_frame
 	clr.w	f0_expand
 
-	/* Start one continuous read for the timed BODY suffix and pre-drain frame 1
-	   before handing frame 0 to Main. After the bank exchange, Sub can keep
-	   pumping into PRG-RAM while Main builds frame 0 from the other bank. */
+	/* Initialize the logical timed state while the CD remains stopped.  The
+	   frame-0 bank must reach Main before any timed BODY sector can arrive. */
 .ifdef DEBUG_PRGBUF_Q
 	PC_MOVE_W h_prebuf_pat+2, PC_PREBUF_PAT, d0
 	move.w	d0, ring_level
 .endif
 	move.w	#1, drain_frame
+	move.l	#RING_BASE, ring_head
+
+frame0_handoff:
+	/* One CMD_STREAM command spans startup, but its clear edge is the physical
+	   timed-start boundary. Hand frame 0 to Main with the suffix still stopped;
+	   Main shows F=FFFF, builds and flips F=0000, then clears CMD_STREAM. */
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+	move.w	#STAT_READY, (COMSTAT0).l
+frame0_ready_wait:
+	tst.w	(COMCMD0).l
+	bne.s	frame0_ready_wait
+	bsr	pcm_on
+	move.w	#0, (COMSTAT0).l
+
+timed_suffix_start:
+	/* The frame-0 flip has happened. Start the one continuous timed read now,
+	   then pre-drain frame 1 while Main displays frame 0 and waits through the
+	   ordinary CMD_SWAP handshake. */
 .ifdef PLAYER_SPECIALIZED
 .if PC_FRAMES < 2
-	bra	stream_armed
+	bra	timed_suffix_armed
 .endif
 .else
 	cmpi.w	#2, h_frames
-	blo	stream_armed
+	blo	timed_suffix_armed
 .endif
 .ifndef PLAYER_SPECIALIZED
 	tst.l	body_total
-	beq	stream_armed
+	beq	timed_suffix_armed
 .endif
 	moveq	#0, d2
 	PC_MOVE_W h_body_arm_sec, PC_BODY_ARM_SEC, d2
@@ -737,7 +755,7 @@ arm_audio_lp:
 	add.l	d2, d0
 	move.l	body_total, d1
 	sub.l	d2, d1
-	beq	stream_armed
+	beq	timed_suffix_armed
 	clr.l	prev_msf
 	clr.l	base_msf
 	bsr	issue_file_readn
@@ -745,23 +763,7 @@ arm_frame1:
 	bsr	pump1_core
 	cmpi.w	#2, drain_frame
 	blo	arm_frame1
-stream_armed:
-	move.l	#RING_BASE, ring_head
-	/* One CMD_STREAM handshake now owns the whole arm. Main receives the complete
-	   frame-0 bank, shows DEBUG F=FFFF while building it, flips F=0000, then
-	   clears CMD_STREAM. Keep the continuous CD read serviced while Main is
-	   genuinely busy, but check the command edge before every future-data pump. */
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	move.w	#STAT_READY, (COMSTAT0).l
-1:
-	tst.w	(COMCMD0).l
-	beq.s	2f
-	bsr	pump_poll_core
-	bra.s	1b
-2:
-	bsr	pcm_on
-	move.w	#0, (COMSTAT0).l
+timed_suffix_armed:
 .equ ISO_HOLD_F0, 0			/* ISO診断: frame0 表示直後に静止(frame0単体の健全性確認) */
 .if ISO_HOLD_F0
 f0h1:

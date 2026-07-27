@@ -149,10 +149,12 @@ packed bytes. The 24–30 fps specialized path omits that counter and call.
 ## CD pump
 
 Startup reads static HEADER through PREBUFFER, reads the finite untimed BODY
-arm, and expands frame 0. Sub then starts one continuous timed BODY read at
-frame 1, pre-drains frame 1, and keeps pumping while Main builds frame 0 from
-the other Word-RAM bank. Timed BODY delivers 75 sectors per second, so Sub
-drains ready sectors throughout frame expansion and idle time.
+arm, expands frame 0, and hands it to Main while the timed reader remains
+stopped. After Main displays frame 0, the original `CMD_STREAM` clear edge
+starts one continuous timed BODY read at frame 1. Sub pre-drains frame 1 while
+Main displays frame 0 and waits through the ordinary `CMD_SWAP`. Timed BODY
+delivers 75 sectors per second, so Sub drains ready sectors throughout timed
+frame expansion and idle time.
 
 Back-pressure depends on the next sector's destination:
 
@@ -170,7 +172,7 @@ Back-pressure depends on the next sector's destination:
 | `FRAME_SECTORS` | 5 useful sectors | pack / sp | Maximum control + payload represented by one routing byte. |
 | `HEADER_SECTORS` | 1 metadata sector | pack / sp | Fixed header sector before BOOT_STAGE and other boot regions. |
 | boot-stage read boundary | after metadata + BOOT_STAGE + DicBuf | sp | Stop before the Main handoff; restart `HEADER.DAT` at the exact first unread sector. |
-| BODY arm boundary | audio preload + frame-0 control + frame-0 patterns | pack / sp | Read exactly this untimed prefix, stop before frame-0 expansion, then start the continuous timed suffix. |
+| BODY arm boundary | audio preload + frame-0 control + frame-0 patterns | pack / sp | Read exactly this untimed prefix and stop before frame-0 expansion; start the continuous timed suffix only after frame 0 is visible. |
 | Word-RAM swap completion | DMNA bit 1 | sp | Hardware busy flag is polled until the 1M bank switch completes. |
 
 `FEATURE_FIXED_N` makes header `vsync_n` authoritative. Main displays every N
@@ -559,10 +561,11 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 ## CD pump
 
 startupはstatic HEADERからPREBUFFERまでを読み、有限でuntimedなBODY armを読んで
-frame 0を展開します。次にframe 1を起点とするtimed BODYへ1回の連続readを開始し、
-frame 1を先読みします。Mainが反対側Word-RAM bankからframe 0を構築している間も
-Subはpumpを続けます。Timed BODYは毎秒75 sectorを届けるため、Subはframe展開中と
-idle中の両方でready sectorをdrainします。
+frame 0を展開し、timed readerを停止したままMainへ渡します。Mainがframe 0を表示した
+後、元の `CMD_STREAM` をclearするedgeでframe 1を起点とするtimed BODYの連続readを
+開始します。SubはMainがframe 0を表示し、通常の `CMD_SWAP` で待っている間にframe 1を
+先読みします。Timed BODYは毎秒75 sectorを届けるため、Subはtimed frame展開中とidle中
+の両方でready sectorをdrainします。
 
 back-pressureは次sectorの行き先で決まります。
 
@@ -580,7 +583,7 @@ back-pressureは次sectorの行き先で決まります。
 | `FRAME_SECTORS` | 有効5 sectors | pack / sp | 1 routing byteが表すcontrol + payload上限。 |
 | `HEADER_SECTORS` | metadata 1 sector | pack / sp | BOOT_STAGEなどのboot領域より前にある固定header sector。 |
 | boot-stage read境界 | metadata + BOOT_STAGE + DicBufの直後 | sp | Main handoff前に停止し、正確な最初の未読sectorから `HEADER.DAT` を再開する。 |
-| BODY arm境界 | audio preload + frame-0 control + frame-0 patterns | pack / sp | このuntimed prefixだけを読み、frame-0展開前に停止してから、連続timed suffixを開始する。 |
+| BODY arm境界 | audio preload + frame-0 control + frame-0 patterns | pack / sp | このuntimed prefixだけを読み、frame-0展開前に停止する。連続timed suffixはframe 0表示後にだけ開始する。 |
 | Word-RAM swap completion | DMNA bit 1 | sp | 1M bank switch完了までhardware busy flagをpollする。 |
 
 `FEATURE_FIXED_N` はheaderの `vsync_n` を正式なcadenceにします。MainはN VBlankごとに

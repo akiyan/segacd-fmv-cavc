@@ -13,8 +13,8 @@ analysis and regression tools. The disc contains only `HEADER.DAT` and
 
 All multi-byte integers are big-endian. Every region is sector-aligned. The Sub
 CPU reads the static `HEADER.DAT`, reads and stops at the finite untimed
-`BODY.DAT` arm, prepares frame 0, then issues one continuous `ROM_READN` for
-the timed BODY suffix.
+`BODY.DAT` arm, prepares and hands off frame 0, then waits for Main to display
+it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
@@ -73,13 +73,13 @@ and WordBuf preloads.
 
 The same `CMD_STREAM` command remains asserted for the rest of startup. Sub
 reads the finite BODY arm, writes its decoded audio while PCM is stopped,
-stops the read at the declared arm boundary, and expands frame 0. It then
-starts one continuous read at the timed BODY suffix and pre-drains frame 1.
-Sub hands the completed frame-0 bank to Main with `STAT_READY` and keeps
-pumping into PRG-RAM from the opposite Word-RAM bank while Main shows the black
-player-only frame -1 (`F=FFFF`) and builds frame 0. Once frame 0 is visible as
-`F=0000`, Main clears the original `CMD_STREAM`. That single edge starts PCM
-and the playback clock; no second startup-only handshake exists.
+stops the read at the declared arm boundary, and expands frame 0. Sub hands the
+completed frame-0 bank to Main with `STAT_READY` while the timed suffix remains
+stopped. Main shows the black player-only frame -1 (`F=FFFF`) and builds frame
+0. Once frame 0 is visible as `F=0000`, Main clears the original `CMD_STREAM`.
+That single edge starts PCM and the continuous timed BODY read. Sub pre-drains
+frame 1 while Main displays frame 0 and waits through the ordinary `CMD_SWAP`
+handshake; no second startup-only handshake exists.
 
 Frame 0 has no timed delivery budget. Its visible name table uses exact target
 patterns only. Remaining resident VRAM slots may receive future patterns
@@ -94,8 +94,8 @@ Sub-owned bank follows the display handoff while delivery may run ahead.
 Frame 0 patterns use the fixed 36 KiB boot-only staging area at PRG RAM
 `0x72000..0x7B000`, which overlaps space that is not yet serving its timed
 purpose. The finite BODY arm is stopped before frame 0 is expanded, and the
-timed BODY suffix starts only after expansion, so this area is independent of
-the timed PrgBuf and its jitter reserve.
+timed BODY suffix starts only after frame 0 is visible, so this area is
+independent of the timed PrgBuf and its jitter reserve.
 
 ## Header
 
@@ -435,8 +435,8 @@ packer はディスク外の解析・回帰確認用に
 
 複数バイト整数はすべてビッグエンディアンです。各領域は sector 境界に揃えます。
 Sub CPUはstaticな `HEADER.DAT` を読み、有限でuntimedな `BODY.DAT` armだけを読んで
-停止し、frame 0を準備します。その後、timed BODY suffixへ1回の連続
-`ROM_READN`を発行します。
+停止し、frame 0を準備してMainへ渡します。Mainがframe 0を表示するまで待ってから、
+timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
@@ -494,12 +494,12 @@ handoffは意図した `HEADER.DAT` read境界です。Subはbankを渡す前に
 
 以後のstartupでは同じ `CMD_STREAM` commandをassertしたままにします。Subは有限の
 BODY armを読み、PCM停止中にdecoded audioをwave RAMへ書き、宣言済みarm境界でreadを
-停止してframe 0を展開します。次にtimed BODY suffixへ1回の連続readを開始し、frame 1を
-先に読み切ります。完成したframe-0 bankを `STAT_READY` でMainへ渡した後も、Subは反対側
-Word-RAM bankからPRG-RAMへのpumpを続けられます。その間、Mainはplayer-onlyの黒い
-frame -1（`F=FFFF`）を表示し、frame 0を構築します。frame 0が `F=0000` として表示
-された時点でMainが元の `CMD_STREAM` をclearします。この1回のedgeがPCMとplayback
-clockを開始し、2個目のstartup専用handshakeはありません。
+停止してframe 0を展開します。完成したframe-0 bankを `STAT_READY` でMainへ渡しますが、
+この時点ではtimed suffixを停止したままにします。Mainはplayer-onlyの黒いframe -1
+（`F=FFFF`）を表示し、frame 0を構築します。frame 0が `F=0000` として表示された時点で
+Mainが元の `CMD_STREAM` をclearします。この1回のedgeがPCMとtimed BODYの連続readを
+開始します。SubはMainがframe 0を表示し、通常の `CMD_SWAP` handshakeで待っている間に
+frame 1を先読みします。2個目のstartup専用handshakeはありません。
 
 frame 0にはtimed delivery budgetがありません。表示name tableは正確なtarget
 patternだけを参照します。空いているresident VRAM slotにはframe-0 cold suffixと
@@ -513,8 +513,8 @@ handoffに応じてSub所有bankが変わり、deliveryが先行し得るため�
 
 frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
 領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。有限の
-BODY armはframe 0展開前に停止し、timed BODY suffixは展開後にだけ開始するため、
-timed PrgBufとそのjitter reserveから独立しています。
+BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後にだけ開始する
+ため、timed PrgBufとそのjitter reserveから独立しています。
 
 ## Header
 

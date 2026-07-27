@@ -228,8 +228,9 @@ print(
 
 
 # TTRC v17 has one startup command. HEADER contains only static boot state;
-# BODY begins with the finite untimed arm, then starts one continuous timed
-# suffix read. The player-only black state publishes F=FFFF.
+# BODY begins with the finite untimed arm. The player-only black state publishes
+# F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
+# after publishing frame 0.
 for removed in ("STAT_BOOT_VRAM", "arm_body_after_frame0", "body_start_pending"):
     if removed in sp_text or removed in ip_text:
         sys.exit(
@@ -244,7 +245,8 @@ for source, token, description in (
          "BODY-arm frame-0 control drain"),
         (sp_text, "PC_MOVE_W h_f0_pat_sec, PC_F0_PAT_SEC, d0",
          "BODY-arm frame-0 pattern drain"),
-        (sp_text, "bsr\tpump_poll_core", "continuous pump during Main startup"),
+        (sp_text, "frame0_ready_wait:", "untimed frame-0 handoff wait"),
+        (sp_text, "timed_suffix_start:", "post-frame-0 timed start"),
         (sp_text, "bsr\tpcm_on", "single playback-start PCM edge"),
         (ip_text, "bsr\tshow_frame_minus_one", "frame -1 display"),
         (ip_text, "move.w\t#-1, frame_no", "F=FFFF HUD sentinel"),
@@ -252,9 +254,39 @@ for source, token, description in (
 ):
     if token not in source:
         sys.exit(f"check_player_ring: missing {description}")
+
+startup_order = (
+    "frame0_handoff:",
+    "move.w\t#STAT_READY, (COMSTAT0).l",
+    "frame0_ready_wait:",
+    "tst.w\t(COMCMD0).l",
+    "bsr\tpcm_on",
+    "move.w\t#0, (COMSTAT0).l",
+    "timed_suffix_start:",
+    "bsr\tissue_file_readn",
+    "arm_frame1:",
+    "timed_suffix_armed:",
+)
+cursor = 0
+for token in startup_order:
+    position = sp_text.find(token, cursor)
+    if position < 0:
+        sys.exit(
+            "check_player_ring: frame-1/frame-0/timed-start order is broken "
+            f"at {token!r}")
+    cursor = position + len(token)
+
+untimed_wait = sp_text[
+    sp_text.index("frame0_handoff:"):sp_text.index("timed_suffix_start:")
+]
+for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
+    if forbidden in untimed_wait:
+        sys.exit(
+            "check_player_ring: timed CD service entered the untimed "
+            f"frame-1/frame-0 interval through {forbidden}")
 print(
     "check_player_ring: OK  v17 BODY arm and one-command "
-    "frame -1/frame-0 startup")
+    "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge")
 
 
 # Boot stage is consumed through an explicit give/copy/take-back handshake.

@@ -287,8 +287,8 @@ ip_entry:
 	move.w	#CMD_STREAM, d0
 .ifdef PLAYER_SPECIALIZED
 	bsr	cmd_wait_startup
-	/* Sub has armed BODY, pre-drained frame 1 and handed over frame 0. Keep
-	   CMD_STREAM asserted until Main has built and flipped frame 0. */
+	/* Sub has armed BODY and handed over frame 0 with the timed suffix stopped.
+	   Keep CMD_STREAM asserted until Main has built and flipped frame 0. */
 .else
 	bsr	cmd_wait_ready
 .endif
@@ -458,7 +458,7 @@ movie_end_md:
 	bsr	wait_vblank
 	dbra	d2, 1b
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
-	bsr	cmd_wait_ready			/* BODY arm + frame1 pre-drain完了まで待つ */
+	bsr	cmd_wait_ready			/* BODY arm + frame0 handoff完了まで待つ */
 	bsr	show_frame_minus_one
 	clr.w	frame_no
 	clr.w	started
@@ -1695,7 +1695,8 @@ cmd_wait_ready:
 	bra	1b
 
 /* Frame 0 is already visible when this clears the sole startup command.
-   Sub starts PCM on this edge and clears READY before Main enters frame 1. */
+   Sub starts PCM and the continuous timed suffix on this edge, clears READY,
+   then prepares frame 1 behind the ordinary CMD_SWAP wait. */
 start_playback:
 	move.w	#0, (GA_COMCMD0).l
 1:
