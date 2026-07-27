@@ -27,6 +27,7 @@ FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
 FEATURE_DICBUF_INDEXED_RUNS = 0x0040
+FEATURE_BOOT_VRAM_SIDECAR = 0x0080
 SOURCE_PRG = 0
 SOURCE_WR = 1
 SOURCE_DIC = 2
@@ -58,6 +59,73 @@ def packed_pattern(key: bytes) -> bytes:
             raise AssertionError("decision pattern contains a palette index above 15")
         out.append((high << 4) | low)
     return bytes(out)
+
+
+def raw_prefetch_expectations(
+    decisions: dict,
+    frames: int,
+    pool: int,
+    feature_enabled: bool,
+) -> tuple[
+    tuple[tuple[tuple[int, bytes], ...], ...],
+    tuple[tuple[int, bytes], ...],
+]:
+    """Return inline and boot-sidecar raw-prefetch records in packed order."""
+    raw = decisions.get("raw_prefetch") or {}
+    enabled = bool(raw.get("enabled", False))
+    if enabled != feature_enabled:
+        raise AssertionError(
+            "raw-prefetch decision/header feature state differs")
+    empty = tuple(() for _ in range(frames))
+    if not enabled:
+        return empty, ()
+    if int(raw.get("schema_version", 0)) != 3:
+        raise AssertionError("raw-prefetch decisions are not schema 3")
+
+    requests = raw.get("requests")
+    cold_trace = raw.get("cold")
+    if requests is None or len(requests) != frames:
+        raise AssertionError("raw-prefetch request frame count differs")
+    if cold_trace is None or len(cold_trace) != frames:
+        raise AssertionError("raw-prefetch cold trace frame count differs")
+
+    expected = []
+    for frame, (frame_requests, cold_count) in enumerate(
+            zip(requests, cold_trace, strict=True)):
+        if len(frame_requests) != int(cold_count):
+            raise AssertionError(
+                f"frame {frame}: raw-prefetch requests/cold count differ")
+        records = []
+        seen_slots = set()
+        for request in frame_requests:
+            if len(request) != 3:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch request has no frozen slot")
+            key, deadline, raw_slot = request
+            slot = int(raw_slot)
+            if not 0 <= slot < pool:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch slot {slot} is outside the pool")
+            if slot in seen_slots:
+                raise AssertionError(
+                    f"frame {frame}: duplicate raw-prefetch slot {slot}")
+            if int(deadline) <= frame:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch deadline {deadline} is not future")
+            records.append((slot, packed_pattern(bytes(key))))
+            seen_slots.add(slot)
+        expected.append(tuple(sorted(records)))
+
+    inline_count = int(raw.get("boot_inline_requests", -1))
+    sidecar_count = int(raw.get("boot_sidecar_requests", -1))
+    if min(inline_count, sidecar_count) < 0:
+        raise AssertionError("raw-prefetch boot split is missing")
+    if inline_count + sidecar_count != len(expected[0]):
+        raise AssertionError("raw-prefetch boot split differs from frame 0")
+    frame0 = expected[0]
+    expected[0] = frame0[:inline_count]
+    sidecar = frame0[inline_count:inline_count + sidecar_count]
+    return tuple(expected), sidecar
 
 
 def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control:
@@ -354,6 +422,21 @@ def main() -> None:
     if len(decision_frames) != frames:
         raise AssertionError(
             f"decision log has {len(decision_frames)} frames, stream has {frames}")
+    raw_prefetch_per, expected_sidecar = raw_prefetch_expectations(
+        decisions,
+        frames,
+        pool,
+        bool(features & FEATURE_VRAM_RAW_PREFETCH),
+    )
+    expected_sidecar_vram = dict(expected_sidecar)
+    if len(expected_sidecar_vram) != len(expected_sidecar):
+        raise AssertionError("raw-prefetch boot sidecar has duplicate slots")
+    if sidecar_vram != expected_sidecar_vram:
+        raise AssertionError(
+            "boot sidecar slots/patterns differ from raw-prefetch decisions")
+    if bool(expected_sidecar) != bool(features & FEATURE_BOOT_VRAM_SIDECAR):
+        raise AssertionError(
+            "boot sidecar decision/header feature state differs")
 
     prg_count = sum(
         count for frame, control in enumerate(controls) if frame
@@ -375,7 +458,8 @@ def main() -> None:
     }
     consumed = {name: 0 for name in sources}
     vram: dict[int, bytes] = dict(sidecar_vram)
-    total_updates = total_cold = 0
+    total_updates = 0
+    total_cold = len(sidecar_vram)
 
     for frame, (decision_frame, control) in enumerate(
             zip(decision_frames, controls, strict=True)):
@@ -385,22 +469,57 @@ def main() -> None:
             raise AssertionError(f"frame {frame}: bitmap cells differ from decisions")
         if len(ordered) != len(control.entries):
             raise AssertionError(f"frame {frame}: decision/update count differs")
-        if not control.use_list and frame:
-            expected_slots = tuple(
-                ((entry & 0x07FF) - base,
-                 (entry & SOURCE_MASK) >> SOURCE_SHIFT)
-                for entry in control.entries if entry & 0x8000)
-            actual_slots = tuple(
-                (slot, source)
-                for start, count, source, _dic in control.runs
-                for slot in range(start, start + count))
-            if actual_slots != tuple(sorted(expected_slots)):
+        expected_prefetch_slots = tuple(
+            (slot, SOURCE_PRG) for slot, _pattern in raw_prefetch_per[frame])
+        actual_slots = tuple(
+            (slot, source)
+            for start, count, source, _dic in control.runs
+            for slot in range(start, start + count))
+        if expected_prefetch_slots:
+            if actual_slots[-len(expected_prefetch_slots):] != (
+                    expected_prefetch_slots):
                 raise AssertionError(
-                    f"frame {frame}: source-coded cold runs differ from entries")
+                    f"frame {frame}: raw-prefetch run suffix differs")
+            actual_update_slots = actual_slots[:-len(expected_prefetch_slots)]
+        else:
+            actual_update_slots = actual_slots
+        if control.use_list:
+            if actual_update_slots != tuple(sorted(actual_update_slots)):
+                raise AssertionError(
+                    f"frame {frame}: update runs are not in physical-slot order")
+            entry_slots = {
+                (entry & 0x07FF) - base for entry in control.entries
+            }
+            if any(slot not in entry_slots for slot, _source in actual_update_slots):
+                raise AssertionError(
+                    f"frame {frame}: update runs contain a non-update slot")
+            expected_update_slots = actual_update_slots
+        else:
+            expected_update_slots = tuple(sorted(
+                (
+                    (entry & 0x07FF) - base,
+                    (entry & SOURCE_MASK) >> SOURCE_SHIFT,
+                )
+                for entry in control.entries if entry & 0x8000
+            ))
+        expected_transfer_slots = (
+            expected_update_slots + expected_prefetch_slots)
+        if len({slot for slot, _source in expected_transfer_slots}) != len(
+                expected_transfer_slots):
+            raise AssertionError(
+                f"frame {frame}: update/raw-prefetch slots overlap")
+        if actual_slots != expected_transfer_slots:
+            raise AssertionError(
+                f"frame {frame}: source-coded update/prefetch runs differ")
 
         expected_by_slot = {}
         for item, entry in zip(ordered, control.entries, strict=True):
             expected_by_slot[(entry & 0x07FF) - base] = packed_pattern(bytes(item[2]))
+        for slot, pattern in raw_prefetch_per[frame]:
+            if slot in expected_by_slot:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch overwrites update slot {slot}")
+            expected_by_slot[slot] = pattern
 
         armed_slots = set()
         for run_slot, run_count, source_id, dic_index in control.runs:
@@ -411,8 +530,7 @@ def main() -> None:
                 "Dic" if source_id == SOURCE_DIC else "reserved"
             )
             for slot in range(run_slot, run_slot + run_count):
-                if slot in armed_slots or (
-                        frame and slot not in expected_by_slot):
+                if slot in armed_slots or slot not in expected_by_slot:
                     raise AssertionError(
                         f"frame {frame}: run arms invalid/duplicate slot {slot}")
                 if source_name not in sources or not sources[source_name]:
@@ -457,7 +575,8 @@ def main() -> None:
         "pattern supply replay: OK "
         f"({frames} frames, {total_updates} updates, {total_cold} cold; "
         f"F0={consumed['F0']} Prg={consumed['Prg']} Wr0={consumed['Wr0']} "
-        f"Wr1={consumed['Wr1']} Dic hits={consumed['Dic']})")
+        f"Wr1={consumed['Wr1']} Dic hits={consumed['Dic']} "
+        f"Sidecar={len(sidecar_vram)})")
     print("VRAM resident/reuse equivalence: OK (every updated cell, every frame)")
 
 

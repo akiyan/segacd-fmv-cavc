@@ -396,16 +396,10 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
 
     source_aware = bool(features & FEATURE_PATTERN_SUPPLY)
     def control_runs(control: Control) -> tuple[tuple[int, int, int, int], ...]:
-        if control.use_list:
-            if control.descriptor_suffix is None:
-                raise AssertionError(
-                    f"frame {control.seq}: list control has no run suffix")
+        if control.descriptor_suffix is not None:
             return decode_descriptors(control.descriptor_suffix, source_aware)
         return old_sub_runs(control.entries, base, source_aware)
 
-    total_cold = sum(
-        count for control in controls
-        for _slot, count, _source, _dic in control_runs(control))
     timed_prg_cold = sum(
         count for control in controls[1:]
         for _slot, count, source, _dic in control_runs(control)
@@ -460,6 +454,73 @@ def pack_pattern(key: bytes) -> bytes:
                 raise AssertionError("decision key contains a palette index above 15")
             out.append((high << 4) | low)
     return bytes(out)
+
+
+def raw_prefetch_expectations(
+    decisions: dict,
+    frames: int,
+    pool: int,
+    feature_enabled: bool,
+) -> tuple[
+    tuple[tuple[tuple[int, bytes], ...], ...],
+    tuple[tuple[int, bytes], ...],
+]:
+    """Return inline and boot-sidecar raw-prefetch records in packed order."""
+    raw = decisions.get("raw_prefetch") or {}
+    enabled = bool(raw.get("enabled", False))
+    if enabled != feature_enabled:
+        raise AssertionError(
+            "raw-prefetch decision/header feature state differs")
+    empty = tuple(() for _ in range(frames))
+    if not enabled:
+        return empty, ()
+    if int(raw.get("schema_version", 0)) != 3:
+        raise AssertionError("raw-prefetch decisions are not schema 3")
+
+    requests = raw.get("requests")
+    cold_trace = raw.get("cold")
+    if requests is None or len(requests) != frames:
+        raise AssertionError("raw-prefetch request frame count differs")
+    if cold_trace is None or len(cold_trace) != frames:
+        raise AssertionError("raw-prefetch cold trace frame count differs")
+
+    expected = []
+    for frame, (frame_requests, cold_count) in enumerate(
+            zip(requests, cold_trace, strict=True)):
+        if len(frame_requests) != int(cold_count):
+            raise AssertionError(
+                f"frame {frame}: raw-prefetch requests/cold count differ")
+        records = []
+        seen_slots = set()
+        for request in frame_requests:
+            if len(request) != 3:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch request has no frozen slot")
+            key, deadline, raw_slot = request
+            slot = int(raw_slot)
+            if not 0 <= slot < pool:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch slot {slot} is outside the pool")
+            if slot in seen_slots:
+                raise AssertionError(
+                    f"frame {frame}: duplicate raw-prefetch slot {slot}")
+            if int(deadline) <= frame:
+                raise AssertionError(
+                    f"frame {frame}: raw-prefetch deadline {deadline} is not future")
+            records.append((slot, pack_pattern(bytes(key))))
+            seen_slots.add(slot)
+        expected.append(tuple(sorted(records)))
+
+    inline_count = int(raw.get("boot_inline_requests", -1))
+    sidecar_count = int(raw.get("boot_sidecar_requests", -1))
+    if min(inline_count, sidecar_count) < 0:
+        raise AssertionError("raw-prefetch boot split is missing")
+    if inline_count + sidecar_count != len(expected[0]):
+        raise AssertionError("raw-prefetch boot split differs from frame 0")
+    frame0 = expected[0]
+    expected[0] = frame0[:inline_count]
+    sidecar = frame0[inline_count:inline_count + sidecar_count]
+    return tuple(expected), sidecar
 
 
 def old_sub_runs(
@@ -584,15 +645,12 @@ def verify_descriptor_alignment() -> None:
 def print_range_stats(
     label: str,
     frame_indices: list[int],
-    controls: tuple[Control, ...],
+    cold_counts: list[int],
     run_counts: list[int],
 ) -> None:
-    cold_counts = [
-        sum(bool(entry & 0x8000) for entry in controls[index].entries)
-        for index in frame_indices
-    ]
+    colds = [cold_counts[index] for index in frame_indices]
     runs = [run_counts[index] for index in frame_indices]
-    cold_total = sum(cold_counts)
+    cold_total = sum(colds)
     run_total = sum(runs)
     descriptor_bytes = sum(2 + 4 * count for count in runs)
     average = cold_total / run_total if run_total else 0.0
@@ -627,6 +685,16 @@ def main() -> None:
         raise AssertionError(
             f"decisions.pkl has {len(decision_frames)} frames; stream has {stream.frames}"
         )
+    raw_prefetch_per, raw_sidecar = raw_prefetch_expectations(
+        decisions,
+        stream.frames,
+        stream.pool,
+        bool(stream.features & FEATURE_VRAM_RAW_PREFETCH),
+    )
+    if bool(raw_sidecar) != bool(
+            stream.features & FEATURE_BOOT_VRAM_SIDECAR):
+        raise AssertionError(
+            "boot sidecar decision/header feature state differs")
 
     expected_payload = bytearray()
     payload_pos = 0
@@ -635,6 +703,7 @@ def main() -> None:
     total_runs = 0
     descriptor_bytes_by_frame: list[int] = []
     run_counts: list[int] = []
+    cold_counts: list[int] = []
     source_aware = bool(stream.features & FEATURE_PATTERN_SUPPLY)
     source_positions = [0] * 5
     dic_payload = stream.source_payloads[4] if stream.source_payloads else b""
@@ -676,6 +745,7 @@ def main() -> None:
             if any(source != SOURCE_PRG for _slot, source in packed_slots):
                 raise AssertionError("frame 0 boot runs use a non-boot source")
             slot_patterns = {}
+            visible_transfer_records = []
             for entry, pattern in zip(
                     control.entries, ordered_patterns, strict=True):
                 slot = (entry & 0x07FF) - stream.base
@@ -683,14 +753,31 @@ def main() -> None:
                 if previous != pattern:
                     raise AssertionError(
                         f"frame 0 slot {slot} maps to conflicting patterns")
-            physical_payload = stream.source_payloads[0]
-            descriptor_slots = tuple(slot for slot, _source in packed_slots)
-            useful_payload = len(descriptor_slots) * 32
-            if len(physical_payload) < useful_payload or any(
-                    physical_payload[useful_payload:]):
+                if entry & 0x8000:
+                    visible_transfer_records.append((slot, pattern))
+            visible_transfer_records.sort()
+            expected_transfer_records = (
+                tuple(visible_transfer_records) + raw_prefetch_per[0])
+            expected_slots = tuple(
+                (slot, SOURCE_PRG)
+                for slot, _pattern in expected_transfer_records)
+            if len({slot for slot, _source in expected_slots}) != len(
+                    expected_slots):
                 raise AssertionError(
-                    "frame 0 payload length differs from descriptor demand")
-            physical_payload = physical_payload[:useful_payload]
+                    "frame 0 update/raw-prefetch slots overlap")
+            if packed_slots != expected_slots:
+                raise AssertionError(
+                    "frame 0 descriptors differ from update/raw-prefetch slots")
+            if any(slot in dict(raw_sidecar) for slot, _source in expected_slots):
+                raise AssertionError(
+                    "frame 0 inline and sidecar raw-prefetch slots overlap")
+            expected_frame_payload = b"".join(
+                pattern for _slot, pattern in expected_transfer_records)
+            physical_payload = stream.source_payloads[0]
+            if physical_payload != expected_frame_payload:
+                raise AssertionError(
+                    "frame 0 physical payload differs from update/raw-prefetch decisions")
+            descriptor_slots = tuple(slot for slot, _source in packed_slots)
             physical_by_slot = {
                 slot: physical_payload[index * 32:(index + 1) * 32]
                 for index, slot in enumerate(descriptor_slots)
@@ -707,15 +794,27 @@ def main() -> None:
             total_cold += len(descriptor_slots)
             total_runs += len(decoded_packed_runs)
             run_counts.append(len(decoded_packed_runs))
+            cold_counts.append(len(descriptor_slots))
             descriptor_bytes_by_frame.append(len(packed_suffix or b""))
             continue
 
+        raw_slots = tuple(
+            (slot, SOURCE_PRG)
+            for slot, _pattern in raw_prefetch_per[seq])
+        packed_slots = expanded_slots(decoded_packed_runs)
+        if raw_slots:
+            if packed_slots[-len(raw_slots):] != raw_slots:
+                raise AssertionError(
+                    f"frame {seq}: descriptor raw-prefetch suffix differs")
+            visible_slots = packed_slots[:-len(raw_slots)]
+        else:
+            visible_slots = packed_slots
         if control.use_list:
             source_by_slot = {}
-            for slot, source in expanded_slots(decoded_packed_runs):
+            for slot, source in visible_slots:
                 if slot in source_by_slot:
                     raise AssertionError(
-                        f"frame {seq}: duplicate physical run slot {slot}")
+                        f"frame {seq}: duplicate physical update slot {slot}")
                 source_by_slot[slot] = source
             inferred_colds = []
             inferred_sources = []
@@ -724,16 +823,19 @@ def main() -> None:
                 source = source_by_slot.pop(slot, None)
                 is_cold = source is not None
                 inferred_colds.append(is_cold)
-                inferred_sources.append(source if is_cold else 0)
-            if source_by_slot and not stream.features & FEATURE_VRAM_RAW_PREFETCH:
+                inferred_sources.append(
+                    source if is_cold else SOURCE_PRG)
+            if source_by_slot:
                 raise AssertionError(
-                    f"frame {seq}: run suffix contains non-update slots")
+                    f"frame {seq}: descriptor contains non-update slots "
+                    f"before the raw-prefetch suffix")
             colds = tuple(inferred_colds)
             sources = tuple(inferred_sources)
         else:
             colds = tuple(bool(entry & 0x8000) for entry in control.entries)
             sources = tuple(
-                (entry & SOURCE_MASK) >> SOURCE_SHIFT if cold and source_aware else 0
+                (entry & SOURCE_MASK) >> SOURCE_SHIFT
+                if cold and source_aware else SOURCE_PRG
                 for entry, cold in zip(control.entries, colds, strict=True))
         dic_indices = tuple(
             dic_index_by_pattern[pattern]
@@ -751,15 +853,24 @@ def main() -> None:
         ]
         if packed_suffix is not None:
             # Bitmap/list entries intentionally remain in cell order.  The
-            # packed suffix and source payload are independently ordered by
-            # physical VRAM slot so the player can issue longer contiguous
-            # transfers.  Rebuild that authoritative order before comparing
-            # descriptor bytes or payload.
+            # visible-cold prefix is independently ordered by physical VRAM
+            # slot. Raw-prefetch records form a second independently sorted
+            # suffix. Rebuild those two segments before comparing descriptor
+            # bytes or payload.
             cold_records.sort(
                 key=lambda record: (
                     (record[0] & 0x07FF) - stream.base,
                 )
             )
+        update_slots = {
+            (entry & 0x07FF) - stream.base for entry in logical_entries
+        }
+        for slot, pattern in raw_prefetch_per[seq]:
+            if slot in update_slots:
+                raise AssertionError(
+                    f"frame {seq}: raw-prefetch overwrites an update slot {slot}")
+            cold_records.append(
+                (stream.base + slot, SOURCE_PRG, 0, pattern))
         physical_entries = tuple(record[0] for record in cold_records)
         physical_sources = tuple(record[1] for record in cold_records)
         physical_dic_indices = tuple(record[2] for record in cold_records)
@@ -782,7 +893,7 @@ def main() -> None:
             raise AssertionError(
                 f"frame {seq}: decoded descriptors differ from physical runs")
 
-        cold_count = sum(colds)
+        cold_count = len(cold_records)
         decision_patterns = [record[3] for record in cold_records]
         expected_frame_payload = b"".join(decision_patterns)
         expected_payload += expected_frame_payload
@@ -848,6 +959,7 @@ def main() -> None:
         total_cold += cold_count
         total_runs += len(decoded_runs)
         run_counts.append(len(decoded_runs))
+        cold_counts.append(cold_count)
         descriptor_bytes_by_frame.append(len(suffix))
 
     if stream.source_payloads is None:
@@ -906,13 +1018,13 @@ def main() -> None:
     print_range_stats(
         "startup F1..F42",
         list(range(1, min(43, stream.frames))),
-        stream.controls,
+        cold_counts,
         run_counts,
     )
     if stream.frames > 2019:
         frame = 2019
         print_range_stats(
-            "frame F2019(decimal)", [frame], stream.controls, run_counts
+            "frame F2019(decimal)", [frame], cold_counts, run_counts
         )
     else:
         print(f"frame F2019(decimal): skipped for {stream.frames}-frame smoke stream")
