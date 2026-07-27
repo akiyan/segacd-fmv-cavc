@@ -606,9 +606,15 @@ def build_tl_bg():
             if seg > 0:
                 d.line([(cx, yb - seg), (cx, yb)], fill=c); yb -= seg
         ys = H_req + H_supply
-        total_capacity = max(sum(SUPPLY_CAPACITIES.values()), 1)
-        for name in style.METER_SUPPLY_ORDER:
-            hs = int(H_supply * SUPPLY_REMAINING[name][fi] / total_capacity)
+        supply_remaining = {
+            name: SUPPLY_REMAINING[name][fi]
+            for name in style.METER_SUPPLY_SOURCE_ORDER
+        }
+        for name, hs in style.meter_supply_segments(
+            supply_remaining,
+            SUPPLY_CAPACITIES,
+            H_supply,
+        ):
             if hs > 0:
                 d.line(
                     [(cx, ys - hs), (cx, ys)],

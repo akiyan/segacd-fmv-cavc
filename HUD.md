@@ -312,6 +312,10 @@ commands. One- and two-tile runs use CPU writes. Longer runs use DMA and can be
 split again at VBlank boundaries. `N` measures fragmentation before those
 hardware transfer choices.
 
+The whole-movie `/hudline` `N COLD RUNS` row uses the maximum timed `N` value
+present in that HUD TSV as its vertical scale. Untimed frame 0 is excluded from
+the maximum.
+
 ### `J`: streamed PrgBuf jitter-reserve high-water mark
 
 `J` is the maximum simultaneous streamed PrgBuf occupancy above the
@@ -803,6 +807,9 @@ sourceのconsecutive VRAM slotを1 runにします。Prg、parity-selected WordB
 Cold-tile countでもphysical VDP DMA command数でもありません。1・2 tile runはCPU write、
 long runはDMAを使い、VBlank boundaryでさらに分割される場合があります。`N`はhardware
 transfer choice前のfragmentationを測ります。
+
+Whole-movie `/hudline` の `N COLD RUNS` rowは、そのHUD TSVにあるtimed `N`の最大値を
+vertical scaleに使います。Untimed frame 0は最大値から除外します。
 
 ### `J`: streamed PrgBuf jitter-reserve high-water mark
 

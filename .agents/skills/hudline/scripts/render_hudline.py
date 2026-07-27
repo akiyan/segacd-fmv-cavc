@@ -489,8 +489,14 @@ def row_specs(
                 (218, 112, 171), eight_bit_scale=True),
         RowSpec("main_pattern_ms", "U  PATTERN", "ms, 12-bit wrap", 125.83,
                 (81, 202, 211)),
-        RowSpec("cold_runs_low8", "N  COLD RUNS", "runs, low byte", 255,
-                style.COL_RUN, eight_bit_scale=True, show_zero=False),
+        RowSpec(
+            "cold_runs_low8",
+            "N  COLD RUNS",
+            "runs, low byte",
+            max(1, timed_max("cold_runs_low8")),
+            style.COL_RUN,
+            show_zero=False,
+        ),
     ])
     optional = (
         ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",

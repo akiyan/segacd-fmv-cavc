@@ -401,11 +401,13 @@ Req occupies half the height, Supply one quarter, and Run/Band split the final
 quarter. All rows share the whole clip on the x-axis with a white playhead:
 1. **Req heatmap** - `Raw / Prg / Wr0 / Wr1 / Dic / Near / Flbk / Miss`
    stacked per frame. `Same` is omitted so the changing load remains visible.
-2. **Pattern supply** - `Prg / Wr0 / Wr1` remaining counts stacked per
-   frame. All three use one scale: the sum of their capacities. Wr0 and Wr1
-   use the shared Wrd cyan colour while remaining separate internally. The
-   persistent DicBuf has no remaining count and is therefore omitted.
-3. **Run** - physical source-aware cold-run count up to the measured cold cap.
+2. **Pattern supply** - `Prg / Wrd` remaining counts stacked per frame.
+   Wrd combines the separate Wr0 and Wr1 traces before pixel scaling, so a
+   positive combined balance remains visible down to one pixel. The scale is
+   the sum of the Prg, Wr0, and Wr1 capacities. The persistent DicBuf has no
+   remaining count and is therefore omitted.
+3. **Run** - physical source-aware cold-run count scaled to the timed maximum
+   actually present in this TSV. Frame 0 does not set the scale.
 4. **Band** - useful Raw payload (light grey), Prg charge (purple), and control
    (blue-grey) as a fraction of the physical bytes in each delivery slot. Pad
    remains blank and the row top marks CD 1x (150 KiB/sec).
@@ -749,9 +751,12 @@ white playheadを共有します。
 
 1. **Req heatmap**: `Raw / Prg / Wr0 / Wr1 / Dic / Near / Flbk / Miss`。
    `Same`は省略します。
-2. **Pattern supply**: `Prg / Wr0 / Wr1` remaining countをcapacity合計のscaleでstack。
-   Persistent DicBufにはremaining countがないため省略します。
-3. **Run**: physical source-aware cold-run count。
+2. **Pattern supply**: `Prg / Wrd` remaining countをstackします。Wrdは別々のWr0/Wr1
+   traceをpixel scale前に合算するため、合算値が正なら最低1pxまで表示されます。
+   scaleはPrg、Wr0、Wr1のcapacity合計です。Persistent DicBufにはremaining countが
+   ないため省略します。
+3. **Run**: このTSVのtimed実測最大を上端にしたphysical source-aware cold-run count。
+   Frame 0はscaleに含めません。
 4. **Band**: physical slot byteに対するRaw payload、Prg charge、controlの割合。
    Padはblankで、row topがCD 1xです。
 
