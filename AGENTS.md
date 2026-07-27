@@ -429,7 +429,21 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   cold cap, filters, palette policy, and other target-quality settings stay
   fixed. Encoder decisions and concrete sim results may change when the model
   is corrected. Lowering workload until a failure disappears measures a
-  workaround, not the original regression.
+  workaround, not the original regression. If a previously qualified quality
+  point now fails, treat it as a regression; once failure is reproduced at or
+  below that baseline, stop lowering the cold cap. Resume upper-bound tuning
+  only after the cause is corrected at the original quality point.
+- **Separate correctness, non-regression, and measured benefit.** A change can
+  be valid and playback-safe without addressing the observed failure. Prefer a
+  player-only A/B on the same packed stream, and report those three conclusions
+  independently. Do not automatically stack the next optimization stage, spend
+  PrgBuf/APPLY capacity, or enlarge resident code merely because the preceding
+  change was theoretically faster; require an observable benefit or a separate
+  correctness need.
+- **Interpret waiting in context, not as severity.** A faster Sub path can
+  reach the next sector wait earlier and therefore increase HUD `C`; that alone
+  is neither improvement nor regression. Keep `C` diagnostic-only and read it
+  with `S/D/R`, visible playback, cadence, `J`, `A`, and `W`.
 - **A graph near zero is not proof of zero.** Fixed whole-movie scales can hide
   a small positive balance. Add an exact signed diagnostic when zero,
   underflow, wraparound, or debt matters, and preserve its per-frame minimum
@@ -438,7 +452,10 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   smallest measurement that can disprove the current explanation. Correlation
   at one low-water interval is not causation; align encoder decisions, live
   balances, queue guards, displayed-frame cadence, and cumulative recovery
-  transitions on one frame axis before naming the cause.
+  transitions on one frame axis before naming the cause. Instrumentation must
+  remain observational rather than steering playback. When added HUD work or
+  a unified layout increases runtime cost, requalify the instrumented standard
+  build on representative fast and slow cadences before relying on its data.
 - **Derive resources from cadence, then qualify each cadence.** Control size,
   PCM work, routing lifetime, PrgBuf ceiling, jitter, and resident-code margin
   differ with fps. Use one fps-derived source of truth rather than a 15fps or
