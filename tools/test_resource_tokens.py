@@ -80,6 +80,24 @@ class ResourceTokenTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout, "token-shell-ok")
 
+    def test_requested_workers_honor_capacity_override_and_stage_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp)):
+            self.assertEqual(resource_tokens.requested_cpu_workers(), 2)
+            with patch.dict(os.environ, {"CBRSIM_WORKERS": "1"}):
+                self.assertEqual(resource_tokens.requested_cpu_workers(), 1)
+            with patch.dict(os.environ, {
+                "SEGACD_CPU_TOKENS": "8",
+                "CBRSIM_WORKERS": "6",
+            }):
+                self.assertEqual(
+                    resource_tokens.requested_cpu_workers(limit=4), 4)
+
+    def test_requested_workers_reject_nonpositive_override(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp)):
+            with patch.dict(os.environ, {"CBRSIM_WORKERS": "0"}):
+                with self.assertRaises(resource_tokens.ResourceTokenError):
+                    resource_tokens.requested_cpu_workers()
+
 
 if __name__ == "__main__":
     unittest.main()

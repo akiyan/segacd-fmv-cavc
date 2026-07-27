@@ -73,6 +73,25 @@ def resource_capacity(resource: str) -> int:
     return value
 
 
+def requested_cpu_workers(*, limit: int | None = None) -> int:
+    """Return the worker count one CPU-heavy stage should reserve and use."""
+
+    capacity = resource_capacity("cpu")
+    raw = os.environ.get("CBRSIM_WORKERS", str(capacity))
+    try:
+        requested = int(raw)
+    except ValueError as exc:
+        raise ResourceTokenError(
+            f"CBRSIM_WORKERS must be an integer: {raw!r}") from exc
+    if requested <= 0:
+        raise ResourceTokenError(
+            f"CBRSIM_WORKERS must be positive: {requested}")
+    requested = min(requested, capacity)
+    if limit is not None:
+        requested = min(requested, max(1, int(limit)))
+    return requested
+
+
 def _resource_slug(resource: str) -> str:
     readable = re.sub(r"[^A-Za-z0-9._-]+", "-", resource).strip("-._")
     readable = (readable or "resource")[:48]

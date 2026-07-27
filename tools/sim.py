@@ -33,6 +33,7 @@ import time
 import math
 import dataclasses
 from collections import defaultdict
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -52,6 +53,7 @@ import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
 import physical_budget  # noqa: E402
 import raw_prefetch  # noqa: E402
+import resource_tokens  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
 import ttrc_routing  # noqa: E402
@@ -975,6 +977,7 @@ def canonicalize_p0_index15(seg_pals, frame_seg, assigns, pidxs):
 # 差分/画質予算の本体は逐次(前フレーム状態に依存)だが、ここは各フレーム独立=実行時間の大半。
 # ワーカー数は PC の CPU コア数-2(動的)。env CBRSIM_WORKERS で上書き可、1で逐次。
 _WG = {}
+_PHASE_WORKERS = None
 
 
 def _quant_init(frames, seg_pals, frame_seg):
@@ -1007,14 +1010,68 @@ def _quant_one_flat(i):
 
 
 def n_workers():
-    env = os.environ.get("CBRSIM_WORKERS")
-    if env:
-        return max(1, int(env))
+    if _PHASE_WORKERS is not None:
+        return _PHASE_WORKERS
+    return resource_tokens.requested_cpu_workers()
+
+
+def _gpu_requested():
+    return os.environ.get(
+        "CBRSIM_GPU", "1").strip().lower() not in {
+        "0", "off", "false", "no",
+    }
+
+
+@contextmanager
+def _parallel_phase(
+    name,
+    *,
+    worker_limit=None,
+    use_gpu=False,
+    gpu_worker_limit=None,
+):
+    """Reserve exactly the CPU/GPU capacity this parallel stage will use."""
+
+    global _PHASE_WORKERS
+    gpu_lease = None
+    cpu_lease = None
+    gpu_on = False
     try:
-        available = len(os.sched_getaffinity(0))
-    except AttributeError:
-        available = os.cpu_count() or 4
-    return max(1, available - 2)
+        if use_gpu and _gpu_requested():
+            print(f"{name}: waiting for GPU token ...", flush=True)
+            gpu_lease = resource_tokens.acquire_tokens("gpu")
+            import gpu_quant
+            gpu_on = gpu_quant.enabled()
+            if not gpu_on:
+                gpu_lease.release()
+                gpu_lease = None
+        limit = worker_limit
+        if (gpu_on and gpu_worker_limit is not None
+                and "CBRSIM_WORKERS" not in os.environ):
+            limit = (
+                gpu_worker_limit if limit is None
+                else min(limit, gpu_worker_limit)
+            )
+        workers = resource_tokens.requested_cpu_workers(limit=limit)
+        print(
+            f"{name}: waiting for {workers} CPU token(s)"
+            f"{' + 1 GPU token' if gpu_on else ''} ...",
+            flush=True,
+        )
+        cpu_lease = resource_tokens.acquire_tokens("cpu", count=workers)
+        _PHASE_WORKERS = workers
+        print(
+            f"{name}: resource grant CPU={workers}"
+            f" GPU={1 if gpu_on else 0}",
+            flush=True,
+        )
+        yield workers, gpu_on
+    finally:
+        _PHASE_WORKERS = None
+        if cpu_lease is not None:
+            cpu_lease.release()
+        if gpu_lease is not None:
+            gpu_lease.release()
 
 
 def quant_worker_count(gpu_enabled, requested, override_present=False):
@@ -1156,24 +1213,32 @@ def main():
     if cached:
         print("CBRSIM_REUSE: cached master/raw/audio を再利用(ffmpeg展開をスキップ)")
     else:
-        prepare_dir(OUT, clean=True)
-        for d in (master_dir, raw_dir):
-            prepare_dir(d, clean=True)
-        print(f"extracting de-dithered master ({W}x{H}) ...")
-        run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-ss", "0", "-t", DURATION, "-i", SRC,
-             "-vf", f"{DEDITHER_VF},fps={FPS_STR}", str(master_dir / "%05d.png")])
-        print(f"extracting raw comparison frames ({W}x{H} raster) ...")
-        run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-ss", "0", "-t", DURATION, "-i", SRC,
-             "-vf", f"{RAW_VF},fps={FPS_STR}", str(raw_dir / "%05d.png")])
-        print(f"extracting audio ({AUDIO_LABEL}) ...")
-        for old in OUT.glob("audio_*.wav"):     # 別形式の残骸を除去(REUSE時の取り違え防止)
-            old.unlink()
-        run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-             "-ss", "0", "-t", DURATION, "-i", SRC,
-             "-vn", "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
-             str(OUT / AUDIO_FILE)])
+        with _parallel_phase("Extract") as (extract_workers, _gpu_on):
+            prepare_dir(OUT, clean=True)
+            for d in (master_dir, raw_dir):
+                prepare_dir(d, clean=True)
+            ffmpeg_threads = [
+                "-threads", str(extract_workers),
+                "-filter_threads", str(extract_workers),
+            ]
+            print(f"extracting de-dithered master ({W}x{H}) ...")
+            run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 *ffmpeg_threads,
+                 "-ss", "0", "-t", DURATION, "-i", SRC,
+                 "-vf", f"{DEDITHER_VF},fps={FPS_STR}", str(master_dir / "%05d.png")])
+            print(f"extracting raw comparison frames ({W}x{H} raster) ...")
+            run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 *ffmpeg_threads,
+                 "-ss", "0", "-t", DURATION, "-i", SRC,
+                 "-vf", f"{RAW_VF},fps={FPS_STR}", str(raw_dir / "%05d.png")])
+            print(f"extracting audio ({AUDIO_LABEL}) ...")
+            for old in OUT.glob("audio_*.wav"):     # 別形式の残骸を除去(REUSE時の取り違え防止)
+                old.unlink()
+            run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                 *ffmpeg_threads,
+                 "-ss", "0", "-t", DURATION, "-i", SRC,
+                 "-vn", "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
+                 str(OUT / AUDIO_FILE)])
     _t = _mark("Extract", _t)
     frames = sorted(master_dir.glob("*.png"))
     n = len(frames)
@@ -1255,9 +1320,11 @@ def main():
 
     # Palette: train the CRAM palette segments.
     print(f"training palettes ({PAL_ALGO})  DITHER={DITHER_ON} SEGPAL={SEGPAL_ON} NEAR={NEAR_ON} ...")
-    frame_cache = FrameFeatureCache(frames) if PAL_ALGO == MOSAIC_GM else None
-    _global_pals, seg_pals, frame_seg, seg_bounds, palette_stats = segment_and_train(
-        frames, frame_cache=frame_cache)
+    with _parallel_phase(
+            "Palette", worker_limit=12, use_gpu=True):
+        frame_cache = FrameFeatureCache(frames) if PAL_ALGO == MOSAIC_GM else None
+        _global_pals, seg_pals, frame_seg, seg_bounds, palette_stats = segment_and_train(
+            frames, frame_cache=frame_cache)
     palette_stats["spatial_assignment"] = {
         "enabled": bool(PAL_ALGO == MOSAIC_GM and PAL_SEAM_WEIGHT > 0),
         "seam_weight": float(PAL_SEAM_WEIGHT),
@@ -1403,8 +1470,10 @@ def main():
 
     # Quantize: build palette assignments and indexed patterns.
     # フレーム独立の割当/索引を並列で前計算(実行時間の大半)。以降のループは逐次(状態依存)。
-    Q_detail, Q_assign, Q_pidx = precompute_quant(
-        frames, seg_pals, frame_seg, frame_cache=frame_cache)
+    with _parallel_phase(
+            "Quantize", use_gpu=True, gpu_worker_limit=4):
+        Q_detail, Q_assign, Q_pidx = precompute_quant(
+            frames, seg_pals, frame_seg, frame_cache=frame_cache)
     del frame_cache
     # Both DEBUG extremes are pinned before quantization. Verify that the
     # lossless index-15 canonicalizer preserves rendered pixels.
@@ -3909,20 +3978,28 @@ def _mark_sim_tmpfs_complete(lease):
 
 
 if __name__ == "__main__":
-    _standalone_lease = _activate_sim_tmpfs()
-    _standalone_completed = False
     try:
-        if _standalone_lease is None or not _standalone_lease.reused:
-            main()
-            _standalone_completed = True
-        else:
-            print(
-                "sim artifact cache: complete matching encode reused; "
-                "simulation skipped",
-                flush=True,
-            )
+        _stem_lease = resource_tokens.acquire_stem(CONFIG_PROFILE.sim_stem)
+    except resource_tokens.ResourceBusyError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(75) from exc
+    try:
+        _standalone_lease = _activate_sim_tmpfs()
+        _standalone_completed = False
+        try:
+            if _standalone_lease is None or not _standalone_lease.reused:
+                main()
+                _standalone_completed = True
+            else:
+                print(
+                    "sim artifact cache: complete matching encode reused; "
+                    "simulation skipped",
+                    flush=True,
+                )
+        finally:
+            if _standalone_lease is not None:
+                if _standalone_completed:
+                    _mark_sim_tmpfs_complete(_standalone_lease)
+                _standalone_lease.release()
     finally:
-        if _standalone_lease is not None:
-            if _standalone_completed:
-                _mark_sim_tmpfs_complete(_standalone_lease)
-            _standalone_lease.release()
+        _stem_lease.release()

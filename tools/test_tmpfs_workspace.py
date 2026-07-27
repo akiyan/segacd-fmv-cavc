@@ -38,6 +38,19 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             lease.release()
             self.assertFalse(lease.marker.exists())
 
+    def test_managed_alias_lease_records_derived_space_reservation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
+            alias = Path(tmp) / "videos" / "movie" / "tmp"
+            owner = workspace.activate_directory(
+                alias, kind="sim", key="profile-abc")
+            derived = workspace.lease_managed_alias(
+                alias, required_bytes=123456)
+            self.assertIsNotNone(derived)
+            record = json.loads(derived.marker.read_text(encoding="utf-8"))
+            self.assertEqual(record["required_bytes"], 123456)
+            derived.release()
+            owner.release()
+
     def test_completed_directory_reuses_only_matching_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
             alias = Path(tmp) / "videos" / "movie" / "tmp"

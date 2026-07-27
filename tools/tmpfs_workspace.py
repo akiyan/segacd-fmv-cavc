@@ -530,8 +530,13 @@ def publish_alias(alias: Path, actual: Path) -> None:
         _replace_alias(alias, actual, directory=False)
 
 
-def lease_managed_alias(alias: Path, *, root: Path | None = None) -> Lease | None:
-    """Lease an existing managed directory/file reached through its alias."""
+def lease_managed_alias(
+    alias: Path,
+    *,
+    required_bytes: int = 0,
+    root: Path | None = None,
+) -> Lease | None:
+    """Lease an existing managed artifact and reserve space for derived data."""
 
     root = ensure_root(root)
     with _workspace_lock(root):
@@ -550,7 +555,10 @@ def lease_managed_alias(alias: Path, *, root: Path | None = None) -> Lease | Non
         entry = artifacts / relative.parts[0]
         if not (entry / ".managed.json").is_file():
             return None
-        return _acquire_lease_locked(entry, root=root)
+        _evict_old_entries_locked(
+            required_bytes, root=root, exclude=(entry,))
+        return _acquire_lease_locked(
+            entry, root=root, required_bytes=required_bytes)
 
 
 def create_run_directory(
