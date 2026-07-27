@@ -315,16 +315,24 @@ ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
 
 echo ">> transcoding verification preview -> $OUT"
 OUT_ABS="$(realpath -m "$OUT")"
+RECORD_CPU_WORKERS="$(
+  "$PYTHON" tools/resource_tokens.py cpu-workers
+)"
+echo ">> preview CPU tokens: $RECORD_CPU_WORKERS"
 if [[ "$OUT_ABS" == "$ROOT/videos/"* ]]; then
-  "$PYTHON" tools/tmpfs_workspace.py run-file \
-    --output "$OUT" --kind record-preview-mp4 --required-gb 1 -- \
-    ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-      -c:v libx264 -crf 18 -pix_fmt yuv420p \
-      -c:a aac -b:a 128k -movflags +faststart '{output}'
+  "$PYTHON" tools/resource_tokens.py run \
+    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
+    "$PYTHON" tools/tmpfs_workspace.py run-file \
+      --output "$OUT" --kind record-preview-mp4 --required-gb 1 -- \
+      ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
+        -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
+        -c:a aac -b:a 128k -movflags +faststart '{output}'
 else
-  ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-    -c:v libx264 -crf 18 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -movflags +faststart "$OUT"
+  "$PYTHON" tools/resource_tokens.py run \
+    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
+    ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
+      -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
+      -c:a aac -b:a 128k -movflags +faststart "$OUT"
 fi
 
 if [ -n "$PIPELINE_WALL_START_NS" ]; then

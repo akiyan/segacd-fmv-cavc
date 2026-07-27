@@ -3977,6 +3977,30 @@ def _mark_sim_tmpfs_complete(lease):
     )
 
 
+def _handoff_sim_tmpfs_lease(lease):
+    """Keep the sim entry leased until a pipeline parent has pinned it."""
+
+    handoff_value = os.environ.get("SEGACD_TMPFS_HANDOFF")
+    if not handoff_value or lease is None:
+        return
+    handoff = Path(handoff_value)
+    handoff.mkdir(parents=True, exist_ok=True)
+    ready = handoff / "ready.json"
+    temporary = handoff / f".ready.{os.getpid()}.tmp"
+    temporary.write_text(json.dumps({
+        "entry": str(lease.entry),
+        "alias": str(OUT),
+    }, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temporary, ready)
+    acknowledgement = handoff / "ack"
+    deadline = time.monotonic() + 60.0
+    while not acknowledgement.is_file():
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"tmpfs pipeline lease handoff timed out: {handoff}")
+        time.sleep(0.05)
+
+
 if __name__ == "__main__":
     try:
         _stem_lease = resource_tokens.acquire_stem(CONFIG_PROFILE.sim_stem)
@@ -4000,6 +4024,7 @@ if __name__ == "__main__":
             if _standalone_lease is not None:
                 if _standalone_completed:
                     _mark_sim_tmpfs_complete(_standalone_lease)
+                _handoff_sim_tmpfs_lease(_standalone_lease)
                 _standalone_lease.release()
     finally:
         _stem_lease.release()

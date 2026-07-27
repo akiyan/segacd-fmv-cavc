@@ -304,6 +304,12 @@ def _parse_args() -> argparse.Namespace:
     source.add_argument("--config", type=Path)
     stem.add_argument("--wait", action="store_true")
     stem.add_argument("command", nargs=argparse.REMAINDER)
+
+    workers = subparsers.add_parser(
+        "cpu-workers",
+        help="print the CPU worker count implied by capacity and CBRSIM_WORKERS",
+    )
+    workers.add_argument("--limit", type=int)
     return parser.parse_args()
 
 
@@ -324,6 +330,9 @@ def _main() -> int:
             with acquire_stem(stem, wait=args.wait):
                 return _run_command(
                     args.command, env=held_stem_environment(stem))
+        if args.action == "cpu-workers":
+            print(requested_cpu_workers(limit=args.limit))
+            return 0
     except ResourceBusyError as exc:
         print(str(exc), file=os.sys.stderr)
         return 75

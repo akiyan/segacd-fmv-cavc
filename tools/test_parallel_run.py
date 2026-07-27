@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import csv
+from pathlib import Path
+import tempfile
+import unittest
+
+import parallel_run
+from encode_config import load_profile
+
+
+def write_profile(path: Path, *, source: str, mode: str = "H32") -> None:
+    width = 256 if mode == "H32" else 320
+    path.write_text(f"""\
+schema_version = 3
+
+[source]
+path = "{source}"
+fps = "30"
+duration = "8"
+
+[video]
+mode = "{mode}"
+width = {width}
+height = 224
+fit = "pad"
+
+[output]
+directory = "videos/{Path(source).stem}_{mode}_{width}x224_adpcm22/tmp"
+emit_decisions = true
+
+[palette]
+algorithm = "mosaic-gm"
+""", encoding="utf-8")
+
+
+class ParallelRunTests(unittest.TestCase):
+    def test_rejects_duplicate_video_stems(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "first.toml"
+            second = root / "second.toml"
+            write_profile(first, source="assets/same.mp4")
+            write_profile(second, source="assets/same.mp4")
+            with self.assertRaises(parallel_run.ParallelRunError):
+                parallel_run.validate_distinct_stems([
+                    load_profile(first), load_profile(second)])
+
+    def test_stage_commands_stop_at_requested_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            profile_path = Path(tmp) / "movie.toml"
+            write_profile(profile_path, source="assets/movie.mp4", mode="H40")
+            profile = load_profile(profile_path)
+            commands = parallel_run.stage_commands(
+                profile,
+                through="record",
+                use_gpu=False,
+                record_seconds=41,
+            )
+            self.assertEqual(
+                [stage for stage, _command in commands],
+                ["sim", "disc", "record"],
+            )
+            record = commands[-1][1]
+            self.assertIn("320x224", record)
+            self.assertIn("41", record)
+            self.assertNotIn("--gpu", commands[0][1])
+
+    def test_summary_is_tsv(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "summary.tsv"
+            result = parallel_run.JobResult(
+                Path("configs/a.toml"),
+                "movie_H32_256x224_adpcm22",
+                "PASS",
+                "",
+                1.25,
+                Path("logs/a.log"),
+                "",
+            )
+            parallel_run._write_summary(path, [result])
+            with path.open(encoding="utf-8", newline="") as handle:
+                rows = list(csv.DictReader(handle, delimiter="\t"))
+            self.assertEqual(len(rows), 1)
+            self.assertEqual(rows[0]["status"], "PASS")
+            self.assertEqual(rows[0]["elapsed_seconds"], "1.250")
+
+
+if __name__ == "__main__":
+    unittest.main()

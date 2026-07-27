@@ -98,6 +98,17 @@ class ResourceTokenTests(unittest.TestCase):
                 with self.assertRaises(resource_tokens.ResourceTokenError):
                     resource_tokens.requested_cpu_workers()
 
+    def test_cpu_workers_cli_reports_shared_budget(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp)):
+            result = subprocess.run([
+                sys.executable,
+                str(Path(resource_tokens.__file__)),
+                "cpu-workers",
+                "--limit", "1",
+            ], check=False, capture_output=True, text=True, env=os.environ)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout, "1\n")
+
 
 if __name__ == "__main__":
     unittest.main()

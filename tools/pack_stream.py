@@ -45,6 +45,7 @@ import sp_extension
 import stream_schedule
 import ttrc_routing
 import resource_tokens
+import tmpfs_workspace
 from encode_config import load_profile
 from cbr_paths import sim_work_dir
 from quantize_global4_tiles import pals_to_bytes
@@ -1767,6 +1768,7 @@ def _profile_from_command_line():
 if __name__ == "__main__":
     _command_profile = _profile_from_command_line()
     _stem_lease = None
+    _sim_lease = None
     if _command_profile is not None:
         try:
             _stem_lease = resource_tokens.acquire_stem(
@@ -1775,7 +1777,12 @@ if __name__ == "__main__":
             print(str(exc), file=sys.stderr)
             raise SystemExit(75) from exc
     try:
+        if _command_profile is not None:
+            _sim_lease = tmpfs_workspace.lease_managed_alias(
+                _command_profile.output_dir)
         main()
     finally:
+        if _sim_lease is not None:
+            _sim_lease.release()
         if _stem_lease is not None:
             _stem_lease.release()
