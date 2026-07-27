@@ -10,6 +10,7 @@ Each 8x8 glyph encodes its nibble twice:
 Only 0..F exist.  Source pixels are indices 0/1; the movie player expands set
 pixels to palette 0 index 15 and background pixels to palette 0 index 1.
 """
+import argparse
 from pathlib import Path
 
 
@@ -53,11 +54,18 @@ def tile_bytes(rows):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output", type=Path, default=Path("boot/dbgfont.bin"))
+    args = parser.parse_args()
     data = bytearray()
     for rows in ORDER:
         data += tile_bytes(rows)
-    Path("boot/dbgfont.bin").write_bytes(bytes(data))
-    print(f"wrote boot/dbgfont.bin = {len(ORDER)} tiles * 32 = {len(data)} bytes")
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_bytes(bytes(data))
+    print(
+        f"wrote {args.output} = "
+        f"{len(ORDER)} tiles * 32 = {len(data)} bytes")
 
 
 if __name__ == "__main__":

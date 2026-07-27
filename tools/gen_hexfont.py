@@ -6,6 +6,7 @@ Glyph N (0..15) is tile N; set pixels use colour index 1, background 0.
 The Main CPU bench ROM uploads these at VRAM tile index 1 (so glyph for
 nibble v lives at tile 1+v) and writes name-table entries to print numbers.
 """
+import argparse
 from pathlib import Path
 
 # 8x8 bitmaps, '#' = colour 1. Bold 5-7px strokes so they survive emulator
@@ -43,10 +44,18 @@ def tile_bytes(rows):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent / "boot" / "hexfont.bin",
+    )
+    args = parser.parse_args()
     data = bytearray()
     for v in range(16):
         data += tile_bytes(GLYPHS[v])
-    out = Path(__file__).resolve().parent.parent / "boot" / "hexfont.bin"
+    out = args.output
+    out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
     print(f"wrote {out} ({len(data)} bytes)")
 
