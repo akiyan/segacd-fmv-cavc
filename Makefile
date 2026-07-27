@@ -37,6 +37,11 @@ MOVIEPLAY_BUILD_DIR := $(MOVIEPLAY_TMP_DIR)/build
 MOVIEPLAY_DISC := $(MOVIEPLAY_TMP_DIR)/disc
 MOVIEPLAY_ISO := $(OUT_DIR)/$(CONFIG_STEM).iso
 MOVIEPLAY_CUE := $(OUT_DIR)/$(CONFIG_STEM).cue
+MOVIEPACK_OUTPUTS := \
+	$(MOVIEPLAY_STREAM_DIR)/HEADER.DAT \
+	$(MOVIEPLAY_STREAM_DIR)/BODY.DAT \
+	$(MOVIEPLAY_STREAM_DIR)/MOVIE.DAT \
+	$(MOVIEPLAY_STREAM_DIR)/palettes.bin
 PLAYER_CONSTANTS := $(MOVIEPLAY_STREAM_DIR)/player_constants.inc
 SP_EXTENSION_OBJ := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.o
 SP_EXTENSION_BIN := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.bin
@@ -212,15 +217,11 @@ movieplay: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 # every build, removing the complete old set first so a failed pack cannot fall
 # through to a stale disc.
 moviepack: check-tools $(SP_EXTENSION_BIN) | movieplay-setup
-	@rm -f $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT \
-		$(MOVIEPLAY_STREAM_DIR)/BODY.DAT \
-		$(MOVIEPLAY_STREAM_DIR)/MOVIE.DAT \
-		$(MOVIEPLAY_STREAM_DIR)/palettes.bin \
-		$(PLAYER_CONSTANTS)
+	@rm -f $(MOVIEPACK_OUTPUTS) $(PLAYER_CONSTANTS)
 	$(PYTHON) tools/pack_stream.py --config "$(CONFIG)" \
 		--sp-extension "$(SP_EXTENSION_BIN)" --verify
 
-$(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT: moviepack
+$(MOVIEPACK_OUTPUTS): moviepack
 	@test -f $@
 
 # 既定はリリースビルド。DEBUG=1 でデバッグオーバーレイを有効化する。

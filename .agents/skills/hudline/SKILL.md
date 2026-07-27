@@ -19,7 +19,10 @@ OCR pass. Keep the image frame-aligned with `/timeline`, then immediately use
    count, profile SHA, gate maxima, and recording size/mtime when available.
    Render failed gates too; when playback did not complete one loop, render
    the contiguous observed prefix only if the matching gate explicitly records
-   that incomplete-loop failure. The image is evidence and must not hide it.
+   that incomplete-loop failure. Keep the expected full-movie frame axis,
+   shade the unobserved suffix, and state observed/expected frame counts in the
+   heading so the matching full codec timeline can still be combined without
+   resampling. The image is evidence and must not hide the missing suffix.
 2. Run:
 
 ```sh
@@ -98,9 +101,11 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 ## Image contract
 
 - Use the complete first movie loop. For an explicitly failed incomplete-loop
-  gate, use the complete observed prefix and state the expected/observed counts
-  in the heading. Frame 0 keeps its horizontal position for alignment, but all
-  metric rows are blank there and it affects no gate, aggregate, or scale.
+  gate, draw the complete observed prefix on the expected full-movie frame
+  axis, visibly shade and label the unobserved suffix, and state the
+  expected/observed counts in the heading. Frame 0 keeps its horizontal
+  position for alignment, but all metric rows are blank there and it affects
+  no gate, aggregate, or scale.
 - Keep `/timeline`'s horizontal contract: left edge 220 px, the same automatic
   pixels-per-frame rule, and `x = 220 + frame * pixels_per_frame`.
 - Put `VBLANK` first. Derive it from the difference between consecutive
@@ -147,9 +152,9 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   row-height, scale, or colour change must therefore appear automatically in
   the immediately generated mixline without a second hard-coded layout.
 - Write a `<output>.json` layout receipt containing the input hashes, frame
-  mapping, row geometry, fixed scales, gate limits, `C/A` minimum, mean,
-  median, and maximum, optional G statistics and B frame count, and recording
-  identity. `/mixline` should consume this
+  mapping, expected and observed frame counts, row geometry, fixed scales,
+  gate limits, `C/A` minimum, mean, median, and maximum, optional G statistics
+  and B frame count, and recording identity. `/mixline` should consume this
   receipt rather than rediscovering geometry from pixels.
 
 ## Interpretation safeguards

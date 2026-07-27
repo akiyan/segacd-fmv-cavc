@@ -185,33 +185,33 @@ class ColdCapTests(unittest.TestCase):
     def test_baseline_scales_only_with_frame_rate(self) -> None:
         self.assertEqual(av_config.baseline_cold_cap_for_fps(15), 360)
         self.assertEqual(av_config.baseline_cold_cap_for_fps(24), 225)
-        self.assertEqual(av_config.baseline_cold_cap_for_fps(30), 180)
+        self.assertEqual(av_config.baseline_cold_cap_for_fps(30), 200)
         self.assertEqual(av_config.baseline_cold_cap_for_fps(60), 90)
 
-    def test_fractional_rate_is_rounded_to_nearest_pattern(self) -> None:
+    def test_ntsc_like_rate_uses_the_qualified_nominal_baseline(self) -> None:
         self.assertEqual(
-            av_config.baseline_cold_cap_for_fps(30_000 / 1_001), 180)
+            av_config.baseline_cold_cap_for_fps(30_000 / 1_001), 200)
 
     def test_profile_cap_may_raise_but_not_lower_baseline(self) -> None:
         qualification = av_config.cold_cap_qualification(
-            30, requested_cap=190)
-        self.assertEqual(qualification.cap, 190)
-        self.assertEqual(qualification.baseline_cap, 180)
+            30, requested_cap=210)
+        self.assertEqual(qualification.cap, 210)
+        self.assertEqual(qualification.baseline_cap, 200)
         self.assertEqual(qualification.source, "profile")
-        with self.assertRaisesRegex(ValueError, "below baseline 180"):
+        with self.assertRaisesRegex(ValueError, "below baseline 200"):
             av_config.cold_cap_qualification(
-                30, requested_cap=179)
+                30, requested_cap=199)
 
     def test_baseline_selector_ignores_profile_environment(self) -> None:
-        with patch.dict(os.environ, {"CBRSIM_COLD_CAP": "190"}):
+        with patch.dict(os.environ, {"CBRSIM_COLD_CAP": "210"}):
             self.assertEqual(
-                av_config.baseline_cold_cap_for_fps(30), 180)
-            self.assertEqual(av_config.cold_cap_for_fps(30), 190)
+                av_config.baseline_cold_cap_for_fps(30), 200)
+            self.assertEqual(av_config.cold_cap_for_fps(30), 210)
 
     def test_pack_ceiling_uses_the_same_fps_selector(self) -> None:
         self.assertEqual(av_config.cold_realized_ceiling_for_fps(15), 360)
         self.assertEqual(av_config.cold_realized_ceiling_for_fps(24), 225)
-        self.assertEqual(av_config.cold_realized_ceiling_for_fps(30), 180)
+        self.assertEqual(av_config.cold_realized_ceiling_for_fps(30), 200)
 
     def test_nonpositive_fps_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

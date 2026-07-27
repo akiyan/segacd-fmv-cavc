@@ -85,15 +85,14 @@ Cold means a 32-byte pattern written to VRAM in the current timed frame,
 regardless of whether its source is Prg, WordBuf, or DicBuf. The shared baseline
 is:
 
-```text
-baseline cold patterns per frame = max(1, round(5400 / fps))
-```
+The general baseline is `max(1, round(5400 / fps))`. The fully qualified
+nominal-30-fps baseline is 200 instead of the formula's 180.
 
 | Content fps | Baseline |
 |---:|---:|
 | 15 | 360 |
 | 24 | 225 |
-| 30 | 180 |
+| 30 | 200 |
 
 Display mode, grid size, and `active_tiles` do not change the baseline.
 `[encoder].cold_cap` may raise it after full-length source qualification.
@@ -472,15 +471,14 @@ palette lineでtransparent index 0をzeroのままにします。
 Coldは、sourceがPrg、WordBuf、DicBufのどれでも、現在のtimed frameでVRAMへ書く
 32-byte patternです。共通baselineは次の通りです。
 
-```text
-baseline cold patterns per frame = max(1, round(5400 / fps))
-```
+一般baselineは`max(1, round(5400 / fps))`です。全経路でqualification済みの
+nominal 30 fps baselineは、式から得る180ではなく200です。
 
 | Content fps | Baseline |
 |---:|---:|
 | 15 | 360 |
 | 24 | 225 |
-| 30 | 180 |
+| 30 | 200 |
 
 display mode、grid size、`active_tiles` はbaselineを変えません。
 `[encoder].cold_cap` はsource固有の全編認定後にbaselineを引き上げられます。省略時は

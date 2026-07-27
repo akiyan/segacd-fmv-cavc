@@ -26,7 +26,7 @@ reuse = false
 emit_decisions = true
 
 [encoder]
-cold_cap = 190
+cold_cap = 210
 
 [palette]
 algorithm = "mosaic-gm"

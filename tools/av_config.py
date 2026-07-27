@@ -393,10 +393,15 @@ def audio_frame_layout(fps):
 # realized <= cap as a guard. frame0 (the full-load header) is exempt.
 
 # --- Per-frame cold cap as an fps-derived physical draw/delivery limit ---
-# The common baseline is 360 patterns at 15 fps and scales with the duration of
-# one content frame: round(360 * 15 / fps) == round(5400 / fps). Display mode
-# and active-tile count do not participate in this limit.
+# The general baseline scales with one content frame as round(5400 / fps).
+# Full-path qualification raises the nominal 30 fps baseline from that formula's
+# 180 patterns to 200. Keep this cadence-specific: the qualified 15/24/60 fps
+# baselines remain 360/225/90. Display mode and active-tile count do not
+# participate in this limit.
 COLD_CAP_PATTERNS_PER_SECOND = 5400
+COLD_CAP_NOMINAL_BASELINES = {
+    30: 200,
+}
 
 
 @dataclass(frozen=True)
@@ -418,7 +423,12 @@ def _normalize_cold_cap_fps(fps):
 def baseline_cold_cap_qualification(fps):
     """Return the fps-derived baseline without a profile override."""
     fps_value = _normalize_cold_cap_fps(fps)
-    cap = max(1, round(COLD_CAP_PATTERNS_PER_SECOND / fps_value))
+    nominal_fps = _nominal_content_fps(fps_value)
+    nominal_key = int(nominal_fps) if nominal_fps.is_integer() else None
+    cap = COLD_CAP_NOMINAL_BASELINES.get(
+        nominal_key,
+        max(1, round(COLD_CAP_PATTERNS_PER_SECOND / fps_value)),
+    )
     return ColdCapQualification(
         fps_value, cap, baseline_cap=cap, source="baseline")
 
