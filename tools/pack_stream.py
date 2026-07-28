@@ -1578,7 +1578,11 @@ def main():
     # memory map.
     sim_prg_buf = log.get("prg_buf_kb", log.get("tank_kb"))
     sim_cold = log.get("max_cold")
-    print(f"  encode params from sim: max_cold={sim_cold} "
+    sim_requested_cold = int(log.get("requested_cold_cap", sim_cold))
+    sim_main_transfer_cold = int(log.get("main_transfer_cold_cap", 0))
+    print(f"  encode params from sim: cold target={sim_requested_cold} "
+          f"Main transfer={sim_main_transfer_cold or 'unclamped'} "
+          f"effective={sim_cold} "
           f"PrgBuf={sim_prg_buf}KB + jitter={RING_JITTER_HEADROOM_KB}KB  "
           f"delivery limit={RING_DELIVERY_CAP_KB}KB "
           f"(physical ring {RING_SIZE_KB}KB)  "
@@ -1650,17 +1654,34 @@ def main():
     # frame0(完全ロードのヘッダ)は除外。
     # realized == cap(共有 TileAllocator で構成上保証)。上限=cap を自動取得(手動env廃止)。
     if profile is not None:
-        profile_cold_cap = profile.section("encoder").get("cold_cap")
+        encoder_profile = profile.section("encoder")
+        profile_cold_cap = encoder_profile.get("cold_cap")
         if profile_cold_cap is None:
             profile_cold_cap = av_config.baseline_cold_cap_for_fps(FPS)
         requested_cold_cap = int(profile_cold_cap)
+        main_transfer_cold_cap = int(
+            encoder_profile.get("main_transfer_cold_cap", 0))
     else:
         # A direct decision-log pack has no TOML to authenticate. Preserve the
         # cap frozen by that sim while still enforcing its fps baseline.
-        requested_cold_cap = int(log.get("max_cold", 0))
+        requested_cold_cap = sim_requested_cold
+        main_transfer_cold_cap = sim_main_transfer_cold
     cold_qualification = av_config.cold_cap_qualification(
         FPS, requested_cap=requested_cold_cap)
-    cold_ceiling = cold_qualification.cap
+    cold_ceiling = av_config.effective_cold_cap(
+        cold_qualification.cap,
+        main_transfer_cap=main_transfer_cold_cap,
+    )
+    if sim_requested_cold != cold_qualification.cap:
+        raise SystemExit(
+            f"pack: sim cold target={sim_requested_cold} differs from "
+            f"profile target={cold_qualification.cap}; re-run sim with the "
+            "current TOML")
+    if sim_main_transfer_cold != main_transfer_cold_cap:
+        raise SystemExit(
+            f"pack: sim Main transfer cold cap={sim_main_transfer_cold} "
+            f"differs from profile cap={main_transfer_cold_cap}; re-run sim "
+            "with the current TOML")
     if int(sim_cold) != cold_ceiling:
         raise SystemExit(
             f"pack: sim cold cap={sim_cold} differs from effective profile "
@@ -1670,8 +1691,10 @@ def main():
         raise SystemExit(
             f"pack: realized per-frame cold max={realized_max} > cap={cold_ceiling}. "
             f"共有 TileAllocator では realized=cap のはず=想定外。sim/pack の割り当て食い違いを疑う。")
-    print(f"  realized cold: max={realized_max} <= {FPS:g}fps cap {cold_ceiling} "
-          f"(source={cold_qualification.source}, baseline="
+    print(f"  realized cold: max={realized_max} <= construction cap "
+          f"{cold_ceiling} (target={cold_qualification.cap}, "
+          f"Main transfer={main_transfer_cold_cap or 'unclamped'}, "
+          f"source={cold_qualification.source}, baseline="
           f"{cold_qualification.baseline_cap}; 共有割り当て)")
     if len(n_load) and int(n_load[0]) > POOL:
         raise SystemExit(

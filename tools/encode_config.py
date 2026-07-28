@@ -57,6 +57,8 @@ ENV_MAP = {
     ("output", "emit_decisions"): "CBRSIM_EMIT_DEC",
     ("encoder", "raw_prefetch"): "CBRSIM_RAW_PREFETCH",
     ("encoder", "cold_cap"): "CBRSIM_COLD_CAP",
+    ("encoder", "main_transfer_cold_cap"):
+        "CBRSIM_MAIN_TRANSFER_COLD_CAP",
     ("encoder", "cram_quality_priority_search_frames"):
         "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES",
     ("palette", "algorithm"): "CBRSIM_PAL_ALGO",
@@ -73,6 +75,7 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_NEAR": "1",
     "CBRSIM_BOOT_VRAM_PREFETCH": "1",
     "CBRSIM_RAW_PREFETCH": "0",
+    "CBRSIM_MAIN_TRANSFER_COLD_CAP": "0",
     "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES": str(
         av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
     "CBRSIM_PAL_MAP_WEIGHT": str(av_config.PALETTE_MAP_WEIGHT),
@@ -230,6 +233,18 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             raise ValueError(
                 f"{profile_path}: encoder.cold_cap {requested_cold_cap} is "
                 f"below baseline {baseline_cold_cap} for fps={source_fps:g}")
+    main_transfer_cold_cap = data.get(
+        "encoder", {}).get("main_transfer_cold_cap")
+    if main_transfer_cold_cap is not None:
+        if isinstance(main_transfer_cold_cap, bool) or not isinstance(
+                main_transfer_cold_cap, int):
+            raise ValueError(
+                f"{profile_path}: encoder.main_transfer_cold_cap must be "
+                "an integer")
+        if main_transfer_cold_cap <= 0:
+            raise ValueError(
+                f"{profile_path}: encoder.main_transfer_cold_cap must be "
+                "positive")
     cram_priority_search_frames = data.get(
         "encoder", {}).get("cram_quality_priority_search_frames")
     if cram_priority_search_frames is not None:

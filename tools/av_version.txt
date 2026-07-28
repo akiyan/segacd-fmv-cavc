@@ -11,6 +11,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e150: Keep the issue-74 cold280 quality target while adding a separate
+#         per-source Main-to-VRAM construction ceiling. The 75-second p113
+#         trace kept every 239-or-lower workload at two fields, while every
+#         241-or-higher workload took three; p112 also slipped twice at 240.
+#         The cold280 profile therefore encodes with a qualified ceiling of
+#         239 instead of scheduling work the player cannot meet.
 #   p115: Restore the single 64x28 name-table DMA after the p114 row-DMA A/B.
 #         Repeating DMA setup for all 28 rows slowed every displayed frame,
 #         drove the reader 25 slots ahead, and reached S2F/R0E by frame 218.
@@ -1014,5 +1020,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=149
+e=150
 p=115

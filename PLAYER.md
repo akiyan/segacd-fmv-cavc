@@ -41,35 +41,36 @@ PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 | `ADP-IDX` | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table |
 | `ADP-OUT` | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table |
 | `HOT-TAIL` | `0x0CC20..0x0CFFF` | 992 B | unused tail of the reserved hot-table page |
-| `PRG-BUF` | fps split, see next table | 378 / 398 KiB | streamed PrgBuf normal ceiling |
+| `PRG-BUF` | fps split, see next table | 376 / 396 KiB | streamed PrgBuf normal ceiling |
 | `JITTER` | fps split, see next table | 40 / 20 KiB | live delivery-jitter reserve above the scheduled ceiling |
-| `OBS-GUARD` | `0x75800..0x75FFF` | 2.00 KiB | observation guard below pump back-pressure |
-| `OVF-GUARD` | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; the boot-only ADPCM entry executes at `0x76800..0x76857`, longer-route builds also use the 216-byte extension through `0x768D7` |
+| `OBS-GUARD` | `0x75000..0x757FF` | 2.00 KiB | observation guard below pump back-pressure |
+| `OVF-GUARD` | `0x75800..0x767FF` | 4.00 KiB | physical PrgBuf overflow guard |
+| `WORD-PENDING3` | `0x76800..0x76FFF` | 2.00 KiB | fourth pending Word sector during playback; the boot-only extension executes here before this range assumes its live role |
 | `APPLY` | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue |
 | `SUB-STACK` | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve |
 | `STACK-TOP` | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top |
 
 ### `PRG-BUF` / `JITTER` fps split
 
-The physical bounds are fixed at every fps: the PrgBuf ring is 424 KiB at
-`0x0D000..0x76FFF`, pump back-pressure begins at 420 KiB, and the delivery
-observation boundary is 418 KiB (`..0x757FF`). Inside that fixed region the
+The physical bounds are fixed at every fps: the PrgBuf ring is 422 KiB at
+`0x0D000..0x767FF`, pump back-pressure begins at 418 KiB, and the delivery
+observation boundary is 416 KiB (`..0x74FFF`). Inside that fixed region the
 normal/scheduled ceiling and the jitter reserve move with content cadence:
 
 ```text
-normal PrgBuf KiB = 418 - cadence reserve KiB
+normal PrgBuf KiB = 416 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
 | Item | 15 fps | 30 fps |
 |---|---|---|
 | cadence reserve | 40 KiB | 20 KiB |
-| `PRG-BUF` normal / scheduled ceiling | 378 KiB | 398 KiB |
-| `PRG-BUF` address | `0x0D000..0x6B7FF` | `0x0D000..0x707FF` |
-| `JITTER` address | `0x6B800..0x757FF` | `0x70800..0x757FF` |
+| `PRG-BUF` normal / scheduled ceiling | 376 KiB | 396 KiB |
+| `PRG-BUF` address | `0x0D000..0x6AFFF` | `0x0D000..0x6FFFF` |
+| `JITTER` address | `0x6B000..0x74FFF` | `0x70000..0x74FFF` |
 
-Other rates follow the same formula (24 fps: reserve 25 KiB, ceiling 393 KiB,
-`PRG-BUF` = `0x0D000..0x6F3FF`). The values come from
+Other rates follow the same formula (24 fps: reserve 25 KiB, ceiling 391 KiB,
+`PRG-BUF` = `0x0D000..0x6EBFF`). The values come from
 `cadence_jitter_reserve_kb()`, `prg_buf_cap_kb()`, and
 `scheduled_delivery_cap_kb()` in `tools/av_config.py`; this document defines
 no independent capacity. The `JITTER` reserve is kept for live sector-arrival
@@ -369,35 +370,36 @@ PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 | `ADP-IDX` | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table |
 | `ADP-OUT` | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table |
 | `HOT-TAIL` | `0x0CC20..0x0CFFF` | 992 B | hot-table予約pageの未使用tail |
-| `PRG-BUF` | fps分割、次表参照 | 378 / 398 KiB | streamed PrgBufのnormal上限 |
+| `PRG-BUF` | fps分割、次表参照 | 376 / 396 KiB | streamed PrgBufのnormal上限 |
 | `JITTER` | fps分割、次表参照 | 40 / 20 KiB | scheduled上限より上のlive delivery-jitter予約 |
-| `OBS-GUARD` | `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard |
-| `OVF-GUARD` | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。boot-onlyのADPCM入口を`0x76800..0x76857`で実行し、長いroutingのbuildは216-byte extensionを`0x768D7`まで使用 |
+| `OBS-GUARD` | `0x75000..0x757FF` | 2.00 KiB | pump back-pressure前の観測guard |
+| `OVF-GUARD` | `0x75800..0x767FF` | 4.00 KiB | physical PrgBuf overflow guard |
+| `WORD-PENDING3` | `0x76800..0x76FFF` | 2.00 KiB | playback中の4本目pending Word sector。boot-only extensionはlive用途へ移る前にこの範囲で実行 |
 | `APPLY` | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue |
 | `SUB-STACK` | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve |
 | `STACK-TOP` | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 |
 
 ### `PRG-BUF` / `JITTER`のfps分割
 
-物理境界はすべてのfpsで固定です。PrgBuf ringは`0x0D000..0x76FFF`の424 KiB、
-pump back-pressureは420 KiBで始まり、delivery観測境界は418 KiB
-（`..0x757FF`）です。この固定領域の内部で、normal/scheduled上限とjitter予約
+物理境界はすべてのfpsで固定です。PrgBuf ringは`0x0D000..0x767FF`の422 KiB、
+pump back-pressureは418 KiBで始まり、delivery観測境界は416 KiB
+（`..0x74FFF`）です。この固定領域の内部で、normal/scheduled上限とjitter予約
 がcontent cadenceに応じて動きます。
 
 ```text
-normal PrgBuf KiB = 418 - cadence reserve KiB
+normal PrgBuf KiB = 416 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
 | 項目 | 15 fps | 30 fps |
 |---|---|---|
 | cadence reserve | 40 KiB | 20 KiB |
-| `PRG-BUF` normal / scheduled上限 | 378 KiB | 398 KiB |
-| `PRG-BUF` address | `0x0D000..0x6B7FF` | `0x0D000..0x707FF` |
-| `JITTER` address | `0x6B800..0x757FF` | `0x70800..0x757FF` |
+| `PRG-BUF` normal / scheduled上限 | 376 KiB | 396 KiB |
+| `PRG-BUF` address | `0x0D000..0x6AFFF` | `0x0D000..0x6FFFF` |
+| `JITTER` address | `0x6B000..0x74FFF` | `0x70000..0x74FFF` |
 
-他のrateも同じ式に従います（24 fps: reserve 25 KiB、上限393 KiB、
-`PRG-BUF` = `0x0D000..0x6F3FF`）。数値は`tools/av_config.py`の
+他のrateも同じ式に従います（24 fps: reserve 25 KiB、上限391 KiB、
+`PRG-BUF` = `0x0D000..0x6EBFF`）。数値は`tools/av_config.py`の
 `cadence_jitter_reserve_kb()`、`prg_buf_cap_kb()`、
 `scheduled_delivery_cap_kb()`から得ます。この文書では独立した容量を定義
 しません。`JITTER`予約はliveのsector到着変動のために保持され、encoder

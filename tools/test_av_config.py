@@ -204,6 +204,24 @@ class ColdCapTests(unittest.TestCase):
         self.assertEqual(av_config.cold_realized_ceiling_for_fps(24), 225)
         self.assertEqual(av_config.cold_realized_ceiling_for_fps(30), 200)
 
+    def test_main_transfer_ceiling_preserves_the_quality_target(self) -> None:
+        self.assertEqual(
+            av_config.effective_cold_cap(
+                280, main_transfer_cap=239),
+            239,
+        )
+        self.assertEqual(
+            av_config.effective_cold_cap(
+                200, main_transfer_cap=239),
+            200,
+        )
+        self.assertEqual(av_config.effective_cold_cap(280), 280)
+
+    def test_invalid_main_transfer_ceiling_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            av_config.effective_cold_cap(
+                280, main_transfer_cap=-1)
+
     def test_nonpositive_fps_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             av_config.cold_cap_for_fps(0)

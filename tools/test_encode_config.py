@@ -245,6 +245,44 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                     ValueError, "cold_cap must be an integer"):
                 load_profile(path)
 
+    def test_profile_may_separate_quality_and_main_transfer_caps(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "main-transfer-cap.toml"
+            path.write_text(PROFILE.replace(
+                "[palette]",
+                "[encoder]\n"
+                "cold_cap = 280\n"
+                "main_transfer_cold_cap = 239\n\n"
+                "[palette]"))
+            env = apply_profile_env(load_profile(path), {})
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "280")
+        self.assertEqual(env["CBRSIM_MAIN_TRANSFER_COLD_CAP"], "239")
+
+    def test_main_transfer_cap_must_be_a_positive_integer(self) -> None:
+        for value in ("0", "-1", "1.5", "true"):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "invalid-main-transfer-cap.toml"
+                path.write_text(PROFILE.replace(
+                    "[palette]",
+                    "[encoder]\n"
+                    f"main_transfer_cold_cap = {value}\n\n"
+                    "[palette]"))
+                with self.assertRaisesRegex(
+                        ValueError,
+                        "main_transfer_cold_cap must be "
+                        "(?:positive|an integer)"):
+                    load_profile(path)
+
+    def test_omitted_main_transfer_cap_clears_inherited_value(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "default-main-transfer-cap.toml"
+            path.write_text(PROFILE)
+            env = apply_profile_env(
+                load_profile(path),
+                {"CBRSIM_MAIN_TRANSFER_COLD_CAP": "239"},
+            )
+        self.assertEqual(env["CBRSIM_MAIN_TRANSFER_COLD_CAP"], "0")
+
     def test_profile_may_override_cram_quality_priority_search_frames(
         self,
     ) -> None:

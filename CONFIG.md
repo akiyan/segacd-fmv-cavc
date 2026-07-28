@@ -55,14 +55,14 @@ memory.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
-| `RING_SIZE` / `RING_SIZE_KB` | 424 KiB (`0x6A000`) | sp / cfg | Physical PRG-RAM ring backing `PrgBuf`, from `0x0D000` to `APPLY_BASE`; the preceding 4 KiB holds hot ADPCM tables. |
+| `RING_SIZE` / `RING_SIZE_KB` | 422 KiB (`0x69800`) | sp / cfg | Physical PRG-RAM ring backing `PrgBuf`, `0x0D000..0x767FF`; the following 2 KiB is the fourth pending Word sector, not part of the ring. |
 | `RING_PHYSICAL_GUARD_KB` | 4 KiB | cfg | Gap between pump back-pressure and the physical ring end. |
-| `BACKPRESSURE_KB` | 420 KiB | cfg / sp | Payload draining stops at this occupancy. |
+| `BACKPRESSURE_KB` | 418 KiB | cfg / sp | Payload draining stops at this occupancy. |
 | `RING_DELIVERY_GUARD_KB` | 2 KiB | cfg | One-sector observation boundary below back-pressure; it is not encoder Supply. |
-| `scheduled_delivery_cap_kb(fps)` | 378 / 393 / 398 KiB at 15 / 24 / 30 fps | cfg / sim / pack | Hard scheduled occupancy ceiling; equal to the normal PrgBuf ceiling so live jitter remains unspent. |
+| `scheduled_delivery_cap_kb(fps)` | 376 / 391 / 396 KiB at 15 / 24 / 30 fps | cfg / sim / pack | Hard scheduled occupancy ceiling; equal to the normal PrgBuf ceiling so live jitter remains unspent. |
 | `cadence_jitter_reserve_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | `ceil(20 * 30 / fps)` reserve used to derive the normal ceiling. |
-| `ring_jitter_headroom_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | Runtime-only arrival headroom from the scheduled ceiling to the 418 KiB observation boundary. |
-| `prg_buf_cap_kb(fps)` | 378 / 393 / 398 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf, PREBUFFER, and scheduled Supply ceiling: 418 KiB minus the cadence reserve. |
+| `ring_jitter_headroom_kb(fps)` | 40 / 25 / 20 KiB at 15 / 24 / 30 fps | cfg | Runtime-only arrival headroom from the scheduled ceiling to the 416 KiB observation boundary. |
+| `prg_buf_cap_kb(fps)` | 376 / 391 / 396 KiB at 15 / 24 / 30 fps | cfg / sim / pack / sp | Normal PrgBuf, PREBUFFER, and scheduled Supply ceiling: 416 KiB minus the cadence reserve. |
 | `quality_budget_kb(fps)` | same as `prg_buf_cap_kb` | cfg / sim | Offline whole-movie quality-accounting capacity. It has no physical meter. |
 | `WordBuf0` | build-derived; 2,048 patterns in the 6,576-frame H40 example | sp / ip / sim / pack | Boot-preloaded sequence in the frame-0 physical bank; its start follows the frame-0 `O_LOADS` envelope. |
 | `WordBuf1` | build-derived; 2,944 patterns in the same example | sp / ip / sim / pack | Different boot-preloaded sequence in the other bank; its start follows the timed cold/run envelope. |
@@ -121,6 +121,11 @@ nominal-30-fps baseline is 200 instead of the formula's 180.
 Display mode, grid size, and `active_tiles` do not change the baseline.
 `[encoder].cold_cap` may raise it after full-length source qualification.
 Omission selects the baseline; a lower value is rejected.
+`[encoder].main_transfer_cold_cap` is a separate, positive per-source
+construction ceiling for total Main-to-VRAM cold loads. It preserves the
+requested quality target in `cold_cap` while preventing a frame from selecting
+work that a qualified player deadline cannot execute. Omission leaves the
+quality target unclamped.
 
 The sim and packer share `tools/tile_alloc.py`. The packer replays the frozen
 allocation and requires realized cold to remain within the effective cap.
@@ -129,7 +134,7 @@ playback.
 
 ## Audio
 
-On-disc format version 17 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+On-disc format version 20 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
@@ -173,7 +178,7 @@ Back-pressure depends on the next sector's destination:
 | low-rate pump interval | every 64 entries or four run descriptors | sp | CDC service during expansion at 20 fps or below. |
 | high-rate pump interval | one end poll for a non-empty descriptor frame | sp | Specialized 24–30 fps path. |
 | `CMD_SWAP` priority | handshake before opportunistic pump | sp | A pending display handoff takes priority over future-data work. |
-| payload full threshold | 420 KiB | sp | Blocks only payload draining. |
+| payload full threshold | 418 KiB | sp | Blocks only payload draining. |
 | APPLY full threshold | 30 KiB | sp | Blocks only control draining. |
 | `FRAME_SECTORS` | 5 useful sectors | pack / sp | Maximum control + payload represented by one routing byte. |
 | `HEADER_SECTORS` | 1 metadata sector | pack / sp | Fixed header sector before BOOT_STAGE and other boot regions. |
@@ -229,9 +234,9 @@ control and Prg payload independently to physical sectors, reserves every CRAM
 switch and run descriptor, and computes both a Prg ceiling and a control-byte
 ceiling for the current frame.
 
-The prefix ledger and exact delivery schedule use the normal 378/393/398 KiB
+The prefix ledger and exact delivery schedule use the normal 376/391/396 KiB
 PrgBuf capacity at 15/24/30 fps. The corresponding 40/25/20 KiB interval up to
-the 418 KiB observation boundary is runtime-only sector-arrival headroom, not
+the 416 KiB observation boundary is runtime-only sector-arrival headroom, not
 encoder Supply. Every BODY prefix must fit both the five-useful-sector route
 and the fps-derived cumulative CD-1x time available at that point. The exact
 finite-PrgBuf route must keep `rate_lead_peak` at zero; later pad cannot repay
@@ -362,7 +367,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | Sim work directory, decoded-input reuse, and decision-log output. |
-| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | Timed raw prefetch, qualified cold-cap raise, and the non-negative CRAM-risk search length. |
+| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `main_transfer_cold_cap`, `cram_quality_priority_search_frames` | Timed raw prefetch, qualified quality target, optional positive Main-to-VRAM construction ceiling, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
@@ -376,8 +381,9 @@ uses the full grid. A smaller value is verified against every master frame.
 It affects accounting, not the cold-cap baseline.
 
 The loader rejects unknown keys, unsupported modes, non-tile-aligned
-dimensions, unsafe profile names, a `cold_cap` below baseline, and a negative
-or non-integer CRAM-risk search length. GPU, the
+dimensions, unsafe profile names, a `cold_cap` below baseline, a non-positive
+or non-integer `main_transfer_cold_cap`, and a negative or non-integer
+CRAM-risk search length. GPU, the
 1,535-tile resident pool, dither, segmented palettes, Near, boot prefetch, and
 the four physical supplies are fixed behavior.
 
@@ -478,14 +484,14 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
-| `RING_SIZE` / `RING_SIZE_KB` | 424 KiB (`0x6A000`) | sp / cfg | `0x0D000` から `APPLY_BASE` までのPrgBuf物理PRG-RAM ring。直前4 KiBはhot ADPCM table。 |
+| `RING_SIZE` / `RING_SIZE_KB` | 422 KiB (`0x69800`) | sp / cfg | PrgBuf物理PRG-RAM ring `0x0D000..0x767FF`。直後2 KiBは4本目のpending Word sectorでring外。 |
 | `RING_PHYSICAL_GUARD_KB` | 4 KiB | cfg | pump back-pressureと物理ring末尾の間隔。 |
-| `BACKPRESSURE_KB` | 420 KiB | cfg / sp | このoccupancyでpayload drainを止める。 |
+| `BACKPRESSURE_KB` | 418 KiB | cfg / sp | このoccupancyでpayload drainを止める。 |
 | `RING_DELIVERY_GUARD_KB` | 2 KiB | cfg | back-pressureより1 sector手前の観測境界。encoder Supplyではない。 |
-| `scheduled_delivery_cap_kb(fps)` | 15 / 24 / 30 fpsで378 / 393 / 398 KiB | cfg / sim / pack | schedule上のhard occupancy上限。live jitterを未使用で残すため通常PrgBuf上限と同じ。 |
+| `scheduled_delivery_cap_kb(fps)` | 15 / 24 / 30 fpsで376 / 391 / 396 KiB | cfg / sim / pack | schedule上のhard occupancy上限。live jitterを未使用で残すため通常PrgBuf上限と同じ。 |
 | `cadence_jitter_reserve_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | 通常上限の導出に使う `ceil(20 * 30 / fps)` reserve。 |
-| `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | scheduled上限から418 KiB観測境界までのruntime専用到着headroom。 |
-| `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで378 / 393 / 398 KiB | cfg / sim / pack / sp | 通常PrgBuf、PREBUFFER、scheduled Supply上限。418 KiBからcadence reserveを引く。 |
+| `ring_jitter_headroom_kb(fps)` | 15 / 24 / 30 fpsで40 / 25 / 20 KiB | cfg | scheduled上限から416 KiB観測境界までのruntime専用到着headroom。 |
+| `prg_buf_cap_kb(fps)` | 15 / 24 / 30 fpsで376 / 391 / 396 KiB | cfg / sim / pack / sp | 通常PrgBuf、PREBUFFER、scheduled Supply上限。416 KiBからcadence reserveを引く。 |
 | `quality_budget_kb(fps)` | `prg_buf_cap_kb` と同じ | cfg / sim | offlineのmovie全体quality accounting容量。物理meterはない。 |
 | `WordBuf0` | buildから導出。6,576-frame H40例では2,048 patterns | sp / ip / sim / pack | frame-0 physical bankのboot preload sequence。開始位置はframe-0 `O_LOADS` envelope直後。 |
 | `WordBuf1` | buildから導出。同じ例では2,944 patterns | sp / ip / sim / pack | 反対bankの異なるboot preload sequence。開始位置はtimed cold/run envelope直後。 |
@@ -540,6 +546,10 @@ nominal 30 fps baselineは、式から得る180ではなく200です。
 display mode、grid size、`active_tiles` はbaselineを変えません。
 `[encoder].cold_cap` はsource固有の全編認定後にbaselineを引き上げられます。省略時は
 baselineを使い、baseline未満は拒否します。
+`[encoder].main_transfer_cold_cap` は、MainからVRAMへ送るtotal cold loadに対する
+別の正のsource固有construction上限です。`cold_cap` の要求品質targetは保持したまま、
+認定済みplayer deadlineで実行できないworkをframeが選ぶのを防ぎます。省略時は
+quality targetをclampしません。
 
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
 realized coldがeffective cap内にあることを要求します。frame 0はtimed playback前に
@@ -547,7 +557,7 @@ untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-On-disc format version 17のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+On-disc format version 20のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |
@@ -589,7 +599,7 @@ back-pressureは次sectorの行き先で決まります。
 | low-rate pump interval | 64 entriesまたは4 run descriptorsごと | sp | 20 fps以下の展開中CDC service。 |
 | high-rate pump interval | non-empty descriptor frame末尾に1回 | sp | specialized 24〜30 fps path。 |
 | `CMD_SWAP` priority | opportunistic pumpよりhandshake優先 | sp | pending display handoffを将来data workより先に処理する。 |
-| payload full threshold | 420 KiB | sp | payload drainだけを止める。 |
+| payload full threshold | 418 KiB | sp | payload drainだけを止める。 |
 | APPLY full threshold | 30 KiB | sp | control drainだけを止める。 |
 | `FRAME_SECTORS` | 有効5 sectors | pack / sp | 1 routing byteが表すcontrol + payload上限。 |
 | `HEADER_SECTORS` | metadata 1 sector | pack / sp | BOOT_STAGEなどのboot領域より前にある固定header sector。 |
@@ -642,7 +652,7 @@ switchとrun descriptorを予約し、current frameのPrg ceilingとcontrol-byte
 計算します。
 
 prefix ledgerと正確なdelivery scheduleは、15/24/30 fpsで通常PrgBuf容量
-378/393/398 KiBを使います。418 KiB観測境界までの40/25/20 KiBはruntime専用の
+376/391/396 KiBを使います。416 KiB観測境界までの40/25/20 KiBはruntime専用の
 sector到着headroomで、encoder Supplyではありません。各BODY prefixはこの容量の下で、
 有効5-sector routeと、その時点までにfpsから導出した累積CD-1x時間の両方へ収まる必要が
 あります。有限PrgBufを含む正確なrouteは `rate_lead_peak` をzeroに保ち、後のpadで
@@ -765,7 +775,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | sim work directory、decoded-input reuse、decision-log output。 |
-| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | timed raw prefetch、認定済みcold-cap引き上げ、非負のCRAM-risk search長。 |
+| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `main_transfer_cold_cap`, `cram_quality_priority_search_frames` | timed raw prefetch、認定済みquality target、optionalな正のMain-to-VRAM construction上限、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 
@@ -779,7 +789,8 @@ aspectは8:7、H40は32:35です。
 baselineには影響しません。
 
 loaderは未知key、未対応mode、tile境界に揃わないdimension、安全でないprofile名、
-baseline未満の `cold_cap`、負または整数でないCRAM-risk search長を拒否します。
+baseline未満の `cold_cap`、正でないか整数でない `main_transfer_cold_cap`、
+負または整数でないCRAM-risk search長を拒否します。
 GPU、1,535-tile resident pool、dither、
 segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 

@@ -500,8 +500,31 @@ def cold_cap_for_fps(fps):
     return cold_cap_qualification(fps).cap
 
 
-def cold_realized_ceiling_for_fps(fps):
+def effective_cold_cap(target_cap, *, main_transfer_cap=None):
+    """Apply an optional Main-to-VRAM construction ceiling to a quality cap.
+
+    ``target_cap`` remains the requested quality point.  A positive
+    ``main_transfer_cap`` is a separately qualified player deadline and may
+    reduce the frame decisions without rewriting that target.
+    """
+    target = int(target_cap)
+    if target <= 0:
+        raise ValueError(f"target cold cap must be positive: {target_cap!r}")
+    if main_transfer_cap in (None, 0, ""):
+        return target
+    deadline = int(main_transfer_cap)
+    if deadline <= 0:
+        raise ValueError(
+            "Main transfer cold cap must be positive when present: "
+            f"{main_transfer_cap!r}")
+    return min(target, deadline)
+
+
+def cold_realized_ceiling_for_fps(fps, *, main_transfer_cap=None):
     """Pack-time realized-cold ceiling. Now == the cap: the shared two-pass allocator
     makes the pack's realized cold equal the sim's cap exactly, so the ceiling is the
     cap itself (the assert `realized <= ceiling` holds by construction)."""
-    return cold_cap_for_fps(fps)
+    return effective_cold_cap(
+        cold_cap_for_fps(fps),
+        main_transfer_cap=main_transfer_cap,
+    )
