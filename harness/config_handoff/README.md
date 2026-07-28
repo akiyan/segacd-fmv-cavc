@@ -6,7 +6,7 @@ This harness proves the configuration boundary used by the encoder and packer:
 2. `sim.py` freezes the resolved geometry, timing, audio, hardware and pack
    settings in `decisions.pkl`.
 3. `pack_stream.py` reads those values from the decision log and produces the
-   same `HEADER.DAT`, `BODY.DAT`, `MOVIE.DAT` and `palettes.bin` even when its
+   same `HEADER.DAT`, `BODY.DAT`, `MOVIE.DAT`, `paltab.bin` and `palidx.bin` even when its
    process receives deliberately wrong H40/15fps/ADPCM environment values.
 
 Run it against an existing full decision log:
