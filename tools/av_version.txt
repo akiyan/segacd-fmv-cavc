@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e151: Round the issue-74 Bad Apple Main-transfer construction ceiling down
+#         from the measured 239-pattern edge to the project's 10-pattern
+#         tuning quantum at 230. Keep cold_cap=280 as the encoder quality
+#         target; only the separate physical playback deadline ceiling changes.
 #   e150: Keep the issue-74 cold280 quality target while adding a separate
 #         per-source Main-to-VRAM construction ceiling. The 75-second p113
 #         trace kept every 239-or-lower workload at two fields, while every
@@ -1020,5 +1024,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=150
+e=151
 p=115
