@@ -40,6 +40,28 @@ class TimelineRenderingTests(unittest.TestCase):
         self.assertEqual(timeline.run_scale_max(values), 9)
         self.assertEqual(timeline.run_scale_max(np.asarray([255, 0])), 1)
 
+    def test_r2v_counts_cpu_words_once_and_one_repair_per_dma_run(self):
+        components = timeline.calculate_r2v_words(
+            np.asarray([0, 3360, 3312]),
+            np.asarray([0, 96, 31]),
+            np.asarray([0, 75, 19]),
+            np.asarray([0, 0, 1]),
+        )
+        np.testing.assert_array_equal(
+            components["repair_words"], [0, 21, 12])
+        np.testing.assert_array_equal(
+            components["name_table_words"], [1792, 1792, 1792])
+        np.testing.assert_array_equal(
+            components["cram_words"], [0, 0, 64])
+        np.testing.assert_array_equal(
+            components["words"], [1792, 5173, 5180])
+
+    def test_r2v_rejects_more_short_runs_than_total_runs(self):
+        with self.assertRaisesRegex(ValueError, "short-run"):
+            timeline.calculate_r2v_words(
+                np.asarray([16]), np.asarray([1]), np.asarray([2]),
+                np.asarray([0]))
+
     def test_hud_run_scale_uses_timed_observed_maximum(self):
         data = {
             "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
