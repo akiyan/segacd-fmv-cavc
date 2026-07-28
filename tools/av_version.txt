@@ -11,6 +11,18 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e149: TTRC v20: move the full segment-palette table (PALTAB) and the
+#         switch table (PALIDX) off the disc into player build inputs
+#         (paltab.bin / palidx.bin). Drop the header seg0 field (offset 64
+#         becomes pad), remove PALTAB/PALIDX from BOOT_STAGE, and fix the
+#         BVRM sidecar regions at +0000/+1000/+5000 with no palette
+#         carve-out (region B capacity grows to a fixed 0x2000 bytes).
+#   p109: Embed paltab.bin/palidx.bin in the transient .startup section and
+#         copy both to M-PALTAB/M-PALIDX at ip_entry before codegen reuse.
+#         Load the initial CRAM from M-PALTAB[0], drop the boot-stage
+#         palette/PALIDX copies and the header n_seg clamp, and restore the
+#         segment-0 CRAM when loop playback restarts (previously the final
+#         segment's palette leaked into the next loop's first frames).
 #   e148: TTRC v19: drop the per-frame pal word from every control block and
 #         ship palette switches as the boot-loaded PALIDX table (frame.u16 +
 #         segment.u16, 15 switches + sentinel) inside BOOT_STAGE. Cap palette
@@ -979,5 +991,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=148
-p=108
+e=149
+p=109

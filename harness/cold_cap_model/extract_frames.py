@@ -98,11 +98,18 @@ def decode_routes(routing: bytes, nframes: int) -> list[tuple[int, int]]:
         die("v7+ frame 0 routing entry must be zero")
     routes = []
     for frame, packed in enumerate(routing[:nframes]):
-        if packed & 0xC0:
-            die(f"frame {frame}: routing reserved bits set in 0x{packed:02X}")
-        n_ctrl = packed & 0x07
+        # bits 6-7 carry the WordBuf payload prefix; ctrl bit 2 is the
+        # 4-sector escape (base 3 in the word field).
+        n_word = (packed >> 6) & 3
+        ctrl_field = packed & 0x07
+        n_ctrl = ctrl_field
+        if ctrl_field & 4:
+            if n_word != 3:
+                die(f"frame {frame}: WordBuf-4 escape lacks base 3 in 0x{packed:02X}")
+            n_ctrl = ctrl_field & 3
+            n_word = 4
         total = (packed >> 3) & 0x07
-        if total > ROUTING_TOTAL_MAX or n_ctrl > total:
+        if total > ROUTING_TOTAL_MAX or n_ctrl > total or n_word > total - n_ctrl:
             die(f"frame {frame}: bad routing entry 0x{packed:02X}")
         routes.append((total - n_ctrl, n_ctrl))
     return routes
@@ -118,7 +125,11 @@ def decode_run_words(raw: bytes, pos: int, k: int, pool: int,
         count = w1 & 0x07FF
         source = (w1 >> 14) & 0x3
         dic_idx = ((w0 >> 11) & 0x1F) << 3 | ((w1 >> 11) & 0x7)
-        if source == 3 or count == 0 or slot + count > pool:
+        if source == 3:
+            # Dic 512: source 3 is Dic with the index biased by 256.
+            source = 2
+            dic_idx += 256
+        if count == 0 or slot + count > pool:
             return None
         if source != 2 and dic_idx:
             return None
@@ -202,8 +213,8 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     body = (pack_dir / "BODY.DAT").read_bytes()
     magic, version, nfr, cols, rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", header)
-    if magic != b"TTRC" or version != 19:
-        die(f"expected TTRC v19, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 20:
+        die(f"expected TTRC v20, got {magic!r} v{version}")
     if cols * rows != cells:
         die(f"grid {cols}x{rows} != {cells} cells")
     routing_sec = struct.unpack_from(">L", header, 26)[0]
@@ -227,15 +238,18 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         features, audio_control_bytes)
     rows_out = [row0]
 
-    # v19: palette switches ride the boot stage as the PALIDX table
-    # (frame.u16, segment.u16 entries terminated by a 0xFFFF frame sentinel).
+    # v20: palette switches are the player-embedded PALIDX table written by
+    # pack as palidx.bin beside the split stream (frame.u16, segment.u16
+    # entries terminated by a 0xFFFF frame sentinel).
     palidx_switches: dict[int, int] = {}
-    stage = header[SECTOR:(1 + paltab_sec) * SECTOR]
-    for entry in range(16):
-        frame, seg = struct.unpack_from(">HH", stage, 0x0F80 + entry * 4)
-        if frame == 0xFFFF:
-            break
-        palidx_switches[frame] = seg + 1
+    palidx_path = pack_dir / "palidx.bin"
+    if palidx_path.exists():
+        palidx = palidx_path.read_bytes()
+        for entry in range(len(palidx) // 4):
+            frame, seg = struct.unpack_from(">HH", palidx, entry * 4)
+            if frame == 0xFFFF:
+                break
+            palidx_switches[frame] = seg + 1
 
     routing_offset = (
         1 + paltab_sec + table_sec + supply_sec

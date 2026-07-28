@@ -11,17 +11,19 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v19): HEADER.DAT = Header(1sec) + BOOT_STAGE(全区間パレット
-              n_seg×128B + optional boot-VRAM sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
+TTRCレイアウト(v20): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
+              sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
               BODY.DAT = arm[startup audio][frame0 control][frame0 patterns]
               + frame1以降の [control][payload][rate pad]
 MOVIE.DAT はツール互換用の HEADER.DAT || BODY.DAT 連結コンテナ。
-control block: >H total_len >H frame_seq >H n_upd >H pal
+パレット(PALTAB全区間)と切替表(PALIDX)はディスクに載せず、pack が
+paltab.bin / palidx.bin としてplayerビルド入力へ書き、Main-IPイメージが内蔵する。
+control block: >H total_len >H frame_seq >H n_upd
                ceil(cells/8) bitmap n_upd*(>H entry) audio [even pad]
                >H n_runs n_runs*(>H slot_start >H count)
-  pal = 区間番号+1(0=切替なし)。実機はMain-RAMのPALTAB表を引く(in-stream CRAM廃止)。
+  palette切替はboot搭載のM-PALIDX表起点(controlに切替バイトは無い)。
 """
 import argparse
 import dataclasses
@@ -217,21 +219,21 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v19: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v20: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v19: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v20: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v19: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v20: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v19: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v20: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
 
 
@@ -795,8 +797,8 @@ def build_control(
     """Build control blocks and return their reconstructed source PCM chunks."""
     seg_cram = [pals_to_bytes_128(p) for p in log["seg_pals"]]
     audio_chunks, pcm_chunks = build_audio_chunks(audio_path, len(per))
-    # CRAM pre-load(PALTAB): パレット本体はヘッダ直後のPALTAB領域で一括配送し、実機は
-    # boot時にMain-RAM表へコピー済み。切替トリガもboot搭載のPALIDX表(frame番号+区間番号)で、
+    # CRAM pre-load(PALTAB): パレット本体はplayerイメージ内蔵(paltab.bin)で、実機は
+    # boot時にMain-RAM表へコピー済み。切替トリガも内蔵のPALIDX表(frame番号+区間番号)で、
     # controlブロックに切替バイトは存在しない(到着タイミング非依存=スリップ回復に強い)。
     # 区間数は av_config.PALTAB_MAX_SEG が上限(実機表の容量)。
     n_seg = len(seg_cram)
@@ -839,7 +841,7 @@ def build_control(
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v19 keeps the 16-bit entry array word-aligned even when
+            # TTRC v20 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -1131,7 +1133,7 @@ def _decode_control_chunk(chunk):
 def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v19 split stream and a combined tooling container.
+    """Write the v20 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
@@ -1143,8 +1145,9 @@ def write_stream(
 
     BODY arm is read before the playback clock. Frame 0 never enters the timed
     Prg ring; frame 1 therefore still begins from the HEADER prebuffer.
-    BOOT_STAGE = 全区間パレット(n_seg×128B)と任意の裏VRAMパターン。
-    Mainはboot時に前者をMain-RAM表へ、後者をVRAMの指定slotへコピーする。"""
+    BOOT_STAGE = 任意の裏VRAMパターン(BVRM sidecar)。Mainはboot時にVRAMの
+    指定slotへコピーする。パレット表と切替表はplayerイメージ内蔵
+    (paltab.bin / palidx.bin)でディスクには載らない。"""
     n_pay_sec = sc["n_pay_sec"]; n_ctrl_sec = sc["n_ctrl_sec"]
     word_stage_sec = np.asarray(
         sc.get("word_stage_sectors", np.zeros(len(per), np.int64)),
@@ -1152,7 +1155,10 @@ def write_stream(
     )
     Bpat = int(sc["prebuf_pat"])
     frame_seg = np.asarray(log["frame_seg"], np.int64)
-    seg0 = pals_to_bytes_128(log["seg_pals"][int(frame_seg[0])])
+    if int(frame_seg[0]) != 0:
+        raise SystemExit(
+            "pack: frame 0 must display palette segment 0 "
+            "(the player's initial CRAM is paltab.bin entry 0)")
     nfr = len(per)
     if nfr > ROUTING_MAX_FRAMES:
         raise SystemExit(
@@ -1216,7 +1222,7 @@ def write_stream(
 
     control = b"".join(disc_blocks)
     # Split frame 0 from the timed stream. It remains an untimed exact
-    # construction, but v19 carries its bytes in the BODY arm rather than HEADER.
+    # construction, but v20 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1262,23 +1268,17 @@ def write_stream(
     if mode_name not in {"H32", "H40", "MODE4"}:
         raise SystemExit(f"pack: unsupported display mode in decision log: {mode_name!r}")
     _mode = {"H32": 0, "H40": 1, "MODE4": 2}[mode_name]
-    # The first boot handoff stages one 24 KiB image at the bank front. The
-    # palette starts at +0x1000, and sidecar records occupy the remaining
-    # preserved holes. Main copies this image before Sub reuses the front for
-    # frame output and the parity-specific WordBuf.
+    # The first boot handoff stages one 24 KiB image at the bank front holding
+    # only the optional boot-VRAM sidecar records. Main copies this image
+    # before Sub reuses the front for frame output and the parity-specific
+    # WordBuf. Palette data does not ride the disc: the full segment table and
+    # the switch table are player-image build inputs (paltab.bin/palidx.bin).
     palette_table = b"".join(
         pals_to_bytes_128(p) for p in log["seg_pals"])
-    sidecar_patterns = supply_plan.prg_patterns[f0_inline:nl0]
-    if len(sidecar_patterns) != sidecar_count:
-        raise SystemExit("pack: boot sidecar pattern stream is truncated")
-    stage_bytes = av_config.PALTAB_STAGE_KB * 1024
-    paltab = bytearray(stage_bytes)
-    palette_offset = 0x1000
-    paltab[palette_offset:palette_offset + len(palette_table)] = palette_table
-    # PALIDX: boot-loaded palette-switch table. frame_seg is forward-only, so
-    # each (frame.u16, segment.u16) entry advances to a strictly later frame.
-    # The player advances while next_switch <= frame_no; the 0xFFFF frame
-    # sentinel terminates the table.
+    # PALIDX: player-embedded palette-switch table. frame_seg is forward-only,
+    # so each (frame.u16, segment.u16) entry advances to a strictly later
+    # frame. The player advances while next_switch <= frame_no; the 0xFFFF
+    # frame sentinel terminates the table.
     switches = [
         (i, int(frame_seg[i]))
         for i in range(1, nfr)
@@ -1297,18 +1297,20 @@ def write_stream(
         palidx += struct.pack(">HH", frame, seg)
     while len(palidx) < av_config.PALIDX_BYTES:
         palidx += struct.pack(">HH", av_config.PALIDX_FRAME_SENTINEL, 0)
-    paltab[
-        av_config.PALIDX_STAGE_OFFSET:
-        av_config.PALIDX_STAGE_OFFSET + av_config.PALIDX_BYTES] = palidx
+    sidecar_patterns = supply_plan.prg_patterns[f0_inline:nl0]
+    if len(sidecar_patterns) != sidecar_count:
+        raise SystemExit("pack: boot sidecar pattern stream is truncated")
+    stage_bytes = av_config.PALTAB_STAGE_KB * 1024
+    stage = bytearray(stage_bytes)
     region_offsets = (
         0x0000,
-        palette_offset + len(palette_table),
+        0x1000,
         0x5000,
     )
     region_capacities = (
         av_config.BOOT_VRAM_REGION_A_BYTES
         // av_config.BOOT_VRAM_SIDECAR_ENTRY_BYTES,
-        (av_config.BOOT_VRAM_REGION_B_BYTES - len(palette_table))
+        av_config.BOOT_VRAM_REGION_B_BYTES
         // av_config.BOOT_VRAM_SIDECAR_ENTRY_BYTES,
         av_config.BOOT_VRAM_REGION_C_BYTES
         // av_config.BOOT_VRAM_SIDECAR_ENTRY_BYTES,
@@ -1331,15 +1333,15 @@ def write_stream(
                 raise SystemExit(
                     f"pack: boot sidecar slot {slot} is outside pool {POOL}")
             record = struct.pack(">H", slot) + pattern
-            paltab[cursor:cursor + len(record)] = record
+            stage[cursor:cursor + len(record)] = record
             cursor += len(record)
         source_index += count
     if source_index != sidecar_count:
         raise AssertionError("boot sidecar region split lost records")
     if sidecar_count:
         struct.pack_into(
-            ">4sHHH", paltab, 0x0FC0, b"BVRM", *region_counts)
-    paltab_sec = len(paltab) // SECTOR
+            ">4sHHH", stage, 0x0FC0, b"BVRM", *region_counts)
+    paltab_sec = len(stage) // SECTOR
     # One reconstructed PCM chunk per sector lets the Sub write each chunk without
     # cross-sector staging. Offset 58 carries the RF5C164 frequency delta; offset
     # 60 tells the player how many BODY-arm sectors to queue before PCM starts.
@@ -1355,7 +1357,7 @@ def write_stream(
     fps_int = int(round(FPS))                         # 名目fps。FEATURE_FIXED_N時はvsync_n由来のCD rate
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v19 requires an untimed frame0 BODY arm")
+        raise SystemExit("pack v20 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
     if av_config.uses_fixed_n_cadence(FPS):
         features |= FEATURE_FIXED_N
@@ -1377,13 +1379,14 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v19 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v20 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
     header += struct.pack(">HH", audio_fd, audio_preload_sec)  # offset 58: RF5C164 FD; 60: prefetch sectors
     header += struct.pack(">H", features)          # offset 62: optional stream features
-    header += b"\0" * (64 - len(header)) + seg0
+    # v20: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
+    # inside the player image, not a header field.
     header += b"\0" * (SECTOR - len(header))
     header = bytearray(header)
     if supply_plan.enabled:
@@ -1405,7 +1408,7 @@ def write_stream(
     if len(adpcm_table_blob) != ADPCM_TABLE_SECTORS * SECTOR:
         raise AssertionError("ADPCM table/extension preload size changed")
     header_blob = (header
-                   + paltab.ljust(paltab_sec * SECTOR, b"\0")
+                   + stage.ljust(paltab_sec * SECTOR, b"\0")
                    + dic_blob.ljust(dic_sec * SECTOR, b"\0")
                    + adpcm_table_blob
                    + wr0_blob.ljust(wr0_sec * SECTOR, b"\0")
@@ -1423,11 +1426,14 @@ def write_stream(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     header_path = out_path.with_name("HEADER.DAT")
     body_path = out_path.with_name("BODY.DAT")
-    # The Main-IP binary embeds the initial CRAM image.  Keep that build input
-    # beside the split stream and derive it from the same canonical decision
-    # log, so a stale palettes.bin cannot disagree with HEADER.DAT's PALTAB.
-    palette_path = out_path.with_name("palettes.bin")
-    palette_path.write_bytes(seg0)
+    # The Main-IP binary embeds the full segment-palette table and the switch
+    # table.  Keep both build inputs beside the split stream and derive them
+    # from the same canonical decision log, so a stale table cannot disagree
+    # with the packed BODY's segment progression.
+    paltab_path = out_path.with_name("paltab.bin")
+    paltab_path.write_bytes(palette_table)
+    palidx_path = out_path.with_name("palidx.bin")
+    palidx_path.write_bytes(bytes(palidx))
     with header_path.open("wb") as f:
         f.write(header_blob)
     constants_path = out_path.with_name("player_constants.inc")
@@ -1507,7 +1513,7 @@ def write_stream(
         raise AssertionError("combined MOVIE.DAT size disagrees with HEADER.DAT + BODY.DAT")
     print(f"wrote {header_path} {header_sec}sec + {body_path} "
           f"{arm_sectors}+{frames_stream_sec}sec; "
-          f"combined {out_path} {total}sec (mode {mode_name} paltab {paltab_sec} "
+          f"combined {out_path} {total}sec (mode {mode_name} stage {paltab_sec} "
           f"BODY arm audio {audio_prefetch_frames}f "
           f"preload Wr0/Wr1/Dic={len(supply_plan.wr0_patterns)}/"
           f"{len(supply_plan.wr1_patterns)}/{len(supply_plan.dic_patterns)} "
@@ -1516,7 +1522,9 @@ def write_stream(
           f"ring_peak {ring_peak*PAT/1024:.0f}KB  v{VERSION} N={vsync_n}"
           f"(={PLAYBACK_FPS:.3f}fps) AUDIO=adpcm22 "
           f"control={AUDIO_CONTROL}B pcm={AUDIO_PCM}B FD=0x{audio_fd:04X}")
-    print(f"  initial CRAM: {palette_path} ({len(seg0)}B, canonical segment {int(frame_seg[0])})")
+    print(f"  player palette tables: {paltab_path} ({len(palette_table)}B, "
+          f"{len(log['seg_pals'])} segments) + {palidx_path} "
+          f"({len(palidx)}B, {len(switches)} switches)")
     print(f"  player constants: {constants_path}")
     print(f"  実機定数: NUM_FRAMES={nfr} FRAME_SECTORS={FRAME_SECTORS}(最大スロット) PALTAB_SEC={paltab_sec} "
           f"F0_CTRL_SEC={f0_ctrl_sec} F0_PAT_SEC={f0_pat_sec} ROUTING_SEC={routing_sec} "
@@ -1600,14 +1608,14 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v19 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v20 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
     wordram_layout = pattern_supply.word_ram_layout(
         len(per), C_CELLS, int(sim_cold))
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:
         raise SystemExit(
-            "pack v19 requires a decision log with a frozen Word-RAM layout; "
+            "pack v20 requires a decision log with a frozen Word-RAM layout; "
             "re-run sim with the current encoder")
     expected_layout = dataclasses.asdict(wordram_layout)
     if frozen_layout != expected_layout:

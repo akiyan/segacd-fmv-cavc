@@ -205,9 +205,12 @@ if [ "$OFFLINE_RECORD" -eq 1 ] && [ -z "$REPLAY_FILE" ]; then
   REPLAY_FILE="$REPLAY_DIR/${TAG}_input.replay"
   REPLAY_MAX_FRAMES=$((MAX_FRAMES + 120))
   echo ">> generating input replay ($REPLAY_MAX_FRAMES frames) -> $REPLAY_FILE"
+  # Replay generation is unpaced, so press START on a wall-clock cadence fine
+  # enough to stay dense in emulated time at 8x-26x. The loop stops when
+  # RetroArch exits, so the extra presses cost nothing on a short run.
   OUTDIR="$REPLAY_DIR" tools/run_headless.sh "$DISC" --tag "${TAG}_replay" \
     --record-replay "$REPLAY_FILE" --max-frames "$REPLAY_MAX_FRAMES" \
-    --boot-wait 1 --presses 20 --press-gap 1 "${DISPLAY_ARGS[@]}"
+    --boot-wait 0.3 --presses 600 --press-gap 0.05 "${DISPLAY_ARGS[@]}"
   [ -s "$REPLAY_FILE" ] || { echo "input replay not produced: $REPLAY_FILE" >&2; exit 1; }
 fi
 

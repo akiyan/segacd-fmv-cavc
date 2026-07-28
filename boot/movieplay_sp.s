@@ -121,8 +121,8 @@
 
 .equ SUB_BANK_1M, 0x000C0000
 
-/* --- TTRC v18 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       19
+/* --- TTRC v20 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
+.equ ROUTING_VERSION,       20
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -298,11 +298,11 @@
 .equ O_PUMPGAP,O_STATUS+0x26
 .endif
 .equ O_HDR,    O_STATUS+0x80
+/* Boot stage: BVRM sidecar records only (palette tables ride the Main-IP
+   image, not the disc). The header keeps the paltab_sec field name. */
 .equ PALTAB_STAGE_OFF, 0x0000
-.equ PALTAB_OFF, 0x1000
 .equ PALTAB_STAGE_BYTES, 0x6000
 .equ O_PALTAB_STAGE, SUB_BANK_1M+PALTAB_STAGE_OFF
-.equ O_PALTAB, SUB_BANK_1M+PALTAB_OFF
 .equ DIC_STAGE_OFF, 0x6000
 .equ DIC_STAGE, SUB_BANK_1M+DIC_STAGE_OFF
 .equ DIC_STAGE_PATTERNS, 512
@@ -335,11 +335,11 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v19ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v20ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
-.equ STAT_BOOT_STAGE, 0x8001		/* palette/Dic stage ready for one-time Main copy */
+.equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic stage ready for one-time Main copy */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは15秒待って CMD_STREAM 再送) */
 
@@ -483,11 +483,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v19: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v20: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v19: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v20: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -517,9 +517,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v19 optional stream features */
+	move.w	62(a0), h_features		/* v20 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v19 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v20 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -1845,7 +1845,7 @@ fc_copy_even:
 /* CTRL_SCR(線形 control block) を Word-RAM へ展開。cold は ring pop。
    block = >H total_len >H frame_seq >H n_upd
            72 bitmap n_upd*(entry) h_audio_bytes audio [even pad]   (MOVIE.md 準拠)
-   パレット切替はboot搭載のM-PALIDX表がMain側で起点となり、controlに切替バイトは無い。
+   パレット切替はplayer内蔵のM-PALIDX表がMain側で起点となり、controlに切替バイトは無い。
    loads はラン形式: [slot_start.w count.w pattern(count*32B)] の列。エンコーダが
    フレーム内coldを連番スロットに割当てるので、MDは1ランを1回の大DMAで転送できる。 */
 expand_frame:
@@ -1864,7 +1864,7 @@ ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v19 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v20 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2144,7 +2144,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v19 streams use run descriptors above. Retain a final-balance
+	/* Canonical v20 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2696,7 +2696,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v19: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v20: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:

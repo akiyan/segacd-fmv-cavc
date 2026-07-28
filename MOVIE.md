@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 19
+VERSION        = 20
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 19. Bitmap controls insert one zero byte after an
+The player accepts version 20. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -37,7 +37,7 @@ HEADER.DAT
 +--------------------------------------------------+  sector 0
 | HEADER (1 sector, zero-padded)                   |
 +--------------------------------------------------+
-| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + PALIDX + optional VRAM sidecar
+| BOOT_STAGE (paltab_sec sectors)                  |  optional boot-VRAM sidecar records
 +--------------------------------------------------+
 | DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
 +--------------------------------------------------+
@@ -109,7 +109,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | exactly `19` |
+| 4 | 2 | version | exactly `20` |
 | 6 | 2 | frames | total frame count (`nfr`) |
 | 8 | 2 | tcols | tile-grid columns |
 | 10 | 2 | trows | tile-grid rows |
@@ -117,7 +117,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | 14 | 2 | pool | resident VRAM tile-pool size |
 | 16 | 2 | base | tile index of physical slot 0 |
 | 18 | 2 | frame_sectors | maximum useful sectors per routing entry, `5` |
-| 20 | 2 | n_seg | palette-segment count, at most 16 |
+| 20 | 2 | n_seg | palette-segment count, at most 16 (informational; the player's embedded paltab.bin is authoritative) |
 
 The next 16 bytes are `struct ">LLLL"`.
 
@@ -143,7 +143,7 @@ The remaining fields are:
 | 58 | 2 | audio_fd | RF5C164 frequency delta |
 | 60 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors |
 | 62 | 2 | features | feature bits described below |
-| 64 | 128 | seg0 | frame-0 CRAM palette |
+| 64 | 128 | pad | zero |
 | 192 | 4 | player_signature | CRC-32 of bytes 0 through 63 |
 | 196 | 20 | PSUP | pattern-supply extension when feature bit 3 is set |
 | 216 | 1832 | pad | zero |
@@ -194,40 +194,48 @@ Each sector count must equal `ceil(patterns * 32 / 2048)`. Generated player
 constants freeze the preload values, routing allocation, compact-tail offsets,
 and parity-specific WordBuf starts, ends, and capacities.
 
-The 128-byte CRAM block contains four palette lines of 16 Genesis colour words
-(`0000BBB0GGG0RRR0`). Entry 0 of each line is transparent. Of the 60 usable
-entries, the darkest colour is placed at line 0/index 1 and the brightest at
-line 0/index 15 before quantisation. Only their positions change.
+## Player-embedded palette tables
+
+Palette data does not ride the disc. The packer writes two build inputs
+beside the split stream and the Main-IP player image embeds both in its
+transient `.startup` section, copying them to Main RAM at entry before
+generated code reuses that area:
+
+- `paltab.bin` — all segment palettes, `n_seg * 128` bytes, copied to the
+  2 KiB PALTAB at `0xFFB200..0xFFB9FF`. The capacity is a fixed 16 segments.
+  Each 128-byte block contains four palette lines of 16 Genesis colour words
+  (`0000BBB0GGG0RRR0`). Entry 0 of each line is transparent. Of the 60 usable
+  entries, the darkest colour is placed at line 0/index 1 and the brightest at
+  line 0/index 15 before quantisation. Only their positions change. The
+  initial CRAM image is segment 0 (frame 0 always displays segment 0), and
+  loop restarts reload it.
+- `palidx.bin` — the palette-switch index PALIDX, 64 bytes: sixteen
+  `(u16 switch_frame, u16 segment)` entries covering at most 15 switches,
+  terminated by a `0xFFFF` frame sentinel that also fills unused entries.
+  Switch frames are strictly ascending and segment numbers advance one at a
+  time. The player copies the table to `0xFFBA00..0xFFBA3F` and performs each
+  CRAM total-replace when its frame counter reaches the next entry, so
+  palette data and switch timing are both independent of same-frame CD
+  delivery.
 
 ## Boot stage
 
-BOOT_STAGE is 24 KiB and is copied to Word-RAM bank offset `+0x0000`. All
-palette segments are stored consecutively at `+0x1000`, 128 bytes each. Main
-copies them once to the 2 KiB PALTAB at `0xFFB200..0xFFB9FF`. The capacity is
-a fixed 16 segments.
-
-The palette-switch index PALIDX sits at `+0x0F80`, 64 bytes: sixteen
-`(u16 switch_frame, u16 segment)` entries covering at most 15 switches,
-terminated by a `0xFFFF` frame sentinel that also fills unused entries.
-Switch frames are strictly ascending and segment numbers advance one at a
-time. Main copies the table to `0xFFBA00..0xFFBA3F` during the same handoff
-and performs each CRAM total-replace when its frame counter reaches the next
-entry, so palette data and switch timing are both independent of same-frame
-CD delivery.
+BOOT_STAGE is 24 KiB and is copied to Word-RAM bank offset `+0x0000`. It
+carries only the optional boot-VRAM sidecar records.
 
 When feature bit 7 is set, a directory at `+0x0FC0` contains `"BVRM"` and three
 big-endian `u16` record counts. Each record is `u16 physical_slot` followed by
-one 32-byte pattern. Records occupy these preserved holes:
+one 32-byte pattern. Records occupy these fixed preserved holes:
 
 - `+0x0000..+0x0F00`
-- the unused palette-table tail through `+0x3000`
+- `+0x1000..+0x3000`
 - `+0x5000..+0x6000`
 
-DicBuf is staged at `+0x6000..+0x9FFF`. Main copies the palette, PALIDX,
-DicBuf, and sidecar records before returning the bank to Sub. Frame 0 and
-WordBuf may then reuse these temporary ranges. `HEADER.DAT` is stopped at this
-handoff and resumed from the exact first unread sector after the bank returns.
-The same sequence runs on movie restart.
+DicBuf is staged at `+0x6000..+0x9FFF`. Main copies the DicBuf and sidecar
+records before returning the bank to Sub. Frame 0 and WordBuf may then reuse
+these temporary ranges. `HEADER.DAT` is stopped at this handoff and resumed
+from the exact first unread sector after the bank returns. The same sequence
+runs on movie restart.
 
 ## ADPCM table
 
@@ -444,7 +452,7 @@ buffer.
 
 Sub copies exactly `total_len` bytes from the APPLY ring into Word RAM and
 advances by that even length. Main reloads CRAM from PALTAB whenever the
-boot-loaded PALIDX table's next switch frame has been reached, applies
+player-embedded PALIDX table's next switch frame has been reached, applies
 source-aware physical pattern transfers to the resident VRAM pool, and updates
 the shadow name table. Most reused cells require only a two-byte name entry.
 Audio is decoded and written to the PCM chip. The two 1M Word-RAM banks swap at
@@ -471,13 +479,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 19
+VERSION        = 20
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は19です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は20です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -489,7 +497,7 @@ HEADER.DAT
 +--------------------------------------------------+  sector 0
 | HEADER (1 sector, zero-padded)                   |
 +--------------------------------------------------+
-| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + PALIDX + optional VRAM sidecar
+| BOOT_STAGE (paltab_sec sectors)                  |  optional boot-VRAM sidecar records
 +--------------------------------------------------+
 | DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
 +--------------------------------------------------+
@@ -556,7 +564,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | 必ず `19` |
+| 4 | 2 | version | 必ず `20` |
 | 6 | 2 | frames | 総frame数（`nfr`） |
 | 8 | 2 | tcols | tile gridの列数 |
 | 10 | 2 | trows | tile gridの行数 |
@@ -564,7 +572,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 14 | 2 | pool | resident VRAM tile poolの大きさ |
 | 16 | 2 | base | physical slot 0のtile index |
 | 18 | 2 | frame_sectors | routing entry当たりの有効sector上限、`5` |
-| 20 | 2 | n_seg | palette segment数、最大16 |
+| 20 | 2 | n_seg | palette segment数、最大16（情報提供のみ。正典はplayer内蔵のpaltab.bin） |
 
 次の16 byteは `struct ">LLLL"` です。
 
@@ -590,7 +598,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 58 | 2 | audio_fd | RF5C164 frequency delta |
 | 60 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数 |
 | 62 | 2 | features | 下記のfeature bit |
-| 64 | 128 | seg0 | frame 0のCRAM palette |
+| 64 | 128 | pad | zero |
 | 192 | 4 | player_signature | byte 0〜63のCRC-32 |
 | 196 | 20 | PSUP | feature bit 3がsetのときのpattern-supply extension |
 | 216 | 1832 | pad | zero |
@@ -640,34 +648,41 @@ PSUPは `struct ">4s9H"` です。
 player constantsがpreload値、routing allocation、compact-tail offset、parity別WordBufの
 開始・終了・容量を固定します。
 
-128-byte CRAM blockは、16個のGenesis colour word
-（`0000BBB0GGG0RRR0`）を持つpalette line 4本です。各lineのentry 0は透明です。
-使用可能な60 entryのうち、最暗色をline 0/index 1、最明色をline 0/index 15へ
-置いてから量子化します。色の集合は変えず、位置だけを変えます。
+## Player内蔵palette table
+
+palette dataはdiscに載せません。packerがsplit streamの隣に2つのビルド入力を
+書き、Main-IP player imageが両方を一時`.startup` sectionへ内蔵します。生成
+codeがその領域を再利用する前に、entry直後にMain RAMへcopyします。
+
+- `paltab.bin` — 全segment palette。`n_seg * 128` byteで、2 KiBのPALTAB
+  （`0xFFB200..0xFFB9FF`）へcopyします。上限は固定16 segmentです。各128-byte
+  blockは、16個のGenesis colour word（`0000BBB0GGG0RRR0`）を持つpalette line
+  4本です。各lineのentry 0は透明です。使用可能な60 entryのうち、最暗色を
+  line 0/index 1、最明色をline 0/index 15へ置いてから量子化します。色の集合は
+  変えず、位置だけを変えます。初期CRAM imageはsegment 0で（frame 0は必ず
+  segment 0を表示）、loop再開時にも再loadします。
+- `palidx.bin` — palette切替indexのPALIDX、64 byteです。16個の
+  `(u16 switch_frame, u16 segment)` entryで最大15切替を持ち、`0xFFFF` frame
+  番兵で終端します（未使用entryも番兵で埋めます）。switch frameは厳密に昇順で、
+  segment番号は1ずつ進みます。playerは表を `0xFFBA00..0xFFBA3F` へcopyし、
+  frame counterが次のentryへ達したときにCRAM総入替を実行します。palette data
+  と切替タイミングの両方が同じframeのCD deliveryに依存しません。
 
 ## Boot stage
 
-BOOT_STAGEは24 KiBで、Word-RAM bank offset `+0x0000` へcopyします。全palette
-segmentは `+0x1000` から128 byteずつ連続配置します。Mainは起動時に1回だけ
-2 KiBのPALTAB（`0xFFB200..0xFFB9FF`）へcopyします。上限は固定16 segmentです。
-
-palette切替indexのPALIDXは `+0x0F80` の64 byteです。16個の
-`(u16 switch_frame, u16 segment)` entryで最大15切替を持ち、`0xFFFF` frame番兵で
-終端します（未使用entryも番兵で埋めます）。switch frameは厳密に昇順で、segment
-番号は1ずつ進みます。Mainは同じhandoffで表を `0xFFBA00..0xFFBA3F` へcopyし、
-frame counterが次のentryへ達したときにCRAM総入替を実行します。palette dataと
-切替タイミングの両方が同じframeのCD deliveryに依存しません。
+BOOT_STAGEは24 KiBで、Word-RAM bank offset `+0x0000` へcopyします。内容は
+optionalなboot-VRAM sidecar recordのみです。
 
 feature bit 7がsetなら、`+0x0FC0` のdirectoryに `"BVRM"` と3個のbig-endian
 `u16` record countがあります。各recordは `u16 physical_slot` と32-byte pattern
-です。recordは次の保存領域に配置します。
+です。recordは次の固定保存領域に配置します。
 
 - `+0x0000..+0x0F00`
-- palette tableの未使用末尾から `+0x3000`
+- `+0x1000..+0x3000`
 - `+0x5000..+0x6000`
 
-DicBufは `+0x6000..+0x9FFF` にstageします。Mainはpalette、PALIDX、DicBuf、
-sidecar recordをcopyしてからbankをSubへ返します。その後、frame 0とWordBufがtemporary rangeを
+DicBufは `+0x6000..+0x9FFF` にstageします。MainはDicBufとsidecar recordを
+copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemporary rangeを
 再利用できます。このhandoffで `HEADER.DAT` を停止し、bank返却後に最初の未読sector
 から正確に再開します。movie restartでも同じ手順を実行します。
 
@@ -869,7 +884,7 @@ audioは常にcheckpointed IMA ADPCMです。chunk先頭に `s16 predictor`、
 ## Playerでの再構築
 
 SubはAPPLY ringから正確に `total_len` byteをWord RAMへcopyし、その偶数長だけcursorを
-進めます。Mainはboot搭載PALIDX表の次回switch frameへ達していればPALTABからCRAMを
+進めます。Mainはplayer内蔵PALIDX表の次回switch frameへ達していればPALTABからCRAMを
 切り替え、source-aware physical pattern transferをresident VRAM poolへ適用し、
 shadow name tableを更新します。再利用cellの
 大半は2-byte name entryだけで済みます。audioをdecodeしてPCM chipへ書き、frame境界

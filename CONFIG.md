@@ -82,19 +82,20 @@ allowance or a boot-preload credit. It is not a physical buffer.
 
 ## Palette table
 
-All segment palettes are shipped once in BOOT_STAGE and copied to Main RAM,
-and the switch schedule ships the same way: the PALIDX table lists every
-switch as `(frame, segment)` and the player advances through it while
-`next_switch <= frame_no`. Timed controls carry no palette bytes at all, so a
-palette switch consumes no same-frame stream payload.
+All segment palettes and the switch schedule are player-embedded build
+inputs: pack writes `paltab.bin` / `palidx.bin` beside the split stream, the
+Main-IP image incbins both, and the player copies them to Main RAM at entry.
+The PALIDX table lists every switch as `(frame, segment)` and the player
+advances through it while `next_switch <= frame_no`. Neither `HEADER.DAT`
+nor timed controls carry palette bytes at all, so a palette switch consumes
+no same-frame stream payload.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
 | `PALTAB_MAX_SEG` | 16 | cfg / ip | Fixed palette-segment capacity; the encoder merges detected ranges down to it. |
 | PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`. |
-| `PALIDX_ENTRIES` | 16 (15 switches + sentinel) | cfg / ip | Boot-loaded switch table at Main RAM `0xFFBA00..0xFFBA3F`. |
-| `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size. |
-| stage / PALIDX / palette offset | `+0x0000` / `+0x0F80` / `+0x1000` | sp / ip | Temporary Word-RAM boot image, switch-table and palette-table starts. |
+| `PALIDX_ENTRIES` | 16 (15 switches + sentinel) | cfg / ip | Player-embedded switch table at Main RAM `0xFFBA00..0xFFBA3F`. |
+| `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size (boot-VRAM sidecar records only). |
 | P0/index1 | darkest usable RGB333 colour | sim / pack / ip | Opaque DEBUG HUD background. |
 | P0/index15 | brightest usable RGB333 colour | sim / pack / ip | DEBUG HUD text. |
 
@@ -503,18 +504,19 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 
 ## Palette table
 
-全segment paletteをBOOT_STAGEで1回だけ送り、Main RAMへcopyします。切替スケジュール
-も同じ経路で送ります: PALIDX表が全切替を `(frame, segment)` で列挙し、playerは
-`next_switch <= frame_no` の間advanceします。timed controlはpalette byteを一切
-持たないため、palette switchは同frameのstream payloadを消費しません。
+全segment paletteと切替スケジュールはplayer内蔵のビルド入力です: packが
+split streamの隣に `paltab.bin` / `palidx.bin` を書き、Main-IP imageが両方を
+incbinし、playerがentry直後にMain RAMへcopyします。PALIDX表が全切替を
+`(frame, segment)` で列挙し、playerは `next_switch <= frame_no` の間advance
+します。`HEADER.DAT` もtimed controlもpalette byteを一切持たないため、
+palette switchは同frameのstream payloadを消費しません。
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
 | `PALTAB_MAX_SEG` | 16 | cfg / ip | 固定palette segment上限。encoderは検出rangeをここまでmergeする。 |
 | PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`。 |
-| `PALIDX_ENTRIES` | 16（15切替+番兵） | cfg / ip | boot搭載切替表。Main RAM `0xFFBA00..0xFFBA3F`。 |
-| `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size。 |
-| stage / PALIDX / palette offset | `+0x0000` / `+0x0F80` / `+0x1000` | sp / ip | temporary Word-RAM boot image、切替表、palette tableの開始。 |
+| `PALIDX_ENTRIES` | 16（15切替+番兵） | cfg / ip | player内蔵切替表。Main RAM `0xFFBA00..0xFFBA3F`。 |
+| `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size（boot-VRAM sidecar record専用）。 |
 | P0/index1 | 使用可能な最暗RGB333色 | sim / pack / ip | 不透明DEBUG HUD background。 |
 | P0/index15 | 使用可能な最明RGB333色 | sim / pack / ip | DEBUG HUD text。 |
 

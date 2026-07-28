@@ -91,9 +91,11 @@ Defaults and rules:
 - Keep the startup sequence. The default is `--trim 0`; omitting `--trim` has the same result.
 - Treat `--seconds` as the final duration from emulator launch. Include enough time for the
   startup screens, the full movie, and a short tail. With the default
-  `jp_mcd2_9212.bin`, reserve at least 45 seconds beyond the source duration;
-  measured full recordings reach the visible frame-0 flip at about 31-33
-  seconds, so a smaller margin truncates the movie tail.
+  `jp_mcd2_9212.bin`, reserve at least 30 seconds beyond the source duration;
+  measured full recordings reach the visible frame-0 flip at 14.9 seconds, so
+  a smaller margin truncates the movie tail. That startup is deterministic
+  because replay generation mashes START densely enough to stay dense in
+  emulated time while the emulator runs unpaced at 8x-26x.
 - Use `--trim SEC` or `--auto-audio-trim` only when the user explicitly requests a
   movie-only clip. Neither mode may be used for a normal `compilation` input.
 - Use `--no-build` only after confirming in the current work that the disc represents the

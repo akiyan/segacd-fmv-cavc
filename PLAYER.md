@@ -159,11 +159,13 @@ For a 6,576-frame, 40x28-cell, cold-180 example:
 `WORDBUF` capacity is 4,992 patterns. The two regions contain different
 parity-selected streams.
 
-During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` with PALIDX at `+0x0F80` and
-PALTAB at `+0x1000`; `DIC-STG` uses `+0x6000..+0x9FFF` for DicBuf staging. Sub
-gives that bank to Main, Main copies the palette, switch table, dictionary,
-and optional VRAM sidecar to their persistent homes, and Main returns the
-bank. Sub stops `HEADER.DAT` before
+During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` for the optional boot-VRAM
+sidecar records; `DIC-STG` uses `+0x6000..+0x9FFF` for DicBuf staging. The
+palette table and switch table are not staged here: the Main-IP image embeds
+`paltab.bin` / `palidx.bin` and copies both to `M-PALTAB` / `M-PALIDX` at
+entry, before generated code reuses the transient `.startup` area. Sub
+gives the staging bank to Main, Main copies the dictionary and optional VRAM
+sidecar to their persistent homes, and Main returns the bank. Sub stops `HEADER.DAT` before
 this handoff and restarts at the exact first unread sector after the return,
 so the copy interval cannot create a sector slip. Sub then reads the finite
 untimed BODY arm and expands frame 0; frame 0 and `WORDBUF` may overwrite the
@@ -181,8 +183,8 @@ build-time checked against the `M-STATE` base.
 | `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player, transient boot UI, generated handlers and guard |
 | `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
 | `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
-| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB |
-| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table (15 switches + sentinel) |
+| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
+| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table, 15 switches + sentinel (player-embedded palidx.bin) |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
 | guard | `0xFFFA40..0xFFFAFF` | 192 B | cushion below the stack guard |
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stack and interrupt reserve |
@@ -221,10 +223,11 @@ sequenceDiagram
     participant M as Main CPU
     participant V as VDP
 
+    M->>M: Copy embedded PALTAB and PALIDX to Main RAM
     M->>S: Assert CMD_STREAM
     CD-->>S: Static HEADER
     S-->>M: STAT_BOOT_STAGE
-    M->>W: Copy PALTAB, PALIDX, DicBuf, sidecar
+    M->>W: Copy DicBuf and sidecar
     M->>S: COMCMD1 stage acknowledgement
     CD-->>S: Finish static HEADER
     CD-->>S: Finite BODY arm (PCM + frame 0)
@@ -457,10 +460,12 @@ patternにつき32 pattern byteと4 byte descriptorを予約します。容量�
 この例の`ROUTE`は8 KiBで、`+0x1E000`から始まります。`WORDBUF`合計容量は
 4,992 patternsです。2つのregionにはparity別の異なるstreamが入ります。
 
-Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（PALIDXは`+0x0F80`、PALTABは`+0x1000`）、
-`DIC-STG`が`+0x6000..+0x9FFF`をDicBuf stagingに使います。SubがそのbankをMainへ渡し、
-Mainはpalette、切替表、dictionary、任意のVRAM sidecarをpersistentな保存先へcopyして
-bankを返します。Subはhandoff前に`HEADER.DAT`を停止し、返却後に正確な最初の
+Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（optionalなboot-VRAM sidecar record専用）、
+`DIC-STG`が`+0x6000..+0x9FFF`をDicBuf stagingに使います。palette表と切替表は
+ここにstageしません: Main-IP imageが`paltab.bin` / `palidx.bin`を内蔵し、生成
+codeが一時`.startup`領域を再利用する前のentry直後に`M-PALTAB` / `M-PALIDX`へ
+copyします。Subがstaging bankをMainへ渡し、Mainはdictionaryと任意のVRAM
+sidecarをpersistentな保存先へcopyしてbankを返します。Subはhandoff前に`HEADER.DAT`を停止し、返却後に正確な最初の
 未読sectorから再開するため、copy intervalがsector slipを発生させません。
 続いてSubは有限でuntimedなBODY armを読み、frame 0を展開します。その後は
 frame 0と`WORDBUF`がtemporary stage rangeを安全に上書きできます。Dump
@@ -477,8 +482,8 @@ build-time checkされます。
 | `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player、transient boot UI、generated handler、guard |
 | `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
 | `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
-| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB |
-| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表（15切替+番兵） |
+| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
+| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表、15切替+番兵（player内蔵palidx.bin） |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
 | guard | `0xFFFA40..0xFFFAFF` | 192 B | stack guard直下のクッション |
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stackとinterrupt reserve |
@@ -516,10 +521,11 @@ sequenceDiagram
     participant M as Main CPU
     participant V as VDP
 
+    M->>M: 内蔵PALTAB/PALIDXをMain RAMへcopy
     M->>S: CMD_STREAMをassert
     CD-->>S: static HEADER
     S-->>M: STAT_BOOT_STAGE
-    M->>W: PALTAB、PALIDX、DicBuf、sidecarをcopy
+    M->>W: DicBufとsidecarをcopy
     M->>S: COMCMD1 stage acknowledgement
     CD-->>S: static HEADERの残り
     CD-->>S: finite BODY arm（PCM + frame 0）
