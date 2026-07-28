@@ -413,10 +413,25 @@ env "${RA_ENV[@]}" retroarch --verbose \
 echo $! > "$RA_PID"
 
 if [ -z "$PLAY_REPLAY" ]; then
+  # The emulator runs unpaced during replay generation (measured 8x-26x
+  # realtime), so a wall-clock press cadence maps to a much coarser emulated
+  # cadence: a 1-second gap became one START every 8-26 emulated seconds and
+  # the Mega-CD startup length varied between 18 s and 35 s depending on which
+  # press caught the CD player's accept window. Resolve the window once and
+  # mash at the requested gap so the presses stay dense in emulated time.
+  # Stop as soon as RetroArch exits so a short run is not padded by the
+  # remaining presses.
   sleep "$BOOT_WAIT"
+  RA_PRESS_PID="$(cat "$RA_PID")"
+  W="$(retroarch_window)"
   for _ in $(seq 1 "$PRESSES"); do
-    W="$(retroarch_window)"
-    [ -n "$W" ] && DISPLAY="$DISPLAY_NUM" xdotool key --window "$W" Return || true
+    kill -0 "$RA_PRESS_PID" 2>/dev/null || break
+    if [ -z "$W" ]; then
+      W="$(retroarch_window)"
+    fi
+    if [ -n "$W" ]; then
+      DISPLAY="$DISPLAY_NUM" xdotool key --window "$W" Return 2>/dev/null || W=""
+    fi
     sleep "$PRESS_GAP"
   done
 fi
