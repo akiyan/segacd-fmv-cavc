@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p114: Replace the fixed-N H40 flip's 1,792-word 64x28 name-table DMA and
+#         active-time staging copy with direct compact row DMAs from shadow.
+#         The shared-deadline reserve now covers only the encoded grid plus a
+#         per-row setup allowance, HUD, CRAM, and the existing timing guard.
 #   p113: Add persistent H/X DEBUG diagnostics for the exact per-frame
 #         physical PrgBuf peak and CD reader lead. Extend the common H32/H40
 #         values-only HUD, OCR, gate evidence, and hudline without changing
@@ -1007,4 +1011,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=149
-p=113
+p=114
