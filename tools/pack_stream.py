@@ -841,7 +841,7 @@ def build_control(
         raise ValueError("shadow update-list flags must match frame count")
     mode_name = display_mode_name(log)
     nominal_groups = vblank_schedule.nominal_group_counts(len(per), FPS)
-    nt_dma_flip = vblank_schedule.uses_h40_nt_dma(mode_name, FPS)
+    interblank_nt = vblank_schedule.uses_h40_interblank_nt(mode_name, FPS)
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     plans = []
     blocks = []
@@ -882,9 +882,13 @@ def build_control(
             runs,
             nominal_groups[i],
             mode=mode_name,
-            nt_dma_flip=nt_dma_flip,
+            interblank_nt=interblank_nt,
             palette_switch=(
                 i > 0 and int(frame_seg[i]) != int(frame_seg[i - 1])),
+            max_groups=(
+                vblank_schedule.MAX_VBLANK_GROUPS
+                if i == 0 else nominal_groups[i]
+            ),
         )
         plans.append(plan)
         body += struct.pack(">H", plan.groups)

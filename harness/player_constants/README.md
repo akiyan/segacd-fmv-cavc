@@ -19,12 +19,12 @@ For every case it requires:
 - Main's specialized flip branches stay inside their local regions, and the
   final guard performs status, V-counter tail, second-status, fresh-wait, then
   the Plane A reg2 write in that order;
-- fixed-N H40 name-table DMA stages only the encoded row width at the
-  generated center offset and transfers the complete zero-bordered 40x28
-  visible aperture;
-- fixed-N H40 starts each 3,400-word transfer budget only at a proven VBlank
-  head, keeps the cold-tail/name-table/flip reserve in the disassembly, and
-  retains status, terminal-line, and fresh-VBlank fallback guards;
+- fixed-N H40 updates only the hidden back name table, uses the generated
+  centered blitter between planned pattern groups, and does not flip until the
+  active-time copy is complete;
+- fixed-N H40 starts every encoder-authored pattern group only at a proven
+  VBlank head, keeps the compact final HUD/CRAM/flip work in the second blank,
+  and retains status, terminal-line, and fresh-VBlank fallback guards;
 - a DMA run that crosses a VBlank word-budget boundary is split there instead
   of discarding the residual capacity needed by the shared deadline;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,

@@ -305,6 +305,8 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
 
     enter = block("bf_enter_planned_group", "bf_debug_snapshot_group")
     required = (
+        (r"\bbsr\w*\s+[^\n]*<bf_before_next_planned_group>",
+         "inter-group active work"),
         (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh VBlank head"),
         # The relocatable object has no symbol annotation on this absolute
         # operand; the enclosing function keeps the check unambiguous.
@@ -316,8 +318,15 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         if not re.search(pattern, enter):
             raise AssertionError(
                 f"{obj}: planned group entry lacks {description}")
+    active_work = re.search(
+        r"\bbsr\w*\s+[^\n]*<bf_before_next_planned_group>", enter)
+    fresh_wait = re.search(
+        r"\bbsr\w*\s+[^\n]*<wait_vb_start>", enter)
+    if active_work is None or fresh_wait is None or active_work.start() >= fresh_wait.start():
+        raise AssertionError(
+            f"{obj}: hidden NT work is not completed before the next VBlank wait")
 
-    next_group = block("bf_next_planned_group", "bf_patch_dbg_stage")
+    next_group = block("bf_next_planned_group", "bf_before_next_planned_group")
     if not re.search(
             r"\bbra\w*\s+[^\n]*<bf_enter_planned_group>", next_group):
         raise AssertionError(
@@ -325,13 +334,11 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
 
     flip = block("bf_flip", "bf_after_flip")
     if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_stage>", flip)) != 2:
+            r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_gap>", flip)) != 2:
         raise AssertionError(
-            f"{obj}: normal and palette flips do not patch the staged HUD")
-    if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<nt_dma_flip>", flip)) != 2:
-        raise AssertionError(
-            f"{obj}: normal and palette plans do not execute one final NT DMA")
+            f"{obj}: normal and palette flips do not apply the compact HUD patch")
+    if "<nt_dma_flip>" in disassembly:
+        raise AssertionError(f"{obj}: fixed-H40 player still contains a final NT DMA")
     if "<wait_fixed_flip>" in flip or "<wait_vb_start>" in flip:
         raise AssertionError(
             f"{obj}: final path adds an unencoded cadence wait")
@@ -430,57 +437,64 @@ def verify_adpcm_decode_pump(
             f"{obj}: decoder pump is {state}, expected {wanted}")
 
 
-def verify_centered_nt_dma(
+def verify_hidden_nt_active_gap(
     objdump: Path, obj: Path, *, tcols: int, trows: int,
 ) -> None:
-    """Prove that fixed-N H40 staging centers the encoded grid."""
+    """Prove that fixed-N H40 copies the centered hidden NT between groups."""
     disassembly = run([str(objdump), "-dr", str(obj)])
     start_match = re.search(
-        r"^[0-9a-f]+ <bf_blit>:$", disassembly, re.MULTILINE)
+        r"^[0-9a-f]+ <bf_blit_reference_core>:$", disassembly, re.MULTILINE)
     end_match = re.search(
         r"^[0-9a-f]+ <bf_dma>:$", disassembly, re.MULTILINE)
     if not start_match or not end_match:
-        raise AssertionError(f"{obj}: missing bf_blit/bf_dma symbols")
+        raise AssertionError(f"{obj}: missing hidden-NT reference copy symbols")
     block = disassembly[start_match.end():end_match.start()]
-    long_copies = len(re.findall(r"\bmovel\s+%a0@\+,%a1@\+", block))
-    word_copies = len(re.findall(r"\bmovew\s+%a0@\+,%a1@\+", block))
-    if (long_copies, word_copies) != (tcols // 2, tcols & 1):
+    long_copies = len(re.findall(
+        r"\bmovel\s+%a1@\+,(?:00)?c00000 <VDP_DATA>", block))
+    word_copies = len(re.findall(
+        r"\bmovew\s+%a1@\+,(?:00)?c00000 <VDP_DATA>", block))
+    if (long_copies, word_copies) != (4, 1):
         raise AssertionError(
-            f"{obj}: NT stage row copies {long_copies} longs/{word_copies} words, "
-            f"expected {tcols // 2}/{tcols & 1}")
-    row_skip = (64 - tcols) * 2
-    if not re.search(rf"\blea\s+%a1@\({row_skip}\),%a1", block):
-        raise AssertionError(f"{obj}: NT stage row skip is not {row_skip} bytes")
-    if not re.search(rf"\bmovew\s+#{trows - 1},%d0", block):
-        raise AssertionError(f"{obj}: NT stage row count is not {trows}")
+            f"{obj}: hidden NT row walker is not the 8-word burst plus tail")
+    if not re.search(rf"\bmovew\s+#{tcols},%d2", block):
+        raise AssertionError(f"{obj}: hidden NT row width is not {tcols}")
+    if not re.search(rf"\bmovew\s+#{trows},%d6", block):
+        raise AssertionError(f"{obj}: hidden NT row count is not {trows}")
+    row0 = (28 - trows) // 2
+    col0_bytes = (40 - tcols) // 2 * 2
+    if not re.search(rf"\bmovew\s+#{row0},%d4", block):
+        raise AssertionError(f"{obj}: hidden NT row center is not {row0}")
+    if col0_bytes and not re.search(rf"\baddiw\s+#{col0_bytes},%d1", block):
+        raise AssertionError(
+            f"{obj}: hidden NT column center is not {col0_bytes} bytes")
 
-    stage_match = re.search(
-        r"\blea\s+0 [^\n]*,%a1\n"
-        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
-        block,
+    before_match = re.search(
+        r"^[0-9a-f]+ <bf_before_next_planned_group>:$",
+        disassembly,
+        re.MULTILINE,
     )
-    dma_match = re.search(
-        r"^[0-9a-f]+ <nt_dma_flip>:$", disassembly, re.MULTILINE)
-    dma_end_match = re.search(
-        r"^[0-9a-f]+ <set_vram_write>:$", disassembly, re.MULTILINE)
-    if not stage_match or not dma_match or not dma_end_match:
-        raise AssertionError(f"{obj}: missing NT stage/DMA symbols")
-    dma = disassembly[dma_match.end():dma_end_match.start()]
-    base_match = re.search(
-        r"\bmovel\s+#0,%d2\n"
-        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
-        dma,
-    )
-    if not base_match:
-        raise AssertionError(f"{obj}: missing NT stage base relocation")
-    actual_offset = int(stage_match.group(1), 16) - int(base_match.group(1), 16)
-    expected_offset = (((28 - trows) // 2) * 64 + (40 - tcols) // 2) * 2
-    if actual_offset != expected_offset:
+    active_match = re.search(
+        r"^[0-9a-f]+ <bf_active_gap_blit>:$", disassembly, re.MULTILINE)
+    patch_match = re.search(
+        r"^[0-9a-f]+ <bf_patch_dbg_gap>:$", disassembly, re.MULTILINE)
+    if not before_match or not active_match or not patch_match:
+        raise AssertionError(f"{obj}: missing active-gap hidden-NT symbols")
+    before = disassembly[before_match.end():active_match.start()]
+    active = disassembly[active_match.end():patch_match.start()]
+    if len(re.findall(
+            r"\bbsr\w*\s+[^\n]*<bf_active_gap_blit>", before)) != 1:
+        raise AssertionError(f"{obj}: hidden NT copy is not selected exactly once")
+    for callee in ("bf_blit_reference_core", "prepare_dbg", "publish_dbg"):
+        if not re.search(rf"\bbsr\w*\s+[^\n]*<{callee}>", active):
+            raise AssertionError(
+                f"{obj}: active-gap path lacks {callee}")
+    if not re.search(r"\bjsr\s+%a3@", active):
+        raise AssertionError(f"{obj}: active-gap path does not call generated blitter")
+
+    patch = disassembly[patch_match.end():]
+    if not re.search(r"\bandiw\s+#56,%d2", patch):
         raise AssertionError(
-            f"{obj}: NT stage offset is {actual_offset}, expected {expected_offset}")
-    if "#-27904" not in dma or "#-27641" not in dma:
-        raise AssertionError(
-            f"{obj}: NT DMA length is not the full 64x28 aperture")
+            f"{obj}: compact HUD patch does not derive the hidden NT from reg2")
 
 
 def build_case(
@@ -528,7 +542,7 @@ def build_case(
     if specialized:
         verify_flip_control_flow(objdump, ip_obj)
         if case.mode == 1 and av_config.uses_fixed_n_cadence(case.fps):
-            verify_centered_nt_dma(
+            verify_hidden_nt_active_gap(
                 objdump, ip_obj, tcols=case.tcols or 40, trows=case.trows)
             verify_shared_deadline_vblank(objdump, ip_obj)
 

@@ -161,31 +161,12 @@
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
 .if PC_MODE == 1
-/* Fixed-N specialized H40 builds copy the back name table with one linear
-   Main-RAM DMA inside the flip VBlank (64-entry-pitch staging, ~18 blank
-   lines) instead of the FIFO-throttled CPU blit (~8 ms of active display).
-   The complete 40x28 visible aperture is staged so a smaller encoded grid
-   stays centered with zero entries around it.  This frees the pre-transfer
-   phase so Pass2 can catch field 1's VBlank. */
-.equ NT_DMA_FLIP, 1
-.equ NT_STAGE_PITCH, 64
-.equ NT_STAGE_ROWS, 28
-.equ NT_STAGE_WORDS, NT_STAGE_PITCH*NT_STAGE_ROWS
-.equ NT_STAGE_ROW_SKIP, (NT_STAGE_PITCH-PC_TCOLS)*2
-/* A shared deadline VBlank must retain enough of the measured word budget for
-   the complete 64-pitch NT DMA, the optional DEBUG HUD staging copy, CRAM on a
-   palette switch, and non-payload control/setup time. The staged HUD is
-   included in that one NT DMA; DEBUG keeps a conservative word-equivalent
-   allowance for its Main-RAM stamp. The 128-word guard is in addition to
-   VB_WORDS_H40's existing margin below the measured theoretical capacity. */
-.ifdef DEBUG
-.equ NT_FLIP_HUD_WORDS, HUD_COMBINED_WORDS
-.else
-.equ NT_FLIP_HUD_WORDS, 0
-.endif
-.equ NT_FLIP_GUARD_WORDS, 128
-.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
-.equ NT_CRAM_FLIP_RESERVE_WORDS, NT_FLIP_RESERVE_WORDS+64
+/* Fixed-N specialized H40 builds write the hidden back name table with the
+   generated CPU blitter after pattern group 1 and before group 2.  The active
+   gap has room for the FIFO-throttled copy and removes the 1,792-word
+   name-table DMA from the second VBlank.  Group 2 then contains only its
+   pattern share, a compact final DEBUG patch, optional CRAM, and the flip. */
+.equ NT_ACTIVE_GAP_BLIT, 1
 .endif
 .endif
 .endif
@@ -1018,6 +999,11 @@ bf_blit:
 	lsl.l	#8, d5
 	lsl.l	#5, d5				/* back_idx*0x2000 */
 	add.l	#NT0, d5			/* back_base = 0xC000 or 0xE000 (flipまで保持) */
+.ifdef NT_ACTIVE_GAP_BLIT
+	/* Defer the VDP-port copy until group 1 has completed.  Doing it here
+	   would consume the phase margin needed to catch that first VBlank. */
+	bra	bf_dma
+.endif
 .ifdef NT_DMA_FLIP
 	/* Re-stage only the encoded grid at its centered location inside the
 	   zeroed 64-entry-pitch visible aperture.  The flip-blank copy remains
@@ -1047,6 +1033,12 @@ bf_blit:
 	bra	bf_dma
 bf_blit_reference:
 .endif
+	bsr	bf_blit_reference_core
+	bra	bf_dma
+
+/* Shared safe reference copy for the ordinary pre-transfer path and the
+   fixed-H40 active-gap fallback.  d5 is the already-proved hidden NT base. */
+bf_blit_reference_core:
 	lea	shadow, a1
 	PC_MOVE_W md_row0, PC_ROW0, d4	/* plane_row = (screen_rows-trows)/2 */
 	PC_MOVE_W md_trows, PC_TROWS, d6
@@ -1087,6 +1079,7 @@ bf_bword:
 bf_bdone:
 	addq.w	#1, d4
 	dbra	d6, bf_row
+	rts
 
 	/* CRAM総入替は flip と同一VBLANKで行う(bf_flip側)。ここで先に書くと、
 	   タイルDMAが複数vblankに渡る間「旧フレーム表示×新パレット」が見える
@@ -1306,8 +1299,10 @@ bf_flip:
 .endif
 .ifdef DEBUG
 .ifndef NT_DMA_FLIP
+.ifndef NT_ACTIVE_GAP_BLIT
 	bsr	prepare_dbg			/* build the inactive HUD row before the deadline */
 	bsr	publish_dbg
+.endif
 .endif
 .endif
 .ifdef NT_DMA_FLIP
@@ -1321,6 +1316,11 @@ bf_flip:
 	lsl.w	#7, d0
 	lea	PALTAB_RAM, a0
 	adda.w	d0, a0				/* recover CRAM source after DEBUG stage patch */
+.endif
+.ifdef NT_ACTIVE_GAP_BLIT
+.ifdef DEBUG
+	bsr	bf_patch_dbg_gap		/* only final values touch the second VBlank */
+.endif
 .endif
 	move.l	#0xC0000000, (VDP_CTRL).l	/* CRAM addr 0 */
 	move.w	#64-1, d1
@@ -1338,8 +1338,10 @@ bf_doflip:
 	   just like a split DMA. */
 .ifdef DEBUG
 .ifndef NT_DMA_FLIP
+.ifndef NT_ACTIVE_GAP_BLIT
 	bsr	prepare_dbg
 	bsr	publish_dbg
+.endif
 .endif
 .endif
 .ifdef NT_DMA_FLIP
@@ -1347,6 +1349,11 @@ bf_doflip:
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
 .endif
 	bsr	nt_dma_flip
+.endif
+.ifdef NT_ACTIVE_GAP_BLIT
+.ifdef DEBUG
+	bsr	bf_patch_dbg_gap
+.endif
 .endif
 	bsr	do_flip
 bf_after_flip:
@@ -1384,6 +1391,7 @@ bf_enter_planned_group:
 	moveq	#0, d7				/* corrupt exhaustion: bounded no-work group */
 	rts
 1:
+	bsr	bf_before_next_planned_group
 	bsr	wait_vb_start
 	subq.w	#1, vblank_groups_left
 	movea.l	vblank_group_ptr, a0
@@ -1422,6 +1430,47 @@ bf_next_planned_group:
 	bsr	bf_debug_snapshot_group
 .endif
 	bra	bf_enter_planned_group
+
+.ifdef NT_ACTIVE_GAP_BLIT
+/* Run the hidden name-table copy exactly once, between encoded groups 1 and 2.
+   At this point group 1's O sample is final, while the next wait still targets
+   a fresh group-2 VBlank.  All registers used by the pattern walker survive. */
+bf_before_next_planned_group:
+	move.w	n_vblank_groups, d0
+	subq.w	#1, d0
+	cmp.w	vblank_groups_left, d0
+	bne.s	1f
+	bsr	bf_active_gap_blit
+1:
+	rts
+
+bf_active_gap_blit:
+	movem.l	d0-d7/a0-a3, -(sp)
+.ifdef MAIN_CODEGEN
+	move.w	(md_codegen_blit).l, d0
+	beq.s	bf_active_gap_reference
+	move.w	(back_idx).l, d0
+	lsl.w	#2, d0
+	lea	(md_codegen_blit_addr).l, a3
+	movea.l	(a3,d0.w), a3
+	jsr	(a3)
+	bra	bf_active_gap_done
+.endif
+bf_active_gap_reference:
+	bsr	bf_blit_reference_core
+bf_active_gap_done:
+.ifdef DEBUG
+	/* Publish every stable field in active time.  The compact deadline patch
+	   below replaces only values that become final after group 2. */
+	bsr	prepare_dbg
+	bsr	publish_dbg
+.endif
+	movem.l	(sp)+, d0-d7/a0-a3
+	rts
+.else
+bf_before_next_planned_group:
+	rts
+.endif
 
 .ifdef NT_DMA_FLIP
 .ifdef DEBUG
@@ -1475,6 +1524,90 @@ dbg_stage_put2:
 	add.w	d4, d4
 	add.w	d4, d4
 	move.l	(a1,d4.w), (a0)+
+	rts
+.endif
+.endif
+
+.ifdef NT_ACTIVE_GAP_BLIT
+.ifdef DEBUG
+/* Patch only the 19 HUD cells whose values become final after group 2.
+   The complete provisional HUD was already published in the active gap. */
+bf_patch_dbg_gap:
+	movem.l	d0-d4/a0-a1, -(sp)
+	lea	dbg_hex_pairs, a1
+
+	moveq	#0, d2
+	move.w	d5, d2				/* prebuilt reg2 retains back-base bits 3..5 */
+	andi.w	#0x0038, d2
+	lsl.l	#8, d2
+	lsl.l	#2, d2				/* hidden NT 0xC000/0xE000, unchanged until flip */
+
+	move.l	d2, d0
+	addq.w	#4*2, d0			/* P */
+	bsr	set_vram_write
+	move.w	dbg_seg, d4
+	bsr	dbg_gap_put2
+
+	move.l	d2, d0
+	addi.w	#18*2, d0			/* M */
+	bsr	set_vram_write
+	move.w	frame_vblank_waits, d4
+	bsr.s	dbg_gap_put2
+
+	move.l	d2, d0
+	addi.w	#22*2, d0			/* U */
+	bsr	set_vram_write
+	move.w	dma_elapsed_ticks, d4
+	bsr.s	dbg_gap_put4
+
+	move.l	d2, d0
+	addi.w	#36*2, d0			/* O */
+	bsr	set_vram_write
+	move.w	pattern_vblank1_exit_v, d4
+	bsr.s	dbg_gap_put2
+
+	move.l	d2, d0
+	addi.w	#0x80+14*2, d0			/* Y/Z/T/I on H40 row 1 */
+	bsr	set_vram_write
+	move.w	pattern_vblank1_words, d4
+	bsr.s	dbg_gap_put3
+	move.w	pattern_vblank2_words, d4
+	bsr.s	dbg_gap_put3
+	move.w	pattern_transfer_vblanks, d4
+	bsr.s	dbg_gap_put1
+	move.w	pattern_exit_v, d4
+	bsr.s	dbg_gap_put2
+
+	movem.l	(sp)+, d0-d4/a0-a1
+	rts
+
+/* Direct deadline patch formatters.  The destination has already been set to
+   the hidden NT, so sequential calls advance only that inactive table. */
+dbg_gap_put4:
+	move.w	d4, d3
+	lsr.w	#8, d4
+	bsr.s	dbg_gap_put2
+	move.w	d3, d4
+	bra.s	dbg_gap_put2
+
+dbg_gap_put3:
+	move.w	d4, d3
+	lsr.w	#8, d4
+	bsr.s	dbg_gap_put1
+	move.w	d3, d4
+	bra.s	dbg_gap_put2
+
+dbg_gap_put1:
+	andi.w	#0x000F, d4
+	addi.w	#HUD_FONT_VTILE, d4
+	move.w	d4, (VDP_DATA).l
+	rts
+
+dbg_gap_put2:
+	andi.w	#0x00FF, d4
+	add.w	d4, d4
+	add.w	d4, d4
+	move.l	(a1,d4.w), (VDP_DATA).l
 	rts
 .endif
 .endif

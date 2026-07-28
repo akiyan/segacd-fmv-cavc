@@ -11,6 +11,14 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p121: Move the fixed-N H40 hidden name-table copy into active display time
+#         between encoder-authored pattern groups 1 and 2. Keep both pattern
+#         shares at fresh VBlank heads, patch only final HUD values in group 2,
+#         and leave CRAM plus the atomic display flip in that final blank.
+#   e154: Balance fixed-N H40 pattern runs across exactly the nominal VBlank
+#         group count using a measured usable-work ceiling. Remove the hidden
+#         full-name-table transfer from final-group accounting while retaining
+#         the ideal raw capacity as a separate diagnostic bound.
 #   p120: Read the TTRC v21 fixed-width per-frame VBlank pattern plan from
 #         Word RAM and execute every encoded group at a fresh VBlank head.
 #         Split long runs exactly at group boundaries, preserve empty final
@@ -1052,5 +1060,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=153
-p=120
+e=154
+p=121

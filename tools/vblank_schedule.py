@@ -24,21 +24,35 @@ WORDS_PER_PATTERN = 16
 MAX_VBLANK_GROUPS = 8
 GROUP_COUNT_BYTES = MAX_VBLANK_GROUPS * 2
 
-# Measured blanking DMA throughput from tools/layout_preview.py.
-VBLANK_WORK_LIMIT = {
+# Ideal blanking DMA throughput from tools/layout_preview.py.  These values
+# assume useful transfer work starts at the first blank line and has no command
+# or polling cost.
+VBLANK_IDEAL_WORDS = {
     "H32": 6346 // 2,
     "H40": 7790 // 2,
     "MODE4": 11690 // 2,
 }
 
-# The p119 H40 trace proved that a nominal 3,400-word share with only five DMA
-# chunks and one short CPU run already exits in active display.  Charging 128
-# fixed words plus 64 per issued chunk puts that exact case just beyond the
-# measured 3,895-word physical blank while retaining the real payload cost.
+# The p120 O trace directly samples the end of group 1.  H40 groups modeled
+# near the ideal 3,895-word limit regularly reached active display, while a
+# 3,700-work ceiling preserves an explicit command/polling margin.  H32 and
+# mode4 retain their ideal ceilings until they receive the same O-trace
+# qualification.
+VBLANK_WORK_LIMIT = {
+    "H32": VBLANK_IDEAL_WORDS["H32"],
+    "H40": 3700,
+    "MODE4": VBLANK_IDEAL_WORDS["MODE4"],
+}
+
+# Work-equivalent costs retain payload volume while accounting for the
+# descriptor issue path.  They are a scheduling model, not physical lower
+# bounds: one-/two-pattern CPU writes and longer DMA runs have different real
+# instruction costs, which the O/I HUD fields continue to qualify.
 GROUP_FIXED_WORK = 128
 TRANSFER_CHUNK_WORK = 64
 
-# Fixed-N H40 uses one 64x28 Main-RAM name-table DMA in the final VBlank.
+# Fixed-N H40 writes the hidden name table in the active gap between groups 1
+# and 2.  Only the compact final HUD patch and flip guard share group 2.
 NT_STAGE_WORDS = 64 * 28
 NT_DMA_SETUP_WORK = 64
 DEBUG_STAGE_WORK = 63
@@ -51,6 +65,7 @@ H40_NT_FINAL_WORK = (
     + DEBUG_STAGE_WORK
     + FLIP_GUARD_WORK
 )
+H40_INTERBLANK_FINAL_WORK = DEBUG_STAGE_WORK + FLIP_GUARD_WORK
 NON_NT_FINAL_WORK = (
     DEBUG_FORMAT_WORK + DEBUG_STAGE_WORK + FLIP_GUARD_WORK
 )
@@ -108,8 +123,8 @@ def nominal_group_counts(frame_count: int, fps: float) -> tuple[int, ...]:
     return tuple(result)
 
 
-def uses_h40_nt_dma(mode: str, fps: float) -> bool:
-    """Match the specialized player's fixed-cadence H40 NT-DMA build."""
+def uses_h40_interblank_nt(mode: str, fps: float) -> bool:
+    """Match the specialized player's fixed-cadence H40 active-gap NT path."""
     return (
         str(mode).upper() == "H40"
         and av_config.uses_fixed_n_cadence(fps)
@@ -117,13 +132,16 @@ def uses_h40_nt_dma(mode: str, fps: float) -> bool:
 
 
 def final_reserved_work(
-        mode: str, *, nt_dma_flip: bool, palette_switch: bool,
+        mode: str, *, interblank_nt: bool, palette_switch: bool,
 ) -> int:
     """Return non-pattern work that must coexist with the last group."""
     normalized = str(mode).upper()
     if normalized not in VBLANK_WORK_LIMIT:
         raise ValueError(f"unsupported display mode: {mode!r}")
-    reserve = H40_NT_FINAL_WORK if nt_dma_flip else NON_NT_FINAL_WORK
+    reserve = (
+        H40_INTERBLANK_FINAL_WORK if interblank_nt
+        else NON_NT_FINAL_WORK
+    )
     if palette_switch:
         reserve += CRAM_REPLACE_WORK
     return reserve
@@ -178,20 +196,100 @@ def _take_group(
     return patterns, work, index, offset
 
 
+def _legal_states(
+        run_counts: tuple[int, ...],
+) -> tuple[tuple[int, int, int], ...]:
+    """Return legal (pattern position, run index, run offset) boundaries."""
+    states = [(0, 0, 0)]
+    position = 0
+    for index, count in enumerate(run_counts):
+        # The player keeps one-/two-pattern CPU runs whole.  A longer DMA run
+        # can be split at any pattern boundary authored by the encoder.
+        if count > 2:
+            states.extend(
+                (position + offset, index, offset)
+                for offset in range(1, count)
+            )
+        position += count
+        states.append((position, index + 1, 0))
+    return tuple(states)
+
+
+def _interval_work(
+        start: tuple[int, int, int],
+        end: tuple[int, int, int],
+) -> int:
+    """Return modeled work for the ordered run interval [start, end)."""
+    patterns = end[0] - start[0]
+    if patterns < 0:
+        raise ValueError("VBlank interval ends before it starts")
+    if not patterns:
+        return GROUP_FIXED_WORK
+    last_run = end[1] if end[2] else end[1] - 1
+    chunks = last_run - start[1] + 1
+    if chunks <= 0:
+        raise AssertionError("nonempty VBlank interval has no run chunk")
+    return (
+        GROUP_FIXED_WORK
+        + patterns * WORDS_PER_PATTERN
+        + chunks * TRANSFER_CHUNK_WORK
+    )
+
+
+def _plan_two_groups(
+        run_counts: tuple[int, ...],
+        limit: int,
+        final_reserve: int,
+) -> tuple[list[int], list[int]] | None:
+    """Choose the legal two-way split with the smallest peak utilization."""
+    states = _legal_states(run_counts)
+    first = states[0]
+    last = states[-1]
+    best = None
+    for boundary in states:
+        first_work = _interval_work(first, boundary)
+        second_work = _interval_work(boundary, last)
+        if first_work > limit or second_work + final_reserve > limit:
+            continue
+        # Compare utilization exactly.  The final reserve makes equal pattern
+        # counts an unbalanced time plan, so balance work rather than tiles.
+        peak = max(
+            Fraction(first_work, limit),
+            Fraction(second_work + final_reserve, limit),
+        )
+        key = (
+            peak,
+            first_work + second_work,
+            first_work,
+            boundary[0],
+        )
+        if best is None or key < best[0]:
+            best = (key, boundary, first_work, second_work)
+    if best is None:
+        return None
+    boundary = best[1]
+    return (
+        [boundary[0], last[0] - boundary[0]],
+        [best[2], best[3]],
+    )
+
+
 def plan_frame(
         runs: Sequence[Sequence[int]],
         nominal_groups: int,
         *,
         mode: str,
-        nt_dma_flip: bool,
+        interblank_nt: bool,
         palette_switch: bool = False,
+        max_groups: int | None = None,
 ) -> VBlankPlan:
     """Partition ordered run payload into safe, deterministic VBlank groups.
 
-    The nominal cadence is tried first.  If its physical blanks cannot contain
-    the measured work, extra groups are added rather than letting a transfer
-    spill into active display.  The fixed eight-word table keeps control-block
-    size independent of this decision.
+    Timed fixed-cadence frames set ``max_groups`` equal to their nominal
+    cadence, so an unschedulable frame is rejected instead of silently changing
+    30 fps into a planned third field.  Untimed frame 0 may use the full table.
+    The fixed eight-word table keeps control-block size independent of the
+    selected count.
     """
     normalized = str(mode).upper()
     try:
@@ -202,17 +300,38 @@ def plan_frame(
     if not 1 <= nominal <= MAX_VBLANK_GROUPS:
         raise ValueError(
             f"nominal VBlank groups must be within 1..{MAX_VBLANK_GROUPS}")
+    maximum = nominal if max_groups is None else int(max_groups)
+    if not nominal <= maximum <= MAX_VBLANK_GROUPS:
+        raise ValueError(
+            f"maximum VBlank groups must be within "
+            f"{nominal}..{MAX_VBLANK_GROUPS}")
     run_counts = _validated_run_counts(runs)
     reserve = final_reserved_work(
         normalized,
-        nt_dma_flip=bool(nt_dma_flip),
+        interblank_nt=bool(interblank_nt),
         palette_switch=bool(palette_switch),
     )
     if reserve + GROUP_FIXED_WORK > limit:
         raise ValueError(
             f"{normalized} final VBlank reserve {reserve} leaves no group room")
 
-    for group_count in range(nominal, MAX_VBLANK_GROUPS + 1):
+    for group_count in range(nominal, maximum + 1):
+        if group_count == 2:
+            balanced = _plan_two_groups(run_counts, limit, reserve)
+            if balanced is not None:
+                counts, works = balanced
+                padded_counts = tuple(
+                    counts + [0] * (MAX_VBLANK_GROUPS - group_count))
+                padded_work = tuple(
+                    works + [0] * (MAX_VBLANK_GROUPS - group_count))
+                return VBlankPlan(
+                    nominal_groups=nominal,
+                    groups=group_count,
+                    patterns=padded_counts,
+                    pattern_work=padded_work,
+                    final_reserved_work=reserve,
+                )
+            continue
         index = 0
         offset = 0
         counts: list[int] = []
@@ -241,4 +360,4 @@ def plan_frame(
     total = sum(run_counts)
     raise ValueError(
         f"{normalized} cannot schedule {total} patterns across "
-        f"{MAX_VBLANK_GROUPS} VBlanks with {len(run_counts)} runs")
+        f"{maximum} VBlanks with {len(run_counts)} runs")
