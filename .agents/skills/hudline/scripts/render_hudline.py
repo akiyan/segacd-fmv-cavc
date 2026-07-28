@@ -310,6 +310,28 @@ def validate(
             raise SystemExit("gate diagnostic_fields omit available B")
     elif gate_has_b:
         raise SystemExit("gate declares B but HUD TSV has no B column")
+    for field, column, gate_key in (
+        ("H", "prgbuf_physical_peak_patterns",
+         "prgbuf_physical_peak_patterns"),
+        ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
+    ):
+        values = data.get(column)
+        declared = field in gate.get("diagnostic_fields", ())
+        if values is not None:
+            expected = int(values[1:].max(initial=0))
+            if gate_key not in gate:
+                raise SystemExit(f"gate JSON lacks {gate_key}")
+            if int(gate[gate_key]) != expected:
+                raise SystemExit(
+                    f"gate {field} maximum {gate[gate_key]} != "
+                    f"TSV value {expected}"
+                )
+            if not declared:
+                raise SystemExit(
+                    f"gate diagnostic_fields omit available {field}")
+        elif declared:
+            raise SystemExit(
+                f"gate declares {field} but HUD TSV has no {column} column")
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -433,6 +455,16 @@ def row_specs(
                 style.COL_PRG,
             )
         )
+    if "prgbuf_physical_peak_patterns" in data:
+        rows.append(
+            RowSpec(
+                "prgbuf_physical_peak_patterns",
+                "H  PRG PHYSICAL",
+                "peak 32-byte patterns/frame",
+                av_config.RING_SIZE_KB * 1024 / 32,
+                style.COL_PRG,
+            )
+        )
     if "prgbuf_underflow_patterns" in data:
         rows.append(
             RowSpec(
@@ -475,6 +507,26 @@ def row_specs(
                 1,
                 WARN,
                 show_zero=False,
+            )
+        )
+    if "reader_ahead_frames" in data:
+        rows.append(
+            RowSpec(
+                "reader_ahead_frames",
+                "XH READER AHEAD",
+                "complete frame slots",
+                max(1, timed_max("reader_ahead_frames")),
+                (103, 181, 220),
+            )
+        )
+    if "reader_slot_sector" in data:
+        rows.append(
+            RowSpec(
+                "reader_slot_sector",
+                "XL READER SLOT",
+                "sector index in slot",
+                max(1, timed_max("reader_slot_sector")),
+                (94, 158, 205),
             )
         )
     rows.extend([
@@ -658,6 +710,24 @@ def draw_rows(
                     anchor="rb",
                 )
 
+        if spec.key == "prgbuf_physical_peak_patterns":
+            backpressure = float(av_config.BACKPRESSURE_KB * 1024 / 32)
+            guide_y = y1 - int(round(
+                (row_height - 1) * min(backpressure, spec.maximum)
+                / max(spec.maximum, 1e-9)))
+            draw.line(
+                (left, guide_y, right, guide_y),
+                fill=NORMAL_LIMIT,
+                width=1,
+            )
+            draw.text(
+                (right - 4, guide_y - 2),
+                f"back-pressure {fmt_hex(backpressure)}",
+                fill=NORMAL_LIMIT,
+                font=font(13),
+                anchor="rb",
+            )
+
         if spec.normal_value is not None:
             normal = float(spec.normal_value)
             normal_y = y1 - int(round(
@@ -794,6 +864,16 @@ def main() -> None:
         if q_values is not None and len(q_values) > 1 else None
     )
     q_underflow_peak = max(0, -q_minimum) if q_minimum is not None else None
+    h_values = data.get("prgbuf_physical_peak_patterns")
+    h_maximum = (
+        int(h_values[1:].max())
+        if h_values is not None and len(h_values) > 1 else None
+    )
+    x_values = data.get("reader_ahead_raw16")
+    x_maximum = (
+        int(x_values[1:].max())
+        if x_values is not None and len(x_values) > 1 else None
+    )
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -809,6 +889,14 @@ def main() -> None:
     apply_guard_text = (
         f"B APPLY block {apply_guard_frames} frames; "
         if apply_guard_frames is not None else ""
+    )
+    physical_buffer_text = (
+        f"H max {h_maximum} patterns; "
+        if h_maximum is not None else ""
+    )
+    reader_ahead_text = (
+        f"X max {x_maximum >> 8} frames + sector {x_maximum & 0xFF}; "
+        if x_maximum is not None else ""
     )
     phase_note = (
         "G is the maximum Sub pump-opportunity interval; "
@@ -854,6 +942,7 @@ def main() -> None:
             f"A min/mean/median/max "
             f"{int(a_stats['minimum'])}/{float(a_stats['mean']):.3f}/"
             f"{float(a_stats['median']):g}/{int(a_stats['maximum'])}; "
+            f"{physical_buffer_text}{reader_ahead_text}"
             f"{g_stats_text}{apply_guard_text}"
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
@@ -982,6 +1071,8 @@ def main() -> None:
                 {"B": int(data["apply_guard_blocked"][1:].max(initial=0))}
                 if "apply_guard_blocked" in data else {}
             ),
+            **({"H": h_maximum} if h_maximum is not None else {}),
+            **({"X": x_maximum} if x_maximum is not None else {}),
         },
         "c_statistics": c_stats,
         "a_statistics": a_stats,
@@ -989,6 +1080,14 @@ def main() -> None:
         "apply_guard_blocked_frames": apply_guard_frames,
         "prgbuf_minimum_patterns": q_minimum,
         "prgbuf_underflow_peak_patterns": q_underflow_peak,
+        "prgbuf_physical_peak_patterns": h_maximum,
+        "reader_ahead_max_raw16": x_maximum,
+        "reader_ahead_max_frames": (
+            x_maximum >> 8 if x_maximum is not None else None
+        ),
+        "reader_ahead_max_slot_sector": (
+            x_maximum & 0xFF if x_maximum is not None else None
+        ),
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,

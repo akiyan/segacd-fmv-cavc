@@ -6,15 +6,17 @@ The player renders values only in one fixed 30-cell order in both modes:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
 The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H32 and
-H40 DEBUG builds append Q/V/O/E/G/K as one 46-cell logical sequence, wrapped
-after 32 or 40 cells respectively. Q is the signed minimum logical PrgBuf
-balance observed during that frame, in exact 32-byte patterns.
+H40 DEBUG builds append Q/V/O/E/G/K/H/X as one 54-cell logical sequence,
+wrapped after 32 or 40 cells respectively. Q is the signed minimum logical
+PrgBuf balance observed during that frame, in exact 32-byte patterns.
 G is the maximum time spent outside the Sub CDC pump between service
 opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
 sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
-that APPLY back-pressure rejected a control-sector pump. A supplied H32 or H40
-profile selects its combined layout automatically. Legacy one-row recordings
-remain readable through their explicit layout options.
+that APPLY back-pressure rejected a control-sector pump. H is the per-frame
+physical PrgBuf peak in exact patterns. X packs complete reader frame slots
+ahead in its high byte and the current slot's sector index in its low byte. A
+supplied H32 or H40 profile selects its combined layout automatically. Legacy
+one-row recordings remain readable through their explicit layout options.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -475,13 +477,15 @@ def _fmt(group: FrameGroup) -> str:
         if "G" in v else ""
     )
     msf_gap = f" K{v['K']:02X}" if "K" in v else ""
+    physical_peak = f" H{v['H']:04X}" if "H" in v else ""
+    reader_ahead = f" X{v['X']:04X}" if "X" in v else ""
     return (
         f"loop={group.loop} t={group.time_first:8.3f}s "
         f"cap={group.capture_first:5d}-{group.capture_last:<5d} "
         f"F{v['F']:04X} P{v['P']:02X} S{v['S']:02X} D{v['D']:02X} "
         f"R{v['R']:02X} L{v['L']:02X} C{v['C']:02X} W{v['W']:02X} "
         f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf}"
-        f"{poll_gap}{msf_gap} "
+        f"{poll_gap}{msf_gap}{physical_peak}{reader_ahead} "
         f"n={group.sample_count} "
         f"conf={group.confidence:.3f}"
     )
@@ -520,6 +524,20 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
             f"({minimum * 32} bytes); "
             f"underflow peak={max(0, -minimum)} patterns"
         )
+    if "H" in groups[0].values:
+        peak_group = max(groups, key=lambda group: group.values["H"])
+        peak = peak_group.values["H"]
+        print(
+            f"H physical peak: {peak} patterns ({peak * 32} bytes) at "
+            f"F{peak_group.values['F']:04X}"
+        )
+    if "X" in groups[0].values:
+        lead_group = max(groups, key=lambda group: group.values["X"])
+        raw = lead_group.values["X"]
+        print(
+            f"X reader lead: {raw >> 8} complete frame slots + "
+            f"sector {raw & 0xFF} at F{lead_group.values['F']:04X}"
+        )
     for number, index in enumerate(transitions, 1):
         previous = groups[index - 1]
         current = groups[index]
@@ -550,6 +568,8 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "main_pattern_ms", "cold_runs_low8", "prgbuf_jitter_peak_kib",
         "prgbuf_min_patterns_raw16", "prgbuf_min_patterns_signed",
         "prgbuf_underflow_patterns",
+        "prgbuf_physical_peak_patterns",
+        "reader_ahead_raw16", "reader_ahead_frames", "reader_slot_sector",
         "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
         "apply_guard_blocked",
         "slip_msf_gap_count", "slip_trn_retry_count",
@@ -613,6 +633,14 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "prgbuf_underflow_patterns": (
                     max(0, -prg_min_signed)
                     if prg_min_signed is not None else ""
+                ),
+                "prgbuf_physical_peak_patterns": values.get("H", ""),
+                "reader_ahead_raw16": values.get("X", ""),
+                "reader_ahead_frames": (
+                    values["X"] >> 8 if "X" in values else ""
+                ),
+                "reader_slot_sector": (
+                    values["X"] & 0xFF if "X" in values else ""
                 ),
                 "sub_poll_gap_raw16": (
                     poll_gap_raw if poll_gap_raw is not None else ""
@@ -765,6 +793,8 @@ def evaluate_upload_gate(
             *(["G"] if "G" in first_loop[0].values else []),
             *(["B"] if "G" in first_loop[0].values else []),
             *(["K"] if "K" in first_loop[0].values else []),
+            *(["H"] if "H" in first_loop[0].values else []),
+            *(["X"] if "X" in first_loop[0].values else []),
         ],
         "maxima": maxima,
         "c_statistics": c_statistics(groups),
@@ -788,6 +818,19 @@ def evaluate_upload_gate(
     if "G" in first_loop[0].values:
         result["sub_poll_gap_statistics"] = g_statistics(groups)
         result["apply_guard_blocked_frames"] = apply_guard_blocked_frames(groups)
+    if "H" in first_loop[0].values:
+        result["prgbuf_physical_peak_patterns"] = max(
+            (group.values["H"] for group in timed_loop),
+            default=0,
+        )
+    if "X" in first_loop[0].values:
+        reader_ahead = max(
+            (group.values["X"] for group in timed_loop),
+            default=0,
+        )
+        result["reader_ahead_max_raw16"] = reader_ahead
+        result["reader_ahead_max_frames"] = reader_ahead >> 8
+        result["reader_ahead_max_slot_sector"] = reader_ahead & 0xFF
     if profile is not None:
         result["profile"] = str(profile.path.resolve())
         result["profile_sha256"] = profile.sha256
@@ -827,6 +870,17 @@ def write_gate_json(path: Path, result: dict) -> None:
         print(
             f"  Q diagnostic min={result['prgbuf_minimum_patterns']} patterns "
             f"underflow_peak={result['prgbuf_underflow_peak_patterns']} patterns"
+        )
+    if "prgbuf_physical_peak_patterns" in result:
+        peak = result["prgbuf_physical_peak_patterns"]
+        print(
+            f"  H diagnostic max={peak} patterns ({peak * 32} bytes)"
+        )
+    if "reader_ahead_max_raw16" in result:
+        print(
+            "  X diagnostic max="
+            f"{result['reader_ahead_max_frames']} complete frame slots + "
+            f"sector {result['reader_ahead_max_slot_sector']}"
         )
     if "sub_poll_gap_statistics" in result:
         print(

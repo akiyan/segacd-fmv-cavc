@@ -296,6 +296,8 @@
 .endif
 .ifdef DEBUG_SUB_POLL_GAP
 .equ O_PUMPGAP,O_STATUS+0x26
+.equ O_PRGPEAK,O_STATUS+0x28
+.equ O_READAHEAD,O_STATUS+0x2A
 .endif
 .equ O_HDR,    O_STATUS+0x80
 /* Boot stage: BVRM sidecar records only (palette tables ride the Main-IP
@@ -426,6 +428,10 @@ stream_start:
 	clr.w	drain_frame
 .ifdef INCLUDE_WORDBUF_RING
 	clr.w	word_pending_count
+.endif
+.ifdef DEBUG_SUB_POLL_GAP
+	clr.w	(O_PRGPEAK).l
+	clr.w	(O_READAHEAD).l
 .endif
 	bsr	init_pcm
 	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
@@ -1384,6 +1390,15 @@ p1_ring:
 	bls.s	3f
 	move.w	d0, (COMSTAT2).l
 3:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* H is the exact per-frame physical peak, unlike sticky whole-run J.
+	   Keep updating the handed-off status bank while Main has not yet asked
+	   for its swap, so payload received during the wait remains visible. */
+	cmp.w	(O_PRGPEAK).l, d0
+	bls.s	4f
+	move.w	d0, (O_PRGPEAK).l
+4:
+.endif
 .endif
 	bra.s	p1_adv
 p1_apply:
@@ -1404,6 +1419,27 @@ p1_adv:
 	clr.w	drain_k
 	addq.w	#1, drain_frame
 p1_ret:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* X packs the reader position relative to the next frame to expand:
+	   high byte = complete frame slots ahead, low byte = sector index in the
+	   current slot. Retain the largest lexicographic position this frame. */
+	moveq	#0, d0
+	move.w	drain_frame, d0
+	sub.w	frame_idx, d0
+	bpl.s	1f
+	moveq	#0, d0
+1:
+	cmpi.w	#0x00FF, d0
+	bls.s	2f
+	move.w	#0x00FF, d0
+2:
+	lsl.w	#8, d0
+	move.b	drain_k+1, d0
+	cmp.w	(O_READAHEAD).l, d0
+	bls.s	3f
+	move.w	d0, (O_READAHEAD).l
+3:
+.endif
 .ifdef DEBUG_SUB_POLL_GAP
 	/* Exclude all time spent in CDC_STAT/READ/TRN, stage copy, and slip
 	   recovery from the next outside-pump interval. */
@@ -1687,6 +1723,28 @@ process_frame:
 	clr.w	pf_ctrl_wait
 	clr.w	pf_body_wait
 .ifdef DEBUG_SUB_POLL_GAP
+	/* Start H/X from the exact state left by pumps that ran after the prior
+	   bank swap. Subsequent payload appends update these same output words. */
+	move.l	ring_tail, d0
+	sub.l	ring_head, d0
+	bpl.s	8f
+	add.l	#RING_SIZE, d0
+8:
+	lsr.l	#5, d0
+	move.w	d0, (O_PRGPEAK).l
+	moveq	#0, d0
+	move.w	drain_frame, d0
+	sub.w	frame_idx, d0
+	bpl.s	8f
+	moveq	#0, d0
+8:
+	cmpi.w	#0x00FF, d0
+	bls.s	8f
+	move.w	#0x00FF, d0
+8:
+	lsl.w	#8, d0
+	move.b	drain_k+1, d0
+	move.w	d0, (O_READAHEAD).l
 	move.w	(GA_STOPWATCH_ABS_W).w, d0
 	move.w	d0, (poll_last_tick).w
 	clr.w	(poll_max_gap).w

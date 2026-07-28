@@ -261,14 +261,16 @@ class HudUploadGateTests(unittest.TestCase):
             {field: 0 for field in "SDRCMJ"},
         )
 
-    def test_h40_combined_diagnostics_preserve_q_g_b_k(self):
+    def test_h40_combined_diagnostics_preserve_q_g_b_k_h_x(self):
         rows = groups(3)
-        for row, gap, slip, msf_gap, prg_min in zip(
+        for row, gap, slip, msf_gap, prg_min, physical_peak, reader_ahead in zip(
             rows,
             (0x0FFF, 0x8000 | 120, 240),
             (0, 3, 5),
             (0, 2, 4),
             (64, 32, 16),
+            (1, 13376, 12000),
+            (0, 0x0203, 0x0108),
             strict=True,
         ):
             row.values.update({
@@ -280,6 +282,8 @@ class HudUploadGateTests(unittest.TestCase):
                 "Q": prg_min,
                 "G": gap,
                 "K": msf_gap,
+                "H": physical_peak,
+                "X": reader_ahead,
             })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hud.tsv"
@@ -292,6 +296,10 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(parsed[1]["apply_guard_blocked"], "1")
         self.assertEqual(parsed[1]["slip_msf_gap_count"], "2")
         self.assertEqual(parsed[1]["slip_trn_retry_count"], "1")
+        self.assertEqual(parsed[1]["prgbuf_physical_peak_patterns"], "13376")
+        self.assertEqual(parsed[1]["reader_ahead_raw16"], str(0x0203))
+        self.assertEqual(parsed[1]["reader_ahead_frames"], "2")
+        self.assertEqual(parsed[1]["reader_slot_sector"], "3")
         rows[1].values["S"] = 1
         rows[1].values["K"] = 255
         with tempfile.TemporaryDirectory() as directory:
@@ -305,7 +313,8 @@ class HudUploadGateTests(unittest.TestCase):
             row.values["K"] = 0
         result = self.evaluate(rows, 3)
         self.assertEqual(
-            result["diagnostic_fields"], ["C", "A", "Q", "G", "B", "K"]
+            result["diagnostic_fields"],
+            ["C", "A", "Q", "G", "B", "K", "H", "X"],
         )
         self.assertEqual(result["prgbuf_minimum_patterns"], 16)
         self.assertEqual(result["apply_guard_blocked_frames"], 1)
@@ -319,6 +328,10 @@ class HudUploadGateTests(unittest.TestCase):
                 "sample_count": 2,
             },
         )
+        self.assertEqual(result["prgbuf_physical_peak_patterns"], 13376)
+        self.assertEqual(result["reader_ahead_max_raw16"], 0x0203)
+        self.assertEqual(result["reader_ahead_max_frames"], 2)
+        self.assertEqual(result["reader_ahead_max_slot_sector"], 3)
         self.assertEqual(result["status"], "PASS")
 
 

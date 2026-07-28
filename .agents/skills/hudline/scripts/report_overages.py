@@ -56,6 +56,8 @@ HUD_COLUMNS = (
     ("G", "sub_poll_gap_ticks", 4),
     ("B", "apply_guard_blocked", 2),
     ("K", "slip_msf_gap_count", 2),
+    ("H", "prgbuf_physical_peak_patterns", 4),
+    ("X", "reader_ahead_raw16", 4),
     ("V", "flip_vcounter", 2),
     ("O", "flip_interval_excess_ticks", 2),
     ("E", "pass2_entry_q4", 2),
@@ -256,6 +258,31 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
                     f"gate {field} {key} {recorded[key]} does not match "
                     f"TSV value {expected[key]}"
                 )
+    for field, column, gate_key in (
+        ("H", "prgbuf_physical_peak_patterns",
+         "prgbuf_physical_peak_patterns"),
+        ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
+    ):
+        present = has_values(rows, column)
+        declared = field in gate.get("diagnostic_fields", ())
+        if present:
+            actual = max(
+                (as_int(row, column) for row in rows[1:]),
+                default=0,
+            )
+            if gate_key not in gate:
+                raise SystemExit(f"gate JSON lacks {gate_key}")
+            if int(gate[gate_key]) != actual:
+                raise SystemExit(
+                    f"gate {field} maximum {gate[gate_key]} does not match "
+                    f"TSV maximum {actual}"
+                )
+            if not declared:
+                raise SystemExit(
+                    f"gate diagnostic_fields omit available {field}")
+        elif declared:
+            raise SystemExit(
+                f"gate declares {field} but HUD TSV has no {column} values")
         for key in ("mean", "median"):
             if not math.isclose(
                 float(recorded[key]),
@@ -352,6 +379,8 @@ def render_markdown(
                     "sub_poll_gap_ticks",
                     "apply_guard_blocked",
                     "slip_msf_gap_count",
+                    "prgbuf_physical_peak_patterns",
+                    "reader_ahead_raw16",
                     "flip_vcounter",
                     "flip_interval_excess_ticks",
                     "pass2_entry_q4",
@@ -393,6 +422,31 @@ def render_markdown(
         summary.append(
             "B APPLY back-pressure frames "
             f"(timed first loop): {blocked}."
+        )
+    if (
+        "prgbuf_physical_peak_patterns" in fields
+        and has_values(rows, "prgbuf_physical_peak_patterns")
+    ):
+        physical_peak = max(
+            as_int(row, "prgbuf_physical_peak_patterns")
+            for row in rows[1:]
+        )
+        summary.append(
+            f"H physical PrgBuf peak (timed first loop): {physical_peak} "
+            f"patterns ({physical_peak * 32} bytes)."
+        )
+    if (
+        "reader_ahead_raw16" in fields
+        and has_values(rows, "reader_ahead_raw16")
+    ):
+        reader_ahead = max(
+            as_int(row, "reader_ahead_raw16")
+            for row in rows[1:]
+        )
+        summary.append(
+            "X reader lead (timed first loop): "
+            f"{reader_ahead >> 8} complete frame slots + "
+            f"sector {reader_ahead & 0xFF}."
         )
     summary.append(
         "C is diagnostic only and does not affect the HUD gate status."

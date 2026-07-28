@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p113: Add persistent H/X DEBUG diagnostics for the exact per-frame
+#         physical PrgBuf peak and CD reader lead. Extend the common H32/H40
+#         values-only HUD, OCR, gate evidence, and hudline without changing
+#         release playback or the encoded stream.
 #   p112: Split every DMA run at the residual VBlank word-budget boundary
 #         instead of deferring the whole crossing run. This preserves enough
 #         of the fixed-N target blank for the guarded name-table DMA and flip.
@@ -1003,4 +1007,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=149
-p=112
+p=113

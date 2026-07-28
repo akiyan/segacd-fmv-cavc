@@ -28,7 +28,7 @@ Build the profile with DEBUG enabled:
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Specialized H32 and H40 DEBUG builds use the same 46-cell combined layout.
+Specialized H32 and H40 DEBUG builds use the same 54-cell combined layout.
 H32 wraps it after 32 cells and H40 after 40 cells. Release builds omit it.
 
 `tools/record_movie.sh` uses a DEBUG disc by default. Release builds omit the
@@ -43,22 +43,22 @@ separators in the actual image. Spaces below show the field boundaries:
 ```text
 row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
 H32 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQ
-H32 row 1:   QQ VV OO EE GGGG KK
+H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX
 H40 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
-H40 row 1:   GGGG KK
+H40 row 1:   GGGG KK HHHH XXXX
 ```
 
 The fixed interpretation order is:
 
 ```text
-F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K
+F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X
 ```
 
 H32 and H40 use the same logical field stream. Every digit occupies one 8x8
 cell. The four-digit signed PrgBuf minimum `Q`, the three flip-phase fields,
-and `G/K` follow the 30-cell common prefix. H32 fills its remaining two row-0
-cells with the first half of `Q`, then continues the other 14 cells on row 1.
-H40 fits `Q/V/O/E` on row 0 and continues `G/K` on row 1.
+and `G/K/H/X` follow the 30-cell common prefix. H32 fills its remaining two
+row-0 cells with the first half of `Q`, then continues the other 22 cells on
+row 1. H40 fits `Q/V/O/E` on row 0 and continues `G/K/H/X` on row 1.
 
 | Field | HUD row | Cell columns | Native pixel range | Digits |
 |---|---:|---:|---:|---:|
@@ -81,15 +81,19 @@ H40 fits `Q/V/O/E` on row 0 and continues `G/K` on row 1.
 | `E` (H32) | 1 | 6-7 | x=48-63 | 2 |
 | `G` (H32) | 1 | 8-11 | x=64-95 | 4 |
 | `K` (H32) | 1 | 12-13 | x=96-111 | 2 |
+| `H` (H32) | 1 | 14-17 | x=112-143 | 4 |
+| `X` (H32) | 1 | 18-21 | x=144-175 | 4 |
 | `Q` (H40) | 0 | 30-33 | x=240-271 | 4 |
 | `V` (H40) | 0 | 34-35 | x=272-287 | 2 |
 | `O` (H40) | 0 | 36-37 | x=288-303 | 2 |
 | `E` (H40) | 0 | 38-39 | x=304-319 | 2 |
 | `G` (H40) | 1 | 0-3 | x=0-31 | 4 |
 | `K` (H40) | 1 | 4-5 | x=32-47 | 2 |
+| `H` (H40) | 1 | 6-9 | x=48-79 | 4 |
+| `X` (H40) | 1 | 10-13 | x=80-111 | 4 |
 
 The common part covers 30 cells or 240 pixels. The complete HUD covers 32
-cells on H32 row 0 plus 14 on row 1, or 40 cells on H40 row 0 plus 6 on row 1.
+cells on H32 row 0 plus 22 on row 1, or 40 cells on H40 row 0 plus 14 on row 1.
 It can cover active picture content; it is not repositioned around
 letterboxing.
 
@@ -106,7 +110,7 @@ content frame; 24 fps fails when `M>03`. The largest passing `J` is
 normal-ceiling-to-physical-end minus one
 KiB: `2D` at 15fps, `1E` at 24fps, and `19` at 30fps. Values above the normal
 jitter interval (`28`, `19`, or `14` respectively) show that
-sector-granular occupancy crossed the shared 418 KiB delivery observation
+sector-granular occupancy crossed the shared 416 KiB delivery observation
 boundary and entered the final physical guard left outside the schedule.
 Report the value, but a `J` within the cadence-specific passing limit does not
 by itself require another confirmation or fail the recording. `C` has no gate
@@ -119,7 +123,8 @@ For every gate result, the analyzer and `/hudline` report the minimum, mean,
 median, and maximum of both `C` and `A` across the timed first loop and preserve
 them in the gate JSON and hudline receipt. When `G` is present, they also
 report its minimum, mean, median, and maximum after separating the packed `B`
-marker. `G`, `B`, and `K` are diagnostic only and never alter the gate.
+marker. `H` reports the exact physical peak and `X` reports the reader lead.
+`G`, `B`, `K`, `H`, and `X` are diagnostic only and never alter the gate.
 
 The black player-only frame -1 uses `F=FFFF` before frame 0. It is an OCR
 sentinel, not a stream frame, and is never written as a HUD TSV row. Frame 0
@@ -152,6 +157,8 @@ available.
 | `G` | Sub | per frame | Longest interval outside a CDC pump opportunity, in 30.72 us ticks | A stable band means no exceptional Sub-side pump neglect |
 | `B` | Sub | per frame | APPLY control-queue back-pressure rejected a pump (derived from `G` bit 15) | `00`; `01` proves the control queue blocked continuous delivery |
 | `K` | Sub | cumulative | MSF sequence-gap recovery count | Compare with `S`; `S-K` is the CDC_TRN retry-exhaustion count |
+| `H` | Sub | per frame | Maximum physical PrgBuf occupancy, in exact 32-byte patterns | Below `3440` stays below the 418 KiB payload back-pressure boundary |
+| `X` | Sub | per frame | CD reader position ahead of the next frame expansion; high byte is complete frame slots, low byte is sector position in the current slot | Read with `H`; large lead is safe only while every destination retains space |
 | `V` | Main | previous frame | V-counter at the last accepted display flip | `E0` = flip at the VBlank start; higher blank lines mean the flip ran late inside its blank |
 | `O` | Main | previous frame | That flip's interval excess over 1024 stopwatch ticks | About `3E` (62 = nominal 1086-tick N2 interval); `FF` marks a slipped 3-field frame |
 | `E` | Main | per frame | Pass2 entry delay since the previous flip, in 4-tick units | Below one field (`88` = 544 ticks) with margin; approaching the field-1 blank end means the transfer is about to miss its VBlank |
@@ -160,8 +167,8 @@ available.
 once incremented, they remain nonzero until playback restarts, and the displayed
 low byte wraps from `FF` to `00`. `J` is also cumulative but retains the
 largest observed excess rather than counting events. `C`, `W`, `M`, `A`, `U`,
-`N`, `Q`, `G`, and `B` describe one frame. `K` is cumulative. `F`, `P`, and
-`L` describe current player state.
+`N`, `Q`, `G`, `B`, `H`, and `X` describe one frame. `K` is cumulative. `F`,
+`P`, and `L` describe current player state.
 `V` and `O` are sampled at `do_flip` *after* the flip register write, so the
 row that carries them was built one frame later: frame `F`'s row shows the
 flip that published frame `F - 1`. Shift by one frame when correlating them
@@ -329,7 +336,7 @@ the maximum.
 
 `J` is the maximum simultaneous streamed PrgBuf occupancy above the
 fps-derived normal ceiling observed since BODY streaming began. That ceiling
-is 378 KiB at 15fps, 393 KiB at 24fps, and 398 KiB at 30fps. It is rounded
+is 376 KiB at 15fps, 391 KiB at 24fps, and 396 KiB at 30fps. It is rounded
 upward to KiB and displayed in hexadecimal. `J=00` proves that occupancy never
 crossed the ceiling; `J=01` means a nonzero excess of at most 1 KiB, and
 `J=0A` means a maximum excess of at most 10 KiB.
@@ -356,6 +363,26 @@ underflow after it happens. If the pop head passes the append tail, the modulo
 distance looks almost full and can trigger payload back-pressure. `Q` retains
 the signed fact for the whole frame even if a later sector repays the debt.
 It is diagnostic only and does not change the upload gate.
+
+### `H` / `X`: physical PrgBuf pressure and CD reader lead
+
+`H` is the largest physical PrgBuf occupancy reached during one frame. The Sub
+CPU initializes it from the exact circular-ring distance and updates it after
+every 2 KiB payload append. One displayed unit is one 32-byte pattern, so
+`H=3440` is 418 KiB: the point at which the next payload poll is refused.
+Unlike sticky whole-run `J`, `H` returns to the current occupancy at each frame
+boundary and shows when pressure was present. The `/hudline` H row draws the
+418 KiB back-pressure guide.
+
+`X` records how far the physical CD reader has advanced relative to the next
+frame expansion. Its high byte is the number of complete frame slots between
+the reader and that consumer position; its low byte is the sector index inside
+the current slot. The value retains the furthest lexicographic position reached
+during the frame. `/hudline` splits it into `XH READER AHEAD` and
+`XL READER SLOT` rows. Read `X` with `H`: reader lead is useful prefetch while
+the destination buffers have space, but lead concurrent with `H=3440` proves
+that physical PrgBuf back-pressure can stop a continuously arriving payload
+sector. Both fields are observational and have no upload-gate threshold.
 
 ### `G` / `B` / `K`: Sub pump and control back-pressure
 
@@ -417,6 +444,8 @@ VBlank.
 | `J` rises again later | Timed playback exceeded the previous startup/runtime high-water mark |
 | `Q=0000` | Logical PrgBuf supply became exactly empty during that frame |
 | `Q=8000..FFFF` | Signed PrgBuf balance went negative; decode as `Q-0x10000` patterns |
+| `H=3440` while `X` is ahead | The physical PrgBuf reached payload back-pressure while the CD reader was prefetched ahead |
+| `H` falls but `J` stays high | Current pressure recovered; `J` is retaining the earlier whole-run peak |
 | `G` remains in its normal band at an `S` transition | The incident was not caused by an exceptional interval outside the CDC pump |
 | `B=01`, followed by a rise in `K`/`S` | APPLY control back-pressure blocked delivery before an MSF-gap recovery |
 | `K` rises by the same amount as `S` | The observed recoveries are MSF sequence gaps, not CDC_TRN retry exhaustion |
@@ -429,13 +458,13 @@ the packed stream when investigating a regression.
 The HUD does not use the Window plane. For each frame the Main CPU:
 
 1. builds the complete next movie name table in the inactive Plane A table;
-2. formats the HUD into one 92-byte Main-RAM staging block in both modes;
-3. overwrites 32 cells of H32 row 0 plus 14 of row 1, or 40 cells of H40 row 0
-   plus 6 of row 1;
+2. formats the HUD into one 108-byte Main-RAM staging block in both modes;
+3. overwrites 32 cells of H32 row 0 plus 22 of row 1, or 40 cells of H40 row 0
+   plus 14 of row 1;
 4. selects that completed table with the same register-2 flip as the movie.
 
 The inactive tables are at VRAM `0xC000` and `0xE000`. Publishing the HUD uses
-23 longword writes in either mode and no DMA. Unoccupied cells retain
+27 longword writes in either mode and no DMA. Unoccupied cells retain
 their movie entries, which avoids exposing an unrelated Plane B frame.
 
 The final flip has a terminal-VBlank guard: V-counter lines `FC` through `FF`
@@ -514,8 +543,11 @@ For current H32/H40 combined HUDs, the TSV preserves `Q` as
 `prgbuf_min_patterns_signed`, and writes the positive debt magnitude as
 `prgbuf_underflow_patterns`. The combined pump diagnostic also writes
 `sub_poll_gap_ticks`, `sub_poll_gap_ms`, `apply_guard_blocked`,
-`slip_msf_gap_count`, and `slip_trn_retry_count`. `/hudline` and `/mixline`
-always include those rows and G/B summaries when the columns are present.
+`slip_msf_gap_count`, and `slip_trn_retry_count`. The physical-buffer
+diagnostic writes `prgbuf_physical_peak_patterns`, `reader_ahead_raw16`,
+`reader_ahead_frames`, and `reader_slot_sector`. `/hudline` and `/mixline`
+always include those rows plus G/B and H/X summaries when the columns are
+present.
 
 The reproducible glyph/layout proof is:
 
@@ -567,7 +599,7 @@ ProfileをDEBUG付きでbuildします。
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Specialized H32/H40 DEBUGは同じ46-cell combined layoutを使います。
+Specialized H32/H40 DEBUGは同じ54-cell combined layoutを使います。
 H32は32 cell、H40は40 cellで折り返します。Release buildはHUDを省きます。
 
 `tools/record_movie.sh`は既定でDEBUG discを使います。Release buildはHUDを省き、
@@ -582,21 +614,21 @@ field boundaryを示します。
 ```text
 row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
 H32 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQ
-H32 row 1:   QQ VV OO EE GGGG KK
+H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX
 H40 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
-H40 row 1:   GGGG KK
+H40 row 1:   GGGG KK HHHH XXXX
 ```
 
 固定解釈順は次のとおりです。
 
 ```text
-F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K
+F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X
 ```
 
 H32とH40は同じlogical field streamを使います。1 digitは1つの8x8 cellです。
 30-cell common prefixの後に、4桁のsigned PrgBuf minimum `Q`、3つのflip-phase
-field、`G/K`が続きます。H32はrow 0の残り2 cellへ`Q`の前半を書き、残る14 cellを
-row 1へ続けます。H40はrow 0へ`Q/V/O/E`、row 1へ`G/K`を書きます。
+field、`G/K/H/X`が続きます。H32はrow 0の残り2 cellへ`Q`の前半を書き、残る
+22 cellをrow 1へ続けます。H40はrow 0へ`Q/V/O/E`、row 1へ`G/K/H/X`を書きます。
 
 | Field | HUD row | Cell columns | Native pixel range | Digits |
 |---|---:|---:|---:|---:|
@@ -619,15 +651,19 @@ row 1へ続けます。H40はrow 0へ`Q/V/O/E`、row 1へ`G/K`を書きます。
 | `E`（H32） | 1 | 6-7 | x=48-63 | 2 |
 | `G`（H32） | 1 | 8-11 | x=64-95 | 4 |
 | `K`（H32） | 1 | 12-13 | x=96-111 | 2 |
+| `H`（H32） | 1 | 14-17 | x=112-143 | 4 |
+| `X`（H32） | 1 | 18-21 | x=144-175 | 4 |
 | `Q`（H40） | 0 | 30-33 | x=240-271 | 4 |
 | `V`（H40） | 0 | 34-35 | x=272-287 | 2 |
 | `O`（H40） | 0 | 36-37 | x=288-303 | 2 |
 | `E`（H40） | 0 | 38-39 | x=304-319 | 2 |
 | `G`（H40） | 1 | 0-3 | x=0-31 | 4 |
 | `K`（H40） | 1 | 4-5 | x=32-47 | 2 |
+| `H`（H40） | 1 | 6-9 | x=48-79 | 4 |
+| `X`（H40） | 1 | 10-13 | x=80-111 | 4 |
 
 共通部は30 cell、240 pixelです。Complete HUDはH32ではrow 0の32 cellとrow 1の
-14 cell、H40ではrow 0の40 cellとrow 1の6 cellを使います。Active pictureを
+22 cell、H40ではrow 0の40 cellとrow 1の14 cellを使います。Active pictureを
 覆う場合があり、letterboxに合わせて移動しません。
 
 Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体から2値の
@@ -642,7 +678,7 @@ fixed N4は`M>03`でfailです。Delivery-paced 24 fpsは`M>03`でfailです。
 Passing `J`の最大値はnormal ceilingから
 physical endまでの差より1 KiB小さい値で、15 fpsは`2D`、24 fpsは`1E`、30 fpsは
 `19`です。Normal jitter interval（それぞれ`28`、`19`、`14`）を超える値は、
-共通の418 KiB delivery observation boundaryを越え、schedule外に残した最後の
+共通の416 KiB delivery observation boundaryを越え、schedule外に残した最後の
 physical guardへ入ったことを示します。値は報告しますが、cadence固有
 passing limit内の`J`だけで再確認やfailにはしません。`C`にはgate thresholdがなく、
 gate結果を変えません。Sub側CD workのdiagnosticとして保持します。
@@ -652,7 +688,8 @@ Taskがpublicationを許可済みなら、gate実行だけを理由に追加appr
 すべてのgate結果で、analyzerと`/hudline`はtimed first loopにおける`C`と`A`それぞれの
 minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
 `G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
-報告します。`G/B/K`はdiagnostic専用でgateを変えません。
+報告します。`H`はexact physical peak、`X`はreader leadを報告します。
+`G/B/K/H/X`はdiagnostic専用でgateを変えません。
 
 Player-onlyの黒いframe -1はframe 0の前に `F=FFFF` を使います。これはOCR
 sentinelでstream frameではなく、HUD TSV rowにも書きません。Frame 0はuntimed boot
@@ -683,13 +720,15 @@ Final frameは次のmovie-frame transitionがないため、derived VBlankはunk
 | `G` | Sub | per frame | CDC pump opportunity外にいた最長interval。30.72 us tick単位 | 安定bandなら例外的なSub-side pump放置はない |
 | `B` | Sub | per frame | APPLY control queueのback-pressureがpumpを拒否（`G` bit 15から分離） | `00`。`01`はcontrol queueがcontinuous deliveryをblockした証明 |
 | `K` | Sub | cumulative | MSF sequence-gap recovery count | `S`と比較し、`S-K`をCDC_TRN retry-exhaustion countとして読む |
+| `H` | Sub | per frame | exact 32-byte pattern単位のphysical PrgBuf maximum | `3440`未満なら418 KiB payload back-pressure boundary未満 |
+| `X` | Sub | per frame | 次frame展開に対するCD reader位置。high byteは完了frame slot数、low byteはcurrent slot内sector位置 | `H`と一緒に読み、全destinationに空きがある場合だけ大きなleadが安全 |
 | `V` | Main | previous frame | accepted display flip時のV-counter | `E0`ならVBlank start。大きいblank lineはlate flip |
 | `O` | Main | previous frame | flip intervalの1024 tick超過分 | nominal N2は約`3E`、`FF`は3-field slip |
 | `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位 | 1 field未満で余裕を持つ。`88`は544 tick |
 
 `S`、`D`、`R`はcumulative counterで、一度増えるとrestartまでnonzeroです。表示low byteは
 `FF`から`00`へwrapします。`J`もcumulativeですがevent数ではなく最大excessを保持します。
-`C/W/M/A/U/N/Q/G/B`は1 frame、`K`はcumulative、`F/P/L`はcurrent stateです。
+`C/W/M/A/U/N/Q/G/B/H/X`は1 frame、`K`はcumulative、`F/P/L`はcurrent stateです。
 
 `V/O`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
 作られます。Frame `F`のrowはframe `F - 1`をpublishしたflipを示すため、per-frame
@@ -833,8 +872,8 @@ vertical scaleに使います。Untimed frame 0は最大値から除外します
 ### `J`: streamed PrgBuf jitter-reserve high-water mark
 
 `J`はBODY streaming開始後に観測した、fps-derived normal ceilingを超えるstreamed
-PrgBuf simultaneous occupancyの最大値です。Normal ceilingは15 fpsで378 KiB、
-24 fpsで393 KiB、30 fpsで398 KiBです。KiBへ切り上げhex表示します。
+PrgBuf simultaneous occupancyの最大値です。Normal ceilingは15 fpsで376 KiB、
+24 fpsで391 KiB、30 fpsで396 KiBです。KiBへ切り上げhex表示します。
 `J=00`はceiling未超過、`J=01`は0より大きく1 KiB以下、`J=0A`は10 KiB以下の
 最大excessです。
 
@@ -855,6 +894,23 @@ Circular pointer arithmeticはunderflow発生後にそれを識別できませ�
 tailを追い越すとmodulo distanceはほぼfullに見え、payload back-pressureを起こせます。
 `Q`は後続sectorがdebtを返済しても、そのframe全体でsigned factを保持します。
 Diagnostic専用でupload gateは変えません。
+
+### `H` / `X`: physical PrgBuf pressureとCD reader lead
+
+`H`は1 frame中に到達したphysical PrgBuf occupancyの最大値です。Sub CPUはexactな
+circular-ring distanceで初期化し、2 KiB payload appendごとに更新します。表示単位は
+32-byte patternなので、`H=3440`は418 KiBで、次のpayload pollを拒否する境界です。
+Whole-run sticky peakの`J`と異なり、`H`は各frame境界でcurrent occupancyへ戻るため、
+pressureが存在したframeを示します。`/hudline`のH rowには418 KiB back-pressure
+guideを描きます。
+
+`X`は次のframe展開に対しphysical CD readerがどこまで進んだかを記録します。High byteは
+readerとconsumer位置の間で完了したframe slot数、low byteはcurrent slot内sector index
+です。1 frame中に到達した最も先の辞書順位置を保持します。`/hudline`では
+`XH READER AHEAD`と`XL READER SLOT`へ分離します。`X`は`H`と一緒に読みます。
+Destination bufferに空きがあるreader leadは有用なprefetchですが、`H=3440`と同時なら、
+continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得る状態です。
+両fieldとも観測専用でupload-gate thresholdはありません。
 
 ### `G` / `B` / `K`: Sub pumpとcontrol back-pressure
 
@@ -908,6 +964,8 @@ bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main pha
 | `J`がさらに上昇 | Timed playbackがそれまでのhigh-water markを更新 |
 | `Q=0000` | そのframeでlogical PrgBuf supplyが正確にempty |
 | `Q=8000..FFFF` | Signed PrgBuf balanceがnegative。`Q-0x10000` patternとして読む |
+| `H=3440`で`X`が先行 | CD readerがprefetch先行中にphysical PrgBufがpayload back-pressureへ到達 |
+| `H`が低下しても`J`が高い | Current pressureは回復し、`J`がearlier whole-run peakを保持 |
 | `S` transitionでも`G`がnormal band内 | CDC pump外の例外的な長時間停止はincident原因ではない |
 | `B=01`の後に`K/S`が増加 | APPLY control back-pressureがdeliveryをblockした後にMSF-gap recovery |
 | `K`と`S`が同量増加 | Recovery原因はMSF sequence gapで、CDC_TRN retry exhaustionではない |
@@ -920,13 +978,13 @@ streamを使います。
 HUDはWindow planeを使いません。各frameでMain CPUは次を行います。
 
 1. inactive Plane A tableへcomplete next movie name tableを構築
-2. 両modeとも92-byte Main-RAM staging blockへHUDをformat
-3. H32ではrow 0の32 cellとrow 1の14 cell、H40ではrow 0の40 cellとrow 1の
-   6 cellを上書き
+2. 両modeとも108-byte Main-RAM staging blockへHUDをformat
+3. H32ではrow 0の32 cellとrow 1の22 cell、H40ではrow 0の40 cellとrow 1の
+   14 cellを上書き
 4. Movieと同じregister-2 flipでcompleted tableを選択
 
 Inactive tableはVRAM `0xC000`と`0xE000`です。HUD publicationは両modeとも
-23 longword writeを使い、DMAは使いません。
+27 longword writeを使い、DMAは使いません。
 未使用cellはmovie entryを保持し、無関係なPlane B frameを露出しません。
 
 Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで
@@ -996,8 +1054,10 @@ Current H32/H40 combined HUDでは、TSVは`Q`を`prgbuf_min_patterns_raw16`と�
 signed valueを`prgbuf_min_patterns_signed`へdecodeし、positiveなdebt magnitudeを
 `prgbuf_underflow_patterns`へ書きます。Pump diagnosticでは代わりに
 `sub_poll_gap_ticks`、`sub_poll_gap_ms`、`apply_guard_blocked`、
-`slip_msf_gap_count`、`slip_trn_retry_count`を書きます。Columnがあれば
-`/hudline`と`/mixline`は常にそれらのrowとG/B summaryを含めます。
+`slip_msf_gap_count`、`slip_trn_retry_count`を書きます。Physical-buffer diagnosticは
+`prgbuf_physical_peak_patterns`、`reader_ahead_raw16`、
+`reader_ahead_frames`、`reader_slot_sector`を書きます。Columnがあれば
+`/hudline`と`/mixline`は常にそれらのrowとG/BおよびH/X summaryを含めます。
 
 Glyph/layoutのreproducible proofは次です。
 
