@@ -1459,24 +1459,49 @@ bf_wait_fixed_flip_vblank:
    the H40 64-entry-pitch stage consumed by the imminent one NT DMA.
    Trashes d0/d3/d4/a0. */
 bf_patch_dbg_stage:
+	lea	dbg_hex_pairs, a1
 	lea	nt_stage+4*2, a0		/* P */
 	move.w	dbg_seg, d4
-	bsr	dbg_put2
+	bsr	dbg_stage_put2
 	lea	nt_stage+18*2, a0		/* M */
 	move.w	frame_vblank_waits, d4
-	bsr	dbg_put2
+	bsr	dbg_stage_put2
 	lea	nt_stage+22*2, a0		/* U */
 	move.w	dma_elapsed_ticks, d4
-	bsr	dbg_put4
+	bsr	dbg_stage_put4
 	lea	nt_stage+0x80+14*2, a0		/* Y/Z/T/I on H40 row 1 */
 	move.w	pattern_vblank1_words, d4
-	bsr	dbg_put3
+	bsr	dbg_stage_put3
 	move.w	pattern_vblank2_words, d4
-	bsr	dbg_put3
+	bsr	dbg_stage_put3
 	move.w	pattern_transfer_vblanks, d4
 	bsr	dbg_put1
 	move.w	pattern_exit_v, d4
-	bsr	dbg_put2
+	bsr	dbg_stage_put2
+	rts
+
+/* Deadline-side byte pairs use the specialized 256-entry tile-pair table.
+   Keep these small out-of-line helpers so every final field is fast without
+   duplicating the table lookup at seven call sites. */
+dbg_stage_put4:
+	move.w	d4, d3
+	lsr.w	#8, d4
+	bsr	dbg_stage_put2
+	move.w	d3, d4
+	bra	dbg_stage_put2
+
+dbg_stage_put3:
+	move.w	d4, d3
+	lsr.w	#8, d4
+	bsr	dbg_put1
+	move.w	d3, d4
+	bra	dbg_stage_put2
+
+dbg_stage_put2:
+	andi.w	#0x00FF, d4
+	add.w	d4, d4
+	add.w	d4, d4
+	move.l	(a1,d4.w), (a0)+
 	rts
 .endif
 .endif
