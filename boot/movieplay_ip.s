@@ -1063,8 +1063,9 @@ bf_dma:
 .endif
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port.  A whole run is issued per VBlank;
-	   only a run longer than one full budget takes the split fallback. */
+	   straight into the control port.  A DMA run that crosses the residual
+	   word budget is split at that exact boundary so the first blank's tail is
+	   not discarded before a shared deadline flip. */
 	move.w	(a2)+, d1			/* +0 len(語) */
 .ifdef DMA_RUN_FASTPATH
 	/* A one-time run branch is much cheaper than programming a DMA for one or
@@ -1074,10 +1075,7 @@ bf_run_lp:
 .endif
 	cmp.w	d7, d1				/* whole run fits the remaining budget? */
 	bls.s	1f
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
-	cmp.w	d0, d1
-	bhi	bf_split_run			/* longer than one full budget (e.g. H40/15) */
-	bsr	bf_refill_vbudget
+	bra	bf_split_run			/* fill this blank before continuing the run */
 1:
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
 	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
@@ -1098,8 +1096,7 @@ bf_run_lp:
 	bra	bf_run_done
 
 bf_split_run:
-	/* Rare: one run exceeds a full VBlank budget.  Fall back to the
-	   on-the-fly chunk walk using the record's raw dst/len/src. */
+	/* Walk the record's raw dst/len/src across one or more budget chunks. */
 	move.w	8(a2), d3			/* +10 dst (a2 is at +2) */
 	movea.l	16(a2), a3			/* +18 src */
 	adda.w	#20, a2				/* advance to the next record */

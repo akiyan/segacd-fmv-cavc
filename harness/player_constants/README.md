@@ -25,6 +25,8 @@ For every case it requires:
 - fixed-N H40 starts each 3,400-word transfer budget only at a proven VBlank
   head, keeps the cold-tail/name-table/flip reserve in the disassembly, and
   retains status, terminal-line, and fresh-VBlank fallback guards;
+- a DMA run that crosses a VBlank word-budget boundary is split there instead
+  of discarding the residual capacity needed by the shared deadline;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;
 - all geometry/timing/audio/supply combinations assemble and link

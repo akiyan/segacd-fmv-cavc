@@ -298,6 +298,18 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         raise AssertionError(
             f"{obj}: shared-state clear overwrites the n_runs zero flag")
 
+    run_loop = block("bf_run_lp", "bf_split_run")
+    residual_compare = re.search(r"\bcmpw\s+%d7,%d1", run_loop)
+    split_crossing = re.search(
+        r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop)
+    if not residual_compare or not split_crossing:
+        raise AssertionError(
+            f"{obj}: a DMA run crossing the residual budget is not split")
+    between = run_loop[residual_compare.end():split_crossing.start()]
+    if "<bf_refill_vbudget>" in between:
+        raise AssertionError(
+            f"{obj}: a crossing DMA run discards the first VBlank tail")
+
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
     if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
         raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")

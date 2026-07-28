@@ -295,7 +295,10 @@ in DEBUG, plus 64 words for a palette switch. VBlank status is checked before
 and after the V counter, and the terminal `FC..FF` lines are rejected. If any
 condition fails, Main waits for a fresh VBlank before the name-table DMA and
 flip. This shares one physical deadline without treating a mid-blank entry as
-unused capacity.
+unused capacity. A DMA run that crosses the current pattern budget is split at
+that boundary rather than abandoning the first blank's residual capacity.
+One- or two-tile CPU-write runs remain whole and can leave at most 32 words
+unused.
 
 Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
@@ -609,7 +612,9 @@ DEBUGで1,966 word、palette switch時はさらに64 wordです。VBlank status�
 counterの前後で確認し、terminalの`FC..FF` lineは拒否します。どれかの条件を
 満たさない場合、Mainはname-table DMAとflipの前にfresh VBlankを待ちます。これに
 より、mid-blank entryを未使用capacityと見なさずに、1個のphysical deadlineを共有
-します。
+します。Current pattern budgetをまたぐDMA runは、最初のblankの残りcapacityを
+捨てず、そのboundaryで分割します。1～2 tileのCPU-write runは分割せず、未使用に
+なるのは最大32 wordです。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が

@@ -11,6 +11,9 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p112: Split every DMA run at the residual VBlank word-budget boundary
+#         instead of deferring the whole crossing run. This preserves enough
+#         of the fixed-N target blank for the guarded name-table DMA and flip.
 #   p111: Preserve the n_runs zero flag while clearing the shared-VBlank budget
 #         origin. The p110 instruction order made the empty-frame branch
 #         unconditional and skipped every timed cold transfer.
@@ -1000,4 +1003,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=149
-p=111
+p=112
