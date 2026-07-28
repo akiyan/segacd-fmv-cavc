@@ -281,20 +281,7 @@ UPGRADE_ON = os.environ.get("CBRSIM_UPGRADE", "1") != "0"
 # baselineに関与しない。profileは全編認定済みの上限へ引き上げられる。
 # frame0 は下の frame_max_cold で別途免除。
 COLD_CAP_QUALIFICATION = av_config.cold_cap_qualification(FPS)
-TARGET_MAX_COLD = COLD_CAP_QUALIFICATION.cap
-try:
-    MAIN_TRANSFER_COLD_CAP = int(os.environ.get(
-        "CBRSIM_MAIN_TRANSFER_COLD_CAP", "0"))
-except ValueError as exc:
-    raise SystemExit(
-        "CBRSIM_MAIN_TRANSFER_COLD_CAP must be an integer") from exc
-MAX_COLD = av_config.effective_cold_cap(
-    TARGET_MAX_COLD,
-    main_transfer_cap=MAIN_TRANSFER_COLD_CAP,
-)
-COLD_CAP_SOURCE = COLD_CAP_QUALIFICATION.source
-if MAX_COLD < TARGET_MAX_COLD:
-    COLD_CAP_SOURCE += "+main-transfer"
+MAX_COLD = COLD_CAP_QUALIFICATION.cap
 MAX_RUN_CONTROL_BYTES = stream_schedule.max_run_control_reservation(
     MAX_COLD, ACTIVE_TILES)
 # Boot VRAM prefetch uses otherwise-unused frame-0 HEADER/staging capacity and
@@ -1316,10 +1303,9 @@ def main():
         if COLD_CAP_QUALIFICATION.baseline_cap is not None
         else MAX_COLD)
     print(
-        f"  cold target={TARGET_MAX_COLD}: "
-        f"source={COLD_CAP_QUALIFICATION.source} baseline={baseline_cap}; "
-        f"Main transfer={MAIN_TRANSFER_COLD_CAP or 'unclamped'}; "
-        f"construction cap={MAX_COLD}; fps={COLD_CAP_QUALIFICATION.fps:g}")
+        f"  cold cap={MAX_COLD}: source={COLD_CAP_QUALIFICATION.source} "
+        f"baseline={baseline_cap}; "
+        f"fps={COLD_CAP_QUALIFICATION.fps:g}")
 
     # The source WAV remains the packer's input.  Analysis must instead audition
     # the exact stream reconstructed by the Sub CPU and quantized for RF5C164.
@@ -3949,13 +3935,11 @@ def main():
                 "prg_physical_ring_kb": int(av_config.RING_SIZE_KB),
                 "quality_budget_kb": int(QUALITY_BUDGET_KB),
                 "max_cold": int(MAX_COLD),
-                "requested_cold_cap": int(TARGET_MAX_COLD),
-                "main_transfer_cold_cap": int(MAIN_TRANSFER_COLD_CAP),
                 "baseline_cold_cap": int(
                     COLD_CAP_QUALIFICATION.baseline_cap
                     if COLD_CAP_QUALIFICATION.baseline_cap is not None
                     else MAX_COLD),
-                "cold_cap_source": COLD_CAP_SOURCE,
+                "cold_cap_source": COLD_CAP_QUALIFICATION.source,
             },
             "encoder": {
                 "detail_alpha": float(DETAIL_ALPHA),
@@ -4222,8 +4206,6 @@ def main():
             "vram_tiles": int(VRAM_TILES),
             # エンコード時の実効パラメータを焼き込む(pack/解析が同一値を使い二重管理を防ぐ)。
             "max_cold": int(MAX_COLD),
-            "requested_cold_cap": int(TARGET_MAX_COLD),
-            "main_transfer_cold_cap": int(MAIN_TRANSFER_COLD_CAP),
             "prg_buf_kb": int(PRG_BUF_CAP_KB),
             "prg_delivery_cap_kb": int(PRG_DELIVERY_CAP_KB),
             "prg_jitter_headroom_kb": int(PRG_JITTER_HEADROOM_KB),
@@ -4366,9 +4348,7 @@ def _rebind_cached_profile(data):
         hardware["baseline_cold_cap"] = int(
             COLD_CAP_QUALIFICATION.baseline_cap
             if COLD_CAP_QUALIFICATION.baseline_cap is not None else MAX_COLD)
-        hardware["requested_cold_cap"] = int(TARGET_MAX_COLD)
-        hardware["main_transfer_cold_cap"] = int(MAIN_TRANSFER_COLD_CAP)
-        hardware["cold_cap_source"] = COLD_CAP_SOURCE
+        hardware["cold_cap_source"] = COLD_CAP_QUALIFICATION.source
     temporary = decision_path.with_name(
         f".{decision_path.name}.{os.getpid()}.tmp")
     with temporary.open("wb") as output:

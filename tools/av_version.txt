@@ -11,16 +11,17 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
-#   e151: Round the issue-74 Bad Apple Main-transfer construction ceiling down
-#         from the measured 239-pattern edge to the project's 10-pattern
-#         tuning quantum at 230. Keep cold_cap=280 as the encoder quality
-#         target; only the separate physical playback deadline ceiling changes.
-#   e150: Keep the issue-74 cold280 quality target while adding a separate
-#         per-source Main-to-VRAM construction ceiling. The 75-second p113
-#         trace kept every 239-or-lower workload at two fields, while every
-#         241-or-higher workload took three; p112 also slipped twice at 240.
-#         The cold280 profile therefore encodes with a qualified ceiling of
-#         239 instead of scheduling work the player cannot meet.
+#   e152: Remove the separate Main-transfer cold ceiling so encoder quality
+#         decisions and physical Main-to-VRAM cold work are one value again.
+#         Keep the issue-74 Bad Apple qualification point fixed at cold280;
+#         deadline stability must come from the player path, not hidden work
+#         reduction.
+#   e151: Diagnostic trial, not retained: round the separate Main-transfer
+#         ceiling from 239 to 230. The trial was stopped before completion
+#         because its effective quality was cold230 rather than cold280.
+#   e150: Diagnostic trial, not retained: add a separate per-source
+#         Main-to-VRAM construction ceiling. The split made a cold280 target
+#         select only cold239 physical work, so it did not qualify cold280.
 #   p115: Restore the single 64x28 name-table DMA after the p114 row-DMA A/B.
 #         Repeating DMA setup for all 28 rows slowed every displayed frame,
 #         drove the reader 25 slots ahead, and reached S2F/R0E by frame 218.
@@ -1024,5 +1025,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=151
+e=152
 p=115
