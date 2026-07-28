@@ -240,10 +240,11 @@ Before accepting the recording, verify:
 - representative lossless frames against the sim when timing or fps behavior is new or suspect.
 - one complete HUD loop with `harness/startup_resync/analyze.py --gate-json`;
   pass the encode profile as the required second positional argument and
-  require every expected movie frame. Fixed-N2 requires `S/D/R=00`, `M<=01`;
-  delivery-paced 15 fps requires `S/D/R=00`, `M<=04`; delivery-paced 24 fps
-  requires `S/D/R=00`, `M<=03`. `C` is diagnostic only and never changes the
-  gate status. Always report the `C/A` minimum, mean, median, and maximum. The
+  require every expected movie frame. Every cadence requires `S/D/R=00`.
+  `M>01` at fixed N2, `M>03` at fixed N4, or `M>03` at delivery-paced
+  24 fps raises alert `WARNING` without failing the gate. `C` is diagnostic
+  only and never changes the gate status. Always report the `C/A` minimum,
+  mean, median, and maximum. The
   generated gate uses
   the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
   and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's

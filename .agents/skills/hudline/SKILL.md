@@ -61,7 +61,7 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
    physical PrgBuf occupancy and maximum packed reader lead against the gate
    JSON. When `Y/O/Z/T/I` are available, validate and report the exact maxima
    for the first two VBlank word shares, first/final pattern-exit V-counters,
-   and transfer-VBlank count. `G/B/K/H/X/Y/O/Z/T/I` remain diagnostic and
+   and complete planned VBlank-group count. `G/B/K/H/X/Y/O/Z/T/I` remain diagnostic and
    never change the gate.
 
    For exact integer-VBlank rates, treat every timed derived `VBLANK` value
@@ -77,7 +77,7 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
    hexadecimal `F`, every gate-overage value/limit, derived `VBLANK`, and
    every HUD value available in the TSV
    (`P/S/D/R/L/C/W/M/A/U/N/J/Q/G/B/K/H/X/Y/Z/T/I/V/O/E`).
-   For per-frame `M`, include every over-limit frame and label it `FAIL`.
+   For per-frame `M`, include every over-limit frame and label it `WARNING`.
    `C` is diagnostic and must never create an over-limit event or alter the
    gate status. For cumulative `S/D/R`
    and sticky-peak `J`, include only transitions to a new over-limit value

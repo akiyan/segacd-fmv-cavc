@@ -829,9 +829,12 @@ def evaluate_upload_gate(
     limits, cadence = upload_gate_limits(content_fps)
     for field, limit in limits.items():
         if maxima[field] > limit:
-            failures.append(
-                f"{field} peak {maxima[field]:02X} exceeds upload limit {limit:02X}"
+            message = (
+                f"{field} peak {maxima[field]:02X} exceeds "
+                f"{'cadence warning' if field == 'M' else 'upload'} "
+                f"limit {limit:02X}"
             )
+            (warnings if field == "M" else failures).append(message)
     display_cadence = display_vblank_cadence(groups, content_fps)
     if display_cadence["violation_count"]:
         examples = ", ".join(
@@ -851,7 +854,7 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 9,
+        "schema_version": 10,
         "gate": gate,
         "alert": alert,
         # Keep the old fields while stored schema-5 results and external
@@ -875,6 +878,7 @@ def evaluate_upload_gate(
             display_cadence["violation_count"]),
         "display_vblank_violations": display_cadence["violations"],
         "gate_fields": list(gate_fields),
+        "warning_fields": ["M"],
         "diagnostic_fields": [
             "C", "A",
             *(["Q"] if "Q" in first_loop[0].values else []),

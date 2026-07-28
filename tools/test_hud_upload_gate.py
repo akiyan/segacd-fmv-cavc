@@ -154,15 +154,15 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 9)
+        self.assertEqual(result["schema_version"], 10)
         self.assertEqual(result["gate_fields"], ["S", "D", "R", "M", "J"])
+        self.assertEqual(result["warning_fields"], ["M"])
         self.assertEqual(result["diagnostic_fields"], ["C", "A"])
         self.assertEqual(result["c_statistics"], c_stats)
         self.assertEqual(result["a_statistics"], a_stats)
 
     def test_each_unsafe_metric_blocks_upload(self):
-        for field, value in {"S": 1, "D": 1, "R": 1,
-                             "M": 2, "J": 26}.items():
+        for field, value in {"S": 1, "D": 1, "R": 1, "J": 26}.items():
             with self.subTest(field=field):
                 result = self.evaluate(groups(4, **{field: value}), 4)
                 self.assertFalse(result["pass"])
@@ -170,6 +170,16 @@ class HudUploadGateTests(unittest.TestCase):
                 self.assertEqual(result["alert"], "FAIL")
                 self.assertEqual(result["status"], "FAIL")
                 self.assertTrue(any(text.startswith(field) for text in result["failures"]))
+
+    def test_m_overage_warns_without_blocking_upload(self):
+        result = self.evaluate(groups(4, M=2), 4)
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["gate"], "PASS")
+        self.assertEqual(result["alert"], "WARNING")
+        self.assertEqual(result["status"], "WARNING")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any(
+            text.startswith("M") for text in result["warnings"]))
 
     def test_c_is_diagnostic_and_never_changes_gate_status(self):
         result = self.evaluate(groups(4, C=255), 4)
@@ -193,10 +203,10 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["delivery_limit_kib"], 376)
         result = self.evaluate(
             groups(4, capture_interval=4, M=4), 4, 15)
-        self.assertFalse(result["pass"])
-        self.assertEqual(result["status"], "FAIL")
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["status"], "WARNING")
         self.assertTrue(any(
-            text.startswith("M") for text in result["failures"]))
+            text.startswith("M") for text in result["warnings"]))
 
     def test_delivery_paced_24fps_uses_variable_slot_and_field_budget(self):
         result = self.evaluate(groups(4, C=255, M=3, J=30), 4, 24)

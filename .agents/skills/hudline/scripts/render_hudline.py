@@ -161,6 +161,9 @@ def load_gate(path: Path) -> dict:
             raise SystemExit("schema-5+ gate must not define a C limit")
         if list(gate.get("gate_fields", ())) != list(GATE_COLUMN):
             raise SystemExit("schema-5+ gate_fields do not match the HUD gate")
+    if int(gate.get("schema_version", 0)) >= 10:
+        if list(gate.get("warning_fields", ())) != ["M"]:
+            raise SystemExit("schema-10+ warning_fields must contain only M")
     return gate
 
 
@@ -561,8 +564,8 @@ def row_specs(
         rows.append(
             RowSpec(
                 "pattern_transfer_vblanks",
-                "T  PATTERN VBLANKS",
-                "transfer VBlanks/frame",
+                "T  PLANNED GROUPS",
+                "encoded VBlank groups/frame",
                 max(2, timed_max("pattern_transfer_vblanks")),
                 (238, 157, 82),
             )
@@ -633,7 +636,11 @@ def value_color(value: float, spec: RowSpec, gate: dict) -> tuple[int, int, int]
         return spec.color
     limit = float(gate["limits"][spec.gate_key])
     if value > limit:
-        return FAIL
+        return (
+            WARN
+            if spec.gate_key in gate.get("warning_fields", ())
+            else FAIL
+        )
     return spec.color
 
 

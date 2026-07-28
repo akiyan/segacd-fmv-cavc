@@ -342,7 +342,12 @@ def gate_overage_events(
             over = value > limit
             changed = previous is None or value != previous
             if over and (field not in TRANSITION_FIELDS or changed):
-                events[index].append(("FAIL", field, value, ">", limit))
+                severity = (
+                    "WARNING"
+                    if field in gate.get("warning_fields", ())
+                    else "FAIL"
+                )
+                events[index].append((severity, field, value, ">", limit))
             previous = value
     return dict(sorted(events.items()))
 
@@ -484,7 +489,7 @@ def render_markdown(
             f"({split_maxima['Y'] / 16:g}/"
             f"{split_maxima['Z'] / 16:g} patterns), "
             f"first exit V-counter {split_maxima['O']:02X}, "
-            f"{split_maxima['T']} VBlanks, "
+            f"{split_maxima['T']} planned VBlank groups, "
             f"final exit V-counter {split_maxima['I']:02X}."
         )
     summary.append(

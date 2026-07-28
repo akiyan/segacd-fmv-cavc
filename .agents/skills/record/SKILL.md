@@ -280,9 +280,9 @@ Check the raw MKV and reports before trusting a capture:
    remains upload-capable; alert `FAIL` makes gate `FAIL` and exits nonzero.
    The first loop must contain every frame. Thresholds are:
 
-   - fixed-N2: `S/D/R=00`, `M<=01`;
-   - fixed-N4: `S/D/R=00`, `M<=03`;
-   - delivery-paced 24 fps: `S/D/R=00`, `M<=03`;
+   - fixed-N2: `S/D/R=00`; `M>01` raises a cadence warning;
+   - fixed-N4: `S/D/R=00`; `M>03` raises a cadence warning;
+   - delivery-paced 24 fps: `S/D/R=00`; `M>03` raises a cadence warning;
    - every cadence: `S/D/R=00`; `J<=2D` at 15fps, `J<=1E` at 24fps,
      or `J<=19` at 30fps.
 
@@ -298,7 +298,8 @@ Check the raw MKV and reports before trusting a capture:
    frame count, H physical peak, X reader lead, Y/Z VBlank word shares, T
    transfer-VBlank count, I pattern-exit phase, and `(S-K) & 0xFF` CDC_TRN
    retry-exhaustion count, and correlate them with actual playback failures.
-   The M limit permits all display fields available to one content frame. The
+   The M warning limit marks the display fields available to one content frame;
+   exceeding it does not by itself fail the upload gate. The
    `J` limit is derived from the stream's generated
    normal PrgBuf ceiling: normal/jitter is 378/40 KiB at 15fps,
    393/25 KiB at 24fps, and 398/20 KiB at 30fps. A value above `28`, `19`, or
