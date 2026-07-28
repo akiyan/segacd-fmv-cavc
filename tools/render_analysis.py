@@ -135,16 +135,15 @@ if (len(CATEGORY_MASK_ROWS) != NF
     raise SystemExit("analysis per-cell category masks have the wrong shape")
 if "audio_label" in z:
     AUDIO_STR = str(z["audio_label"])        # sim側のADPCM音声ラベル
-if "audio_playback_file" in z:
-    AUDIO_PATH = Path(SIM) / str(z["audio_playback_file"])
-    if not AUDIO_PATH.is_file():
-        raise FileNotFoundError(
-            f"stats.npz playback audio is missing: {AUDIO_PATH}")
-else:
-    # Legacy sim outputs contained one extracted source WAV only.
-    _legacy_audio = sorted(glob.glob(f"{SIM}/audio_*.wav"))
-    AUDIO_PATH = Path(_legacy_audio[0]) if len(_legacy_audio) == 1 else Path(
-        SIM) / "audio_13k3_u8_mono.wav"
+if "audio_playback_file" not in z:
+    raise SystemExit(
+        "stats.npz has no audio_playback_file; re-sim this source. Selecting a "
+        "WAV by filename would silently use the clean source audio instead of "
+        "the ADPCM playback model.")
+AUDIO_PATH = Path(SIM) / str(z["audio_playback_file"])
+if not AUDIO_PATH.is_file():
+    raise FileNotFoundError(
+        f"stats.npz playback audio is missing: {AUDIO_PATH}")
 _raw = sorted(glob.glob(f"{SIM}/raw/*.png"))
 RW, RH = Image.open(_raw[0]).size             # Sourceパネル素材の画素
 _SOURCE_SAR = Fraction(os.environ.get("CBRSIM_SOURCE_SAR", "1:1").replace(":", "/"))
