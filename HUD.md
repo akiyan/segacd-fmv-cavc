@@ -510,8 +510,14 @@ The HUD does not use the Window plane. For each frame the Main CPU:
    plus 23 of row 1;
 4. selects that completed table with the same register-2 flip as the movie.
 
-The inactive tables are at VRAM `0xC000` and `0xE000`. Publishing the HUD uses
-31 longword writes plus one word write in either mode and no DMA. Unoccupied cells retain
+The inactive tables are at VRAM `0xC000` and `0xE000`. Other player paths
+publish the HUD with 31 longword writes plus one word write and no separate
+HUD DMA. The specialized fixed-N H40 path already copies its complete
+64-by-28 name-table stage with one DMA. It formats stable HUD fields between
+the first and second pattern VBlanks, patches `P/M/U/Y/Z/T/I` after the pattern
+tail, and merges the complete HUD into that Main-RAM stage. The one existing
+name-table DMA then carries picture and HUD together, so no post-DMA VDP-port
+republish remains on the second-VBlank flip deadline. Unoccupied cells retain
 their movie entries, which avoids exposing an unrelated Plane B frame.
 
 The final flip has a terminal-VBlank guard: V-counter lines `FC` through `FF`
@@ -1074,8 +1080,13 @@ HUDはWindow planeを使いません。各frameでMain CPUは次を行います�
    23 cellを上書き
 4. Movieと同じregister-2 flipでcompleted tableを選択
 
-Inactive tableはVRAM `0xC000`と`0xE000`です。HUD publicationは両modeとも
-31 longword writeと1 word writeを使い、DMAは使いません。
+Inactive tableはVRAM `0xC000`と`0xE000`です。他のplayer pathでは31 longword
+writeと1 word writeを使い、HUD専用DMAは使いません。
+Specialized fixed-N H40 pathは、64-by-28 name-table stage全体を既存の1 DMAで
+copyします。最初と2つ目のpattern VBlankの間でstableなHUD fieldをformatし、
+pattern tail後に`P/M/U/Y/Z/T/I`をpatchして、complete HUDをMain-RAM stageへ
+mergeします。既存のname-table DMAがpictureとHUDを一緒に運ぶため、2つ目の
+VBlank flip deadline上にpost-DMA VDP-port republishは残りません。
 未使用cellはmovie entryを保持し、無関係なPlane B frameを露出しません。
 
 Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで

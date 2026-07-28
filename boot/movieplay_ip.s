@@ -169,10 +169,11 @@
 .equ NT_STAGE_WORDS, NT_STAGE_PITCH*NT_STAGE_ROWS
 .equ NT_STAGE_ROW_SKIP, (NT_STAGE_PITCH-PC_TCOLS)*2
 /* A shared deadline VBlank must retain enough of the measured word budget for
-   the complete 64-pitch NT DMA, the optional DEBUG HUD republish, CRAM on a
-   palette switch, and non-payload control/setup time.  The 128-word guard is
-   in addition to VB_WORDS_H40's existing ~495-word margin below the measured
-   theoretical blank capacity. */
+   the complete 64-pitch NT DMA, the optional DEBUG HUD staging copy, CRAM on a
+   palette switch, and non-payload control/setup time. The staged HUD is
+   included in that one NT DMA; DEBUG keeps a conservative word-equivalent
+   allowance for its Main-RAM stamp. The 128-word guard is in addition to
+   VB_WORDS_H40's existing margin below the measured theoretical capacity. */
 .ifdef DEBUG
 .equ NT_FLIP_HUD_WORDS, HUD_COMBINED_WORDS
 .else
@@ -1211,6 +1212,16 @@ bf_flip:
 	bne.s	1f
 	clr.w	frame_vblank_waits		/* its VBlank count is not playback load */
 1:
+.ifdef NT_DMA_FLIP
+	/* A two-VBlank transfer formatted the static HUD after its first budget.
+	   One-/zero-VBlank frames still have the whole inter-flip active interval
+	   available here. Patch only transfer-final fields on the deadline path. */
+	cmpi.w	#2, pattern_transfer_vblanks
+	bhs.s	2f
+	bsr	prepare_dbg
+	bsr	stamp_dbg_stage
+2:
+.endif
 .endif
 	/* Precompute the display-register write before the cadence wait.
 	   do_flip performs only a final VBlank check followed by this command, so
@@ -1240,12 +1251,14 @@ bf_flip:
 	bhs.s	1b				/* 複数跨ぎは最後のentryを採用 */
 	move.l	a0, palidx_ptr
 	move.w	d0, dbg_seg			/* 絶対値で更新(増分でなく自己修復) */
+.ifndef NT_DMA_FLIP
 	lsl.w	#7, d0				/* *128B */
 	lea	PALTAB_RAM, a0
 	adda.w	d0, a0				/* src = 表[区間] (最大15*128=1920でadda.w可) */
+.endif
 .ifdef DEBUG
-	bsr	prepare_dbg			/* build the inactive HUD row before the deadline */
 .ifndef NT_DMA_FLIP
+	bsr	prepare_dbg			/* build the inactive HUD row before the deadline */
 	bsr	publish_dbg
 .endif
 .endif
@@ -1254,6 +1267,9 @@ bf_flip:
 .ifdef NT_DMA_FLIP
 	move.w	#NT_CRAM_FLIP_RESERVE_WORDS, d6
 	bsr	bf_wait_fixed_flip_vblank	/* share the budgeted deadline blank when safe */
+.ifdef DEBUG
+	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
+.endif
 .else
 	bsr	wait_fixed_palette_flip		/* cadence target plus a fresh CRAM VBlank */
 .endif
@@ -1271,9 +1287,10 @@ bf_flip:
 .endif
 .ifdef NT_DMA_FLIP
 	bsr	nt_dma_flip			/* whole back NT in ~11 blank lines */
-.ifdef DEBUG
-	bsr	publish_dbg			/* republish: the DMA replaced HUD rows */
-.endif
+	move.w	dbg_seg, d0
+	lsl.w	#7, d0
+	lea	PALTAB_RAM, a0
+	adda.w	d0, a0				/* recover CRAM source after DEBUG stage patch */
 .endif
 	move.l	#0xC0000000, (VDP_CTRL).l	/* CRAM addr 0 */
 	move.w	#64-1, d1
@@ -1283,18 +1300,15 @@ bf_flip:
 	bsr	do_flip				/* CRAM直後・同vblank内にflip */
 	bra	bf_after_flip
 bf_doflip:
-	/* Pattern DMA normally leaves us inside VBlank, but reuse-only frames and
-	   the DEBUG Plane A HUD write can reach here during active display.  A reg2
-	   switch there horizontally splices the old and new name tables at the
-	   current scanline.  Build the HUD row in Main RAM and copy it into the
-	   inactive video name table before the cadence wait.  The target VBlank then
-	   switches reg2, so the fixed 15/20/23-MOVE.L HUD copy is
-	   off the display deadline and cannot lead or defer the picture.  Re-check
-	   immediately before the atomic flip; count a newly waited VBlank through
-	   wait_vb_start just like a split DMA. */
+	/* Pattern DMA normally leaves us inside VBlank. The H40 fixed-N path has
+	   already formatted its HUD outside the second transfer deadline and folds
+	   the final row into nt_stage before the one name-table DMA. Other paths
+	   publish the inactive HUD before cadence waiting. Re-check immediately
+	   before the atomic flip; count a newly waited VBlank through wait_vb_start
+	   just like a split DMA. */
 .ifdef DEBUG
-	bsr	prepare_dbg
 .ifndef NT_DMA_FLIP
+	bsr	prepare_dbg
 	bsr	publish_dbg
 .endif
 .endif
@@ -1303,10 +1317,10 @@ bf_doflip:
 .ifdef NT_DMA_FLIP
 	move.w	#NT_FLIP_RESERVE_WORDS, d6
 	bsr	bf_wait_fixed_flip_vblank	/* cold tail + NT DMA + flip share the deadline */
-	bsr	nt_dma_flip
 .ifdef DEBUG
-	bsr	publish_dbg			/* republish: the DMA replaced HUD rows */
+	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
 .endif
+	bsr	nt_dma_flip
 .else
 	bsr	wait_fixed_flip			/* normal frame: exactly N flip-to-flip VBlanks */
 .endif
@@ -1391,6 +1405,16 @@ bf_debug_snapshot_vbudget:
    never inside the per-run issue path. */
 bf_debug_next_vbudget:
 	bsr	bf_debug_snapshot_vbudget
+.ifdef NT_DMA_FLIP
+	/* On the first split only, spend the active-display gap before VBlank 2
+	   formatting every HUD field that is already known. Transfer-final fields
+	   are patched after the last pattern word. */
+	cmpi.w	#1, pattern_transfer_vblanks
+	bne.s	1f
+	bsr	prepare_dbg
+	bsr	stamp_dbg_stage
+1:
+.endif
 	addq.w	#1, pattern_transfer_vblanks
 	bra	bf_refill_vbudget
 .endif
@@ -1422,7 +1446,6 @@ bf_wait_fixed_flip_vblank:
 	tst.w	frame_vblank_waits
 	beq.s	1f
 	subq.w	#1, frame_vblank_waits
-	bsr	bf_patch_dbg_m
 1:
 .endif
 	rts
@@ -1431,17 +1454,29 @@ bf_wait_fixed_flip_vblank:
 	rts
 
 .ifdef DEBUG
-/* prepare_dbg ran before the cadence wait.  Patch only its M byte when the
-   final pattern wait becomes the shared display-deadline VBlank. */
-bf_patch_dbg_m:
-	movem.l	d0/d4/a0-a1, -(sp)
-	lea	dbg_row+18*2, a0
+/* Refresh fields whose final values are not available when a split frame
+   preformats and stages its HUD between transfer VBlanks. Write directly into
+   the H40 64-entry-pitch stage consumed by the imminent one NT DMA.
+   Trashes d0/d3/d4/a0. */
+bf_patch_dbg_stage:
+	lea	nt_stage+4*2, a0		/* P */
+	move.w	dbg_seg, d4
+	bsr	dbg_put2
+	lea	nt_stage+18*2, a0		/* M */
 	move.w	frame_vblank_waits, d4
-.ifdef HUD_HEX_TABLE
-	lea	dbg_hex_pairs, a1
-.endif
-	DBG_PUT2
-	movem.l	(sp)+, d0/d4/a0-a1
+	bsr	dbg_put2
+	lea	nt_stage+22*2, a0		/* U */
+	move.w	dma_elapsed_ticks, d4
+	bsr	dbg_put4
+	lea	nt_stage+0x80+14*2, a0		/* Y/Z/T/I on H40 row 1 */
+	move.w	pattern_vblank1_words, d4
+	bsr	dbg_put3
+	move.w	pattern_vblank2_words, d4
+	bsr	dbg_put3
+	move.w	pattern_transfer_vblanks, d4
+	bsr	dbg_put1
+	move.w	pattern_exit_v, d4
+	bsr	dbg_put2
 	rts
 .endif
 .endif
@@ -2177,6 +2212,28 @@ prepare_dbg:
 .endif
 	rts
 
+.ifdef DEBUG
+.ifdef NT_DMA_FLIP
+/* Merge the final H40 HUD into the 64-entry-pitch Main-RAM name-table stage.
+   This runs after the shared-blank admission check but before its one NT DMA,
+   replacing the slower post-DMA VDP-port republish. Trashes d0/a0/a1. */
+stamp_dbg_stage:
+	lea	dbg_row, a0
+	lea	nt_stage, a1
+	moveq	#20-1, d0			/* H40 row 0: 40 words */
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	lea	48(a1), a1			/* row-0 80B -> row-1 128B */
+	moveq	#11-1, d0			/* H40 row 1: first 22 of 23 words */
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	move.w	(a0)+, (a1)+
+	rts
+.endif
+.endif
+
 /* Publish a prebuilt row over the first cells of the inactive Plane A movie
    table. It is not displayed yet, so the copy is safe during active display.
    Cells to the right remain the exact same movie table; no Window/Plane B
@@ -2197,9 +2254,16 @@ publish_dbg:
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
 .else
+.ifdef NT_DMA_FLIP
+	moveq	#20-1, d1			/* H40 fixed-N: startup frame -1 only */
+1:
+	move.l	(a0)+, (VDP_DATA).l
+	dbra	d1, 1b
+.else
 	.rept 20				/* row 0: common 30 + Q/V/O/E */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+.endif
 .endif
 .ifdef HUD_SUB_POLL_GAP
 	/* Name tables use a 64-cell pitch. H32 resumes the linear 63-cell stream
@@ -2216,9 +2280,16 @@ publish_dbg:
 	.endr
 	move.w	(a0)+, (VDP_DATA).l
 .else
+.ifdef NT_DMA_FLIP
+	moveq	#11-1, d1			/* H40 fixed-N: startup frame -1 only */
+1:
+	move.l	(a0)+, (VDP_DATA).l
+	dbra	d1, 1b
+.else
 	.rept 11				/* H40 row 1: first 22 of 23 words */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+.endif
 	move.w	(a0)+, (VDP_DATA).l
 .endif
 .endif

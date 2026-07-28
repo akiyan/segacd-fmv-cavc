@@ -11,6 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p117: Move fixed-N H40 DEBUG HUD formatting out of the second pattern
+#         VBlank, merge its final values into the Main-RAM name-table stage,
+#         and carry picture plus HUD through the existing one NT DMA. Remove
+#         the post-DMA 63-cell VDP republish from the flip deadline while
+#         preserving the Y/Z/T/I split diagnostics.
 #   p116: Add DEBUG Y/Z/T/I diagnostics for exact pattern words transferred in
 #         the first and second transfer VBlanks, the number of transfer
 #         VBlanks, and the V-counter at pattern exit. Extend H32/H40 OCR,
@@ -1031,4 +1036,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=152
-p=116
+p=117

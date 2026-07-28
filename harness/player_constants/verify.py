@@ -327,13 +327,12 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     if not re.search(r"\bmovew\s+#3400,%d7", refill):
         raise AssertionError(f"{obj}: H40 budget refill is not 3400 words")
 
-    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_m")
+    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_stage")
     required = (
         (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
         (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
         (r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", "terminal-HV guard"),
         (r"\bcmpiw\s+#-1024,%d0", "terminal FC00 comparison"),
-        (r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_m>", "shared-wait M patch"),
         (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh-VBlank fallback"),
     )
     for pattern, description in required:
@@ -356,6 +355,13 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
             r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", flip)) != 2:
         raise AssertionError(
             f"{obj}: normal and palette flips do not share the guarded helper")
+    if len(re.findall(
+            r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_stage>", flip)) != 2:
+        raise AssertionError(
+            f"{obj}: normal and palette flips do not patch the staged HUD")
+    if "<publish_dbg>" in flip:
+        raise AssertionError(
+            f"{obj}: H40 flip path still republishes HUD through the VDP port")
 
 
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:

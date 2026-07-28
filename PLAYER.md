@@ -290,14 +290,24 @@ creates a full budget; Main waits for the next head.
 
 The shared path is taken only when the remaining word budget covers the
 complete 64-by-28 name-table DMA (1,792 words), a 128-word timing guard, the
-63-word DEBUG HUD republish when present, and the optional 64-word CRAM
-replacement. The resulting reserves are 1,920 words in release or 1,983 words
-in DEBUG, plus 64 words for a palette switch. VBlank status is checked before
-and after the V counter, and the terminal `FC..FF` lines are rejected. If any
+63-word-equivalent DEBUG HUD staging allowance when present, and the optional
+64-word CRAM replacement. The resulting reserves are 1,920 words in release
+or 1,983 words in DEBUG, plus 64 words for a palette switch. VBlank status is
+checked before and after the V counter, and the terminal `FC..FF` lines are rejected. If any
 condition fails, Main waits for a fresh VBlank before the name-table DMA and
 flip. This shares one physical deadline without treating a mid-blank entry as
 unused capacity. A DMA run that crosses the current pattern budget is split at
 that boundary rather than abandoning the first blank's residual capacity.
+
+For a two-VBlank DEBUG pattern transfer, Main formats the stable HUD fields
+after the first transfer budget and before waiting for the second VBlank.
+After the final pattern word, it patches only the transfer-final fields and
+the resolved palette segment into the Main-RAM name-table stage. The existing
+single 1,792-word name-table DMA therefore carries both picture and HUD; there
+is no separate 63-cell VDP-port republish after that DMA. The staging allowance
+keeps the shared admission check conservative even though those HUD words are
+already part of the name-table DMA.
+
 One- or two-tile CPU-write runs remain whole and can leave at most 32 words
 unused.
 
@@ -608,15 +618,23 @@ line（`E0`）にある場合だけfull budgetを与えます。すでに進行�
 遅く入った場合はfull budgetを作らず、次のheadを待ちます。
 
 Shared pathを使うのは、残りword budgetが64-by-28 name-table DMA全体（1,792
-word）、128-word timing guard、存在する場合の63-word DEBUG HUD republish、任意の
-64-word CRAM replacementを覆う場合だけです。そのreserveはreleaseで1,920 word、
-DEBUGで1,983 word、palette switch時はさらに64 wordです。VBlank statusはV
+word）、128-word timing guard、存在する場合の63-word相当のDEBUG HUD staging
+allowance、任意の64-word CRAM replacementを覆う場合だけです。そのreserveは
+releaseで1,920 word、DEBUGで1,983 word、palette switch時はさらに64 wordです。VBlank statusはV
 counterの前後で確認し、terminalの`FC..FF` lineは拒否します。どれかの条件を
 満たさない場合、Mainはname-table DMAとflipの前にfresh VBlankを待ちます。これに
 より、mid-blank entryを未使用capacityと見なさずに、1個のphysical deadlineを共有
 します。Current pattern budgetをまたぐDMA runは、最初のblankの残りcapacityを
-捨てず、そのboundaryで分割します。1～2 tileのCPU-write runは分割せず、未使用に
-なるのは最大32 wordです。
+捨てず、そのboundaryで分割します。
+
+2-VBlank DEBUG pattern transferでは、Mainは最初のtransfer budget後、2つ目の
+VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
+transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
+patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
+DMA後に別の63-cell VDP-port republishは行いません。HUD wordはname-table DMAに
+含まれますが、staging allowanceはshared admission checkを保守的に維持します。
+
+1～2 tileのCPU-write runは分割せず、未使用になるのは最大32 wordです。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が
