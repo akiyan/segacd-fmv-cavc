@@ -711,6 +711,50 @@ def upload_gate_limits(content_fps: float) -> tuple[dict[str, int], str]:
     }, cadence
 
 
+def display_vblank_cadence(
+    groups: list[FrameGroup],
+    content_fps: float,
+) -> dict:
+    """Measure how many captured VBlanks each timed frame stayed visible."""
+    first_loop = [group for group in groups if group.loop == 0]
+    expected = av_config.fixed_vblank_interval(float(content_fps))
+    histogram: Counter[int] = Counter()
+    observations: list[dict[str, int]] = []
+    for current, following in zip(first_loop, first_loop[1:]):
+        frame = current.values["F"]
+        next_frame = following.values["F"]
+        # Frame 0 is untimed boot staging. The last movie frame has no
+        # following transition and is excluded naturally by zip().
+        if frame == 0 or next_frame != frame + 1:
+            continue
+        actual = following.capture_first - current.capture_first
+        histogram[actual] += 1
+        observations.append({
+            "frame": frame,
+            "next_frame": next_frame,
+            "capture_first": current.capture_first,
+            "next_capture_first": following.capture_first,
+            "display_vblanks": actual,
+        })
+    violations = (
+        [
+            observation for observation in observations
+            if observation["display_vblanks"] != expected
+        ]
+        if expected is not None else []
+    )
+    return {
+        "expected": expected,
+        "evaluated_frames": len(observations),
+        "histogram": {
+            str(display_vblanks): count
+            for display_vblanks, count in sorted(histogram.items())
+        },
+        "violation_count": len(violations),
+        "violations": violations,
+    }
+
+
 def evaluate_upload_gate(
     groups: list[FrameGroup],
     expected_frames: int,
@@ -764,13 +808,26 @@ def evaluate_upload_gate(
             failures.append(
                 f"{field} peak {maxima[field]:02X} exceeds upload limit {limit:02X}"
             )
+    display_cadence = display_vblank_cadence(groups, content_fps)
+    if display_cadence["violation_count"]:
+        examples = ", ".join(
+            f"F{row['frame']:04d}={row['display_vblanks']}"
+            for row in display_cadence["violations"][:8]
+        )
+        remaining = display_cadence["violation_count"] - 8
+        suffix = f", +{remaining} more" if remaining > 0 else ""
+        warnings.append(
+            f"{cadence} display cadence missed "
+            f"{display_cadence['violation_count']} deadline(s): "
+            f"{examples}{suffix}"
+        )
 
     stat = recording.stat()
     alert = hud_gate.classify_alert(failures, warnings)
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 6,
+        "schema_version": 7,
         "gate": gate,
         "alert": alert,
         # Keep the old fields while stored schema-5 results and external
@@ -786,6 +843,13 @@ def evaluate_upload_gate(
         "evaluated_timed_frames": len(timed_loop),
         "content_fps": float(content_fps),
         "cadence": cadence,
+        "display_vblank_expected": display_cadence["expected"],
+        "display_vblank_evaluated_frames": (
+            display_cadence["evaluated_frames"]),
+        "display_vblank_histogram": display_cadence["histogram"],
+        "display_vblank_violation_count": (
+            display_cadence["violation_count"]),
+        "display_vblank_violations": display_cadence["violations"],
         "gate_fields": list(gate_fields),
         "diagnostic_fields": [
             "C", "A",
@@ -865,6 +929,17 @@ def write_gate_json(path: Path, result: dict) -> None:
         + f"  frames={result['observed_first_loop_frames']}/"
         f"{result['expected_frames']}  cadence={result['cadence']} "
         f"fps={result['content_fps']:g}"
+    )
+    expected_vblanks = result["display_vblank_expected"]
+    cadence_rule = (
+        f"expected={expected_vblanks}"
+        if expected_vblanks is not None else "variable delivery-paced"
+    )
+    print(
+        "  display VBlanks/frame "
+        f"{cadence_rule} histogram={result['display_vblank_histogram']} "
+        f"violations={result['display_vblank_violation_count']}/"
+        f"{result['display_vblank_evaluated_frames']}"
     )
     if "prgbuf_minimum_patterns" in result:
         print(

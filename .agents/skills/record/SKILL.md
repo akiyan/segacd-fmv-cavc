@@ -286,11 +286,17 @@ Check the raw MKV and reports before trusting a capture:
    - every cadence: `S/D/R=00`; `J<=2D` at 15fps, `J<=1E` at 24fps,
      or `J<=19` at 30fps.
 
-   `C`, `Q`, `G`, `B`, and `K` are diagnostic only. They have no limits and
-   never change the gate status. Report the C distribution and Q minimum when
-   available. For the pump layout, report the G distribution, B frame count,
-   and `(S-K) & 0xFF` CDC_TRN retry-exhaustion count, and correlate them with actual
-   playback failures.
+   For fixed-N playback, compare consecutive first-capture positions for every
+   timed, nonterminal `F`. A visible duration other than N VBlanks raises alert
+   `WARNING` while retaining gate `PASS`. Preserve the complete duration
+   histogram and affected frames in the gate JSON. Delivery-paced playback
+   records the histogram without an exact-duration warning.
+
+   `C`, `Q`, `G`, `B`, `K`, `H`, and `X` are diagnostic only. They have no
+   limits and never change the gate status. Report the C distribution and Q
+   minimum when available. For the pump layout, report the G distribution, B
+   frame count, H physical peak, X reader lead, and `(S-K) & 0xFF` CDC_TRN
+   retry-exhaustion count, and correlate them with actual playback failures.
    The M limit permits all display fields available to one content frame. The
    `J` limit is derived from the stream's generated
    normal PrgBuf ceiling: normal/jitter is 378/40 KiB at 15fps,
@@ -356,8 +362,9 @@ byte, and `J` is the sticky ceil-KiB streamed PrgBuf excess above the
 fps-derived normal ceiling. `Q` is a signed exact-pattern balance: values with
 the high bit set are negative underflow, not a large positive occupancy. A
 Gate `PASS` in the `S/D/R/M/J` result JSON is the required handoff condition;
-alert may be `NONE` or `WARNING`;
-`C/A/Q` remain recorded diagnostics. When the
+alert may be `NONE` or `WARNING`. A fixed-N visible-duration mismatch is one
+source of `WARNING` and does not block upload. `C/A/Q/G/B/K/H/X` remain
+recorded diagnostics. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
 trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and

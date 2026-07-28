@@ -119,6 +119,15 @@ of Sub-side CD work. Report all `S/D/R/M/J` gate maxima when gate is `PASS` and
 report the diagnostic C maximum. When the enclosing task already authorizes
 publication, continue without requesting another approval merely because the
 gate ran.
+
+For fixed-N playback, the analyzer also measures the visible duration of each
+timed, nonterminal movie frame from consecutive `F` transition capture
+positions. A duration other than N VBlanks raises alert `WARNING` while
+retaining gate `PASS`; it records the complete histogram and every affected
+frame in the gate JSON. Frame 0 and the terminal frame are excluded because
+their timed display extents are not both observable. Delivery-paced playback
+records the histogram without applying an exact-duration warning.
+
 For every gate result, the analyzer and `/hudline` report the minimum, mean,
 median, and maximum of both `C` and `A` across the timed first loop and preserve
 them in the gate JSON and hudline receipt. When `G` is present, they also
@@ -685,6 +694,13 @@ gate結果を変えません。Sub側CD workのdiagnosticとして保持しま�
 
 Gate `PASS`では全`S/D/R/M/J` gate maximumとdiagnostic C maximumを報告します。
 Taskがpublicationを許可済みなら、gate実行だけを理由に追加approvalは求めません。
+
+Fixed-N playbackでは、analyzerは連続する`F` transitionのcapture位置から、timedかつ
+nonterminalな各movie frameの実表示時間も測ります。N VBlank以外ならgate `PASS`を
+維持したままalert `WARNING`とし、完全なhistogramと該当frameをgate JSONへ記録します。
+Frame 0とterminal frameはtimed表示区間の両端を観測できないため除外します。
+Delivery-paced playbackはhistogramを記録しますが、exact duration warningは適用しません。
+
 すべてのgate結果で、analyzerと`/hudline`はtimed first loopにおける`C`と`A`それぞれの
 minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
 `G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
