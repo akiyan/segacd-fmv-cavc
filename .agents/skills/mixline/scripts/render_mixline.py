@@ -16,6 +16,7 @@ SCRIPT = Path(__file__).resolve()
 REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
+import analysis_style  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 import hud_gate  # noqa: E402
 
@@ -26,7 +27,7 @@ DIM = (158, 160, 169)
 WARN = (246, 190, 72)
 FAIL = (244, 87, 87)
 SEPARATOR = (62, 64, 72)
-HEADER_HEIGHT = 185
+HEADER_HEIGHT = 220
 
 
 def font(size: int) -> ImageFont.FreeTypeFont:
@@ -260,6 +261,21 @@ def main() -> None:
         fill=state_color,
         font=font(19),
     )
+    legend_totals = timeline.get("legend_totals") or {}
+    legend_order = timeline.get("legend_totals_order") or list(legend_totals)
+    if legend_totals:
+        legend_font = font(19)
+        x = 24
+        y = 160
+        scope = str(timeline.get("legend_totals_scope", "EVAL totals"))
+        draw.text((x, y), scope, fill=DIM, font=legend_font)
+        x += int(draw.textlength(scope, font=legend_font)) + 26
+        for name in legend_order:
+            color = analysis_style.CATEGORY_COLORS.get(name, DIM)
+            draw.rectangle((x, y + 3, x + 21, y + 23), fill=color)
+            text = f"{name} {int(legend_totals[name]):,}"
+            draw.text((x + 29, y), text, fill=TEXT, font=legend_font)
+            x += 29 + int(draw.textlength(text, font=legend_font)) + 34
     draw.line(
         (0, HEADER_HEIGHT - 1, width - 1, HEADER_HEIGHT - 1),
         fill=SEPARATOR,
