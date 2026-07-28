@@ -62,8 +62,8 @@ def make_header(case: Case) -> bytes:
     cells = tcols * trows
     frames = 600
     features = ttrc_routing.FEATURE_COLD_RUNS
-    if av_config.uses_fixed_n2_cadence(case.fps):
-        features |= ttrc_routing.FEATURE_FIXED_N2
+    if av_config.uses_fixed_n_cadence(case.fps):
+        features |= ttrc_routing.FEATURE_FIXED_N
     _rate, audio, _control = av_config.audio_frame_layout(case.fps)
     if case.pattern_supply:
         features |= (
@@ -266,6 +266,74 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
         raise AssertionError(f"{obj}: do_flip branch escaped its region: {details}")
 
 
+def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
+    """Prove the H40 fixed-N cold-tail/NT shared-VBlank guards."""
+    disassembly = run([str(objdump), "-d", str(obj)])
+
+    def block(start_name: str, end_name: str) -> str:
+        start = re.search(
+            rf"^[0-9a-f]+ <{re.escape(start_name)}>:$",
+            disassembly,
+            re.MULTILINE,
+        )
+        end = re.search(
+            rf"^[0-9a-f]+ <{re.escape(end_name)}>:$",
+            disassembly,
+            re.MULTILINE,
+        )
+        if not start or not end or start.start() >= end.start():
+            raise AssertionError(
+                f"{obj}: missing or reordered {start_name}/{end_name}")
+        return disassembly[start.end():end.start()]
+
+    start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
+    if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
+        raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")
+    if not re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", start_budget):
+        raise AssertionError(f"{obj}: initial VBlank budget lacks HV guard")
+    if not re.search(r"\bcmpiw\s+#224,%d0", start_budget):
+        raise AssertionError(f"{obj}: initial VBlank budget is not limited to E0")
+    if len(re.findall(r"<bf_refill_vbudget>", start_budget)) < 2:
+        raise AssertionError(
+            f"{obj}: active and mid-blank budget entries do not refill")
+
+    refill = block("bf_refill_vbudget", "bf_wait_fixed_flip_vblank")
+    if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
+        raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
+    if not re.search(r"\bmovew\s+#3400,%d7", refill):
+        raise AssertionError(f"{obj}: H40 budget refill is not 3400 words")
+
+    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_m")
+    required = (
+        (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
+        (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
+        (r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", "terminal-HV guard"),
+        (r"\bcmpiw\s+#-1024,%d0", "terminal FC00 comparison"),
+        (r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_m>", "shared-wait M patch"),
+        (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh-VBlank fallback"),
+    )
+    for pattern, description in required:
+        if not re.search(pattern, shared):
+            raise AssertionError(f"{obj}: shared deadline path lacks {description}")
+    if len(re.findall(
+            r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", shared)) != 2:
+        raise AssertionError(
+            f"{obj}: shared deadline path lacks its two status reads")
+
+    flip = block("bf_flip", "bf_after_flip")
+    normal_reserve = 64 * 28 + 46 + 128
+    palette_reserve = normal_reserve + 64
+    for reserve, description in (
+            (normal_reserve, "normal NT/HUD/guard reserve"),
+            (palette_reserve, "palette NT/HUD/CRAM/guard reserve")):
+        if not re.search(rf"\bmovew\s+#{reserve},%d6", flip):
+            raise AssertionError(f"{obj}: missing {description} ({reserve} words)")
+    if len(re.findall(
+            r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", flip)) != 2:
+        raise AssertionError(
+            f"{obj}: normal and palette flips do not share the guarded helper")
+
+
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
     """Prove the single startup command spans frame -1 through frame 0."""
     disassembly = run([str(objdump), "-d", str(obj)])
@@ -359,7 +427,7 @@ def verify_adpcm_decode_pump(
 def verify_centered_nt_dma(
     objdump: Path, obj: Path, *, tcols: int, trows: int,
 ) -> None:
-    """Prove that fixed-N2 H40 staging centers the encoded grid."""
+    """Prove that fixed-N H40 staging centers the encoded grid."""
     disassembly = run([str(objdump), "-dr", str(obj)])
     start_match = re.search(
         r"^[0-9a-f]+ <bf_blit>:$", disassembly, re.MULTILINE)
@@ -453,9 +521,10 @@ def build_case(
     verify_startup_body_arm(objdump, ip_obj)
     if specialized:
         verify_flip_control_flow(objdump, ip_obj)
-        if case.mode == 1 and av_config.uses_fixed_n2_cadence(case.fps):
+        if case.mode == 1 and av_config.uses_fixed_n_cadence(case.fps):
             verify_centered_nt_dma(
                 objdump, ip_obj, tcols=case.tcols or 40, trows=case.trows)
+            verify_shared_deadline_vblank(objdump, ip_obj)
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"

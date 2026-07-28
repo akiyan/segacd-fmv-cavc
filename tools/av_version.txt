@@ -11,6 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p110: Let fixed-N H40 share its display-deadline VBlank between the final
+#         cold-transfer tail and the complete name-table DMA, optional CRAM
+#         replacement, DEBUG HUD republish, and flip. Start each 3,400-word
+#         budget only at a proven VBlank head, require a guarded residual
+#         reserve before sharing, and retain a fresh-VBlank fallback.
 #   e149: TTRC v20: move the full segment-palette table (PALTAB) and the
 #         switch table (PALIDX) off the disc into player build inputs
 #         (paltab.bin / palidx.bin). Drop the header seg0 field (offset 64
@@ -992,4 +997,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=149
-p=109
+p=110

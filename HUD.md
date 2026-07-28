@@ -271,6 +271,12 @@ the current frame. Display cadence waiting is deliberately excluded. This
 makes `M` a deadline diagnostic rather than a restatement of 15/24/30 fps
 pacing.
 
+On fixed-N H40, the final cold tail may use the same deadline VBlank as the
+name-table DMA and flip when the guarded residual budget is sufficient. That
+shared target wait is display cadence, so it is excluded from `M`; only the
+earlier intervening pattern-work VBlank starts remain. A fallback that needs
+a fresh flip VBlank likewise remains display work rather than pattern work.
+
 For fixed-N playback, the normal region is `M=00..N-1`; reaching `N` proves
 that pattern work spilled into the fixed display deadline. Thus fixed N2 allows
 `M<=01`, and fixed N4 allows `M<=03`. Delivery-paced content uses the automatic
@@ -777,6 +783,12 @@ spikeに使います。
 
 `M`はcurrent frameのMain-side pattern transfer pathが消費したVBlank start数です。
 Display cadence待ちは除外するため、deadline diagnosticになります。
+
+Fixed-N H40では、guard付きの残りbudgetが十分なら、最後のcold tailがname-table
+DMAとflipと同じdeadline VBlankを使えます。このshared target waitはdisplay
+cadenceなので`M`から除外し、それより前のintervening pattern-work VBlank start
+だけを残します。Fresh flip VBlankが必要なfallbackもpattern workではなくdisplay
+workのままです。
 
 Fixed-Nの正常範囲は`M=00..N-1`で、`N`到達はpattern workがfixed display deadlineへ
 spillした証明です。Fixed N2は`M<=01`、fixed N4は`M<=03`です。Delivery-paced contentは

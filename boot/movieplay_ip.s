@@ -166,6 +166,19 @@
 .equ NT_STAGE_ROWS, 28
 .equ NT_STAGE_WORDS, NT_STAGE_PITCH*NT_STAGE_ROWS
 .equ NT_STAGE_ROW_SKIP, (NT_STAGE_PITCH-PC_TCOLS)*2
+/* A shared deadline VBlank must retain enough of the measured word budget for
+   the complete 64-pitch NT DMA, the optional DEBUG HUD republish, CRAM on a
+   palette switch, and non-payload control/setup time.  The 128-word guard is
+   in addition to VB_WORDS_H40's existing ~495-word margin below the measured
+   theoretical blank capacity. */
+.ifdef DEBUG
+.equ NT_FLIP_HUD_WORDS, 46
+.else
+.equ NT_FLIP_HUD_WORDS, 0
+.endif
+.equ NT_FLIP_GUARD_WORDS, 128
+.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
+.equ NT_CRAM_FLIP_RESERVE_WORDS, NT_FLIP_RESERVE_WORDS+64
 .endif
 .endif
 .endif
@@ -1038,18 +1051,14 @@ bf_dma:
 	move.w	d0, pass2_entry_q
 .endif
 	move.w	n_runs, d4
+	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	beq	bf_flip
 	lea	RUN_TABLE, a2
-	move.w	(VDP_CTRL).l, d0		/* 現vblank内でなければ次vblankへ */
-	btst	#3, d0
-	bne	1f
-	bsr	wait_vb_start
-1:
+	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
 	move.w	(GA_STOPWATCH).l, d0
 	move.w	d0, dma_start_tick		/* begin inside the first transfer VBlank */
 .endif
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d7	/* d7 = 残VBLANK予算(語) */
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
 	   straight into the control port.  A whole run is issued per VBlank;
@@ -1066,8 +1075,7 @@ bf_run_lp:
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
 	cmp.w	d0, d1
 	bhi	bf_split_run			/* longer than one full budget (e.g. H40/15) */
-	bsr	wait_vb_start
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+	bsr	bf_refill_vbudget
 1:
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
 	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
@@ -1096,8 +1104,7 @@ bf_split_run:
 bf_chunk:
 	tst.w	d7				/* 予算切れなら次vblank開始まで待って補充 */
 	bgt	1f
-	bsr	wait_vb_start
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+	bsr	bf_refill_vbudget
 1:
 	move.w	d1, d6				/* chunk = min(ラン残, 予算) */
 	cmp.w	d7, d6
@@ -1126,8 +1133,7 @@ bf_short_run:
 	   an 8-word tail, so a 16/32-word run may need to start in the next blank. */
 	cmp.w	d7, d1
 	bls.s	1f
-	bsr	wait_vb_start
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+	bsr	bf_refill_vbudget
 1:
 	addq.l	#4, a2				/* skip reg93/94 */
 	move.l	(a2)+, d0			/* +6 cmd = ordinary VRAM write address */
@@ -1201,7 +1207,12 @@ bf_flip:
 .endif
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
+.ifdef NT_DMA_FLIP
+	move.w	#NT_CRAM_FLIP_RESERVE_WORDS, d6
+	bsr	bf_wait_fixed_flip_vblank	/* share the budgeted deadline blank when safe */
+.else
 	bsr	wait_fixed_palette_flip		/* cadence target plus a fresh CRAM VBlank */
+.endif
 .else
 	bsr	wait_vb_start			/* 頭から使える新しいvblank(CRAM+flipが確実に収まる) */
 .endif
@@ -1245,13 +1256,15 @@ bf_doflip:
 .endif
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
-	bsr	wait_fixed_flip			/* normal frame: exactly N flip-to-flip VBlanks */
 .ifdef NT_DMA_FLIP
-	bsr	wait_vb_start			/* NT DMA needs the blank head */
+	move.w	#NT_FLIP_RESERVE_WORDS, d6
+	bsr	bf_wait_fixed_flip_vblank	/* cold tail + NT DMA + flip share the deadline */
 	bsr	nt_dma_flip
 .ifdef DEBUG
 	bsr	publish_dbg			/* republish: the DMA replaced HUD rows */
 .endif
+.else
+	bsr	wait_fixed_flip			/* normal frame: exactly N flip-to-flip VBlanks */
 .endif
 .endif
 .else
@@ -1286,6 +1299,81 @@ bf_update_list:
 	move.w	(a0)+, (a1,d0.w)
 	dbra	d7, 1b
 	bra	bf_blit
+
+/* Start Pass2 with one honest VBlank word budget.  An already-active display
+   waits for the next blank.  An already-entered blank may keep the full budget
+   only on its first V-counter line; later entry waits for the following head
+   instead of pretending all md_vbudget words remain.  d7 returns the full
+   budget and vbudget_from_head records that its time origin is trustworthy.
+   Trashes d0. */
+bf_start_vbudget:
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	beq	bf_refill_vbudget
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	cmpi.w	#0x00E0, d0
+	bne	bf_refill_vbudget
+	move.w	#1, vbudget_from_head
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+	rts
+
+bf_refill_vbudget:
+	bsr	wait_vb_start
+	move.w	#1, vbudget_from_head
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+	rts
+
+.ifdef NT_DMA_FLIP
+/* Fixed-N H40 only. d6 is the word reserve for NT/HUD/optional CRAM/guard.
+   If Pass2 ended inside a VBlank whose budget began at its head, and the
+   residual word budget covers all flip work, keep that exact cadence VBlank.
+   Otherwise retain the old fresh-start path.  The target blank is display
+   pacing as well as the final pattern chunk, so DEBUG M excludes that shared
+   wait and continues to count only intervening pattern-work blanks.
+   Trashes d0. */
+bf_wait_fixed_flip_vblank:
+	bsr	wait_fixed_flip
+	tst.w	vbudget_from_head
+	beq.s	2f
+	cmp.w	d6, d7
+	blo.s	2f
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	beq.s	2f
+	move.w	(VDP_HV).l, d0
+	cmpi.w	#0xFC00, d0
+	bhs.s	2f
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	beq.s	2f
+.ifdef DEBUG
+	tst.w	frame_vblank_waits
+	beq.s	1f
+	subq.w	#1, frame_vblank_waits
+	bsr	bf_patch_dbg_m
+1:
+.endif
+	rts
+2:
+	bsr	wait_vb_start
+	rts
+
+.ifdef DEBUG
+/* prepare_dbg ran before the cadence wait.  Patch only its M byte when the
+   final pattern wait becomes the shared display-deadline VBlank. */
+bf_patch_dbg_m:
+	movem.l	d0/d4/a0-a1, -(sp)
+	lea	dbg_row+18*2, a0
+	move.w	frame_vblank_waits, d4
+.ifdef HUD_HEX_TABLE
+	lea	dbg_hex_pairs, a1
+.endif
+	DBG_PUT2
+	movem.l	(sp)+, d0/d4/a0-a1
+	rts
+.endif
+.endif
 
 /* vblankに入るまで待つ(既に中なら即戻る)。trashes d0 */
 wait_vb_in:
@@ -2180,6 +2268,8 @@ dma_elapsed_ticks:
 	.space 2				/* DEBUG Uxxxx: 30.72 us stopwatch ticks */
 dma_start_tick:
 	.space 2				/* DEBUG stopwatch sample at first pattern transfer */
+vbudget_from_head:
+	.space 2				/* current d7 began at a proven VBlank head */
 flip_hv_v:
 	.space 2				/* DEBUG HUD V: V-counter at the last accepted flip */
 arm_overshoot:

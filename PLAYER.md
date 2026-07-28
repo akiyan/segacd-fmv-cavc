@@ -280,6 +280,23 @@ sequenceDiagram
     M->>S: Next CMD_SWAP
 ```
 
+For specialized fixed-N H40 playback, one transfer deadline can serve both
+the final cold-run tail and the display flip. The Main CPU treats 3,400 words
+as the usable pattern-transfer budget for a VBlank, and grants that full
+budget only after waiting for a new VBlank or while the V counter is still on
+its first blank line (`E0`). Entering an already-running blank later never
+creates a full budget; Main waits for the next head.
+
+The shared path is taken only when the remaining word budget covers the
+complete 64-by-28 name-table DMA (1,792 words), a 128-word timing guard, the
+46-word DEBUG HUD republish when present, and the optional 64-word CRAM
+replacement. The resulting reserves are 1,920 words in release or 1,966 words
+in DEBUG, plus 64 words for a palette switch. VBlank status is checked before
+and after the V counter, and the terminal `FC..FF` lines are rejected. If any
+condition fails, Main waits for a fresh VBlank before the name-table DMA and
+flip. This shares one physical deadline without treating a mid-blank entry as
+unused capacity.
+
 Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
 payload work cannot delay an already-pending handoff.
@@ -578,6 +595,21 @@ sequenceDiagram
 
     M->>S: 次のCMD_SWAP
 ```
+
+Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
+display flipで共有できます。Main CPUは1 VBlankでpattern transferに使用できる
+budgetを3,400 wordとし、新しいVBlankを待った直後、またはV counterが最初のblank
+line（`E0`）にある場合だけfull budgetを与えます。すでに進行中のblankへそれより
+遅く入った場合はfull budgetを作らず、次のheadを待ちます。
+
+Shared pathを使うのは、残りword budgetが64-by-28 name-table DMA全体（1,792
+word）、128-word timing guard、存在する場合の46-word DEBUG HUD republish、任意の
+64-word CRAM replacementを覆う場合だけです。そのreserveはreleaseで1,920 word、
+DEBUGで1,966 word、palette switch時はさらに64 wordです。VBlank statusはV
+counterの前後で確認し、terminalの`FC..FF` lineは拒否します。どれかの条件を
+満たさない場合、Mainはname-table DMAとflipの前にfresh VBlankを待ちます。これに
+より、mid-blank entryを未使用capacityと見なさずに、1個のphysical deadlineを共有
+します。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が
