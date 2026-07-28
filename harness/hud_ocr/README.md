@@ -51,7 +51,8 @@ four-digit `Q`, covers both 32-cell and 40-cell wrapping of simultaneous
 the older `read_frameno()` API still reads an isolated `Fxxxx` field without
 requiring the rest of the HUD. The synthetic source is deliberately bright and
 noisy; the proof models opaque font cells and also retains a legacy common-row
-case. `Y/Z` are the exact pattern words issued in the first two transfer
-VBlanks, `T` is the number of transfer VBlanks, and `I` is the V-counter at
-pattern exit. This matches the player: no Window transparency or alternate
-Plane B is involved.
+case. `Y/Z` are the exact pattern words charged to the first two fresh VBlank
+budgets, `T` is the number of budgets opened, and `I` is the V-counter at
+pattern exit. A whole run may physically overrun a blank without incrementing
+`T`. This matches the player: no Window transparency or alternate Plane B is
+involved.

@@ -283,10 +283,11 @@ sequenceDiagram
 
 TTRC v22 controls store `n_runs` immediately followed by source-aware run
 descriptors. Main schedules whole runs against the runtime residual budget.
-Fixed N is the healthy transfer-window count: N2 permits two and N4 permits
-four; using another transfer VBlank remains bounded but raises a HUD warning.
-A light N4 frame may finish in one or two transfer VBlanks and leave the
-remaining cadence windows empty.
+Fixed N is the healthy fresh-budget count: N2 permits two and N4 permits four;
+opening another budget remains bounded but raises a HUD warning. A light N4
+frame may open only one or two budgets and leave the remaining cadence windows
+empty. These counters record explicit budget openings, not the physical blanks
+crossed when a whole run overruns into active display.
 
 For specialized fixed-N H40 playback, one transfer deadline can serve both
 the final cold-run tail and the display flip. The Main CPU treats 3,400 words
@@ -308,13 +309,13 @@ current residual budget waits for a fresh VBlank as an overload fallback; this
 is not an intended second-VBlank allocation. Only a run longer than one
 complete budget uses the chunk fallback.
 
-For a multi-VBlank DEBUG pattern transfer, Main formats the stable HUD fields
-after the first transfer budget and before waiting for the second VBlank.
+For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
+after the first transfer budget and before waiting for the next fresh VBlank.
 After the final pattern word, it patches only the transfer-final fields and
 the resolved palette segment into the Main-RAM name-table stage. The existing
 single 1,792-word name-table DMA therefore carries both picture and HUD; there
 is no separate 69-cell VDP-port republish after that DMA. Exact word counters
-cover runtime transfer VBlanks 1 through 4; `T` exposes a fifth or later blank.
+cover runtime VBlank budgets 1 through 4; `T` exposes a fifth or later budget.
 The staging allowance
 keeps the shared admission check conservative even though those HUD words are
 already part of the name-table DMA.
@@ -622,10 +623,11 @@ sequenceDiagram
 ```
 
 TTRC v22 controlは`n_runs`の直後にsource-aware run descriptorを置きます。
-Mainはruntime残budgetに対してwhole runをscheduleします。Fixed Nはhealthyな
-transfer-window数で、N2は2本、N4は4本です。さらにtransfer VBlankを使う処理は
-boundedのままですがHUD warningになります。軽いN4 frameは1〜2 transfer VBlankで
-完了し、残るcadence windowを空きにできます。
+Mainはruntime残budgetに対してwhole runをscheduleします。Fixed Nはhealthyなfresh
+budget数で、N2は2本、N4は4本です。さらにbudgetを開く処理はboundedのままですがHUD
+warningになります。軽いN4 frameは1〜2 budgetだけを開き、残るcadence windowを
+空きにできます。このcounterはexplicitなbudget openingを記録し、whole runがactive
+displayへoverrunした際に物理的に跨いだblank数は数えません。
 
 Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
 display flipで共有できます。Main CPUは1 VBlankでpattern transferに使用できる
@@ -644,12 +646,12 @@ counterの前後で確認し、terminalの`FC..FF` lineは拒否します。ど�
 overload fallbackとしてfresh VBlankを待ちますが、これは意図した2本目への配分
 ではありません。1回のfull budgetより長いrunだけがchunk fallbackを使います。
 
-multi-VBlank DEBUG pattern transferでは、Mainは最初のtransfer budget後、2つ目の
+multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
 transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
 patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
-DMA後に別の69-cell VDP-port republishは行いません。Runtime transfer VBlank
-1〜4のexact word counterを持ち、`T`が5本目以降を可視化します。HUD wordはname-table DMAに
+DMA後に別の69-cell VDP-port republishは行いません。Runtime VBlank budget
+1〜4のexact word counterを持ち、`T`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
 含まれますが、staging allowanceはshared admission checkを保守的に維持します。
 
 1～2 tileのCPU-write runもwholeのままです。

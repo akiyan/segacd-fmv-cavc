@@ -502,14 +502,14 @@ def render_markdown(
             if len(later_maxima) == 2 else ""
         )
         summary.append(
-            "Y/O/Z/T/I/Y3/Y4 Main transfer split maxima "
+            "Y/O/Z/T/I/Y3/Y4 Main transfer-budget maxima "
             f"(timed first loop): {split_maxima['Y']}/"
             f"{split_maxima['Z']} words "
             f"({split_maxima['Y'] / 16:g}/"
             f"{split_maxima['Z'] / 16:g} patterns)"
             f"{later_text}, "
             f"first exit V-counter {split_maxima['O']:02X}, "
-            f"{split_maxima['T']} transfer VBlanks, "
+            f"opened VBlank budget count {split_maxima['T']}, "
             f"final exit V-counter {split_maxima['I']:02X}."
         )
     summary.append(

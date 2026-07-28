@@ -61,7 +61,7 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
    physical PrgBuf occupancy and maximum packed reader lead against the gate
    JSON. When `Y/O/Z/Y3/Y4/T/I` are available, validate and report the exact
    maxima for the first four runtime VBlank word shares, first/final
-   pattern-exit V-counters, and transfer-VBlank count. `T>N` at fixed cadence
+   pattern-exit V-counters, and opened transfer-budget count. `T>N` at fixed cadence
    raises alert `WARNING` while retaining gate `PASS`; the individual shares
    and phases remain diagnostic.
 
@@ -195,9 +195,11 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   high byte and current-slot sector position in its low byte. Read them
   together to distinguish useful prefetch from a payload back-pressure event.
   These fields are diagnostic and never change the upload gate.
-- `Y/Z/Y3/Y4` are exact word shares for the first four runtime
-  pattern-transfer VBlanks, `O/I` are the current frame's first/final
-  pattern-exit V-counters, and `T` is the total transfer-VBlank count. Use
+- `Y/Z/Y3/Y4` are exact word shares charged to the first four runtime
+  VBlank budgets, `O/I` are the current frame's first/final
+  pattern-exit V-counters, and `T` is the number of budgets opened. A whole
+  run can physically continue through active display without opening another
+  budget, so `T=1` does not prove that the work fit inside one VBlank. Use
   `O=00..DF` to identify a first share that ran into active display, and use
   `I` for the final tail. `T>N` at fixed cadence is a warning; the word shares
   and phases are diagnostic.

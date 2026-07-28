@@ -586,8 +586,8 @@ def row_specs(
         rows.append(
             RowSpec(
                 "pattern_transfer_vblanks",
-                "T  TRANSFER VBLANKS",
-                "VBlanks carrying pattern work/frame",
+                "T  VBLANK BUDGETS",
+                "fresh pattern budgets opened/frame",
                 max(2, timed_max("pattern_transfer_vblanks")),
                 (238, 157, 82),
             )

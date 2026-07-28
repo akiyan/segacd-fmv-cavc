@@ -150,10 +150,12 @@ median, and maximum of both `C` and `A` across the timed first loop and preserve
 them in the gate JSON and hudline receipt. When `G` is present, they also
 report its minimum, mean, median, and maximum after separating the packed `B`
 marker. `H` reports the exact physical peak and `X` reports the reader lead.
-`Y/Z/Y3/Y4/T/I` report the Main pattern-transfer split and its exit phase.
+`Y/Z/Y3/Y4/T/I` report the Main pattern-budget accounting and its exit phase.
 For fixed-N playback, `T>N` raises alert `WARNING` while retaining gate
-`PASS`. The transfer fields are otherwise diagnostic only; they do not create
-an alert. `G`, `B`, `K`, `H`, and `X` never alter the gate or alert.
+`PASS`. `T` counts opened fresh VBlank budgets, not the physical blank periods
+crossed by an overlong whole run. The transfer fields are otherwise diagnostic
+only; they do not create an alert. `G`, `B`, `K`, `H`, and `X` never alter the
+gate or alert.
 
 The black player-only frame -1 uses `F=FFFF` before frame 0. It is an OCR
 sentinel, not a stream frame, and is never written as a HUD TSV row. Frame 0
@@ -188,12 +190,12 @@ available.
 | `K` | Sub | cumulative | MSF sequence-gap recovery count | Compare with `S`; `S-K` is the CDC_TRN retry-exhaustion count |
 | `H` | Sub | per frame | Maximum physical PrgBuf occupancy, in exact 32-byte patterns | Below `3440` stays below the 418 KiB payload back-pressure boundary |
 | `X` | Sub | per frame | CD reader position ahead of the next frame expansion; high byte is complete frame slots, low byte is sector position in the current slot | Read with `H`; large lead is safe only while every destination retains space |
-| `Y` | Main | per frame | Exact pattern-transfer words issued in runtime transfer VBlank 1 | Divide by 16 for whole 32-byte patterns; read with the later shares and `T` |
+| `Y` | Main | per frame | Exact pattern-transfer words charged to runtime VBlank budget 1 | Divide by 16 for whole 32-byte patterns; read with the later shares and `T` |
 | `O` | Main | per frame | V-counter immediately after the first pattern-transfer share | `E0..FF` remains in VBlank; `00..DF` proves that the first share ran into active display |
-| `Z` | Main | per frame | Exact pattern-transfer words issued in runtime transfer VBlank 2 | At or below the generated word budget |
-| `Y3` | Main | per frame | Exact pattern-transfer words issued in runtime transfer VBlank 3 | Zero on N2; available to N4 |
-| `Y4` | Main | per frame | Exact pattern-transfer words issued in runtime transfer VBlank 4 | Zero on N2; available to N4 |
-| `T` | Main | per frame | Number of VBlanks that carried pattern transfer | At most fixed cadence N; `T>N` raises a warning |
+| `Z` | Main | per frame | Exact pattern-transfer words charged to runtime VBlank budget 2 | At or below the generated word budget |
+| `Y3` | Main | per frame | Exact pattern-transfer words charged to runtime VBlank budget 3 | Zero on N2; available to N4 |
+| `Y4` | Main | per frame | Exact pattern-transfer words charged to runtime VBlank budget 4 | Zero on N2; available to N4 |
+| `T` | Main | per frame | Number of fresh runtime VBlank budgets opened | At most fixed cadence N; `T>N` raises a warning |
 | `I` | Main | per frame | V-counter when pattern transfer ended, before the remaining deadline work | Read with all word shares and same-frame `O`; it measures phase, not gate status |
 | `V` | Main | previous frame | V-counter at the last accepted display flip | `E0` = flip at the VBlank start; higher blank lines mean the flip ran late inside its blank |
 | `E` | Main | per frame | Pass2 entry delay since the previous flip, in 4-tick units | Below one field (`88` = 544 ticks) with margin; approaching the field-1 blank end means the transfer is about to miss its VBlank |
@@ -421,22 +423,25 @@ the destination buffers have space, but lead concurrent with `H=3440` proves
 that physical PrgBuf back-pressure can stop a continuously arriving payload
 sector. Both fields are observational and have no upload-gate threshold.
 
-### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer VBlanks
+### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer budgets
 
 `Y`, `Z`, `Y3`, and `Y4` are the exact word counts issued by the pattern path
-in its first four runtime transfer VBlanks. Sixteen words make one 32-byte
+against its first four fresh runtime VBlank budgets. Sixteen words make one 32-byte
 pattern. Ordinary runs spill whole to a fresh VBlank. Only the rare fallback
 for a run longer than one complete budget may cut at a boundary, so a value
 can contain a partial run only in that case. An unused cadence window remains
 zero.
 
-`T` counts every VBlank that carried pattern work. `T=01` means all pattern
-work fit in one VBlank and `T=02` means two VBlanks were used. For fixed-N
-playback, `T>N` proves that the transfer itself exceeded the cadence window and
-raises alert `WARNING`, not gate `FAIL`. When `T<=04`, the nonzero values among
-`Y+Z+Y3+Y4` account for the complete pattern word count. `T>=05` is still
-reported exactly, while the HUD intentionally preserves only the first four
-shares.
+`T` counts the fresh VBlank budgets opened by the pattern path. `T=01` means
+that the player did not explicitly refill the first budget; it does not prove
+that a whole run physically finished before active display. Such a run can
+continue through active display and even reach the following blank while `T`
+remains `01`. `T=02` means that the player explicitly waited for and opened a
+second fresh budget. For fixed-N playback, `T>N` proves that explicit budget
+allocation exceeded the cadence window and raises alert `WARNING`, not gate
+`FAIL`. When `T<=04`, the nonzero values among `Y+Z+Y3+Y4` account for the
+complete pattern word count. `T>=05` is still reported exactly, while the HUD
+intentionally preserves only the first four budget shares.
 
 `O` is the raw V-counter high byte sampled immediately after the first
 pattern-transfer share. A value in `E0..FF` remains inside VBlank; `00..DF`
@@ -500,8 +505,8 @@ VBlank.
 | `A` rises with `W`, while `C` stays low | ADPCM decode or its internal low-rate CDC service is the stronger Sub-side cost |
 | `N` rises with `U` | Run fragmentation is increasing Main fixed transfer overhead |
 | `U` rises while `N` stays modest | Larger pattern volume or VBlank splitting dominates rather than descriptor count |
-| `T<=04` and `Y+Z+Y3+Y4` matches the frame's pattern words | All runtime transfer shares are accounted for |
-| `T>N` | Pattern transfer exceeded the fixed cadence window and raises a warning |
+| `T<=04` and `Y+Z+Y3+Y4` matches the frame's pattern words | All runtime budget charges are accounted for |
+| `T>N` | Explicit fresh-budget allocation exceeded the fixed cadence window and raises a warning |
 | `O=00..DF` | The first pattern share itself ran beyond VBlank; its raw-word budget ignored too much run/CPU overhead |
 | `O=E0..FF`, `T<=N`, and `I` is early | Pattern shares ended in their cadence windows; investigate HUD/name-table/palette/flip work |
 | `T<=N` and `I` is near the terminal blank | The final pattern share left little margin for the remaining deadline work |
@@ -704,8 +709,8 @@ F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / 
 
 H32とH40は同じlogical field streamを使います。1 digitは1つの8x8 cellです。
 30-cell common prefixの後に、4桁のsigned PrgBuf minimum `Q`、3つのflip-phase
-field、`G/K/H/X/Y/Z/T/I/Y3/Y4`が続きます。`Y3/Y4`はruntime transfer VBlank
-3・4のword数です。H32はrow 0の残り2 cellへ`Q`の前半を書き、row 1を埋めて
+field、`G/K/H/X/Y/Z/T/I/Y3/Y4`が続きます。`Y3/Y4`はruntime VBlank budget
+3・4へchargeしたword数です。H32はrow 0の残り2 cellへ`Q`の前半を書き、row 1を埋めて
 row 2の5 cellまで続けます。H40はrow 0へ`Q/V/O/E`、残る29 cellをrow 1へ
 続けます。
 
@@ -788,9 +793,11 @@ Delivery-paced playbackはhistogramを記録しますが、exact duration warnin
 minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
 `G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
 報告します。`H`はexact physical peak、`X`はreader leadを報告します。
-`Y/Z/Y3/Y4/T/I`はMain pattern-transfer splitとexit phaseを報告します。
+`Y/Z/Y3/Y4/T/I`はMain pattern-budget accountingとexit phaseを報告します。
 Fixed-Nでは`T>N`をgate `PASS`のままalert `WARNING`にします。Transfer fieldは
-それ以外のalertを作りません。`G/B/K/H/X`はgateもalertも変えません。
+それ以外のalertを作りません。`T`はfresh VBlank budgetを開いた数であり、overlongな
+whole runが物理的に跨いだblank期間の数ではありません。`G/B/K/H/X`はgateもalertも
+変えません。
 
 Player-onlyの黒いframe -1はframe 0の前に `F=FFFF` を使います。これはOCR
 sentinelでstream frameではなく、HUD TSV rowにも書きません。Frame 0はuntimed boot
@@ -823,12 +830,12 @@ Final frameは次のmovie-frame transitionがないため、derived VBlankはunk
 | `K` | Sub | cumulative | MSF sequence-gap recovery count | `S`と比較し、`S-K`をCDC_TRN retry-exhaustion countとして読む |
 | `H` | Sub | per frame | exact 32-byte pattern単位のphysical PrgBuf maximum | `3440`未満なら418 KiB payload back-pressure boundary未満 |
 | `X` | Sub | per frame | 次frame展開に対するCD reader位置。high byteは完了frame slot数、low byteはcurrent slot内sector位置 | `H`と一緒に読み、全destinationに空きがある場合だけ大きなleadが安全 |
-| `Y` | Main | per frame | runtime transfer VBlank 1で発行したexact pattern-transfer word数 | 16で割るとcompleteな32-byte pattern数。後続shareと`T`と一緒に読む |
+| `Y` | Main | per frame | runtime VBlank budget 1へchargeしたexact pattern-transfer word数 | 16で割るとcompleteな32-byte pattern数。後続shareと`T`と一緒に読む |
 | `O` | Main | per frame | 1つ目のpattern-transfer share直後のV-counter | `E0..FF`ならVBlank内、`00..DF`なら1つ目のshareがactive displayへはみ出した証拠 |
-| `Z` | Main | per frame | runtime transfer VBlank 2で発行したexact pattern-transfer word数 | generated word budget以下 |
-| `Y3` | Main | per frame | runtime transfer VBlank 3で発行したexact pattern-transfer word数 | N2ではzero、N4で利用可能 |
-| `Y4` | Main | per frame | runtime transfer VBlank 4で発行したexact pattern-transfer word数 | N2ではzero、N4で利用可能 |
-| `T` | Main | per frame | pattern transferを行ったVBlank数 | fixed cadence N以下。`T>N`はwarning |
+| `Z` | Main | per frame | runtime VBlank budget 2へchargeしたexact pattern-transfer word数 | generated word budget以下 |
+| `Y3` | Main | per frame | runtime VBlank budget 3へchargeしたexact pattern-transfer word数 | N2ではzero、N4で利用可能 |
+| `Y4` | Main | per frame | runtime VBlank budget 4へchargeしたexact pattern-transfer word数 | N2ではzero、N4で利用可能 |
+| `T` | Main | per frame | fresh runtime VBlank budgetを開いた数 | fixed cadence N以下。`T>N`はwarning |
 | `I` | Main | per frame | pattern transfer終了時、残りdeadline work前のV-counter | 全word shareと同frameの`O`を一緒に読むphase値。Gate statusではない |
 | `V` | Main | previous frame | accepted display flip時のV-counter | `E0`ならVBlank start。大きいblank lineはlate flip |
 | `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位 | 1 field未満で余裕を持つ。`88`は544 tick |
@@ -1021,19 +1028,22 @@ Destination bufferに空きがあるreader leadは有用なprefetchですが、`
 continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得る状態です。
 両fieldとも観測専用でupload-gate thresholdはありません。
 
-### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer VBlank
+### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer budget
 
-`Y`、`Z`、`Y3`、`Y4`はpattern pathが最初の4つのruntime transfer VBlankで発行した
-exact word countです。16 wordで1つの32-byte patternです。通常runはwholeのまま
+`Y`、`Z`、`Y3`、`Y4`はpattern pathが最初の4つのfresh runtime VBlank budgetへ
+chargeしたexact word countです。16 wordで1つの32-byte patternです。通常runはwholeのまま
 次のfresh VBlankへspillします。1回のfull budgetより長いrunのrare chunk fallback
 だけはboundaryで分割されるため、その場合は各値がpartial runを含みます。
 使わなかったcadence windowはzeroのままです。
 
-`T`はpattern workを行った全VBlankを数えます。`T=01`は1 VBlank内、`T=02`は2
-VBlankを使ったことを表します。Fixed-Nでは`T>N`がcadence window超過の証拠で、
-gate `FAIL`ではなくalert `WARNING`になります。`T<=04`なら非zeroの
-`Y+Z+Y3+Y4`がframe全体のpattern word数です。`T>=05`もcountは正確に報告し、
-HUDは最初の4 shareだけを保持します。
+`T`はpattern pathが開いたfresh VBlank budget数です。`T=01`は最初のbudgetを明示的に
+refillしなかったことを示しますが、whole runがactive display前に物理的に完了した
+証拠ではありません。そのrunがactive displayを通り、次のblankへ到達しても`T=01`
+のままです。`T=02`はfreshな2つ目のbudgetを明示的に待って開いたことを示します。
+Fixed-Nでは`T>N`がexplicit budget allocationのcadence window超過の証拠で、gate
+`FAIL`ではなくalert `WARNING`になります。`T<=04`なら非zeroの`Y+Z+Y3+Y4`がframe
+全体のpattern word数です。`T>=05`もcountは正確に報告し、HUDは最初の4 budget
+shareだけを保持します。
 
 `O`は1つ目のpattern-transfer share直後にsampleしたraw V-counter high byteです。
 `E0..FF`ならVBlank内、`00..DF`ならpayloadにrun/CPU overheadを加えた実作業がactive
@@ -1088,8 +1098,8 @@ bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main pha
 | `A`と`W`が上昇し`C`は低い | ADPCM decodeまたはinternal CDC serviceがSub側主要cost |
 | `N`と`U`が同時上昇 | Run fragmentationがMain fixed overheadを増加 |
 | `U`上昇、`N`は小さい | Descriptor数よりpattern volumeまたはVBlank splitが支配 |
-| `T<=04`かつ`Y+Z+Y3+Y4`がframeのpattern word数と一致 | Runtime transfer shareをすべて集計できている |
-| `T>N` | Pattern transferがfixed cadence windowを超過しwarning |
+| `T<=04`かつ`Y+Z+Y3+Y4`がframeのpattern word数と一致 | Runtime budget chargeをすべて集計できている |
+| `T>N` | Explicit fresh-budget allocationがfixed cadence windowを超過しwarning |
 | `O=00..DF` | 1つ目のpattern share自体がVBlankを越え、raw-word budgetがrun/CPU overheadを過小評価 |
 | `O=E0..FF`、`T<=N`、`I`はearly | Pattern shareはcadence window内で終了。HUD/name-table/palette/flip workを調べる |
 | `T<=N`で`I`がterminal blank近く | 最後のpattern share後に残るdeadline marginが小さい |

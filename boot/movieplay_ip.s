@@ -1093,7 +1093,7 @@ bf_dma:
 	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
 	move.w	(GA_STOPWATCH).l, d0
-	move.w	d0, dma_start_tick		/* begin inside the first transfer VBlank */
+	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
 .endif
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
@@ -1458,7 +1458,7 @@ bf_wait_fixed_flip_vblank:
 .ifdef DEBUG
 	/* Only remove a wait when pattern work itself occupied the cadence's
 	   display-deadline VBlank. If it finished earlier (common at N=4), every
-	   counted wait belongs to an earlier transfer VBlank. */
+	   counted wait belongs to an earlier opened VBlank budget. */
 	move.w	pattern_transfer_vblanks, d0
 	cmp.w	#PC_VSYNC_N, d0
 	blo.s	1f
@@ -1474,7 +1474,7 @@ bf_wait_fixed_flip_vblank:
 
 .ifdef DEBUG
 /* Refresh fields whose final values are not available when a split frame
-   preformats and stages its HUD between transfer VBlanks. Write directly into
+   preformats and stages its HUD between opened VBlank budgets. Write directly into
    the H40 64-entry-pitch stage consumed by the imminent one NT DMA.
    Trashes d0/d3/d4/a0. */
 bf_patch_dbg_stage:
@@ -2109,9 +2109,10 @@ wait_vblank:
    Category glyphs are omitted to reserve cells for future supply metrics.
    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx = 30 words.
    Both modes append Q/V/O/E/G/K/H/X/Y/Z/T/I plus two three-digit counters for
-   transfer VBlanks 3/4, for 69 words total. H32 wraps at 32 words and H40 at
-   40 words. Y/Z are VBlank 1/2, O/I are the first/final transfer exit
-   V-counters, and T is the actual count of transfer-bearing VBlanks.
+   opened VBlank budgets 3/4, for 69 words total. H32 wraps at 32 words and H40
+   at 40 words. Y/Z are budgets 1/2, O/I are the first/final transfer exit
+   V-counters, and T is the number of fresh budgets opened. A whole run may
+   physically cross active display without incrementing T.
 	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
@@ -2190,7 +2191,7 @@ prepare_dbg:
 	   its own frame's flip, so the freshest sample is one frame old). */
 	move.w	flip_hv_v, d4
 	DBG_PUT2
-	/* O: V-counter immediately after transfer VBlank 1's pattern work. */
+	/* O: V-counter immediately after VBlank budget 1's pattern work. */
 	move.w	pattern_vblank1_exit_v, d4
 	DBG_PUT2
 	/* E: this frame's Pass2 entry delay since the previous flip, ticks/4 */
@@ -2220,14 +2221,14 @@ prepare_dbg:
 	   is the sector index inside the current physical slot. */
 	move.w	(PROBE_BANK+STATUS_OFF+0x2A).l, d4
 	DBG_PUT4
-	/* Y/Z: exact pattern-transfer words issued in the first and second
-	   transfer VBlanks. 16 words equal one 32-byte pattern. */
+	/* Y/Z: exact pattern-transfer words charged to the first and second
+	   fresh VBlank budgets. 16 words equal one 32-byte pattern. */
 	move.w	pattern_vblank1_words, d4
 	DBG_PUT3
 	move.w	pattern_vblank2_words, d4
 	DBG_PUT3
-	/* T: number of VBlanks that carried pattern work; I: V-counter when
-	   Pass2 pattern transfer ended, before HUD/NT/CRAM/flip work. */
+	/* T: number of fresh VBlank budgets opened; I: V-counter when Pass2
+	   pattern transfer ended, before HUD/NT/CRAM/flip work. */
 	move.w	pattern_transfer_vblanks, d4
 	DBG_PUT1
 	move.w	pattern_exit_v, d4
@@ -2510,19 +2511,19 @@ vbudget_from_head:
 flip_hv_v:
 	.space 2				/* DEBUG HUD V: V-counter at the last accepted flip */
 pattern_vblank1_exit_v:
-	.space 2				/* DEBUG HUD O: V-counter after transfer VBlank 1 */
+	.space 2				/* DEBUG HUD O: V-counter after budget 1 */
 pass2_entry_q:
 	.space 2				/* DEBUG HUD E: Pass2 entry delay since prev flip, ticks/4 */
 pattern_vblank1_words:
-	.space 2				/* DEBUG HUD Y: exact pattern words in transfer VBlank 1 */
+	.space 2				/* DEBUG HUD Y: exact pattern words charged to budget 1 */
 pattern_vblank2_words:
-	.space 2				/* DEBUG HUD Z: exact pattern words in transfer VBlank 2 */
+	.space 2				/* DEBUG HUD Z: exact pattern words charged to budget 2 */
 pattern_vblank3_words:
-	.space 2				/* DEBUG HUD Y3: exact pattern words in transfer VBlank 3 */
+	.space 2				/* DEBUG HUD Y3: exact pattern words charged to budget 3 */
 pattern_vblank4_words:
-	.space 2				/* DEBUG HUD Y4: exact pattern words in transfer VBlank 4 */
+	.space 2				/* DEBUG HUD Y4: exact pattern words charged to budget 4 */
 pattern_transfer_vblanks:
-	.space 2				/* DEBUG HUD T: VBlanks that carried pattern transfer */
+	.space 2				/* DEBUG HUD T: fresh VBlank budgets opened */
 pattern_exit_v:
 	.space 2				/* DEBUG HUD I: V-counter at Pass2 pattern exit */
 wr_ptr0:

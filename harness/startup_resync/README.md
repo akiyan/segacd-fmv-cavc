@@ -36,10 +36,11 @@ back-pressure field `B`. `K` is the cumulative MSF-gap recovery count, and the
 TSV derives CDC_TRN retry exhaustion as `(S-K) & 0xFF`. `H` is the per-frame
 physical PrgBuf peak in exact 32-byte patterns. `X` packs complete reader
 frame slots ahead in its high byte and the current slot's sector index in its
-low byte. `Y/Z/Y3/Y4` are the exact word shares of the first four runtime
-pattern-transfer VBlanks, `O/I` are their first/final exit V-counters, and `T`
-is the total number of VBlanks that carried pattern work. Fixed-N `T>N`
-raises alert `WARNING` without failing the gate. Keep `--flip-fields`
+low byte. `Y/Z/Y3/Y4` are the exact word shares charged to the first four fresh
+runtime VBlank budgets, `O/I` are their first/final exit V-counters, and `T`
+is the total number of budgets opened. A whole run can overrun into active
+display without opening another budget. Fixed-N `T>N` raises alert `WARNING`
+without failing the gate. Keep `--flip-fields`
 and `--poll-gap-fields` only for legacy one-row H40 recordings; use
 `--combined-fields` only when parsing a standard H32/H40 recording without a
 profile.
