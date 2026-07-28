@@ -11,6 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p116: Add DEBUG Y/Z/T/I diagnostics for exact pattern words transferred in
+#         the first and second transfer VBlanks, the number of transfer
+#         VBlanks, and the V-counter at pattern exit. Extend H32/H40 OCR,
+#         gate evidence, and hudline so cold280 split behavior can be measured
+#         without changing release transfer decisions.
 #   e152: Remove the separate Main-transfer cold ceiling so encoder quality
 #         decisions and physical Main-to-VRAM cold work are one value again.
 #         Keep the issue-74 Bad Apple qualification point fixed at cold280;
@@ -1026,4 +1031,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=152
-p=115
+p=116

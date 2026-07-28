@@ -251,7 +251,7 @@ Before accepting the recording, verify:
   Preserve the encoder/player-versioned HUD TSV body under `logs/`, its
   run-specific compatibility symlink, and the upload-capable gate JSON next to
   the recording.
-  Both H32 and H40 profiles select the same 46-cell diagnostic field set;
+  Both H32 and H40 profiles select the same 63-cell diagnostic field set;
   OCR wraps it after the mode's native 32- or 40-cell row width.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named

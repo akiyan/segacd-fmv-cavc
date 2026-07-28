@@ -87,6 +87,10 @@ HUD_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
     ("K", 2),
     ("H", 4),
     ("X", 4),
+    ("Y", 3),
+    ("Z", 3),
+    ("T", 1),
+    ("I", 2),
 )
 
 
@@ -269,7 +273,7 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Current native H32/H40 frames default to their 54-cell combined layouts.
+    Current native H32/H40 frames default to their 63-cell combined layouts.
     Pass an explicit legacy layout when reading an older recording.
     """
     gray = _gray(img)

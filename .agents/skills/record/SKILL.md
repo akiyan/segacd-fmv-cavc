@@ -292,10 +292,11 @@ Check the raw MKV and reports before trusting a capture:
    histogram and affected frames in the gate JSON. Delivery-paced playback
    records the histogram without an exact-duration warning.
 
-   `C`, `Q`, `G`, `B`, `K`, `H`, and `X` are diagnostic only. They have no
-   limits and never change the gate status. Report the C distribution and Q
-   minimum when available. For the pump layout, report the G distribution, B
-   frame count, H physical peak, X reader lead, and `(S-K) & 0xFF` CDC_TRN
+   `C`, `Q`, `G`, `B`, `K`, `H`, `X`, `Y`, `Z`, `T`, and `I` are diagnostic
+   only. They have no limits and never change the gate status. Report the C
+   distribution and Q minimum when available. For the pump layout, report the G distribution, B
+   frame count, H physical peak, X reader lead, Y/Z VBlank word shares, T
+   transfer-VBlank count, I pattern-exit phase, and `(S-K) & 0xFF` CDC_TRN
    retry-exhaustion count, and correlate them with actual playback failures.
    The M limit permits all display fields available to one content frame. The
    `J` limit is derived from the stream's generated
@@ -337,8 +338,8 @@ sound is clean or free of audible clicks only after listening to the final file.
 
 The standard capture already builds DEBUG. The HUD omits category glyphs and
 uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` prefix in H32 and H40.
-Both modes append `Q/V/O/E/G/K` and wrap the same 46-cell logical stream at
-their native 32- or 40-cell width. The profile selects the matching combined
+Both modes append `Q/V/O/E/G/K/H/X/Y/Z/T/I` and wrap the same 63-cell logical
+stream at their native 32- or 40-cell width. The profile selects the matching combined
 OCR layout automatically. Parse the complete first loop
 whenever the capture can be uploaded; for a local-only recording, full OCR
 remains optional unless diagnostics were requested. Keep
@@ -364,7 +365,7 @@ the high bit set are negative underflow, not a large positive occupancy. A
 Gate `PASS` in the `S/D/R/M/J` result JSON is the required handoff condition;
 alert may be `NONE` or `WARNING`. A fixed-N visible-duration mismatch is one
 source of `WARNING` and does not block upload. `C/A/Q/G/B/K/H/X` remain
-recorded diagnostics. When the
+recorded diagnostics, as do the Main pattern-split fields `Y/Z/T/I`. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
 trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and
@@ -414,5 +415,5 @@ the fast path, additionally report the exact-comparison JSON/pass state and
 repeat-run result. For an upload-capable capture, report the HUD gate JSON,
 complete-loop frame count, `S/D/R/M/J` gate maxima, the diagnostic C maximum,
 `C/A` minimum, mean, median, and maximum, plus G statistics and B/K cause
-counts when present, gate state, hudline and mixline PNGs,
-and both public Gist/raw image URLs.
+counts, H/X maxima, and Y/Z/T/I split maxima when present, gate state, hudline
+and mixline PNGs, and both public Gist/raw image URLs.

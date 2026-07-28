@@ -71,6 +71,7 @@ MAXIMUM_COLUMN = {
 
 HEX_COLUMNS = {
     "flip_vcounter",
+    "pattern_exit_vcounter",
 }
 
 
@@ -314,6 +315,10 @@ def validate(
         ("H", "prgbuf_physical_peak_patterns",
          "prgbuf_physical_peak_patterns"),
         ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
+        ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
+        ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
+        ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
+        ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
     ):
         values = data.get(column)
         declared = field in gate.get("diagnostic_fields", ())
@@ -527,6 +532,47 @@ def row_specs(
                 "sector index in slot",
                 max(1, timed_max("reader_slot_sector")),
                 (94, 158, 205),
+            )
+        )
+    if "pattern_vblank1_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank1_words",
+                "Y  PATTERN VB1",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank1_words")),
+                (114, 192, 233),
+            )
+        )
+    if "pattern_vblank2_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank2_words",
+                "Z  PATTERN VB2",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank2_words")),
+                (78, 159, 217),
+            )
+        )
+    if "pattern_transfer_vblanks" in data:
+        rows.append(
+            RowSpec(
+                "pattern_transfer_vblanks",
+                "T  PATTERN VBLANKS",
+                "transfer VBlanks/frame",
+                max(2, timed_max("pattern_transfer_vblanks")),
+                (238, 157, 82),
+            )
+        )
+    if "pattern_exit_vcounter" in data:
+        rows.append(
+            RowSpec(
+                "pattern_exit_vcounter",
+                "I  PATTERN EXIT",
+                "VDP V-counter",
+                0xFF,
+                (198, 137, 226),
+                eight_bit_scale=True,
             )
         )
     rows.extend([
@@ -874,6 +920,18 @@ def main() -> None:
         int(x_values[1:].max())
         if x_values is not None and len(x_values) > 1 else None
     )
+    split_maxima = {
+        key: (
+            int(data[column][1:].max())
+            if column in data and len(data[column]) > 1 else None
+        )
+        for key, column in (
+            ("Y", "pattern_vblank1_words"),
+            ("Z", "pattern_vblank2_words"),
+            ("T", "pattern_transfer_vblanks"),
+            ("I", "pattern_exit_vcounter"),
+        )
+    }
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -897,6 +955,14 @@ def main() -> None:
     reader_ahead_text = (
         f"X max {x_maximum >> 8} frames + sector {x_maximum & 0xFF}; "
         if x_maximum is not None else ""
+    )
+    transfer_split_text = (
+        "Y/Z max "
+        f"{split_maxima['Y']}/{split_maxima['Z']} words "
+        f"({split_maxima['Y'] / 16:g}/{split_maxima['Z'] / 16:g} patterns); "
+        f"T max {split_maxima['T']}; I max {split_maxima['I']:02X}; "
+        if all(value is not None for value in split_maxima.values())
+        else ""
     )
     phase_note = (
         "G is the maximum Sub pump-opportunity interval; "
@@ -942,7 +1008,7 @@ def main() -> None:
             f"A min/mean/median/max "
             f"{int(a_stats['minimum'])}/{float(a_stats['mean']):.3f}/"
             f"{float(a_stats['median']):g}/{int(a_stats['maximum'])}; "
-            f"{physical_buffer_text}{reader_ahead_text}"
+            f"{physical_buffer_text}{reader_ahead_text}{transfer_split_text}"
             f"{g_stats_text}{apply_guard_text}"
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
@@ -1073,6 +1139,10 @@ def main() -> None:
             ),
             **({"H": h_maximum} if h_maximum is not None else {}),
             **({"X": x_maximum} if x_maximum is not None else {}),
+            **({
+                key: value for key, value in split_maxima.items()
+                if value is not None
+            }),
         },
         "c_statistics": c_stats,
         "a_statistics": a_stats,
@@ -1088,6 +1158,10 @@ def main() -> None:
         "reader_ahead_max_slot_sector": (
             x_maximum & 0xFF if x_maximum is not None else None
         ),
+        "pattern_vblank1_max_words": split_maxima["Y"],
+        "pattern_vblank2_max_words": split_maxima["Z"],
+        "pattern_transfer_vblank_max": split_maxima["T"],
+        "pattern_exit_vcounter_max": split_maxima["I"],
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,

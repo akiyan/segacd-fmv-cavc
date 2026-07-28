@@ -345,7 +345,7 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
             f"{obj}: shared deadline path lacks its two status reads")
 
     flip = block("bf_flip", "bf_after_flip")
-    normal_reserve = 64 * 28 + 54 + 128
+    normal_reserve = 64 * 28 + 63 + 128
     palette_reserve = normal_reserve + 64
     for reserve, description in (
             (normal_reserve, "normal NT/HUD/guard reserve"),

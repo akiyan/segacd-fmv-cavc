@@ -6,7 +6,7 @@ The player renders values only in one fixed 30-cell order in both modes:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
 The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H32 and
-H40 DEBUG builds append Q/V/O/E/G/K/H/X as one 54-cell logical sequence,
+H40 DEBUG builds append Q/V/O/E/G/K/H/X/Y/Z/T/I as one 63-cell logical sequence,
 wrapped after 32 or 40 cells respectively. Q is the signed minimum logical
 PrgBuf balance observed during that frame, in exact 32-byte patterns.
 G is the maximum time spent outside the Sub CDC pump between service
@@ -14,9 +14,12 @@ opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
 sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
 that APPLY back-pressure rejected a control-sector pump. H is the per-frame
 physical PrgBuf peak in exact patterns. X packs complete reader frame slots
-ahead in its high byte and the current slot's sector index in its low byte. A
-supplied H32 or H40 profile selects its combined layout automatically. Legacy
-one-row recordings remain readable through their explicit layout options.
+ahead in its high byte and the current slot's sector index in its low byte.
+Y/Z are the exact pattern words transferred in the first/second transfer
+VBlank, T is the number of pattern-transfer VBlanks, and I is the V-counter at
+Pass2 pattern exit. A supplied H32 or H40 profile selects its combined layout
+automatically. Legacy one-row recordings remain readable through their
+explicit layout options.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -479,13 +482,17 @@ def _fmt(group: FrameGroup) -> str:
     msf_gap = f" K{v['K']:02X}" if "K" in v else ""
     physical_peak = f" H{v['H']:04X}" if "H" in v else ""
     reader_ahead = f" X{v['X']:04X}" if "X" in v else ""
+    transfer_split = (
+        f" Y{v['Y']:03X} Z{v['Z']:03X} T{v['T']:01X} I{v['I']:02X}"
+        if all(field in v for field in "YZTI") else ""
+    )
     return (
         f"loop={group.loop} t={group.time_first:8.3f}s "
         f"cap={group.capture_first:5d}-{group.capture_last:<5d} "
         f"F{v['F']:04X} P{v['P']:02X} S{v['S']:02X} D{v['D']:02X} "
         f"R{v['R']:02X} L{v['L']:02X} C{v['C']:02X} W{v['W']:02X} "
         f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf}"
-        f"{poll_gap}{msf_gap}{physical_peak}{reader_ahead} "
+        f"{poll_gap}{msf_gap}{physical_peak}{reader_ahead}{transfer_split} "
         f"n={group.sample_count} "
         f"conf={group.confidence:.3f}"
     )
@@ -570,6 +577,9 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "prgbuf_underflow_patterns",
         "prgbuf_physical_peak_patterns",
         "reader_ahead_raw16", "reader_ahead_frames", "reader_slot_sector",
+        "pattern_vblank1_words", "pattern_vblank1_patterns",
+        "pattern_vblank2_words", "pattern_vblank2_patterns",
+        "pattern_transfer_vblanks", "pattern_exit_vcounter",
         "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
         "apply_guard_blocked",
         "slip_msf_gap_count", "slip_trn_retry_count",
@@ -641,6 +651,18 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 ),
                 "reader_slot_sector": (
                     values["X"] & 0xFF if "X" in values else ""
+                ),
+                "pattern_vblank1_words": values.get("Y", ""),
+                "pattern_vblank1_patterns": (
+                    f"{values['Y'] / 16:.4f}" if "Y" in values else ""
+                ),
+                "pattern_vblank2_words": values.get("Z", ""),
+                "pattern_vblank2_patterns": (
+                    f"{values['Z'] / 16:.4f}" if "Z" in values else ""
+                ),
+                "pattern_transfer_vblanks": values.get("T", ""),
+                "pattern_exit_vcounter": (
+                    f"{values['I']:02X}" if "I" in values else ""
                 ),
                 "sub_poll_gap_raw16": (
                     poll_gap_raw if poll_gap_raw is not None else ""
@@ -827,7 +849,7 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 7,
+        "schema_version": 8,
         "gate": gate,
         "alert": alert,
         # Keep the old fields while stored schema-5 results and external
@@ -859,6 +881,11 @@ def evaluate_upload_gate(
             *(["K"] if "K" in first_loop[0].values else []),
             *(["H"] if "H" in first_loop[0].values else []),
             *(["X"] if "X" in first_loop[0].values else []),
+            *([
+                "Y", "Z", "T", "I"
+            ] if all(
+                field in first_loop[0].values for field in "YZTI"
+            ) else []),
         ],
         "maxima": maxima,
         "c_statistics": c_statistics(groups),
@@ -895,6 +922,23 @@ def evaluate_upload_gate(
         result["reader_ahead_max_raw16"] = reader_ahead
         result["reader_ahead_max_frames"] = reader_ahead >> 8
         result["reader_ahead_max_slot_sector"] = reader_ahead & 0xFF
+    if all(field in first_loop[0].values for field in "YZTI"):
+        result["pattern_vblank1_max_words"] = max(
+            (group.values["Y"] for group in timed_loop),
+            default=0,
+        )
+        result["pattern_vblank2_max_words"] = max(
+            (group.values["Z"] for group in timed_loop),
+            default=0,
+        )
+        result["pattern_transfer_vblank_max"] = max(
+            (group.values["T"] for group in timed_loop),
+            default=0,
+        )
+        result["pattern_exit_vcounter_max"] = max(
+            (group.values["I"] for group in timed_loop),
+            default=0,
+        )
     if profile is not None:
         result["profile"] = str(profile.path.resolve())
         result["profile_sha256"] = profile.sha256
@@ -956,6 +1000,16 @@ def write_gate_json(path: Path, result: dict) -> None:
             "  X diagnostic max="
             f"{result['reader_ahead_max_frames']} complete frame slots + "
             f"sector {result['reader_ahead_max_slot_sector']}"
+        )
+    if "pattern_transfer_vblank_max" in result:
+        print(
+            "  Y/Z/T/I diagnostics: first max="
+            f"{result['pattern_vblank1_max_words']} words "
+            f"({result['pattern_vblank1_max_words'] / 16:g} patterns), "
+            f"second max={result['pattern_vblank2_max_words']} words "
+            f"({result['pattern_vblank2_max_words'] / 16:g} patterns), "
+            f"transfer VBlanks max={result['pattern_transfer_vblank_max']}, "
+            f"exit V-counter max={result['pattern_exit_vcounter_max']:02X}"
         )
     if "sub_poll_gap_statistics" in result:
         print(

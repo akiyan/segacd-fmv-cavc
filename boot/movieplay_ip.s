@@ -144,13 +144,14 @@
 .endif
 
 .ifdef HUD_HEX_TABLE
-/* Specialized H32/H40 DEBUG builds publish the same 54 hexadecimal cells:
+/* Specialized H32/H40 DEBUG builds publish the same 63 hexadecimal cells:
    common fields, signed per-frame PrgBuf minimum Q, flip phase V/O/E, then
-   pump diagnostics G/K and physical-buffer diagnostics H/X. H32 wraps the
-   linear stream after 32 cells; H40 wraps after 40. */
+   pump diagnostics G/K, physical-buffer diagnostics H/X, and Main transfer
+   split diagnostics Y/Z/T/I. H32 wraps the linear stream after 32 cells; H40
+   wraps after 40. */
 .equ HUD_FLIP_FIELDS, 1
 .equ HUD_SUB_POLL_GAP, 1
-.equ HUD_COMBINED_WORDS, 54
+.equ HUD_COMBINED_WORDS, 63
 .endif
 
 .ifdef PLAYER_SPECIALIZED
@@ -235,6 +236,28 @@
 	move.l	(a1,d4.w), (a0)+
 .else
 	bsr	dbg_put2
+.endif
+.endm
+
+.macro DBG_PUT1
+.ifdef HUD_HEX_TABLE
+	andi.w	#0x000F, d4
+	addi.w	#HUD_FONT_VTILE, d4
+	move.w	d4, (a0)+
+.else
+	bsr	dbg_put1
+.endif
+.endm
+
+.macro DBG_PUT3
+.ifdef HUD_HEX_TABLE
+	move.w	d4, d3
+	lsr.w	#8, d4
+	DBG_PUT1
+	move.w	d3, d4
+	DBG_PUT2
+.else
+	bsr	dbg_put3
 .endif
 .endm
 
@@ -1053,9 +1076,18 @@ bf_dma:
 .endif
 	/* Keep this clear before the n_runs load: MOVE supplies the Z flag consumed
 	   by the following BEQ. */
+.ifdef DEBUG
+	clr.w	pattern_vblank1_words
+	clr.w	pattern_vblank2_words
+	clr.w	pattern_transfer_vblanks
+	clr.w	pattern_exit_v
+.endif
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
+.ifdef DEBUG
+	move.w	#1, pattern_transfer_vblanks
+.endif
 	lea	RUN_TABLE, a2
 	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
@@ -1104,7 +1136,11 @@ bf_split_run:
 bf_chunk:
 	tst.w	d7				/* 予算切れなら次vblank開始まで待って補充 */
 	bgt	1f
+.ifdef DEBUG
+	bsr	bf_debug_next_vbudget
+.else
 	bsr	bf_refill_vbudget
+.endif
 1:
 	move.w	d1, d6				/* chunk = min(ラン残, 予算) */
 	cmp.w	d7, d6
@@ -1133,7 +1169,11 @@ bf_short_run:
 	   an 8-word tail, so a 16/32-word run may need to start in the next blank. */
 	cmp.w	d7, d1
 	bls.s	1f
+.ifdef DEBUG
+	bsr	bf_debug_next_vbudget
+.else
 	bsr	bf_refill_vbudget
+.endif
 1:
 	addq.l	#4, a2				/* skip reg93/94 */
 	move.l	(a2)+, d0			/* +6 cmd = ordinary VRAM write address */
@@ -1157,6 +1197,10 @@ bf_flip:
 .ifdef DEBUG
 	tst.w	n_runs
 	beq.s	1f
+	bsr	bf_debug_snapshot_vbudget
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, pattern_exit_v
 	move.w	(GA_STOPWATCH).l, d0
 	sub.w	dma_start_tick, d0
 	andi.w	#0x0FFF, d0			/* stopwatch wraps naturally after 4096 ticks */
@@ -1323,6 +1367,33 @@ bf_refill_vbudget:
 	move.w	#1, vbudget_from_head
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
 	rts
+
+.ifdef DEBUG
+/* Snapshot the exact pattern words consumed from the current VBlank budget.
+   Only the first two transfer VBlanks need dedicated counters: T retains the
+   total count, so T>=3 identifies an additional transfer blank. Trashes d0. */
+bf_debug_snapshot_vbudget:
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
+	sub.w	d7, d0
+	cmpi.w	#1, pattern_transfer_vblanks
+	bne.s	1f
+	move.w	d0, pattern_vblank1_words
+	rts
+1:
+	cmpi.w	#2, pattern_transfer_vblanks
+	bne.s	2f
+	move.w	d0, pattern_vblank2_words
+2:
+	rts
+
+/* Finish the current budget snapshot before waiting for the next fresh head.
+   The bookkeeping happens after the previous blank's selected transfer work,
+   never inside the per-run issue path. */
+bf_debug_next_vbudget:
+	bsr	bf_debug_snapshot_vbudget
+	addq.w	#1, pattern_transfer_vblanks
+	bra	bf_refill_vbudget
+.endif
 
 .ifdef NT_DMA_FLIP
 /* Fixed-N H40 only. d6 is the word reserve for NT/HUD/optional CRAM/guard.
@@ -1974,8 +2045,9 @@ wait_vblank:
    copy; reg2 selects the completed picture and HUD atomically.
    Category glyphs are omitted to reserve cells for future supply metrics.
    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx = 30 words.
-   Both modes append Q/V/O/E/G/K/H/X for 54 words total. H32 wraps at 32 words
-   and H40 wraps at 40 words. Q, G, H, and X are four digits.
+   Both modes append Q/V/O/E/G/K/H/X/Y/Z/T/I for 63 words total. H32 wraps at
+   32 words and H40 wraps at 40 words. Y/Z are three-digit exact VBlank word
+   counts, T is one digit, and I is the Pass2-exit V-counter.
 	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
@@ -2084,6 +2156,18 @@ prepare_dbg:
 	   is the sector index inside the current physical slot. */
 	move.w	(PROBE_BANK+STATUS_OFF+0x2A).l, d4
 	DBG_PUT4
+	/* Y/Z: exact pattern-transfer words issued in the first and second
+	   transfer VBlanks. 16 words equal one 32-byte pattern. */
+	move.w	pattern_vblank1_words, d4
+	DBG_PUT3
+	move.w	pattern_vblank2_words, d4
+	DBG_PUT3
+	/* T: number of VBlanks that carried pattern work; I: V-counter when
+	   Pass2 pattern transfer ended, before HUD/NT/CRAM/flip work. */
+	move.w	pattern_transfer_vblanks, d4
+	DBG_PUT1
+	move.w	pattern_exit_v, d4
+	DBG_PUT2
 .endif
 .endif
 .ifdef HUD_HEX_TABLE
@@ -2118,7 +2202,7 @@ publish_dbg:
 	.endr
 .endif
 .ifdef HUD_SUB_POLL_GAP
-	/* Name tables use a 64-cell pitch. H32 resumes the linear 54-cell stream
+	/* Name tables use a 64-cell pitch. H32 resumes the linear 63-cell stream
 	   at logical cell 32; H40 resumes it at logical cell 40. */
 	moveq	#0, d0
 	move.w	back_idx, d0
@@ -2127,13 +2211,15 @@ publish_dbg:
 	add.l	#NT0+0x80, d0
 	bsr	set_vram_write
 .if PC_MODE == 0
-	.rept 11				/* H32 row 1: remaining 22 words */
+	.rept 15				/* H32 row 1: first 30 of 31 words */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+	move.w	(a0)+, (VDP_DATA).l
 .else
-	.rept 7				/* H40 row 1: GGGG KK HHHH XXXX */
+	.rept 11				/* H40 row 1: first 22 of 23 words */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+	move.w	(a0)+, (VDP_DATA).l
 .endif
 .endif
 .else
@@ -2158,6 +2244,20 @@ dbg_put4:
 	bsr	dbg_put2
 	move.w	d3, d4
 	bra	dbg_put2
+
+/* Append three/one hexadecimal digits for the exact split counters. */
+dbg_put3:
+	move.w	d4, d3
+	lsr.w	#8, d4
+	bsr	dbg_put1
+	move.w	d3, d4
+	bra	dbg_put2
+
+dbg_put1:
+	andi.w	#0xF, d4
+	addi.w	#HUD_FONT_VTILE, d4
+	move.w	d4, (a0)+
+	rts
 
 /* Append the low byte as two digits.  Calculate both name-table words directly;
    this is the hot DEBUG formatter and avoids a per-nibble loop and DBRA. */
@@ -2283,6 +2383,14 @@ arm_overshoot:
 	.space 2				/* DEBUG HUD O: flip interval excess over 1024 ticks */
 pass2_entry_q:
 	.space 2				/* DEBUG HUD E: Pass2 entry delay since prev flip, ticks/4 */
+pattern_vblank1_words:
+	.space 2				/* DEBUG HUD Y: exact pattern words in transfer VBlank 1 */
+pattern_vblank2_words:
+	.space 2				/* DEBUG HUD Z: exact pattern words in transfer VBlank 2 */
+pattern_transfer_vblanks:
+	.space 2				/* DEBUG HUD T: VBlanks that carried pattern transfer */
+pattern_exit_v:
+	.space 2				/* DEBUG HUD I: V-counter at Pass2 pattern exit */
 wr_ptr0:
 	.space 4				/* next Wr0 preload address in the currently mapped bank */
 wr_ptr1:

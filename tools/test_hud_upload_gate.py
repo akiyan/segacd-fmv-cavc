@@ -154,7 +154,7 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 7)
+        self.assertEqual(result["schema_version"], 8)
         self.assertEqual(result["gate_fields"], ["S", "D", "R", "M", "J"])
         self.assertEqual(result["diagnostic_fields"], ["C", "A"])
         self.assertEqual(result["c_statistics"], c_stats)
@@ -331,9 +331,12 @@ class HudUploadGateTests(unittest.TestCase):
             {field: 0 for field in "SDRCMJ"},
         )
 
-    def test_h40_combined_diagnostics_preserve_q_g_b_k_h_x(self):
+    def test_h40_combined_diagnostics_preserve_q_g_b_k_h_x_y_z_t_i(self):
         rows = groups(3)
-        for row, gap, slip, msf_gap, prg_min, physical_peak, reader_ahead in zip(
+        for (
+            row, gap, slip, msf_gap, prg_min, physical_peak, reader_ahead,
+            first_words, second_words, transfer_vblanks, exit_vcounter,
+        ) in zip(
             rows,
             (0x0FFF, 0x8000 | 120, 240),
             (0, 3, 5),
@@ -341,6 +344,10 @@ class HudUploadGateTests(unittest.TestCase):
             (64, 32, 16),
             (1, 13376, 12000),
             (0, 0x0203, 0x0108),
+            (0, 3392, 3200),
+            (0, 1088, 800),
+            (0, 2, 2),
+            (0, 0xE9, 0xF2),
             strict=True,
         ):
             row.values.update({
@@ -354,6 +361,10 @@ class HudUploadGateTests(unittest.TestCase):
                 "K": msf_gap,
                 "H": physical_peak,
                 "X": reader_ahead,
+                "Y": first_words,
+                "Z": second_words,
+                "T": transfer_vblanks,
+                "I": exit_vcounter,
             })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hud.tsv"
@@ -370,6 +381,12 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(parsed[1]["reader_ahead_raw16"], str(0x0203))
         self.assertEqual(parsed[1]["reader_ahead_frames"], "2")
         self.assertEqual(parsed[1]["reader_slot_sector"], "3")
+        self.assertEqual(parsed[1]["pattern_vblank1_words"], "3392")
+        self.assertEqual(parsed[1]["pattern_vblank1_patterns"], "212.0000")
+        self.assertEqual(parsed[1]["pattern_vblank2_words"], "1088")
+        self.assertEqual(parsed[1]["pattern_vblank2_patterns"], "68.0000")
+        self.assertEqual(parsed[1]["pattern_transfer_vblanks"], "2")
+        self.assertEqual(parsed[1]["pattern_exit_vcounter"], "E9")
         rows[1].values["S"] = 1
         rows[1].values["K"] = 255
         with tempfile.TemporaryDirectory() as directory:
@@ -384,7 +401,7 @@ class HudUploadGateTests(unittest.TestCase):
         result = self.evaluate(rows, 3)
         self.assertEqual(
             result["diagnostic_fields"],
-            ["C", "A", "Q", "G", "B", "K", "H", "X"],
+            ["C", "A", "Q", "G", "B", "K", "H", "X", "Y", "Z", "T", "I"],
         )
         self.assertEqual(result["prgbuf_minimum_patterns"], 16)
         self.assertEqual(result["apply_guard_blocked_frames"], 1)
@@ -402,6 +419,10 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["reader_ahead_max_raw16"], 0x0203)
         self.assertEqual(result["reader_ahead_max_frames"], 2)
         self.assertEqual(result["reader_ahead_max_slot_sector"], 3)
+        self.assertEqual(result["pattern_vblank1_max_words"], 3392)
+        self.assertEqual(result["pattern_vblank2_max_words"], 1088)
+        self.assertEqual(result["pattern_transfer_vblank_max"], 2)
+        self.assertEqual(result["pattern_exit_vcounter_max"], 0xF2)
         self.assertEqual(result["status"], "PASS")
 
 

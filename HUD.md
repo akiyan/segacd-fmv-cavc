@@ -28,7 +28,7 @@ Build the profile with DEBUG enabled:
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Specialized H32 and H40 DEBUG builds use the same 54-cell combined layout.
+Specialized H32 and H40 DEBUG builds use the same 63-cell combined layout.
 H32 wraps it after 32 cells and H40 after 40 cells. Release builds omit it.
 
 `tools/record_movie.sh` uses a DEBUG disc by default. Release builds omit the
@@ -43,22 +43,23 @@ separators in the actual image. Spaces below show the field boundaries:
 ```text
 row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
 H32 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQ
-H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX
+H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX YYY ZZZ T II
 H40 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
-H40 row 1:   GGGG KK HHHH XXXX
+H40 row 1:   GGGG KK HHHH XXXX YYY ZZZ T II
 ```
 
 The fixed interpretation order is:
 
 ```text
-F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X
+F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X / Y / Z / T / I
 ```
 
 H32 and H40 use the same logical field stream. Every digit occupies one 8x8
 cell. The four-digit signed PrgBuf minimum `Q`, the three flip-phase fields,
-and `G/K/H/X` follow the 30-cell common prefix. H32 fills its remaining two
-row-0 cells with the first half of `Q`, then continues the other 22 cells on
-row 1. H40 fits `Q/V/O/E` on row 0 and continues `G/K/H/X` on row 1.
+and `G/K/H/X/Y/Z/T/I` follow the 30-cell common prefix. H32 fills its remaining
+two row-0 cells with the first half of `Q`, then continues the other 31 cells
+on row 1. H40 fits `Q/V/O/E` on row 0 and continues the other 23 cells on
+row 1.
 
 | Field | HUD row | Cell columns | Native pixel range | Digits |
 |---|---:|---:|---:|---:|
@@ -83,6 +84,10 @@ row 1. H40 fits `Q/V/O/E` on row 0 and continues `G/K/H/X` on row 1.
 | `K` (H32) | 1 | 12-13 | x=96-111 | 2 |
 | `H` (H32) | 1 | 14-17 | x=112-143 | 4 |
 | `X` (H32) | 1 | 18-21 | x=144-175 | 4 |
+| `Y` (H32) | 1 | 22-24 | x=176-199 | 3 |
+| `Z` (H32) | 1 | 25-27 | x=200-223 | 3 |
+| `T` (H32) | 1 | 28 | x=224-231 | 1 |
+| `I` (H32) | 1 | 29-30 | x=232-247 | 2 |
 | `Q` (H40) | 0 | 30-33 | x=240-271 | 4 |
 | `V` (H40) | 0 | 34-35 | x=272-287 | 2 |
 | `O` (H40) | 0 | 36-37 | x=288-303 | 2 |
@@ -91,9 +96,13 @@ row 1. H40 fits `Q/V/O/E` on row 0 and continues `G/K/H/X` on row 1.
 | `K` (H40) | 1 | 4-5 | x=32-47 | 2 |
 | `H` (H40) | 1 | 6-9 | x=48-79 | 4 |
 | `X` (H40) | 1 | 10-13 | x=80-111 | 4 |
+| `Y` (H40) | 1 | 14-16 | x=112-135 | 3 |
+| `Z` (H40) | 1 | 17-19 | x=136-159 | 3 |
+| `T` (H40) | 1 | 20 | x=160-167 | 1 |
+| `I` (H40) | 1 | 21-22 | x=168-183 | 2 |
 
 The common part covers 30 cells or 240 pixels. The complete HUD covers 32
-cells on H32 row 0 plus 22 on row 1, or 40 cells on H40 row 0 plus 14 on row 1.
+cells on H32 row 0 plus 31 on row 1, or 40 cells on H40 row 0 plus 23 on row 1.
 It can cover active picture content; it is not repositioned around
 letterboxing.
 
@@ -133,7 +142,9 @@ median, and maximum of both `C` and `A` across the timed first loop and preserve
 them in the gate JSON and hudline receipt. When `G` is present, they also
 report its minimum, mean, median, and maximum after separating the packed `B`
 marker. `H` reports the exact physical peak and `X` reports the reader lead.
-`G`, `B`, `K`, `H`, and `X` are diagnostic only and never alter the gate.
+`Y/Z/T/I` report the Main pattern-transfer split and its exit phase.
+`G`, `B`, `K`, `H`, `X`, `Y`, `Z`, `T`, and `I` are diagnostic only and
+never alter the gate.
 
 The black player-only frame -1 uses `F=FFFF` before frame 0. It is an OCR
 sentinel, not a stream frame, and is never written as a HUD TSV row. Frame 0
@@ -168,6 +179,10 @@ available.
 | `K` | Sub | cumulative | MSF sequence-gap recovery count | Compare with `S`; `S-K` is the CDC_TRN retry-exhaustion count |
 | `H` | Sub | per frame | Maximum physical PrgBuf occupancy, in exact 32-byte patterns | Below `3440` stays below the 418 KiB payload back-pressure boundary |
 | `X` | Sub | per frame | CD reader position ahead of the next frame expansion; high byte is complete frame slots, low byte is sector position in the current slot | Read with `H`; large lead is safe only while every destination retains space |
+| `Y` | Main | per frame | Exact pattern-transfer words issued in the first transfer VBlank | Divide by 16 for whole 32-byte patterns; read with `Z/T` |
+| `Z` | Main | per frame | Exact pattern-transfer words issued in the second transfer VBlank | The second share should leave enough time for name table, HUD, palette work, and flip |
+| `T` | Main | per frame | Number of VBlanks that carried pattern transfer | `01` or `02` is the intended one-/two-VBlank path; `03+` proves a further transfer spill |
+| `I` | Main | per frame | V-counter when pattern transfer ended, before the remaining deadline work | Read with `Z` and the following row's `V/O`; it measures phase, not gate status |
 | `V` | Main | previous frame | V-counter at the last accepted display flip | `E0` = flip at the VBlank start; higher blank lines mean the flip ran late inside its blank |
 | `O` | Main | previous frame | That flip's interval excess over 1024 stopwatch ticks | About `3E` (62 = nominal 1086-tick N2 interval); `FF` marks a slipped 3-field frame |
 | `E` | Main | per frame | Pass2 entry delay since the previous flip, in 4-tick units | Below one field (`88` = 544 ticks) with margin; approaching the field-1 blank end means the transfer is about to miss its VBlank |
@@ -176,8 +191,8 @@ available.
 once incremented, they remain nonzero until playback restarts, and the displayed
 low byte wraps from `FF` to `00`. `J` is also cumulative but retains the
 largest observed excess rather than counting events. `C`, `W`, `M`, `A`, `U`,
-`N`, `Q`, `G`, `B`, `H`, and `X` describe one frame. `K` is cumulative. `F`,
-`P`, and `L` describe current player state.
+`N`, `Q`, `G`, `B`, `H`, `X`, `Y`, `Z`, `T`, and `I` describe one frame.
+`K` is cumulative. `F`, `P`, and `L` describe current player state.
 `V` and `O` are sampled at `do_flip` *after* the flip register write, so the
 row that carries them was built one frame later: frame `F`'s row shows the
 flip that published frame `F - 1`. Shift by one frame when correlating them
@@ -393,6 +408,25 @@ the destination buffers have space, but lead concurrent with `H=3440` proves
 that physical PrgBuf back-pressure can stop a continuously arriving payload
 sector. Both fields are observational and have no upload-gate threshold.
 
+### `Y` / `Z` / `T` / `I`: Main pattern-transfer split
+
+`Y` and `Z` are the exact word counts issued by the pattern path in its first
+and second transfer VBlanks. Sixteen words make one 32-byte pattern. A DMA run
+may be cut at a word-budget boundary, so either value can contain a partial
+pattern even though their sum still accounts for the exact transfer.
+
+`T` counts every VBlank that carried pattern work. `T=01` means all pattern
+work fit in one VBlank, `T=02` means the intended two-VBlank split was used,
+and `T=03` or more proves that the transfer itself needed an additional blank.
+When `T<=02`, `Y+Z` equals the frame's complete pattern word count. When
+`T>=03`, `Y+Z` intentionally covers only the first two VBlanks.
+
+`I` is the raw V-counter high byte sampled when the pattern path finishes,
+before HUD publication, name-table DMA, CRAM replacement, and display flip.
+Read it with the second share `Z` and with `V/O` from the following HUD row.
+It distinguishes a late pattern tail from work that spills after the tail.
+All four fields are observational and have no upload-gate threshold.
+
 ### `G` / `B` / `K`: Sub pump and control back-pressure
 
 `G` is the longest interval in one frame between Sub-CPU CDC service
@@ -447,6 +481,10 @@ VBlank.
 | `A` rises with `W`, while `C` stays low | ADPCM decode or its internal low-rate CDC service is the stronger Sub-side cost |
 | `N` rises with `U` | Run fragmentation is increasing Main fixed transfer overhead |
 | `U` rises while `N` stays modest | Larger pattern volume or VBlank splitting dominates rather than descriptor count |
+| `T=02` and `Y+Z` matches the frame's pattern words | The intended two-VBlank pattern split completed |
+| `T>=03` | Pattern transfer itself consumed a third or later VBlank |
+| `T=02`, `I` is early, but the following row's `O=FF` | Pattern work finished in the second blank; later HUD/name-table/palette/flip work caused the visible hold |
+| `T=02` and `I` is near the terminal blank | The second pattern share left little margin for the remaining deadline work |
 | `M` reaches `02` or more | Main pattern work crossed an extra VBlank deadline |
 | `P` changes with stable `S/D` | Normal scheduled CRAM segment switch |
 | `J` changes from `00` | Streaming occupancy used part of the physical jitter reserve |
@@ -467,13 +505,13 @@ the packed stream when investigating a regression.
 The HUD does not use the Window plane. For each frame the Main CPU:
 
 1. builds the complete next movie name table in the inactive Plane A table;
-2. formats the HUD into one 108-byte Main-RAM staging block in both modes;
-3. overwrites 32 cells of H32 row 0 plus 22 of row 1, or 40 cells of H40 row 0
-   plus 14 of row 1;
+2. formats the HUD into one 126-byte Main-RAM staging block in both modes;
+3. overwrites 32 cells of H32 row 0 plus 31 of row 1, or 40 cells of H40 row 0
+   plus 23 of row 1;
 4. selects that completed table with the same register-2 flip as the movie.
 
 The inactive tables are at VRAM `0xC000` and `0xE000`. Publishing the HUD uses
-27 longword writes in either mode and no DMA. Unoccupied cells retain
+31 longword writes plus one word write in either mode and no DMA. Unoccupied cells retain
 their movie entries, which avoids exposing an unrelated Plane B frame.
 
 The final flip has a terminal-VBlank guard: V-counter lines `FC` through `FF`
@@ -556,7 +594,9 @@ For current H32/H40 combined HUDs, the TSV preserves `Q` as
 diagnostic writes `prgbuf_physical_peak_patterns`, `reader_ahead_raw16`,
 `reader_ahead_frames`, and `reader_slot_sector`. `/hudline` and `/mixline`
 always include those rows plus G/B and H/X summaries when the columns are
-present.
+present. The pattern-split diagnostic writes `pattern_vblank1_words`,
+`pattern_vblank2_words`, `pattern_transfer_vblanks`, and
+`pattern_exit_vcounter`; the same renderers preserve those rows and maxima.
 
 The reproducible glyph/layout proof is:
 
@@ -608,7 +648,7 @@ ProfileをDEBUG付きでbuildします。
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Specialized H32/H40 DEBUGは同じ54-cell combined layoutを使います。
+Specialized H32/H40 DEBUGは同じ63-cell combined layoutを使います。
 H32は32 cell、H40は40 cellで折り返します。Release buildはHUDを省きます。
 
 `tools/record_movie.sh`は既定でDEBUG discを使います。Release buildはHUDを省き、
@@ -623,21 +663,22 @@ field boundaryを示します。
 ```text
 row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
 H32 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQ
-H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX
+H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX YYY ZZZ T II
 H40 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
-H40 row 1:   GGGG KK HHHH XXXX
+H40 row 1:   GGGG KK HHHH XXXX YYY ZZZ T II
 ```
 
 固定解釈順は次のとおりです。
 
 ```text
-F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X
+F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X / Y / Z / T / I
 ```
 
 H32とH40は同じlogical field streamを使います。1 digitは1つの8x8 cellです。
 30-cell common prefixの後に、4桁のsigned PrgBuf minimum `Q`、3つのflip-phase
-field、`G/K/H/X`が続きます。H32はrow 0の残り2 cellへ`Q`の前半を書き、残る
-22 cellをrow 1へ続けます。H40はrow 0へ`Q/V/O/E`、row 1へ`G/K/H/X`を書きます。
+field、`G/K/H/X/Y/Z/T/I`が続きます。H32はrow 0の残り2 cellへ`Q`の前半を書き、
+残る31 cellをrow 1へ続けます。H40はrow 0へ`Q/V/O/E`、残る23 cellをrow 1へ
+続けます。
 
 | Field | HUD row | Cell columns | Native pixel range | Digits |
 |---|---:|---:|---:|---:|
@@ -662,6 +703,10 @@ field、`G/K/H/X`が続きます。H32はrow 0の残り2 cellへ`Q`の前半を�
 | `K`（H32） | 1 | 12-13 | x=96-111 | 2 |
 | `H`（H32） | 1 | 14-17 | x=112-143 | 4 |
 | `X`（H32） | 1 | 18-21 | x=144-175 | 4 |
+| `Y`（H32） | 1 | 22-24 | x=176-199 | 3 |
+| `Z`（H32） | 1 | 25-27 | x=200-223 | 3 |
+| `T`（H32） | 1 | 28 | x=224-231 | 1 |
+| `I`（H32） | 1 | 29-30 | x=232-247 | 2 |
 | `Q`（H40） | 0 | 30-33 | x=240-271 | 4 |
 | `V`（H40） | 0 | 34-35 | x=272-287 | 2 |
 | `O`（H40） | 0 | 36-37 | x=288-303 | 2 |
@@ -670,9 +715,13 @@ field、`G/K/H/X`が続きます。H32はrow 0の残り2 cellへ`Q`の前半を�
 | `K`（H40） | 1 | 4-5 | x=32-47 | 2 |
 | `H`（H40） | 1 | 6-9 | x=48-79 | 4 |
 | `X`（H40） | 1 | 10-13 | x=80-111 | 4 |
+| `Y`（H40） | 1 | 14-16 | x=112-135 | 3 |
+| `Z`（H40） | 1 | 17-19 | x=136-159 | 3 |
+| `T`（H40） | 1 | 20 | x=160-167 | 1 |
+| `I`（H40） | 1 | 21-22 | x=168-183 | 2 |
 
 共通部は30 cell、240 pixelです。Complete HUDはH32ではrow 0の32 cellとrow 1の
-22 cell、H40ではrow 0の40 cellとrow 1の14 cellを使います。Active pictureを
+31 cell、H40ではrow 0の40 cellとrow 1の23 cellを使います。Active pictureを
 覆う場合があり、letterboxに合わせて移動しません。
 
 Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体から2値の
@@ -705,7 +754,8 @@ Delivery-paced playbackはhistogramを記録しますが、exact duration warnin
 minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
 `G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
 報告します。`H`はexact physical peak、`X`はreader leadを報告します。
-`G/B/K/H/X`はdiagnostic専用でgateを変えません。
+`Y/Z/T/I`はMain pattern-transfer splitとexit phaseを報告します。
+`G/B/K/H/X/Y/Z/T/I`はdiagnostic専用でgateを変えません。
 
 Player-onlyの黒いframe -1はframe 0の前に `F=FFFF` を使います。これはOCR
 sentinelでstream frameではなく、HUD TSV rowにも書きません。Frame 0はuntimed boot
@@ -738,13 +788,18 @@ Final frameは次のmovie-frame transitionがないため、derived VBlankはunk
 | `K` | Sub | cumulative | MSF sequence-gap recovery count | `S`と比較し、`S-K`をCDC_TRN retry-exhaustion countとして読む |
 | `H` | Sub | per frame | exact 32-byte pattern単位のphysical PrgBuf maximum | `3440`未満なら418 KiB payload back-pressure boundary未満 |
 | `X` | Sub | per frame | 次frame展開に対するCD reader位置。high byteは完了frame slot数、low byteはcurrent slot内sector位置 | `H`と一緒に読み、全destinationに空きがある場合だけ大きなleadが安全 |
+| `Y` | Main | per frame | 1つ目のtransfer VBlankで発行したexact pattern-transfer word数 | 16で割るとcompleteな32-byte pattern数。`Z/T`と一緒に読む |
+| `Z` | Main | per frame | 2つ目のtransfer VBlankで発行したexact pattern-transfer word数 | name table、HUD、palette work、flipの時間を残す必要がある |
+| `T` | Main | per frame | pattern transferを行ったVBlank数 | `01`または`02`が意図した1/2-VBlank path。`03+`は追加transfer spill |
+| `I` | Main | per frame | pattern transfer終了時、残りdeadline work前のV-counter | `Z`と次rowの`V/O`を一緒に読むphase値。Gate statusではない |
 | `V` | Main | previous frame | accepted display flip時のV-counter | `E0`ならVBlank start。大きいblank lineはlate flip |
 | `O` | Main | previous frame | flip intervalの1024 tick超過分 | nominal N2は約`3E`、`FF`は3-field slip |
 | `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位 | 1 field未満で余裕を持つ。`88`は544 tick |
 
 `S`、`D`、`R`はcumulative counterで、一度増えるとrestartまでnonzeroです。表示low byteは
 `FF`から`00`へwrapします。`J`もcumulativeですがevent数ではなく最大excessを保持します。
-`C/W/M/A/U/N/Q/G/B/H/X`は1 frame、`K`はcumulative、`F/P/L`はcurrent stateです。
+`C/W/M/A/U/N/Q/G/B/H/X/Y/Z/T/I`は1 frame、`K`はcumulative、`F/P/L`は
+current stateです。
 
 `V/O`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
 作られます。Frame `F`のrowはframe `F - 1`をpublishしたflipを示すため、per-frame
@@ -928,6 +983,22 @@ Destination bufferに空きがあるreader leadは有用なprefetchですが、`
 continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得る状態です。
 両fieldとも観測専用でupload-gate thresholdはありません。
 
+### `Y` / `Z` / `T` / `I`: Main pattern-transfer split
+
+`Y`と`Z`はpattern pathが1つ目と2つ目のtransfer VBlankで発行したexact word countです。
+16 wordで1つの32-byte patternです。DMA runはword-budget boundaryで分割され得るため、
+どちらかがpartial patternを含むことがありますが、合計はexact transferを表します。
+
+`T`はpattern workを行った全VBlankを数えます。`T=01`は1 VBlank内、`T=02`は意図した
+2-VBlank split、`T=03`以上はtransfer自体が追加blankを必要とした証拠です。`T<=02`
+なら`Y+Z`はframe全体のpattern word数です。`T>=03`なら`Y+Z`は意図的に最初の2
+VBlankだけを表します。
+
+`I`はpattern path終了時、HUD publication、name-table DMA、CRAM replacement、
+display flipより前にsampleしたraw V-counter high byteです。2つ目のshare `Z`と、
+次のHUD rowの`V/O`を一緒に読みます。Pattern tailがlateなのか、tail後のworkが
+spillしたのかを分けます。4 fieldとも観測専用でupload-gate thresholdはありません。
+
 ### `G` / `B` / `K`: Sub pumpとcontrol back-pressure
 
 `G`は1 frame内のSub CPU CDC service opportunity間で最長のintervalです。Low 12 bitを
@@ -974,6 +1045,10 @@ bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main pha
 | `A`と`W`が上昇し`C`は低い | ADPCM decodeまたはinternal CDC serviceがSub側主要cost |
 | `N`と`U`が同時上昇 | Run fragmentationがMain fixed overheadを増加 |
 | `U`上昇、`N`は小さい | Descriptor数よりpattern volumeまたはVBlank splitが支配 |
+| `T=02`かつ`Y+Z`がframeのpattern word数と一致 | 意図した2-VBlank pattern splitが完了 |
+| `T>=03` | Pattern transfer自体が3つ目以降のVBlankを消費 |
+| `T=02`で`I`はearly、次rowの`O=FF` | Pattern workは2つ目のblankで完了し、後続HUD/name-table/palette/flip workがvisible holdを発生 |
+| `T=02`で`I`がterminal blank近く | 2つ目のpattern share後に残るdeadline marginが小さい |
 | `M>=02` | Main pattern workがextra VBlank deadlineをcross |
 | `P`変化、`S/D`安定 | 正常なscheduled CRAM segment switch |
 | `J`が`00`から変化 | Physical jitter reserveを使用 |
@@ -994,13 +1069,13 @@ streamを使います。
 HUDはWindow planeを使いません。各frameでMain CPUは次を行います。
 
 1. inactive Plane A tableへcomplete next movie name tableを構築
-2. 両modeとも108-byte Main-RAM staging blockへHUDをformat
-3. H32ではrow 0の32 cellとrow 1の22 cell、H40ではrow 0の40 cellとrow 1の
-   14 cellを上書き
+2. 両modeとも126-byte Main-RAM staging blockへHUDをformat
+3. H32ではrow 0の32 cellとrow 1の31 cell、H40ではrow 0の40 cellとrow 1の
+   23 cellを上書き
 4. Movieと同じregister-2 flipでcompleted tableを選択
 
 Inactive tableはVRAM `0xC000`と`0xE000`です。HUD publicationは両modeとも
-27 longword writeを使い、DMAは使いません。
+31 longword writeと1 word writeを使い、DMAは使いません。
 未使用cellはmovie entryを保持し、無関係なPlane B frameを露出しません。
 
 Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで
@@ -1074,6 +1149,9 @@ signed valueを`prgbuf_min_patterns_signed`へdecodeし、positiveなdebt magnit
 `prgbuf_physical_peak_patterns`、`reader_ahead_raw16`、
 `reader_ahead_frames`、`reader_slot_sector`を書きます。Columnがあれば
 `/hudline`と`/mixline`は常にそれらのrowとG/BおよびH/X summaryを含めます。
+Pattern-split diagnosticは`pattern_vblank1_words`、
+`pattern_vblank2_words`、`pattern_transfer_vblanks`、
+`pattern_exit_vcounter`を書き、同じrendererがそのrowとmaximumを保持します。
 
 Glyph/layoutのreproducible proofは次です。
 

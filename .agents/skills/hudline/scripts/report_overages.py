@@ -58,6 +58,10 @@ HUD_COLUMNS = (
     ("K", "slip_msf_gap_count", 2),
     ("H", "prgbuf_physical_peak_patterns", 4),
     ("X", "reader_ahead_raw16", 4),
+    ("Y", "pattern_vblank1_words", 3),
+    ("Z", "pattern_vblank2_words", 3),
+    ("T", "pattern_transfer_vblanks", 1),
+    ("I", "pattern_exit_vcounter", 2),
     ("V", "flip_vcounter", 2),
     ("O", "flip_interval_excess_ticks", 2),
     ("E", "pass2_entry_q4", 2),
@@ -262,6 +266,10 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
         ("H", "prgbuf_physical_peak_patterns",
          "prgbuf_physical_peak_patterns"),
         ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
+        ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
+        ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
+        ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
+        ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
     ):
         present = has_values(rows, column)
         declared = field in gate.get("diagnostic_fields", ())
@@ -381,6 +389,10 @@ def render_markdown(
                     "slip_msf_gap_count",
                     "prgbuf_physical_peak_patterns",
                     "reader_ahead_raw16",
+                    "pattern_vblank1_words",
+                    "pattern_vblank2_words",
+                    "pattern_transfer_vblanks",
+                    "pattern_exit_vcounter",
                     "flip_vcounter",
                     "flip_interval_excess_ticks",
                     "pass2_entry_q4",
@@ -447,6 +459,29 @@ def render_markdown(
             "X reader lead (timed first loop): "
             f"{reader_ahead >> 8} complete frame slots + "
             f"sector {reader_ahead & 0xFF}."
+        )
+    split_columns = (
+        ("Y", "pattern_vblank1_words"),
+        ("Z", "pattern_vblank2_words"),
+        ("T", "pattern_transfer_vblanks"),
+        ("I", "pattern_exit_vcounter"),
+    )
+    if all(
+        column in fields and has_values(rows, column)
+        for _field, column in split_columns
+    ):
+        split_maxima = {
+            field: max(as_int(row, column) for row in rows[1:])
+            for field, column in split_columns
+        }
+        summary.append(
+            "Y/Z/T/I Main transfer split maxima "
+            f"(timed first loop): {split_maxima['Y']}/"
+            f"{split_maxima['Z']} words "
+            f"({split_maxima['Y'] / 16:g}/"
+            f"{split_maxima['Z'] / 16:g} patterns), "
+            f"{split_maxima['T']} VBlanks, "
+            f"exit V-counter {split_maxima['I']:02X}."
         )
     summary.append(
         "C is diagnostic only and does not affect the HUD gate status."
