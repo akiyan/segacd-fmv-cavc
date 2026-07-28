@@ -154,7 +154,7 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 10)
+        self.assertEqual(result["schema_version"], 11)
         self.assertEqual(result["gate_fields"], ["S", "D", "R", "M", "J"])
         self.assertEqual(result["warning_fields"], ["M"])
         self.assertEqual(result["diagnostic_fields"], ["C", "A"])
@@ -377,6 +377,8 @@ class HudUploadGateTests(unittest.TestCase):
                 "Z": second_words,
                 "T": transfer_vblanks,
                 "I": exit_vcounter,
+                "Y3": 0,
+                "Y4": 0,
             })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hud.tsv"
@@ -398,6 +400,8 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(parsed[1]["pattern_vblank1_exit_vcounter"], "E8")
         self.assertEqual(parsed[1]["pattern_vblank2_words"], "1088")
         self.assertEqual(parsed[1]["pattern_vblank2_patterns"], "68.0000")
+        self.assertEqual(parsed[1]["pattern_vblank3_words"], "0")
+        self.assertEqual(parsed[1]["pattern_vblank4_words"], "0")
         self.assertEqual(parsed[1]["pattern_transfer_vblanks"], "2")
         self.assertEqual(parsed[1]["pattern_exit_vcounter"], "E9")
         rows[1].values["S"] = 1
@@ -415,7 +419,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(
             result["diagnostic_fields"],
             ["C", "A", "Q", "G", "B", "K", "H", "X",
-             "Y", "O", "Z", "T", "I"],
+             "Y", "O", "Z", "T", "I", "Y3", "Y4"],
         )
         self.assertEqual(result["prgbuf_minimum_patterns"], 16)
         self.assertEqual(result["apply_guard_blocked_frames"], 1)
@@ -436,9 +440,23 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["pattern_vblank1_max_words"], 3392)
         self.assertEqual(result["pattern_vblank1_exit_vcounter_max"], 0xF1)
         self.assertEqual(result["pattern_vblank2_max_words"], 1088)
+        self.assertEqual(result["pattern_vblank3_max_words"], 0)
+        self.assertEqual(result["pattern_vblank4_max_words"], 0)
         self.assertEqual(result["pattern_transfer_vblank_max"], 2)
         self.assertEqual(result["pattern_exit_vcounter_max"], 0xF2)
         self.assertEqual(result["status"], "PASS")
+
+    def test_transfer_vblank_count_over_fixed_n_is_warning(self):
+        rows = groups(4)
+        for row in rows:
+            row.values["T"] = 3
+        result = self.evaluate(rows, 4, 30)
+        self.assertEqual(result["gate"], "PASS")
+        self.assertEqual(result["alert"], "WARNING")
+        self.assertTrue(any(
+            "T peak 3 exceeds fixed-N transfer window count 2" in text
+            for text in result["warnings"]
+        ))
 
 
 if __name__ == "__main__":

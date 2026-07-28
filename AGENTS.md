@@ -232,7 +232,7 @@ within Sega CD limits, not fixed presets:
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
   CPU through full lookup tables duplicated in both physical 1M Word-RAM
-  banks. It is the only audio format in on-disc format version 20. Physical
+  banks. It is the only audio format in on-disc format version 21. Physical
   hardware and additional modes/cadences are broader compatibility checks
   rather than implementation blockers (see [ADPCM.md](ADPCM.md)). Z80 offload
   remains shelved because BUSREQ-based feeding contends with Main CPU video

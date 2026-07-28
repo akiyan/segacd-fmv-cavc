@@ -323,6 +323,8 @@ def validate(
         ("O", "pattern_vblank1_exit_vcounter",
          "pattern_vblank1_exit_vcounter_max"),
         ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
+        ("Y3", "pattern_vblank3_words", "pattern_vblank3_max_words"),
+        ("Y4", "pattern_vblank4_words", "pattern_vblank4_max_words"),
         ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
         ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
     ):
@@ -560,12 +562,32 @@ def row_specs(
                 (78, 159, 217),
             )
         )
+    if "pattern_vblank3_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank3_words",
+                "Y3 PATTERN VB3",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank3_words")),
+                (63, 133, 198),
+            )
+        )
+    if "pattern_vblank4_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank4_words",
+                "Y4 PATTERN VB4",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank4_words")),
+                (48, 111, 176),
+            )
+        )
     if "pattern_transfer_vblanks" in data:
         rows.append(
             RowSpec(
                 "pattern_transfer_vblanks",
-                "T  PLANNED GROUPS",
-                "encoded VBlank groups/frame",
+                "T  TRANSFER VBLANKS",
+                "VBlanks carrying pattern work/frame",
                 max(2, timed_max("pattern_transfer_vblanks")),
                 (238, 157, 82),
             )
@@ -939,6 +961,8 @@ def main() -> None:
             ("Y", "pattern_vblank1_words"),
             ("O", "pattern_vblank1_exit_vcounter"),
             ("Z", "pattern_vblank2_words"),
+            ("Y3", "pattern_vblank3_words"),
+            ("Y4", "pattern_vblank4_words"),
             ("T", "pattern_transfer_vblanks"),
             ("I", "pattern_exit_vcounter"),
         )
@@ -967,13 +991,21 @@ def main() -> None:
         f"X max {x_maximum >> 8} frames + sector {x_maximum & 0xFF}; "
         if x_maximum is not None else ""
     )
+    later_split_text = (
+        f"; VB3/VB4 {split_maxima['Y3']}/{split_maxima['Y4']} words"
+        if split_maxima["Y3"] is not None and split_maxima["Y4"] is not None
+        else ""
+    )
     transfer_split_text = (
-        "Y/Z words max "
+        "VB1/VB2 words max "
         f"{split_maxima['Y']}/{split_maxima['Z']} words "
-        f"({split_maxima['Y'] / 16:g}/{split_maxima['Z'] / 16:g} patterns); "
+        f"({split_maxima['Y'] / 16:g}/{split_maxima['Z'] / 16:g} patterns)"
+        f"{later_split_text}; "
         f"O first-exit max {split_maxima['O']:02X}; "
         f"T max {split_maxima['T']}; I max {split_maxima['I']:02X}; "
-        if all(value is not None for value in split_maxima.values())
+        if all(
+            split_maxima[key] is not None for key in ("Y", "O", "Z", "T", "I")
+        )
         else ""
     )
     phase_note = (
@@ -1173,6 +1205,8 @@ def main() -> None:
         "pattern_vblank1_max_words": split_maxima["Y"],
         "pattern_vblank1_exit_vcounter_max": split_maxima["O"],
         "pattern_vblank2_max_words": split_maxima["Z"],
+        "pattern_vblank3_max_words": split_maxima["Y3"],
+        "pattern_vblank4_max_words": split_maxima["Y4"],
         "pattern_transfer_vblank_max": split_maxima["T"],
         "pattern_exit_vcounter_max": split_maxima["I"],
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),

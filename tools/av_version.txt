@@ -11,6 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p123: Restore p112's runtime residual-budget run splitting on the current
+#         TTRC v21 stream. Preserve the first VBlank tail, share the guarded
+#         fixed-N deadline with the final name-table/HUD/CRAM/flip work, derive
+#         the cadence limit from N=2/N=4, and expose exact runtime VB1--VB4
+#         pattern words plus transfer-window overrun warnings in the DEBUG HUD.
 #   p122: Preserve the hidden name-table base across each compact final DEBUG
 #         HUD address command. The VDP command helper clobbers d2, so keep the
 #         base in d3 and restore accurate M/U/O/Y/Z/T/I values after group 2.
@@ -1064,4 +1069,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=154
-p=122
+p=123

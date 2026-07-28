@@ -25,9 +25,10 @@ The startup-specific fields are:
 The startup fields use two hexadecimal digits. `U` uses four digits and `N`
 uses two. The extra counters exist only in a `DEBUG=1` player and add no DMA.
 
-Standard H32/H40 DEBUG builds carry the same `Q/V/O/E/G/K/H/X/Y/Z/T/I`
-information as one 63-cell stream. H32 wraps after 32 cells (`Q` crosses the
-row boundary); H40 wraps after 40 cells (`G/K/H/X/Y/Z/T/I` occupy row 1).
+Standard H32/H40 DEBUG builds carry the same
+`Q/V/O/E/G/K/H/X/Y/Z/T/I/Y3/Y4` information as one 69-cell stream. H32 wraps
+into three 32-cell rows (`Q` and `Y3` cross row boundaries); H40 wraps into
+two 40-cell rows (`G/K/H/X/Y/Z/T/I/Y3/Y4` occupy row 1).
 Supplying either profile selects
 the matching combined layout automatically. `G` is the longest interval outside a Sub CDC pump
 opportunity in 30.72 us ticks; its bit 15 becomes the separate per-frame APPLY
@@ -35,9 +36,10 @@ back-pressure field `B`. `K` is the cumulative MSF-gap recovery count, and the
 TSV derives CDC_TRN retry exhaustion as `(S-K) & 0xFF`. `H` is the per-frame
 physical PrgBuf peak in exact 32-byte patterns. `X` packs complete reader
 frame slots ahead in its high byte and the current slot's sector index in its
-low byte. `Y/Z` are the exact word shares of the first two pattern-transfer
-VBlanks, `O/I` are their first/final exit V-counters, and `T` is the number of
-VBlanks that carried pattern work. Keep `--flip-fields`
+low byte. `Y/Z/Y3/Y4` are the exact word shares of the first four runtime
+pattern-transfer VBlanks, `O/I` are their first/final exit V-counters, and `T`
+is the total number of VBlanks that carried pattern work. Fixed-N `T>N`
+raises alert `WARNING` without failing the gate. Keep `--flip-fields`
 and `--poll-gap-fields` only for legacy one-row H40 recordings; use
 `--combined-fields` only when parsing a standard H32/H40 recording without a
 profile.
@@ -73,8 +75,8 @@ loop; untimed frame 0 and later loops are excluded. The same statistics are
 stored in the gate JSON. `C` is diagnostic only and does not affect the gate
 status. Standard H32/H40 parsing and legacy `--poll-gap-fields` both preserve G
 minimum/mean/median/maximum and the B frame count in the report and gate JSON;
-standard parsing also preserves H/X maxima. `/hudline` and `/mixline` render
-G/B/K/H/X permanently. The TSV contains one row
+standard parsing also preserves H/X and Y/Z/Y3/Y4/T/I maxima. `/hudline` and
+`/mixline` render G/B/K/H/X/Y/Z/Y3/Y4/T/I permanently. The TSV contains one row
 per aggregated movie frame.
 Transition rows additionally carry the previous and next lead, which makes
 preload-to-live boundary failures easy to compare between A/B recordings. With

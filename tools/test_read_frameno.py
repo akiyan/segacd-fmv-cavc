@@ -32,13 +32,13 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.99)
 
     def test_combined_layout_wraps_at_each_native_width(self) -> None:
-        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 63)
-        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 63)
+        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 69)
+        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 69)
         self.assertEqual(
             read_frameno.hud_layout_dimensions(
                 read_frameno.HUD_H32_COMBINED_LAYOUT
             ),
-            (32, 2),
+            (32, 3),
         )
         self.assertEqual(
             read_frameno.hud_layout_dimensions(

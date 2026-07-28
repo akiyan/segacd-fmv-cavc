@@ -61,6 +61,8 @@ HUD_COLUMNS = (
     ("Y", "pattern_vblank1_words", 3),
     ("O", "pattern_vblank1_exit_vcounter", 2),
     ("Z", "pattern_vblank2_words", 3),
+    ("Y3", "pattern_vblank3_words", 3),
+    ("Y4", "pattern_vblank4_words", 3),
     ("T", "pattern_transfer_vblanks", 1),
     ("I", "pattern_exit_vcounter", 2),
     ("V", "flip_vcounter", 2),
@@ -270,6 +272,8 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
         ("O", "pattern_vblank1_exit_vcounter",
          "pattern_vblank1_exit_vcounter_max"),
         ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
+        ("Y3", "pattern_vblank3_words", "pattern_vblank3_max_words"),
+        ("Y4", "pattern_vblank4_words", "pattern_vblank4_max_words"),
         ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
         ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
     ):
@@ -399,6 +403,8 @@ def render_markdown(
                     "pattern_vblank1_words",
                     "pattern_vblank1_exit_vcounter",
                     "pattern_vblank2_words",
+                    "pattern_vblank3_words",
+                    "pattern_vblank4_words",
                     "pattern_transfer_vblanks",
                     "pattern_exit_vcounter",
                     "flip_vcounter",
@@ -482,14 +488,28 @@ def render_markdown(
             field: max(as_int(row, column) for row in rows[1:])
             for field, column in split_columns
         }
+        later_columns = (
+            ("Y3", "pattern_vblank3_words"),
+            ("Y4", "pattern_vblank4_words"),
+        )
+        later_maxima = {
+            field: max(as_int(row, column) for row in rows[1:])
+            for field, column in later_columns
+            if column in fields and has_values(rows, column)
+        }
+        later_text = (
+            f", VB3/VB4 {later_maxima['Y3']}/{later_maxima['Y4']} words"
+            if len(later_maxima) == 2 else ""
+        )
         summary.append(
-            "Y/O/Z/T/I Main transfer split maxima "
+            "Y/O/Z/T/I/Y3/Y4 Main transfer split maxima "
             f"(timed first loop): {split_maxima['Y']}/"
             f"{split_maxima['Z']} words "
             f"({split_maxima['Y'] / 16:g}/"
-            f"{split_maxima['Z'] / 16:g} patterns), "
+            f"{split_maxima['Z'] / 16:g} patterns)"
+            f"{later_text}, "
             f"first exit V-counter {split_maxima['O']:02X}, "
-            f"{split_maxima['T']} planned VBlank groups, "
+            f"{split_maxima['T']} transfer VBlanks, "
             f"final exit V-counter {split_maxima['I']:02X}."
         )
     summary.append(

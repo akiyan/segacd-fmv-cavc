@@ -129,20 +129,20 @@ def main():
                      "G": 0x0456,
                      "K": 0x12, "O": 0x3E, "E": 0x88}, (0, 3),
                layout=read_frameno.HUD_H40_POLL_GAP_LAYOUT)
-    if read_frameno.HUD_H32_COMBINED_CELLS != 63:
+    if read_frameno.HUD_H32_COMBINED_CELLS != 69:
         raise SystemExit(
             f"H32 combined HUD has "
-            f"{read_frameno.HUD_H32_COMBINED_CELLS} cells, expected 63"
+            f"{read_frameno.HUD_H32_COMBINED_CELLS} cells, expected 69"
         )
-    if read_frameno.HUD_H40_COMBINED_CELLS != 63:
+    if read_frameno.HUD_H40_COMBINED_CELLS != 69:
         raise SystemExit(
             f"H40 combined HUD has "
-            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 63"
+            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 69"
         )
     if read_frameno.hud_layout_dimensions(
         read_frameno.HUD_H32_COMBINED_LAYOUT
-    ) != (32, 2):
-        raise SystemExit("H32 combined HUD must occupy 32x2 cells")
+    ) != (32, 3):
+        raise SystemExit("H32 combined HUD must occupy 32x3 cells")
     if read_frameno.hud_layout_dimensions(
         read_frameno.HUD_H40_COMBINED_LAYOUT
     ) != (40, 2):
@@ -154,7 +154,8 @@ def main():
         "U": 0x023D, "N": 0x87, "J": 0x0E,
         "Q": 0xFFFD, "V": 0xF2, "O": 0x3E, "E": 0x88,
         "G": 0x8456, "K": 0x12, "H": 0x34C0, "X": 0x0203,
-        "Y": 0xD40, "Z": 0x440, "T": 0x2, "I": 0xE9,
+        "Y": 0xD40, "Z": 0x440, "T": 0x4, "I": 0xE9,
+        "Y3": 0x120, "Y4": 0x080,
     }
     check_case(
         256, combined_values, (0, 3),
@@ -193,7 +194,7 @@ def main():
             f"standalone F API: got {frame:04X}/{confidence:.3f}, expected CAFE")
 
     print("HUD OCR proof: OK (values only, common H32/H40 legacy 30 cells, "
-          "combined H32 32+31 and H40 40+23 cells over two rows, "
+          "combined H32 32+32+5 and H40 40+29 wrapped cells, "
           "unused legacy H40 width movie-visible, standalone F compatible)")
 
 

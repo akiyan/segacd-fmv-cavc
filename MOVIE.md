@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 20
+VERSION        = 21
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 20. Bitmap controls insert one zero byte after an
+The player accepts version 21. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -400,11 +400,24 @@ payload.
 | `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
 | 0/1 | audio pad | zero byte when needed for word alignment |
 | 2 | n_runs | cold-run count |
+| 2 | n_vblank_groups | number of encoder-planned VBlank work groups, 1--8 |
+| 16 | group_pattern_count | eight encoder-planned pattern counts; unused tail words are zero |
 | `n_runs * 4` | cold runs | source-aware physical transfer descriptors |
 
 `frame_seq` detects a shifted control stream. Sector MSF continuity is checked
 at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
+
+The encoder partitions the physical cold-run sequence into
+`n_vblank_groups`. Each count records the planned number of consecutive
+patterns for that group. A boundary may split a long run, while one- and
+two-pattern CPU-copy runs stay intact. The counts through `n_vblank_groups`
+sum to all descriptor patterns; the remaining words are zero. The packer and
+Sub-side stream checker validate this construction plan. The current Main
+player deliberately skips these 18 metadata bytes and schedules the following
+run descriptors at runtime with the guarded residual VBlank budget. This keeps
+the v21 packed bytes available for same-stream player A/B tests without making
+encoded boundaries steer playback.
 
 Bitmap updates use `ceil(cells / 8)` bytes, followed by a zero byte when that
 size is odd. One 16-bit entry follows for each set bit in ascending cell order:
@@ -479,13 +492,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 20
+VERSION        = 21
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は20です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は21です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -836,11 +849,21 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 | `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
 | 0/1 | audio pad | word alignmentに必要なzero byte |
 | 2 | n_runs | cold-run数 |
+| 2 | n_vblank_groups | encoderが計画したVBlank work group数、1--8 |
+| 16 | group_pattern_count | encoderが計画した8個のpattern数。未使用末尾wordはzero |
 | `n_runs * 4` | cold runs | source-aware physical transfer descriptor |
 
 `frame_seq` はcontrol streamのずれを検出します。readerはsector MSFの連続性を確認し、
 gapがあればre-seekして正確に読み直します。それでもsequenceが一致しない場合は
 前frameを保持し、desync counterを増やします。
+
+encoderは物理cold-run列を `n_vblank_groups` 個へ分割します。各countは、そのgroupで
+予定した連続pattern数です。長いrunは境界で分割でき、1〜2 patternのCPU-copy runは
+分割しません。`n_vblank_groups` までの合計は全descriptor pattern数と一致し、残りの
+wordはzeroです。PackerとSub側stream checkerはこのconstruction planを検証します。
+現在のMain playerは意図的にこの18-byte metadataを読み飛ばし、後続run descriptorを
+guard付き残余VBlank budgetでruntime scheduleします。これによりv21 packed byteを
+same-stream player A/Bへ保ちながら、encoded boundaryがplaybackを操作しません。
 
 bitmap updateは `ceil(cells / 8)` byteで、そのサイズが奇数ならzero byteを続けます。
 set bitごとにcell昇順で16-bit entryを1個置きます。

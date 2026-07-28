@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""実機/エミュ録画のデバッグHUD（左上端、H32/H40とも最大2行）から各値を読む。
+"""実機/エミュ録画のデバッグHUD（左上端、H32最大3行/H40最大2行）から各値を読む。
 
 HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値だけを描く:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
@@ -90,6 +90,8 @@ HUD_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
     ("Z", 3),
     ("T", 1),
     ("I", 2),
+    ("Y3", 3),
+    ("Y4", 3),
 )
 
 
@@ -272,7 +274,7 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Current native H32/H40 frames default to their 63-cell combined layouts.
+    Current native H32/H40 frames default to their 69-cell combined layouts.
     Pass an explicit legacy layout when reading an older recording.
     """
     gray = _gray(img)

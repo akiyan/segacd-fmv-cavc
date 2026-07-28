@@ -267,7 +267,7 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
 
 
 def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
-    """Prove the encoder-authored VBlank plan and shared final H40 work."""
+    """Prove the H40 fixed-N cold-tail/NT shared-VBlank guards."""
     disassembly = run([str(objdump), "-d", str(obj)])
 
     def block(start_name: str, end_name: str) -> str:
@@ -287,64 +287,120 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         return disassembly[start.end():end.start()]
 
     dma_entry = block("bf_dma", "bf_run_lp")
-    if not re.search(
-            r"\bbsr\w*\s+[^\n]*<bf_enter_planned_group>", dma_entry):
+    clear_state = re.search(r"\bclrw\s+0 [^\n]*", dma_entry)
+    load_runs = re.search(r"\bmovew\s+0 [^\n]*,%d4", dma_entry)
+    branch_empty = re.search(
+        r"\bbeq\w*\s+[^\n]*<bf_flip>", dma_entry)
+    if not clear_state or not load_runs or not branch_empty:
         raise AssertionError(
-            f"{obj}: Pass2 does not enter the encoder-authored first group")
-    if not re.search(
-            r"\bbeq\w*\s+[^\n]*<bf_plan_complete>", dma_entry):
+            f"{obj}: missing shared-state clear/n_runs/empty-frame branch")
+    if not clear_state.start() < load_runs.start() < branch_empty.start():
         raise AssertionError(
-            f"{obj}: an empty frame does not retain its planned cadence")
+            f"{obj}: shared-state clear overwrites the n_runs zero flag")
+
     run_loop = block("bf_run_lp", "bf_split_run")
     residual_compare = re.search(r"\bcmpw\s+%d7,%d1", run_loop)
     split_crossing = re.search(
         r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop)
     if not residual_compare or not split_crossing:
         raise AssertionError(
-            f"{obj}: a DMA run crossing its encoded group is not split")
+            f"{obj}: a DMA run crossing the residual budget is not split")
+    between = run_loop[residual_compare.end():split_crossing.start()]
+    if "<bf_refill_vbudget>" in between:
+        raise AssertionError(
+            f"{obj}: a crossing DMA run discards the first VBlank tail")
 
-    enter = block("bf_enter_planned_group", "bf_debug_snapshot_group")
+    start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
+    if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
+        raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")
+    if not re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", start_budget):
+        raise AssertionError(f"{obj}: initial VBlank budget lacks HV guard")
+    if not re.search(r"\bcmpiw\s+#224,%d0", start_budget):
+        raise AssertionError(f"{obj}: initial VBlank budget is not limited to E0")
+    if len(re.findall(r"<bf_refill_vbudget>", start_budget)) < 2:
+        raise AssertionError(
+            f"{obj}: active and mid-blank budget entries do not refill")
+
+    refill = block("bf_refill_vbudget", "bf_wait_fixed_flip_vblank")
+    if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
+        raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
+    if not re.search(r"\bmovew\s+#3400,%d7", refill):
+        raise AssertionError(f"{obj}: H40 budget refill is not 3400 words")
+
+    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_stage")
     required = (
-        (r"\bbsr\w*\s+[^\n]*<bf_before_next_planned_group>",
-         "inter-group active work"),
-        (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh VBlank head"),
-        # The relocatable object has no symbol annotation on this absolute
-        # operand; the enclosing function keeps the check unambiguous.
-        (r"\bsubqw\s+#1,", "group countdown"),
-        (r"\bmovew\s+%a0@\+,%d7", "encoded pattern count load"),
-        (r"\blslw\s+#4,%d7", "pattern-to-word conversion"),
+        (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
+        (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
+        (r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", "terminal-HV guard"),
+        (r"\bcmpiw\s+#-1024,%d0", "terminal FC00 comparison"),
+        (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh-VBlank fallback"),
     )
     for pattern, description in required:
-        if not re.search(pattern, enter):
-            raise AssertionError(
-                f"{obj}: planned group entry lacks {description}")
-    active_work = re.search(
-        r"\bbsr\w*\s+[^\n]*<bf_before_next_planned_group>", enter)
-    fresh_wait = re.search(
-        r"\bbsr\w*\s+[^\n]*<wait_vb_start>", enter)
-    if active_work is None or fresh_wait is None or active_work.start() >= fresh_wait.start():
+        if not re.search(pattern, shared):
+            raise AssertionError(f"{obj}: shared deadline path lacks {description}")
+    if len(re.findall(
+            r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", shared)) != 2:
         raise AssertionError(
-            f"{obj}: hidden NT work is not completed before the next VBlank wait")
-
-    next_group = block("bf_next_planned_group", "bf_before_next_planned_group")
-    if not re.search(
-            r"\bbra\w*\s+[^\n]*<bf_enter_planned_group>", next_group):
-        raise AssertionError(
-            f"{obj}: group transition does not enter the next encoded group")
+            f"{obj}: shared deadline path lacks its two status reads")
 
     flip = block("bf_flip", "bf_after_flip")
+    normal_reserve = 64 * 28 + 69 + 128
+    palette_reserve = normal_reserve + 64
+    for reserve, description in (
+            (normal_reserve, "normal NT/HUD/guard reserve"),
+            (palette_reserve, "palette NT/HUD/CRAM/guard reserve")):
+        if not re.search(rf"\bmovew\s+#{reserve},%d6", flip):
+            raise AssertionError(f"{obj}: missing {description} ({reserve} words)")
     if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_gap>", flip)) != 2:
+            r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", flip)) != 2:
         raise AssertionError(
-            f"{obj}: normal and palette flips do not apply the compact HUD patch")
-    if "<nt_dma_flip>" in disassembly:
-        raise AssertionError(f"{obj}: fixed-H40 player still contains a final NT DMA")
-    if "<wait_fixed_flip>" in flip or "<wait_vb_start>" in flip:
+            f"{obj}: normal and palette flips do not share the guarded helper")
+    if len(re.findall(
+            r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_stage>", flip)) != 2:
         raise AssertionError(
-            f"{obj}: final path adds an unencoded cadence wait")
+            f"{obj}: normal and palette flips do not patch the staged HUD")
     if "<publish_dbg>" in flip:
         raise AssertionError(
             f"{obj}: H40 flip path still republishes HUD through the VDP port")
+
+
+def verify_runtime_vblank_cadence(
+    objdump: Path, obj: Path, *, expected_n: int,
+) -> None:
+    """Prove runtime split diagnostics cover every supported fixed-N window."""
+    disassembly = run([str(objdump), "-d", str(obj)])
+    start = re.search(
+        r"^[0-9a-f]+ <bf_wait_fixed_flip_vblank>:$",
+        disassembly, re.MULTILINE)
+    end = re.search(
+        r"^[0-9a-f]+ <bf_patch_dbg_stage>:$",
+        disassembly, re.MULTILINE)
+    if not start or not end or start.start() >= end.start():
+        raise AssertionError(f"{obj}: missing runtime cadence block")
+    shared = disassembly[start.end():end.start()]
+    if not re.search(rf"\bcmpiw\s+#{expected_n},%d0", shared):
+        raise AssertionError(
+            f"{obj}: transfer-window accounting is not derived from N={expected_n}")
+
+    addresses = [
+        symbol_address(objdump, obj, f"pattern_vblank{index}_words")
+        for index in range(1, 5)
+    ]
+    if addresses != list(range(addresses[0], addresses[0] + 8, 2)):
+        raise AssertionError(
+            f"{obj}: four runtime VBlank word counters are not contiguous")
+    snapshot_start = re.search(
+        r"^[0-9a-f]+ <bf_debug_snapshot_vbudget>:$",
+        disassembly, re.MULTILINE)
+    snapshot_end = re.search(
+        r"^[0-9a-f]+ <bf_debug_next_vbudget>:$",
+        disassembly, re.MULTILINE)
+    if not snapshot_start or not snapshot_end:
+        raise AssertionError(f"{obj}: missing runtime VBlank snapshot helper")
+    snapshot = disassembly[snapshot_start.end():snapshot_end.start()]
+    if not re.search(r"\bcmpiw\s+#4,%d6", snapshot):
+        raise AssertionError(
+            f"{obj}: runtime VBlank snapshot is still limited to two groups")
 
 
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
@@ -437,64 +493,57 @@ def verify_adpcm_decode_pump(
             f"{obj}: decoder pump is {state}, expected {wanted}")
 
 
-def verify_hidden_nt_active_gap(
+def verify_centered_nt_dma(
     objdump: Path, obj: Path, *, tcols: int, trows: int,
 ) -> None:
-    """Prove that fixed-N H40 copies the centered hidden NT between groups."""
+    """Prove that fixed-N H40 staging centers the encoded grid."""
     disassembly = run([str(objdump), "-dr", str(obj)])
     start_match = re.search(
-        r"^[0-9a-f]+ <bf_blit_reference_core>:$", disassembly, re.MULTILINE)
+        r"^[0-9a-f]+ <bf_blit>:$", disassembly, re.MULTILINE)
     end_match = re.search(
         r"^[0-9a-f]+ <bf_dma>:$", disassembly, re.MULTILINE)
     if not start_match or not end_match:
-        raise AssertionError(f"{obj}: missing hidden-NT reference copy symbols")
+        raise AssertionError(f"{obj}: missing bf_blit/bf_dma symbols")
     block = disassembly[start_match.end():end_match.start()]
-    long_copies = len(re.findall(
-        r"\bmovel\s+%a1@\+,(?:00)?c00000 <VDP_DATA>", block))
-    word_copies = len(re.findall(
-        r"\bmovew\s+%a1@\+,(?:00)?c00000 <VDP_DATA>", block))
-    if (long_copies, word_copies) != (4, 1):
+    long_copies = len(re.findall(r"\bmovel\s+%a0@\+,%a1@\+", block))
+    word_copies = len(re.findall(r"\bmovew\s+%a0@\+,%a1@\+", block))
+    if (long_copies, word_copies) != (tcols // 2, tcols & 1):
         raise AssertionError(
-            f"{obj}: hidden NT row walker is not the 8-word burst plus tail")
-    if not re.search(rf"\bmovew\s+#{tcols},%d2", block):
-        raise AssertionError(f"{obj}: hidden NT row width is not {tcols}")
-    if not re.search(rf"\bmovew\s+#{trows},%d6", block):
-        raise AssertionError(f"{obj}: hidden NT row count is not {trows}")
-    row0 = (28 - trows) // 2
-    col0_bytes = (40 - tcols) // 2 * 2
-    if not re.search(rf"\bmovew\s+#{row0},%d4", block):
-        raise AssertionError(f"{obj}: hidden NT row center is not {row0}")
-    if col0_bytes and not re.search(rf"\baddiw\s+#{col0_bytes},%d1", block):
-        raise AssertionError(
-            f"{obj}: hidden NT column center is not {col0_bytes} bytes")
+            f"{obj}: NT stage row copies {long_copies} longs/{word_copies} words, "
+            f"expected {tcols // 2}/{tcols & 1}")
+    row_skip = (64 - tcols) * 2
+    if not re.search(rf"\blea\s+%a1@\({row_skip}\),%a1", block):
+        raise AssertionError(f"{obj}: NT stage row skip is not {row_skip} bytes")
+    if not re.search(rf"\bmovew\s+#{trows - 1},%d0", block):
+        raise AssertionError(f"{obj}: NT stage row count is not {trows}")
 
-    before_match = re.search(
-        r"^[0-9a-f]+ <bf_before_next_planned_group>:$",
-        disassembly,
-        re.MULTILINE,
+    stage_match = re.search(
+        r"\blea\s+0 [^\n]*,%a1\n"
+        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
+        block,
     )
-    active_match = re.search(
-        r"^[0-9a-f]+ <bf_active_gap_blit>:$", disassembly, re.MULTILINE)
-    patch_match = re.search(
-        r"^[0-9a-f]+ <bf_patch_dbg_gap>:$", disassembly, re.MULTILINE)
-    if not before_match or not active_match or not patch_match:
-        raise AssertionError(f"{obj}: missing active-gap hidden-NT symbols")
-    before = disassembly[before_match.end():active_match.start()]
-    active = disassembly[active_match.end():patch_match.start()]
-    if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<bf_active_gap_blit>", before)) != 1:
-        raise AssertionError(f"{obj}: hidden NT copy is not selected exactly once")
-    for callee in ("bf_blit_reference_core", "prepare_dbg", "publish_dbg"):
-        if not re.search(rf"\bbsr\w*\s+[^\n]*<{callee}>", active):
-            raise AssertionError(
-                f"{obj}: active-gap path lacks {callee}")
-    if not re.search(r"\bjsr\s+%a3@", active):
-        raise AssertionError(f"{obj}: active-gap path does not call generated blitter")
-
-    patch = disassembly[patch_match.end():]
-    if not re.search(r"\bandiw\s+#56,%d3", patch):
+    dma_match = re.search(
+        r"^[0-9a-f]+ <nt_dma_flip>:$", disassembly, re.MULTILINE)
+    dma_end_match = re.search(
+        r"^[0-9a-f]+ <set_vram_write>:$", disassembly, re.MULTILINE)
+    if not stage_match or not dma_match or not dma_end_match:
+        raise AssertionError(f"{obj}: missing NT stage/DMA symbols")
+    dma = disassembly[dma_match.end():dma_end_match.start()]
+    base_match = re.search(
+        r"\bmovel\s+#0,%d2\n"
+        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
+        dma,
+    )
+    if not base_match:
+        raise AssertionError(f"{obj}: missing NT stage base relocation")
+    actual_offset = int(stage_match.group(1), 16) - int(base_match.group(1), 16)
+    expected_offset = (((28 - trows) // 2) * 64 + (40 - tcols) // 2) * 2
+    if actual_offset != expected_offset:
         raise AssertionError(
-            f"{obj}: compact HUD patch does not derive the hidden NT from reg2")
+            f"{obj}: NT stage offset is {actual_offset}, expected {expected_offset}")
+    if "#-27904" not in dma or "#-27641" not in dma:
+        raise AssertionError(
+            f"{obj}: NT DMA length is not the full 64x28 aperture")
 
 
 def build_case(
@@ -542,9 +591,12 @@ def build_case(
     if specialized:
         verify_flip_control_flow(objdump, ip_obj)
         if case.mode == 1 and av_config.uses_fixed_n_cadence(case.fps):
-            verify_hidden_nt_active_gap(
+            verify_centered_nt_dma(
                 objdump, ip_obj, tcols=case.tcols or 40, trows=case.trows)
             verify_shared_deadline_vblank(objdump, ip_obj)
+            verify_runtime_vblank_cadence(
+                objdump, ip_obj,
+                expected_n=av_config.vsync_n_for_fps(case.fps))
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"

@@ -6,8 +6,8 @@ The player renders values only in one fixed 30-cell order in both modes:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
 The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H32 and
-H40 DEBUG builds append Q/V/O/E/G/K/H/X/Y/Z/T/I as one 63-cell logical sequence,
-wrapped after 32 or 40 cells respectively. Q is the signed minimum logical
+H40 DEBUG builds append Q/V/O/E/G/K/H/X/Y/Z/T/I/Y3/Y4 as one 69-cell logical
+sequence, wrapped after 32 or 40 cells respectively. Q is the signed minimum logical
 PrgBuf balance observed during that frame, in exact 32-byte patterns.
 G is the maximum time spent outside the Sub CDC pump between service
 opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
@@ -15,9 +15,10 @@ sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
 that APPLY back-pressure rejected a control-sector pump. H is the per-frame
 physical PrgBuf peak in exact patterns. X packs complete reader frame slots
 ahead in its high byte and the current slot's sector index in its low byte.
-Y/Z are the exact pattern words assigned to and transferred in encoded groups
-1/2, O/I are the V-counters after the first/last actual pattern share, and T is
-the complete planned VBlank-group count, including an empty final group. A supplied H32 or H40 profile selects its combined layout
+Y/Z/Y3/Y4 are the exact pattern words transferred in runtime VBlanks 1--4,
+O/I are the V-counters after the first/last actual pattern share, and T is the
+actual number of VBlanks that carried pattern work. A supplied H32 or H40
+profile selects its combined layout
 automatically. Legacy one-row recordings remain readable through their
 explicit layout options.
 
@@ -579,6 +580,8 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "reader_ahead_raw16", "reader_ahead_frames", "reader_slot_sector",
         "pattern_vblank1_words", "pattern_vblank1_patterns",
         "pattern_vblank2_words", "pattern_vblank2_patterns",
+        "pattern_vblank3_words", "pattern_vblank3_patterns",
+        "pattern_vblank4_words", "pattern_vblank4_patterns",
         "pattern_transfer_vblanks", "pattern_exit_vcounter",
         "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
         "apply_guard_blocked",
@@ -659,6 +662,14 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "pattern_vblank2_words": values.get("Z", ""),
                 "pattern_vblank2_patterns": (
                     f"{values['Z'] / 16:.4f}" if "Z" in values else ""
+                ),
+                "pattern_vblank3_words": values.get("Y3", ""),
+                "pattern_vblank3_patterns": (
+                    f"{values['Y3'] / 16:.4f}" if "Y3" in values else ""
+                ),
+                "pattern_vblank4_words": values.get("Y4", ""),
+                "pattern_vblank4_patterns": (
+                    f"{values['Y4'] / 16:.4f}" if "Y4" in values else ""
                 ),
                 "pattern_transfer_vblanks": values.get("T", ""),
                 "pattern_exit_vcounter": (
@@ -835,6 +846,23 @@ def evaluate_upload_gate(
                 f"limit {limit:02X}"
             )
             (warnings if field == "M" else failures).append(message)
+    fixed_n = av_config.fixed_vblank_interval(float(content_fps))
+    transfer_vblank_max = (
+        max(
+            (group.values.get("T", 0) for group in timed_loop),
+            default=0,
+        )
+        if first_loop and "T" in first_loop[0].values else None
+    )
+    if (
+        fixed_n is not None
+        and transfer_vblank_max is not None
+        and transfer_vblank_max > fixed_n
+    ):
+        warnings.append(
+            f"T peak {transfer_vblank_max:X} exceeds fixed-N transfer "
+            f"window count {fixed_n:X}"
+        )
     display_cadence = display_vblank_cadence(groups, content_fps)
     if display_cadence["violation_count"]:
         examples = ", ".join(
@@ -854,7 +882,7 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 10,
+        "schema_version": 11,
         "gate": gate,
         "alert": alert,
         # Keep the old fields while stored schema-5 results and external
@@ -891,6 +919,11 @@ def evaluate_upload_gate(
                 "Y", "O", "Z", "T", "I"
             ] if all(
                 field in first_loop[0].values for field in "YOZTI"
+            ) else []),
+            *([
+                "Y3", "Y4"
+            ] if all(
+                field in first_loop[0].values for field in ("Y3", "Y4")
             ) else []),
         ],
         "maxima": maxima,
@@ -937,6 +970,17 @@ def evaluate_upload_gate(
             (group.values["Z"] for group in timed_loop),
             default=0,
         )
+        if all(
+            field in first_loop[0].values for field in ("Y3", "Y4")
+        ):
+            result["pattern_vblank3_max_words"] = max(
+                (group.values["Y3"] for group in timed_loop),
+                default=0,
+            )
+            result["pattern_vblank4_max_words"] = max(
+                (group.values["Y4"] for group in timed_loop),
+                default=0,
+            )
         result["pattern_transfer_vblank_max"] = max(
             (group.values["T"] for group in timed_loop),
             default=0,
@@ -963,7 +1007,7 @@ def standard_combined_fields(
     poll_gap_fields: bool,
     combined_fields: bool,
 ) -> bool:
-    """Select the standard two-row layout for an H32 or H40 profile."""
+    """Select the standard wrapped layout for an H32 or H40 profile."""
     if combined_fields:
         return True
     if flip_fields or poll_gap_fields or profile is None:
@@ -1013,15 +1057,21 @@ def write_gate_json(path: Path, result: dict) -> None:
             f"sector {result['reader_ahead_max_slot_sector']}"
         )
     if "pattern_transfer_vblank_max" in result:
+        later = (
+            f"third/fourth max={result['pattern_vblank3_max_words']}/"
+            f"{result['pattern_vblank4_max_words']} words, "
+            if "pattern_vblank3_max_words" in result else ""
+        )
         print(
-            "  Y/O/Z/T/I diagnostics: first max="
+            "  Y/O/Z/T/I/Y3/Y4 diagnostics: first max="
             f"{result['pattern_vblank1_max_words']} words "
             f"({result['pattern_vblank1_max_words'] / 16:g} patterns), "
             f"first exit max="
             f"{result.get('pattern_vblank1_exit_vcounter_max', 0):02X}, "
             f"second max={result['pattern_vblank2_max_words']} words "
             f"({result['pattern_vblank2_max_words'] / 16:g} patterns), "
-            f"planned VBlank groups max={result['pattern_transfer_vblank_max']}, "
+            + later
+            + f"transfer VBlanks max={result['pattern_transfer_vblank_max']}, "
             f"exit V-counter max={result['pattern_exit_vcounter_max']:02X}"
         )
     if "sub_poll_gap_statistics" in result:
@@ -1088,7 +1138,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--combined-fields", action="store_true",
-        help="force the standard two-row H32/H40 layout when no profile is "
+        help="force the standard wrapped H32/H40 layout when no profile is "
              "supplied; H32/H40 profiles select it automatically",
     )
     parser.add_argument(

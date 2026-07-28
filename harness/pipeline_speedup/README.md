@@ -286,14 +286,21 @@ widths 1--40 with the scalar word copy.
 
 Feature bit 0 appends the already-known cold slot runs to each control block
 after its audio and absolute-address alignment pad. The suffix is one big-endian
-`n_runs` word followed by four-byte run descriptors. TTRC v19 keeps the record
-size, stores Prg/Wr/Dic in the high source bits, and stores a 9-bit DicBuf index
-across the source and remaining high bits. Source `2` addresses Dic entries
-0--255 and source `3` addresses entries 256--511. A run splits when its physical
-source changes, when DicBuf indices stop being consecutive, or at the 256-entry
-Dic block boundary. The optimized player consumes these runs
-instead of scanning every update entry and rebuilding them. Run the independent
-proof against the real split stream and its decision log:
+`n_runs` word, one `n_vblank_groups` word, eight planned per-VBlank
+pattern-count words, and four-byte run descriptors. The fixed-width TTRC v21
+plan lets the packer and Sub checker validate the encoder construction while
+keeping every control block's funding independent of the chosen group count.
+The current Main player skips the 18-byte plan and schedules the run descriptors
+at runtime with the guarded residual VBlank budget, which permits same-stream
+player A/B tests. The descriptors store Prg/Wr/Dic
+in the high source bits and a 9-bit DicBuf index across the source and remaining
+high bits. Source `2` addresses Dic entries 0--255 and source `3` addresses
+entries 256--511. A run splits when its physical source changes, when DicBuf
+indices stop being consecutive, at the 256-entry Dic block boundary, or at an
+encoded VBlank group boundary. The optimized player consumes these runs instead
+of scanning every update entry and rebuilding them; the boundary itself does
+not steer the current runtime player. Run the independent proof
+against the real split stream and its decision log:
 
 ```sh
 tools/python.sh harness/pipeline_speedup/verify_run_descriptors.py \
@@ -307,7 +314,7 @@ every control; feature-zero legacy streams remain supported by constructing the 
 suffix hypothetically. Display entries stay in cell order, while the packed suffix
 and payload follow ascending physical VRAM-slot order. Across the complete supplied
 profile the checker rebuilds those two orders independently, including run grouping
-and 32-byte payload consumption. For v19 it independently walks frame 0, Prg, Wr0,
+and 32-byte payload consumption. For v21 it independently walks frame 0, Prg, Wr0,
 Wr1, and indexed Dic payloads and proves every physical source is reproduced exactly.
 It also matches bitmap cells, entry palettes and every physical cold pattern to
 `decisions.pkl`. Timed raw-prefetch runs are verified as the separately

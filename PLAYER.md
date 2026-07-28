@@ -281,6 +281,14 @@ sequenceDiagram
     M->>S: Next CMD_SWAP
 ```
 
+TTRC v21 controls retain one fixed-width encoder VBlank plan. Sub validates
+and copies it, while Main skips those 18 bytes and derives the actual boundaries
+from the runtime residual budget. This preserves byte-identical player-only A/B
+tests. Fixed N is the healthy transfer-window count: N2 permits two and N4
+permits four; using another transfer VBlank remains bounded but raises a HUD
+warning. A light N4 frame may finish in one or two transfer VBlanks and leave
+the remaining cadence windows empty.
+
 For specialized fixed-N H40 playback, one transfer deadline can serve both
 the final cold-run tail and the display flip. The Main CPU treats 3,400 words
 as the usable pattern-transfer budget for a VBlank, and grants that full
@@ -290,21 +298,23 @@ creates a full budget; Main waits for the next head.
 
 The shared path is taken only when the remaining word budget covers the
 complete 64-by-28 name-table DMA (1,792 words), a 128-word timing guard, the
-63-word-equivalent DEBUG HUD staging allowance when present, and the optional
+69-word-equivalent DEBUG HUD staging allowance when present, and the optional
 64-word CRAM replacement. The resulting reserves are 1,920 words in release
-or 1,983 words in DEBUG, plus 64 words for a palette switch. VBlank status is
+or 1,989 words in DEBUG, plus 64 words for a palette switch. VBlank status is
 checked before and after the V counter, and the terminal `FC..FF` lines are rejected. If any
 condition fails, Main waits for a fresh VBlank before the name-table DMA and
 flip. This shares one physical deadline without treating a mid-blank entry as
 unused capacity. A DMA run that crosses the current pattern budget is split at
 that boundary rather than abandoning the first blank's residual capacity.
 
-For a two-VBlank DEBUG pattern transfer, Main formats the stable HUD fields
+For a multi-VBlank DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the second VBlank.
 After the final pattern word, it patches only the transfer-final fields and
 the resolved palette segment into the Main-RAM name-table stage. The existing
 single 1,792-word name-table DMA therefore carries both picture and HUD; there
-is no separate 63-cell VDP-port republish after that DMA. The staging allowance
+is no separate 69-cell VDP-port republish after that DMA. Exact word counters
+cover runtime transfer VBlanks 1 through 4; `T` exposes a fifth or later blank.
+The staging allowance
 keeps the shared admission check conservative even though those HUD words are
 already part of the name-table DMA.
 
@@ -611,6 +621,13 @@ sequenceDiagram
     M->>S: 次のCMD_SWAP
 ```
 
+TTRC v21 controlはfixed-widthのencoder VBlank planを保持します。Subは検証して
+copyしますが、Mainはその18 byteを読み飛ばし、runtime残budgetから実際のboundaryを
+導出します。これによりplayer-only A/Bはbyte-identicalなstreamを使えます。Fixed Nは
+healthyなtransfer-window数で、N2は2本、N4は4本です。さらにtransfer VBlankを使う
+処理はboundedのままですがHUD warningになります。軽いN4 frameは1〜2 transfer
+VBlankで完了し、残るcadence windowを空きにできます。
+
 Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
 display flipで共有できます。Main CPUは1 VBlankでpattern transferに使用できる
 budgetを3,400 wordとし、新しいVBlankを待った直後、またはV counterが最初のblank
@@ -618,20 +635,21 @@ line（`E0`）にある場合だけfull budgetを与えます。すでに進行�
 遅く入った場合はfull budgetを作らず、次のheadを待ちます。
 
 Shared pathを使うのは、残りword budgetが64-by-28 name-table DMA全体（1,792
-word）、128-word timing guard、存在する場合の63-word相当のDEBUG HUD staging
+word）、128-word timing guard、存在する場合の69-word相当のDEBUG HUD staging
 allowance、任意の64-word CRAM replacementを覆う場合だけです。そのreserveは
-releaseで1,920 word、DEBUGで1,983 word、palette switch時はさらに64 wordです。VBlank statusはV
+releaseで1,920 word、DEBUGで1,989 word、palette switch時はさらに64 wordです。VBlank statusはV
 counterの前後で確認し、terminalの`FC..FF` lineは拒否します。どれかの条件を
 満たさない場合、Mainはname-table DMAとflipの前にfresh VBlankを待ちます。これに
 より、mid-blank entryを未使用capacityと見なさずに、1個のphysical deadlineを共有
 します。Current pattern budgetをまたぐDMA runは、最初のblankの残りcapacityを
 捨てず、そのboundaryで分割します。
 
-2-VBlank DEBUG pattern transferでは、Mainは最初のtransfer budget後、2つ目の
+multi-VBlank DEBUG pattern transferでは、Mainは最初のtransfer budget後、2つ目の
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
 transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
 patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
-DMA後に別の63-cell VDP-port republishは行いません。HUD wordはname-table DMAに
+DMA後に別の69-cell VDP-port republishは行いません。Runtime transfer VBlank
+1〜4のexact word counterを持ち、`T`が5本目以降を可視化します。HUD wordはname-table DMAに
 含まれますが、staging allowanceはshared admission checkを保守的に維持します。
 
 1～2 tileのCPU-write runは分割せず、未使用になるのは最大32 wordです。
