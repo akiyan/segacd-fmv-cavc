@@ -33,7 +33,7 @@ POLLUTED = {
     "CBRSIM_RING_CAP_KB": "1", "CBRSIM_MAX_COLD": "1",
     "CBRSIM_COLD_CAP": "1",
 }
-ARTIFACTS = ("HEADER.DAT", "BODY.DAT", "MOVIE.DAT", "palettes.bin")
+ARTIFACTS = ("HEADER.DAT", "BODY.DAT", "MOVIE.DAT", "paltab.bin", "palidx.bin")
 
 
 def digest(path: Path) -> str:

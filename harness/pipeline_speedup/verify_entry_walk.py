@@ -6,7 +6,7 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For current v19 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+For current v20 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
 that each frame's control block and cold patterns are ready before that frame
 can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
@@ -49,7 +49,7 @@ def frame_sectors(
     acc = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl in routes[1:]:
+    for n_pay, n_ctrl, _n_word in routes[1:]:
         acc += rate_numerator
         ratedelta, acc = divmod(acc, rate_modulus)
         actual = n_pay + n_ctrl
@@ -86,22 +86,29 @@ def decode_routes(
 
     routes = []
     for frame, packed in enumerate(routing[:nframes]):
-        if packed & 0xC0:
-            raise AssertionError(
-                f"frame {frame}: routing reserved bits are set in 0x{packed:02X}"
-            )
-        n_ctrl = packed & 0x07
+        # bits 6-7 carry the WordBuf payload prefix; ctrl bit 2 is the
+        # 4-sector escape (base 3 in the word field).
+        n_word = (packed >> 6) & 3
+        ctrl_field = packed & 0x07
+        n_ctrl = ctrl_field
+        if ctrl_field & 4:
+            if n_word != 3:
+                raise AssertionError(
+                    f"frame {frame}: WordBuf-4 escape lacks base 3 in 0x{packed:02X}"
+                )
+            n_ctrl = ctrl_field & 3
+            n_word = 4
         total = (packed >> 3) & 0x07
         if total > ROUTING_TOTAL_MAX:
             raise AssertionError(
                 f"frame {frame}: routing total {total} exceeds "
                 f"{ROUTING_TOTAL_MAX} sectors"
             )
-        if n_ctrl > total:
+        if n_ctrl > total or n_word > total - n_ctrl:
             raise AssertionError(
                 f"frame {frame}: routing control {n_ctrl} exceeds total {total}"
             )
-        routes.append((total - n_ctrl, n_ctrl))
+        routes.append((total - n_ctrl, n_ctrl, n_word))
     return routes
 
 
@@ -284,8 +291,8 @@ def main() -> None:
     magic, version, nfr, _cols, _rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", data, 0
     )
-    if magic != b"TTRC" or version != 19:
-        raise SystemExit(f"expected TTRC v19, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 20:
+        raise SystemExit(f"expected TTRC v20, got {magic!r} v{version}")
     prebuf_pat = struct.unpack_from(">L", data, 22)[0]
     routing_sec = struct.unpack_from(">L", data, 26)[0]
     prebuf_sec = struct.unpack_from(">L", data, 30)[0]
@@ -304,7 +311,7 @@ def main() -> None:
     ) * SECTOR
     routing_raw = data[routing_off : routing_off + routing_sec * SECTOR]
     routes = decode_routes(routing_raw, nfr, version)
-    if routes[0] != (0, 0):
+    if routes[0] != (0, 0, 0):
         raise AssertionError(f"frame 0 BODY-arm route must be zero, got {routes[0]}")
     fsecs = frame_sectors(routes, version, fps, vsync_n, features)
 
@@ -343,7 +350,7 @@ def main() -> None:
     ) * SECTOR
     control_stream = bytearray()
     for i in range(1, nfr):
-        n_pay, n_ctrl = routes[i]
+        n_pay, n_ctrl, _n_word = routes[i]
         frame_len = fsecs[i] * SECTOR
         frame = frames[cursor : cursor + frame_len]
         if len(frame) != frame_len:
@@ -384,7 +391,7 @@ def main() -> None:
         payload_delivered = prebuf_pat
         payload_needed = 0
         for seq in range(1, nfr):
-            n_pay, n_ctrl = routes[seq]
+            n_pay, n_ctrl, n_word = routes[seq]
             control_delivered += n_ctrl * SECTOR
             control_needed += len(controls[seq])
             if control_delivered < control_needed:
@@ -401,7 +408,9 @@ def main() -> None:
                     f"frame {seq}: cold payload is not armed before control "
                     f"({payload_delivered} patterns delivered, {payload_needed} needed)"
                 )
-            payload_delivered += n_pay * (SECTOR // 32)
+            # WordBuf refill sectors ride the payload prefix and do not
+            # deliver Prg patterns.
+            payload_delivered += (n_pay - n_word) * (SECTOR // 32)
 
     print(
         f"entry-walk equivalence: OK (v{version}, {nfr} frames, {updates} entries, "

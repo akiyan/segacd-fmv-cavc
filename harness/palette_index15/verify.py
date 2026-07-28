@@ -149,34 +149,33 @@ def _word_rgb_sum(word):
 
 
 def check_header(path, log=None):
+    """v20: the packed palettes live in paltab.bin beside HEADER.DAT."""
     data = Path(path).read_bytes()
     if len(data) < 2 * SECTOR or data[:4] != b"TTRC":
         raise SystemExit(f"{path}: not a complete TTRC HEADER.DAT")
     nseg = struct.unpack_from(">H", data, 20)[0]
-    paltab_sec = struct.unpack_from(">L", data, 48)[0]
-    palette_base = SECTOR + 0x1000  # segment palettes sit at stage +0x1000
-    if (paltab_sec * SECTOR < 0x1000 + nseg * 128
-            or len(data) < SECTOR + paltab_sec * SECTOR):
-        raise SystemExit(f"{path}: truncated PALTAB")
-    blocks = [data[palette_base + seg * 128:palette_base + (seg + 1) * 128]
-              for seg in range(nseg)]
+    paltab_path = Path(path).with_name("paltab.bin")
+    paltab = paltab_path.read_bytes()
+    if len(paltab) != nseg * 128:
+        raise SystemExit(
+            f"{paltab_path}: {len(paltab)} bytes != header n_seg {nseg} * 128")
+    blocks = [paltab[seg * 128:(seg + 1) * 128] for seg in range(nseg)]
     for seg, block in enumerate(blocks):
         words = np.frombuffer(block, dtype=">u2").astype(np.uint16).reshape(4, 16)
         if np.any(words[:, 0] != 0):
-            raise SystemExit(f"HEADER segment {seg}: an index0 word is nonzero")
+            raise SystemExit(f"paltab segment {seg}: an index0 word is nonzero")
         sums = np.vectorize(_word_rgb_sum)(words[:, 1:])
         if int(sums[0, 14]) != int(sums.max()):
-            raise SystemExit(f"HEADER segment {seg}: P0/index15 is not globally brightest")
+            raise SystemExit(f"paltab segment {seg}: P0/index15 is not globally brightest")
     if log is not None:
         if nseg != len(log["seg_pals"]):
-            raise SystemExit("HEADER/decision segment counts differ")
+            raise SystemExit("paltab/decision segment counts differ")
         for seg, pals in enumerate(log["seg_pals"]):
             expected = assert_canonical(pals, f"decision segment {seg}")
             if blocks[seg] != expected:
-                raise SystemExit(f"HEADER PALTAB segment {seg} differs from decision log")
-        seg0 = int(np.asarray(log["frame_seg"])[0])
-        if data[64:192] != blocks[seg0]:
-            raise SystemExit("HEADER seg0 copy differs from frame 0's PALTAB entry")
+                raise SystemExit(f"paltab.bin segment {seg} differs from decision log")
+        if int(np.asarray(log["frame_seg"])[0]) != 0:
+            raise SystemExit("frame 0 does not display palette segment 0")
     return nseg
 
 

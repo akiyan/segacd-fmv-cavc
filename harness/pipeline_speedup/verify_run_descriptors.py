@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v19 files and reconstructs every current control and payload byte. The
+TTRC v20 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -36,6 +36,7 @@ FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
 FEATURE_DICBUF_INDEXED_RUNS = 0x0040
 FEATURE_BOOT_VRAM_SIDECAR = 0x0080
+FEATURE_WORDBUF_RING = 0x0100
 ADPCM_TABLE_SECTORS = 5
 ROUTING_TOTAL_MAX = 5
 PATTERN_SUPPLY_OFFSET = 196
@@ -113,7 +114,7 @@ def frame_sectors(
     accumulator = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl in routes[1:]:
+    for n_pay, n_ctrl, _n_word in routes[1:]:
         accumulator += rate_numerator
         rated, accumulator = divmod(accumulator, rate_modulus)
         actual = n_pay + n_ctrl
@@ -150,22 +151,29 @@ def decode_routes(
 
     routes = []
     for frame, packed in enumerate(routing[:nframes]):
-        if packed & 0xC0:
-            raise AssertionError(
-                f"frame {frame}: routing reserved bits are set in 0x{packed:02X}"
-            )
-        n_ctrl = packed & 0x07
+        # bits 6-7 carry the WordBuf payload prefix; ctrl bit 2 is the
+        # 4-sector escape (base 3 in the word field).
+        n_word = (packed >> 6) & 3
+        ctrl_field = packed & 0x07
+        n_ctrl = ctrl_field
+        if ctrl_field & 4:
+            if n_word != 3:
+                raise AssertionError(
+                    f"frame {frame}: WordBuf-4 escape lacks base 3 in 0x{packed:02X}"
+                )
+            n_ctrl = ctrl_field & 3
+            n_word = 4
         total = (packed >> 3) & 0x07
         if total > ROUTING_TOTAL_MAX:
             raise AssertionError(
                 f"frame {frame}: routing total {total} exceeds "
                 f"{ROUTING_TOTAL_MAX} sectors"
             )
-        if n_ctrl > total:
+        if n_ctrl > total or n_word > total - n_ctrl:
             raise AssertionError(
                 f"frame {frame}: routing control {n_ctrl} exceeds total {total}"
             )
-        routes.append((total - n_ctrl, n_ctrl))
+        routes.append((total - n_ctrl, n_ctrl, n_word))
     return routes
 
 
@@ -250,9 +258,9 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, pool, base = struct.unpack_from(
         ">4sHHHHHHH", header
     )
-    if magic != b"TTRC" or version != 19:
+    if magic != b"TTRC" or version != 20:
         raise AssertionError(
-            f"expected split TTRC v19, got {magic!r} v{version}")
+            f"expected split TTRC v20, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
@@ -271,7 +279,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
         FEATURE_COLD_RUNS | FEATURE_FIXED_N
         | FEATURE_PATTERN_SUPPLY | FEATURE_SHADOW_UPDATE_LISTS
         | FEATURE_VRAM_RAW_PREFETCH | FEATURE_DICBUF_INDEXED_RUNS
-        | FEATURE_BOOT_VRAM_SIDECAR)
+        | FEATURE_BOOT_VRAM_SIDECAR | FEATURE_WORDBUF_RING)
     if unknown_features:
         raise AssertionError(f"unsupported header feature bits 0x{unknown_features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
@@ -311,7 +319,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
         routing_offset : routing_offset + routing_sectors * SECTOR
     ]
     routes = decode_routes(routing_raw, nfr, version)
-    if routes[0] != (0, 0):
+    if routes[0] != (0, 0, 0):
         raise AssertionError(f"frame 0 route must be (0, 0), got {routes[0]}")
 
     prebuffer_offset = routing_offset + routing_sectors * SECTOR
@@ -361,22 +369,33 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     ) * SECTOR
     control_stream = bytearray()
     body_payload = bytearray()
+    word_refill = [bytearray(), bytearray()]
     for seq in range(1, nfr):
         slot_bytes = slots[seq] * SECTOR
         slot = body[body_pos : body_pos + slot_bytes]
         if len(slot) != slot_bytes:
             raise AssertionError(f"frame {seq}: BODY.DAT slot is truncated")
-        n_pay, n_ctrl = routes[seq]
+        n_pay, n_ctrl, n_word = routes[seq]
         useful_bytes = (n_ctrl + n_pay) * SECTOR
         if useful_bytes > slot_bytes:
             raise AssertionError(f"frame {seq}: route exceeds its BODY slot")
         control_stream += slot[: n_ctrl * SECTOR]
-        body_payload += slot[n_ctrl * SECTOR : useful_bytes]
+        # The payload prefix stages the frame-parity WordBuf refill; only the
+        # remainder is timed Prg payload.
+        word_end = (n_ctrl + n_word) * SECTOR
+        word_refill[seq & 1] += slot[n_ctrl * SECTOR : word_end]
+        body_payload += slot[word_end : useful_bytes]
         body_pos += slot_bytes
     if body_pos != len(body):
         raise AssertionError(
             f"BODY.DAT has {len(body) - body_pos} unrouted trailing bytes"
         )
+    if any(len(refill) % PATTERN_BYTES for refill in word_refill):
+        raise AssertionError("WordBuf refill stream is not pattern aligned")
+    # The parity WordBuf sequence is the boot preload followed by every timed
+    # refill sector for that parity in arrival order.
+    wr0_payload += bytes(word_refill[0])
+    wr1_payload += bytes(word_refill[1])
 
     control_pos = 0
     for seq in range(1, nfr):

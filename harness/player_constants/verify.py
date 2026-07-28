@@ -497,7 +497,11 @@ def main() -> None:
             header = make_header(case)
             header_path = case_dir / "HEADER.DAT"
             header_path.write_bytes(header)
-            (case_dir / "palettes.bin").write_bytes(bytes(128))
+            # Minimal player-embedded palette tables: one all-black segment
+            # and an all-sentinel switch table.
+            (case_dir / "paltab.bin").write_bytes(bytes(128))
+            (case_dir / "palidx.bin").write_bytes(
+                struct.pack(">HH", 0xFFFF, 0) * 16)
             constants = player_constants.generate_include(
                 header_path, case_dir / "player_constants.inc")
 

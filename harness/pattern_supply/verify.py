@@ -20,7 +20,7 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 19
+VERSION = 20
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
@@ -254,9 +254,13 @@ def take_region(
 
 
 def body_streams(
-    body: bytes, routes: list[tuple[int, int]], fps: int, vsync_n: int,
+    body: bytes, routes: list[tuple[int, int, int]], fps: int, vsync_n: int,
     features: int,
-) -> tuple[bytes, bytes]:
+) -> tuple[bytes, bytes, tuple[bytes, bytes]]:
+    """Split BODY slots into control, Prg payload, and parity WordBuf refills.
+
+    Each timed slot is [n_ctrl control][n_word WordBuf refill for the frame's
+    parity bank][n_pay - n_word Prg payload][rate pad]."""
     numerator, modulus = (
         (1001 * vsync_n, 800)
         if features & FEATURE_FIXED_N2 else (75, fps)
@@ -266,7 +270,8 @@ def body_streams(
     cursor = 0
     controls = bytearray()
     payload = bytearray()
-    for frame, (n_pay, n_ctrl) in enumerate(routes[1:], start=1):
+    word_refill = [bytearray(), bytearray()]
+    for frame, (n_pay, n_ctrl, n_word) in enumerate(routes[1:], start=1):
         accumulator += numerator
         rated, accumulator = divmod(accumulator, modulus)
         actual = n_pay + n_ctrl
@@ -276,13 +281,18 @@ def body_streams(
         if len(slot) != sectors * SECTOR:
             raise AssertionError(f"frame {frame}: BODY slot is truncated")
         controls += slot[:n_ctrl * SECTOR]
-        payload += slot[n_ctrl * SECTOR:actual * SECTOR]
+        word_end = (n_ctrl + n_word) * SECTOR
+        word_refill[frame & 1] += slot[n_ctrl * SECTOR:word_end]
+        payload += slot[word_end:actual * SECTOR]
         if any(slot[actual * SECTOR:]):
             raise AssertionError(f"frame {frame}: rate padding is nonzero")
         cursor += len(slot)
     if cursor != len(body):
         raise AssertionError(f"BODY has {len(body) - cursor} unrouted bytes")
-    return bytes(controls), bytes(payload)
+    return (
+        bytes(controls), bytes(payload),
+        (bytes(word_refill[0]), bytes(word_refill[1])),
+    )
 
 
 def bitmap_cells(bitmap: bytes, cells: int) -> list[int]:
@@ -321,7 +331,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v19 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v20 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -353,13 +363,11 @@ def main() -> None:
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]
     if len(boot_stage) != paltab_sectors * SECTOR:
         raise AssertionError("boot stage is truncated")
-    _paltab = boot_stage[0x1000:0x1000 + nseg * 128]
-    if len(_paltab) != nseg * 128:
-        raise AssertionError("PALTAB is truncated inside the boot stage")
+    # v20: no palette rides the boot stage; the sidecar regions are fixed.
     sidecar_vram = {}
     if boot_stage[0x0FC0:0x0FC4] == b"BVRM":
         region_counts = struct.unpack_from(">3H", boot_stage, 0x0FC4)
-        region_offsets = (0x0000, 0x1000 + nseg * 128, 0x5000)
+        region_offsets = (0x0000, 0x1000, 0x5000)
         for offset, count in zip(region_offsets, region_counts, strict=True):
             for index in range(count):
                 record = offset + index * 34
@@ -382,13 +390,21 @@ def main() -> None:
         raise AssertionError("routing frame 0 or sector padding is nonzero")
     routes = []
     for frame, encoded in enumerate(routing_region[:frames]):
-        if encoded & 0xC0:
-            raise AssertionError(f"frame {frame}: routing reserved bits set")
-        n_ctrl = encoded & 7
-        total = encoded >> 3
-        if n_ctrl > total or total > 5:
+        # bits 6-7 carry the WordBuf payload prefix; ctrl bit 2 is the
+        # 4-sector escape (base 3 in the word field).
+        n_word = (encoded >> 6) & 3
+        ctrl_field = encoded & 7
+        n_ctrl = ctrl_field
+        if ctrl_field & 4:
+            if n_word != 3:
+                raise AssertionError(
+                    f"frame {frame}: WordBuf-4 escape lacks base 3: 0x{encoded:02X}")
+            n_ctrl = ctrl_field & 3
+            n_word = 4
+        total = (encoded >> 3) & 7
+        if n_ctrl > total or total > 5 or n_word > total - n_ctrl:
             raise AssertionError(f"frame {frame}: invalid route 0x{encoded:02X}")
-        routes.append((total - n_ctrl, n_ctrl))
+        routes.append((total - n_ctrl, n_ctrl, n_word))
     cursor += len(routing_region)
     prebuffer, cursor = take_region(
         header, cursor, prebuf_sectors, prebuf_patterns * 32, "Prg prebuffer")
@@ -412,7 +428,7 @@ def main() -> None:
     f0_patterns, body_cursor = take_region(
         body, body_cursor, f0_pattern_sectors, f0_cold * 32, "frame 0 patterns")
 
-    control_stream, body_payload = body_streams(
+    control_stream, body_payload, word_refill = body_streams(
         body[body_cursor:], routes, fps, vsync_n, features)
     controls = [f0_control]
     control_cursor = 0
@@ -458,13 +474,21 @@ def main() -> None:
     if len(streamed_prg) < useful_prg_bytes or any(streamed_prg[useful_prg_bytes:]):
         raise AssertionError("Prg payload length/padding does not match source-coded entries")
 
+    # The parity WordBuf sequence is the boot preload followed by every timed
+    # refill sector for that parity in arrival order. Refill sectors carry no
+    # padding (pack fills each with complete patterns).
+    if any(len(refill) % 32 for refill in word_refill):
+        raise AssertionError("WordBuf refill stream is not pattern aligned")
+    wr_seq = (wr0 + word_refill[0], wr1 + word_refill[1])
     sources = {
         "F0": deque(
             f0_patterns[pos:pos + 32] for pos in range(0, len(f0_patterns), 32)),
         "Prg": deque(
             streamed_prg[pos:pos + 32] for pos in range(0, useful_prg_bytes, 32)),
-        "Wr0": deque(wr0[pos:pos + 32] for pos in range(0, len(wr0), 32)),
-        "Wr1": deque(wr1[pos:pos + 32] for pos in range(0, len(wr1), 32)),
+        "Wr0": deque(
+            wr_seq[0][pos:pos + 32] for pos in range(0, len(wr_seq[0]), 32)),
+        "Wr1": deque(
+            wr_seq[1][pos:pos + 32] for pos in range(0, len(wr_seq[1]), 32)),
         "Dic": tuple(
             dic_blob[pos:pos + 32] for pos in range(0, len(dic_blob), 32)),
     }

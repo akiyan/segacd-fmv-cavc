@@ -67,7 +67,7 @@ def frame_sectors(
     accumulator = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl in routes[1:]:
+    for n_pay, n_ctrl, _n_word in routes[1:]:
         accumulator += rate_numerator
         rated, accumulator = divmod(accumulator, rate_modulus)
         actual = n_pay + n_ctrl
@@ -104,22 +104,29 @@ def decode_routes(
 
     routes = []
     for frame, packed in enumerate(routing[:nframes]):
-        if packed & 0xC0:
-            raise AssertionError(
-                f"frame {frame}: routing reserved bits are set in 0x{packed:02X}"
-            )
-        n_ctrl = packed & 0x07
+        # bits 6-7 carry the WordBuf payload prefix; ctrl bit 2 is the
+        # 4-sector escape (base 3 in the word field).
+        n_word = (packed >> 6) & 3
+        ctrl_field = packed & 0x07
+        n_ctrl = ctrl_field
+        if ctrl_field & 4:
+            if n_word != 3:
+                raise AssertionError(
+                    f"frame {frame}: WordBuf-4 escape lacks base 3 in 0x{packed:02X}"
+                )
+            n_ctrl = ctrl_field & 3
+            n_word = 4
         total = (packed >> 3) & 0x07
         if total > ROUTING_TOTAL_MAX:
             raise AssertionError(
                 f"frame {frame}: routing total {total} exceeds "
                 f"{ROUTING_TOTAL_MAX} sectors"
             )
-        if n_ctrl > total:
+        if n_ctrl > total or n_word > total - n_ctrl:
             raise AssertionError(
                 f"frame {frame}: routing control {n_ctrl} exceeds total {total}"
             )
-        routes.append((total - n_ctrl, n_ctrl))
+        routes.append((total - n_ctrl, n_ctrl, n_word))
     return routes
 
 
@@ -193,8 +200,8 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, _pool = struct.unpack_from(
         ">4sHHHHHH", header
     )
-    if magic != b"TTRC" or version != 19:
-        raise AssertionError(f"expected split TTRC v17, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 20:
+        raise AssertionError(f"expected split TTRC v20, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
@@ -218,7 +225,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
         routing_offset : routing_offset + routing_sec * SECTOR
     ]
     routes = decode_routes(routing_raw, nfr, version)
-    if routes[0] != (0, 0):
+    if routes[0] != (0, 0, 0):
         raise AssertionError(f"frame 0 route must be (0, 0), got {routes[0]}")
     expected_header_len = (routing_offset // SECTOR + routing_sec + prebuf_sec) * SECTOR
     if len(header) != expected_header_len:
