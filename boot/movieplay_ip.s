@@ -42,27 +42,27 @@
 .equ NT0, 0xC000
 .equ NT1, 0xE000
 
-/* 0xFF2000..0xFF65FF is no longer a tile staging buffer: streamed pattern DMA
+/* 0xFF2100..0xFF66FF is no longer a tile staging buffer: streamed pattern DMA
    reads Word RAM directly and repairs the first destination word on the CPU.
    Keep this range for boot-time Main-CPU code generation.  The complete fixed
    Main-RAM map (identical in every build and profile) is:
-     M-CODE   0xFF0000..0xFF65FF  resident IP + generated handlers/blitters
-     M-STATE  0xFF6600..0xFF87FF  runtime .bss (8.5 KiB worst-case reserve)
+     M-CODE   0xFF0000..0xFF66FF  resident IP + generated handlers/blitters
+     M-STATE  0xFF6700..0xFF87FF  runtime .bss (8.25 KiB worst-case reserve)
      M-RUNTBL 0xFF8800..0xFFB1FF  pre-swizzled 22B cold-run records
      M-PALTAB 0xFFB200..0xFFB9FF  16 x 128B palette segments
      M-PALIDX 0xFFBA00..0xFFBA3F  16 x 4B palette-switch entries
      M-DIC    0xFFBA40..0xFFFA3F  512-pattern persistent dictionary
      guard    0xFFFA40..0xFFFAFF  cushion below the stack
      M-STACK  0xFFFB00..0xFFFCFF  / M-TOP 0xFFFD00.. BIOS reserve */
-.equ MAIN_CODEGEN_BASE,  0x00FF2000
-.equ MAIN_CODEGEN_LIMIT, 0x00FF6600	/* M-STATE base = end of M-CODE */
+.equ MAIN_CODEGEN_BASE,  0x00FF2100
+.equ MAIN_CODEGEN_LIMIT, 0x00FF6700	/* M-STATE base = end of M-CODE */
 .equ RUN_TABLE,          0x00FF8800	/* pre-swizzled 22B cold-run records; 0x2A00B capacity */
 .equ DIC_BUF,            0x00FFBA40	/* persistent dictionary; direct Main-RAM VDP DMA */
 .equ DIC_BUF_END,        0x00FFFA40
 .equ DIC_BUF_PATTERNS,   512
 .equ MAIN_CODEGEN_TABLE_BYTES, 0x0200	/* 256 signed word offsets */
 .equ MAIN_CODEGEN_HANDLER_MAX, 70	/* mask FF: guarded before writing */
-.equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4900
+.equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4A00
 .equ MAIN_CODEGEN_BLITTER_MAX, 7296	/* H40 40x28, NT0+NT1 */
 .equ DIC_STAGE_OFF,      0x6000		/* copied before frame-0 output reuses this area */
 
@@ -103,10 +103,11 @@
 .equ BOOT_VRAM_DIR_OFF, 0x0FC0
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
 .equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
-/* 1VBLANKで安全に転送できる語数はモード別(md_vbudget)。実測(dmabench)に基づき保守的に。
-   これを超える転送はランをまたいで次VBLANKへ分割=active表示中へのはみ出し防止(ares対策)。 */
+/* 1VBLANKで安全に使えるDMA相当word budgetはモード別(md_vbudget)。
+   CPUによるVDP word writeはDMAの4倍でchargeし、run境界で次VBLANKへ分ける。 */
 .equ VB_WORDS_H32, 2800		/* H32 V28 NTSC */
-.equ VB_WORDS_H40, 3400		/* H40 V28 NTSC(理論~3895語より保守的) */
+.equ VB_WORDS_H40, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
+.equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
 .equ CPU_DIRECT_MAX_WORDS, 32	/* 1-2 tiles: CPU writes beat per-run DMA setup
 				   (128 was measured no better: transfer time is
 				   VRAM-slot bound, not issue-mechanism bound) */
@@ -169,12 +170,12 @@
 .equ NT_STAGE_ROWS, 28
 .equ NT_STAGE_WORDS, NT_STAGE_PITCH*NT_STAGE_ROWS
 .equ NT_STAGE_ROW_SKIP, (NT_STAGE_PITCH-PC_TCOLS)*2
-/* A shared deadline VBlank must retain enough of the measured word budget for
+/* A shared deadline VBlank must retain enough of the conservative word budget for
    the complete 64-pitch NT DMA, the optional DEBUG HUD staging copy, CRAM on a
    palette switch, and non-payload control/setup time. The staged HUD is
    included in that one NT DMA; DEBUG keeps a conservative word-equivalent
-   allowance for its Main-RAM stamp. The 128-word guard is in addition to
-   VB_WORDS_H40's existing margin below the measured theoretical capacity. */
+   allowance for its Main-RAM stamp. CPU-written CRAM words use the same 4x
+   charge as CPU-written pattern words. */
 .ifdef DEBUG
 .equ NT_FLIP_HUD_WORDS, HUD_COMBINED_WORDS
 .else
@@ -182,7 +183,7 @@
 .endif
 .equ NT_FLIP_GUARD_WORDS, 128
 .equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
-.equ NT_CRAM_FLIP_RESERVE_WORDS, NT_FLIP_RESERVE_WORDS+64
+.equ NT_CRAM_FLIP_RESERVE_WORDS, NT_FLIP_RESERVE_WORDS+(64*CPU_VDP_WORD_COST)
 .endif
 .endif
 .endif
@@ -1057,7 +1058,8 @@ bf_bdone:
 bf_dma:
 	/* Pass2: 表を順に Word-RAM からVRAMへ転送。VBLANK予算(d7)でランをまたいで分割。
 	   長runのWord-RAM DMAは先頭1ワードが化ける(実測/Sega文書)ため、src+2/full lengthを
-	   dstへDMAした後、チャンク先頭の1ワードをCPUで上書き修復する。短runはCPU直書き。 */
+	   dstへDMAした後、チャンク先頭の1ワードをCPUで上書き修復する。短runはCPU直書き。
+	   d7はDMA相当cost、DEBUGのa1はHUDへ出すlogical pattern word数。 */
 .ifdef HUD_FLIP_FIELDS
 	/* E: how late the pre-transfer Main work (swap wait, parse, bitmap, NT
 	   blit) reached this point, in 4-tick units since the previous flip.
@@ -1079,27 +1081,38 @@ bf_dma:
 	moveq	#0, d0
 	move.l	d0, pattern_vblank1_words
 	move.l	d0, pattern_vblank3_words
-	clr.w	pattern_transfer_vblanks
 	clr.w	pattern_exit_v
 	clr.w	pattern_vblank1_exit_v
+.endif
+	clr.w	pattern_transfer_vblanks
+.ifdef NT_DMA_FLIP
+	clr.w	vbudget_held_reserve
+	move.w	#NT_FLIP_RESERVE_WORDS, d0
+	movea.l	palidx_ptr, a0
+	move.w	frame_no, d1
+	cmp.w	(a0), d1
+	blo.s	7f
+	addi.w	#64*CPU_VDP_WORD_COST, d0
+7:
+	move.w	d0, pattern_final_reserve_words
 .endif
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
-.ifdef DEBUG
 	move.w	#1, pattern_transfer_vblanks
-.endif
 	lea	RUN_TABLE, a2
 	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
+	moveq	#0, d0
+	movea.l	d0, a1				/* exact logical words in the current budget */
 	move.w	(GA_STOPWATCH).l, d0
 	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
 .endif
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port. Ordinary runs stay whole. Crossing the
-	   residual budget is an overload fallback, not an intended second-VBlank
-	   schedule: wait for a fresh blank and issue the complete run there. */
+	   straight into the control port. Fill the current budget, then continue
+	   a boundary-crossing DMA run in the next budget. The cadence-final budget
+	   has already withheld NT/HUD/CRAM/flip capacity. */
 	move.w	(a2)+, d1			/* +0 len(語) */
 .ifdef DMA_RUN_FASTPATH
 	/* A one-time run branch is much cheaper than programming a DMA for one or
@@ -1107,16 +1120,11 @@ bf_run_lp:
 	cmpi.w	#CPU_DIRECT_MAX_WORDS, d1
 	bls	bf_short_run
 .endif
-	cmp.w	d7, d1				/* whole run fits the remaining budget? */
+	move.w	d1, d6
+	addq.w	#CPU_VDP_WORD_COST, d6		/* full DMA + one CPU repair word */
+	cmp.w	d7, d6				/* whole run fits the remaining budget? */
 	bls.s	1f
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
-	cmp.w	d0, d1
-	bhi	bf_split_run			/* longer than one complete budget */
-.ifdef DEBUG
-	bsr	bf_debug_next_vbudget
-.else
-	bsr	bf_refill_vbudget
-.endif
+	bra	bf_split_run			/* fill this budget before continuing the run */
 1:
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
 	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
@@ -1133,37 +1141,47 @@ bf_run_lp:
 	move.l	d2, (VDP_CTRL).l		/* restore ordinary destination */
 	movea.l	(a2)+, a3			/* +18 src */
 	move.w	(a3), (VDP_DATA).l		/* repair dst[0] (redundant-correct for DicBuf) */
-	sub.w	d1, d7
+.ifdef DEBUG
+	adda.w	d1, a1
+.endif
+	sub.w	d6, d7
 	bra	bf_run_done
 
 bf_split_run:
-	/* Rare physical fallback: a single run longer than one complete VBlank
-	   budget cannot be issued whole without entering active display. */
+	/* Walk the record's raw dst/len/src across one or more budget chunks. */
 	move.w	8(a2), d3			/* +10 dst (a2 is at +2) */
 	movea.l	16(a2), a3			/* +18 src */
 	adda.w	#20, a2				/* advance to the next record */
 bf_chunk:
-	tst.w	d7				/* 予算切れなら次vblank開始まで待って補充 */
-	bgt	1f
-.ifdef DEBUG
-	bsr	bf_debug_next_vbudget
-.else
-	bsr	bf_refill_vbudget
-.endif
+	tst.w	d7
+	ble	bf_chunk_refill
+	cmpa.l	#DIC_BUF, a3			/* Word-RAM chunk also needs one CPU repair */
+	bcc.s	1f
+	cmpi.w	#CPU_VDP_WORD_COST, d7
+	bls	bf_chunk_refill
 1:
-	move.w	d1, d6				/* chunk = min(ラン残, 予算) */
-	cmp.w	d7, d6
-	bls	2f
-	move.w	d7, d6
+	move.w	d7, d6				/* data words fitting the remaining cost */
+	cmpa.l	#DIC_BUF, a3
+	bcc.s	2f
+	subq.w	#CPU_VDP_WORD_COST, d6
 2:
-	cmpa.l	#DIC_BUF, a3			/* DicBuf has normal DMA; Prg/Wr sources are Word RAM */
-	bcs.s	3f
-	bsr	dma_chunk
-	bra.s	4f
+	cmp.w	d1, d6
+	bls.s	3f
+	move.w	d1, d6
 3:
-	bsr	dma_chunk_wr			/* Word-RAM DMA + first-word repair */
+	cmpa.l	#DIC_BUF, a3			/* DicBuf has normal DMA; Prg/Wr sources are Word RAM */
+	bcs.s	4f
+	bsr	dma_chunk
+	sub.w	d6, d7
+	bra.s	5f
 4:
-	sub.w	d6, d7				/* 予算 -= chunk */
+	bsr	dma_chunk_wr			/* Word-RAM DMA + first-word repair */
+	sub.w	d6, d7
+	subq.w	#CPU_VDP_WORD_COST, d7
+5:
+.ifdef DEBUG
+	adda.w	d6, a1
+.endif
 	sub.w	d6, d1				/* ラン残 -= chunk */
 	add.w	d6, d6				/* chunk*2 = バイト */
 	adda.w	d6, a3				/* src += バイト */
@@ -1171,18 +1189,21 @@ bf_chunk:
 	tst.w	d1
 	bne	bf_chunk
 	bra	bf_run_done
+bf_chunk_refill:
+	bsr	bf_next_vbudget
+	bra	bf_chunk
 
 .ifdef DMA_RUN_FASTPATH
 bf_short_run:
-	/* Keep the whole short run in one VBlank.  H40's 3400-word budget leaves
-	   an 8-word tail, so a 16/32-word run may need to start in the next blank. */
-	cmp.w	d7, d1
+	/* Keep a one-/two-tile CPU run whole and charge four DMA-word units for
+	   every logical word written through the VDP data port. */
+	move.w	d1, d6
+	lsl.w	#2, d6
+	cmp.w	d7, d6
 	bls.s	1f
-.ifdef DEBUG
-	bsr	bf_debug_next_vbudget
-.else
-	bsr	bf_refill_vbudget
-.endif
+	bsr	bf_next_vbudget
+	move.w	d1, d6
+	lsl.w	#2, d6
 1:
 	addq.l	#4, a2				/* skip reg93/94 */
 	move.l	(a2)+, d0			/* +6 cmd = ordinary VRAM write address */
@@ -1197,12 +1218,24 @@ bf_short_run:
 	move.l	(a3)+, (VDP_DATA).l
 	.endr
 	dbra	d0, 2b
-	sub.w	d1, d7
+.ifdef DEBUG
+	adda.w	d1, a1
+.endif
+	sub.w	d6, d7
 .endif
 bf_run_done:
 	subq.w	#1, d4
 	bne	bf_run_lp
 bf_flip:
+.ifdef NT_DMA_FLIP
+	/* The cadence-final budget withheld this capacity from patterns. Restore it
+	   for the shared NT/HUD/CRAM/flip admission check. */
+	move.w	vbudget_held_reserve, d0
+	beq.s	8f
+	add.w	d0, d7
+	clr.w	vbudget_held_reserve
+8:
+.endif
 .ifdef DEBUG
 	tst.w	n_runs
 	beq.s	1f
@@ -1388,16 +1421,27 @@ bf_refill_vbudget:
 	bsr	wait_vb_start
 	move.w	#1, vbudget_from_head
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+.ifdef NT_DMA_FLIP
+	/* Pattern budget N is also the fixed-cadence display deadline. Withhold
+	   its final display work before issuing any pattern transfer. */
+	clr.w	vbudget_held_reserve
+	cmpi.w	#PC_VSYNC_N, pattern_transfer_vblanks
+	bne.s	1f
+	move.w	pattern_final_reserve_words, d0
+	sub.w	d0, d7
+	move.w	d0, vbudget_held_reserve
+1:
+.endif
 	rts
 
 .ifdef DEBUG
-/* Snapshot the exact pattern words consumed from the current VBlank budget.
+/* Snapshot exact logical pattern words issued in the current VBlank budget.
+   They intentionally differ from d7's DMA-equivalent cost when CPU writes run.
    Four counters cover every fixed cadence supported by av_config. T may still
    exceed four and makes a physically overloaded fifth transfer blank visible.
-   Trashes d0. */
+   Trashes d0/d6/a0. */
 bf_debug_snapshot_vbudget:
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
-	sub.w	d7, d0
+	move.l	a1, d0
 	move.w	pattern_transfer_vblanks, d6
 	cmpi.w	#4, d6
 	bhi.s	2f
@@ -1413,10 +1457,8 @@ bf_debug_snapshot_vbudget:
 2:
 	rts
 
-/* Finish the current budget snapshot before waiting for the next fresh head.
-   The bookkeeping happens after the previous blank's selected transfer work,
-   never inside the per-run issue path. */
-bf_debug_next_vbudget:
+/* Finish the current budget snapshot before waiting for the next fresh head. */
+bf_next_vbudget:
 	bsr	bf_debug_snapshot_vbudget
 .ifdef NT_DMA_FLIP
 	/* On the first split only, spend the active-display gap before VBlank 2
@@ -1428,6 +1470,11 @@ bf_debug_next_vbudget:
 	bsr	stamp_dbg_stage
 1:
 .endif
+	suba.l	a1, a1				/* exact logical-word counter for the next budget */
+	addq.w	#1, pattern_transfer_vblanks
+	bra	bf_refill_vbudget
+.else
+bf_next_vbudget:
 	addq.w	#1, pattern_transfer_vblanks
 	bra	bf_refill_vbudget
 .endif
@@ -2111,8 +2158,8 @@ wait_vblank:
    Both modes append Q/V/O/E/G/K/H/X/Y/Z/T/I plus two three-digit counters for
    opened VBlank budgets 3/4, for 69 words total. H32 wraps at 32 words and H40
    at 40 words. Y/Z are budgets 1/2, O/I are the first/final transfer exit
-   V-counters, and T is the number of fresh budgets opened. A whole run may
-   physically cross active display without incrementing T.
+   V-counters, and T is the number of fresh budgets opened. O/I remain the
+   physical phase check when the weighted budget is still optimistic.
 	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
@@ -2221,8 +2268,8 @@ prepare_dbg:
 	   is the sector index inside the current physical slot. */
 	move.w	(PROBE_BANK+STATUS_OFF+0x2A).l, d4
 	DBG_PUT4
-	/* Y/Z: exact pattern-transfer words charged to the first and second
-	   fresh VBlank budgets. 16 words equal one 32-byte pattern. */
+	/* Y/Z: exact logical pattern words issued in the first and second fresh
+	   VBlank budgets. Weighted CPU/DMA capacity cost remains separate. */
 	move.w	pattern_vblank1_words, d4
 	DBG_PUT3
 	move.w	pattern_vblank2_words, d4
@@ -2508,6 +2555,10 @@ dma_start_tick:
 	.space 2				/* DEBUG stopwatch sample at first pattern transfer */
 vbudget_from_head:
 	.space 2				/* current d7 began at a proven VBlank head */
+pattern_final_reserve_words:
+	.space 2				/* cadence-final NT/HUD/CRAM/flip DMA-equivalent cost */
+vbudget_held_reserve:
+	.space 2				/* final capacity withheld from the current pattern d7 */
 flip_hv_v:
 	.space 2				/* DEBUG HUD V: V-counter at the last accepted flip */
 pattern_vblank1_exit_v:
@@ -2515,15 +2566,15 @@ pattern_vblank1_exit_v:
 pass2_entry_q:
 	.space 2				/* DEBUG HUD E: Pass2 entry delay since prev flip, ticks/4 */
 pattern_vblank1_words:
-	.space 2				/* DEBUG HUD Y: exact pattern words charged to budget 1 */
+	.space 2				/* DEBUG HUD Y: exact logical pattern words in budget 1 */
 pattern_vblank2_words:
-	.space 2				/* DEBUG HUD Z: exact pattern words charged to budget 2 */
+	.space 2				/* DEBUG HUD Z: exact logical pattern words in budget 2 */
 pattern_vblank3_words:
-	.space 2				/* DEBUG HUD Y3: exact pattern words charged to budget 3 */
+	.space 2				/* DEBUG HUD Y3: exact logical pattern words in budget 3 */
 pattern_vblank4_words:
-	.space 2				/* DEBUG HUD Y4: exact pattern words charged to budget 4 */
+	.space 2				/* DEBUG HUD Y4: exact logical pattern words in budget 4 */
 pattern_transfer_vblanks:
-	.space 2				/* DEBUG HUD T: fresh VBlank budgets opened */
+	.space 2				/* runtime budget index; DEBUG HUD T */
 pattern_exit_v:
 	.space 2				/* DEBUG HUD I: V-counter at Pass2 pattern exit */
 wr_ptr0:

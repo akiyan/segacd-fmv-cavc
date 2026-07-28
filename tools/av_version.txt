@@ -11,6 +11,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p126: Use a conservative 3,200 DMA-word-equivalent H40 VBlank budget.
+#         Charge every CPU-written VDP word four units, including short direct
+#         runs, DMA first-word repair, and CRAM. Split DMA runs at residual
+#         boundaries and withhold NT/HUD/CRAM/flip capacity from cadence budget
+#         N before pattern work. Keep HUD shares as separate logical words.
+#         Move the Main codegen/state boundary by 0x100 while preserving the
+#         17.5 KiB codegen capacity and its 128-byte worst-case guard.
 #   p125: Keep ordinary DMA runs whole. A run that does not fit the residual
 #         word budget spills intact to a fresh VBlank as an overload fallback;
 #         only a run longer than one complete budget uses chunk splitting.
@@ -1079,4 +1086,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=155
-p=125
+p=126

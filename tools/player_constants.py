@@ -34,7 +34,7 @@ PATTERN_SUPPLY_STRUCT = struct.Struct(">4s9H")
 
 MODE_SPECS = {
     0: ("H32", 32, 2800),
-    1: ("H40", 40, 3400),
+    1: ("H40", 40, 3200),
 }
 
 

@@ -299,29 +299,20 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
             f"{obj}: shared-state clear overwrites the n_runs zero flag")
 
     run_loop = block("bf_run_lp", "bf_split_run")
-    residual_compare = re.search(r"\bcmpw\s+%d7,%d1", run_loop)
-    full_budget = re.search(r"\bmovew\s+#3400,%d0", run_loop)
-    full_compare = re.search(r"\bcmpw\s+%d0,%d1", run_loop)
-    split_oversize = re.search(
-        r"\bbhi\w*\s+[^\n]*<bf_split_run>", run_loop)
-    spill_whole = re.search(
-        r"\bbsr\w*\s+[^\n]*<bf_debug_next_vbudget>", run_loop)
-    if not all((
-        residual_compare, full_budget, full_compare,
-        split_oversize, spill_whole,
-    )):
+    repair_charge = re.search(r"\baddqw\s+#4,%d6", run_loop)
+    residual_compare = re.search(r"\bcmpw\s+%d7,%d6", run_loop)
+    split_crossing = re.search(
+        r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop)
+    if not all((repair_charge, residual_compare, split_crossing)):
         raise AssertionError(
-            f"{obj}: missing whole-run residual-overload fallback")
-    positions = (
-        residual_compare.start(), full_budget.start(), full_compare.start(),
-        split_oversize.start(), spill_whole.start(),
-    )
-    if positions != tuple(sorted(positions)):
+            f"{obj}: missing CPU-weighted residual-boundary split")
+    if not (
+        repair_charge.start()
+        < residual_compare.start()
+        < split_crossing.start()
+    ):
         raise AssertionError(
-            f"{obj}: whole-run residual-overload fallback is out of order")
-    if re.search(r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop):
-        raise AssertionError(
-            f"{obj}: an ordinary residual crossing still splits the run")
+            f"{obj}: CPU-weighted residual split is out of order")
 
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
     if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
@@ -337,8 +328,27 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     refill = block("bf_refill_vbudget", "bf_wait_fixed_flip_vblank")
     if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
         raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
-    if not re.search(r"\bmovew\s+#3400,%d7", refill):
-        raise AssertionError(f"{obj}: H40 budget refill is not 3400 words")
+    if not re.search(r"\bmovew\s+#3200,%d7", refill):
+        raise AssertionError(f"{obj}: H40 budget refill is not 3200 words")
+    if not re.search(r"\bsubw\s+[^\n]*,%d7", refill):
+        raise AssertionError(
+            f"{obj}: cadence-final budget does not withhold display work")
+
+    short_run = block("bf_short_run", "bf_run_done")
+    required_short = (
+        (r"\blslw\s+#2,%d6", "4x CPU-word charge"),
+        (r"\bcmpw\s+%d7,%d6", "weighted residual admission"),
+        (r"\bsubw\s+%d6,%d7", "weighted residual debit"),
+    )
+    for pattern, description in required_short:
+        if not re.search(pattern, short_run):
+            raise AssertionError(
+                f"{obj}: short-run path lacks {description}")
+
+    split_run = block("bf_split_run", "bf_short_run")
+    if not re.search(r"\bsubqw\s+#4,%d7", split_run):
+        raise AssertionError(
+            f"{obj}: split Word-RAM DMA lacks its CPU-repair charge")
 
     shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_stage")
     required = (
@@ -358,7 +368,7 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
 
     flip = block("bf_flip", "bf_after_flip")
     normal_reserve = 64 * 28 + 69 + 128
-    palette_reserve = normal_reserve + 64
+    palette_reserve = normal_reserve + 64 * 4
     for reserve, description in (
             (normal_reserve, "normal NT/HUD/guard reserve"),
             (palette_reserve, "palette NT/HUD/CRAM/guard reserve")):
@@ -406,11 +416,14 @@ def verify_runtime_vblank_cadence(
         r"^[0-9a-f]+ <bf_debug_snapshot_vbudget>:$",
         disassembly, re.MULTILINE)
     snapshot_end = re.search(
-        r"^[0-9a-f]+ <bf_debug_next_vbudget>:$",
+        r"^[0-9a-f]+ <bf_next_vbudget>:$",
         disassembly, re.MULTILINE)
     if not snapshot_start or not snapshot_end:
         raise AssertionError(f"{obj}: missing runtime VBlank snapshot helper")
     snapshot = disassembly[snapshot_start.end():snapshot_end.start()]
+    if not re.search(r"\bmovel\s+%a1,%d0", snapshot):
+        raise AssertionError(
+            f"{obj}: runtime VBlank HUD words are not kept separate from cost")
     if not re.search(r"\bcmpiw\s+#4,%d6", snapshot):
         raise AssertionError(
             f"{obj}: runtime VBlank snapshot is still limited to two groups")
@@ -669,7 +682,7 @@ def main() -> None:
                 case_dir, assembler=assembler, objcopy=objcopy, objdump=objdump)
 
             for label, build in (("generic", generic), ("specialized", specialized)):
-                if build.ip_bin > 18688:
+                if build.ip_bin > 18944:
                     raise AssertionError(
                         f"{case.name}: {label} IP is {build.ip_bin} bytes")
                 if (

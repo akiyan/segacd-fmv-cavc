@@ -63,7 +63,8 @@ the 59.94 Hz HUD series; S/D/R stayed 0 everywhere):
 - *Main-window overrun* (older builds, opening section): U reaches 576-605
   ticks (17.7-18.6 ms), i.e. the pattern-transfer interval itself spills
   past a field. Run-count N 107-143 in the same frames — run overhead, not
-  word volume (2.8k words fits one 3,400-word VBlank budget).
+  word volume (2.8k logical words fit the then-current nominal 3,400-word
+  budget, before CPU-weighted accounting was added).
 - *Palette collision* (realized-190): the only break sits exactly on a
   CRAM-switch frame, which must fit CRAM + flip atomically in one VBlank.
   The same stream survived its 190-load plateaus.
@@ -232,13 +233,13 @@ the short-run and budget-split fallbacks.  Pass2 then pops register
 values straight into the VDP control port: ~12 instructions per run
 in-blank instead of ~40, cutting the per-run blank cost to ~30-45 us,
 so a 30-run plateau transfer fits its single VBlank (~2.6 ms total).
-The unified repair write (dst[0] = src[0]) stays for every source —
-redundant but correct for DicBuf.  The split path (runs longer than a
-full VBlank budget, e.g. H40/15 machi) keeps the old on-the-fly
-arithmetic.  Expected effect: plateau U collapses from ~550 to ~100
-ticks, the 1968-type break disappears, and the deterministic ceiling
-moves toward the 3,400-word budget (~212 loads) or the next binding
-resource (Sub/CD).
+The unified repair write (dst[0] = src[0]) stays for the ordinary path —
+redundant but correct for DicBuf. The runtime scheduler uses a 3,200
+DMA-word-equivalent H40 budget, charges every CPU-written VDP word four
+units, and splits a DMA run at a residual boundary. The cadence-final
+budget withholds name-table/HUD/CRAM/flip work before patterns. The
+deterministic ceiling is therefore content-dependent: short-run density
+and DMA repair count matter in addition to logical pattern words.
 
 ## Phase 2 measurement design (as built)
 

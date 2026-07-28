@@ -181,8 +181,8 @@ build-time checked against the `M-STATE` base.
 
 | Name | Address | Size | Contents |
 |---|---|---:|---|
-| `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player, transient boot UI, generated handlers and guard |
-| `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
+| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated handlers and guard |
+| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
 | `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table, 15 switches + sentinel (player-embedded palidx.bin) |
@@ -282,45 +282,49 @@ sequenceDiagram
 ```
 
 TTRC v22 controls store `n_runs` immediately followed by source-aware run
-descriptors. Main schedules whole runs against the runtime residual budget.
-Fixed N is the healthy fresh-budget count: N2 permits two and N4 permits four;
-opening another budget remains bounded but raises a HUD warning. A light N4
-frame may open only one or two budgets and leave the remaining cadence windows
-empty. These counters record explicit budget openings, not the physical blanks
-crossed when a whole run overruns into active display.
+descriptors. Main schedules them against the runtime residual budget. Fixed N
+is the healthy fresh-budget count: N2 permits two and N4 permits four; opening
+another budget remains bounded but raises a HUD warning. A light N4 frame may
+open only one or two budgets and leave the remaining cadence windows empty.
+These counters record explicit budget openings.
 
 For specialized fixed-N H40 playback, one transfer deadline can serve both
-the final cold-run tail and the display flip. The Main CPU treats 3,400 words
-as the usable pattern-transfer budget for a VBlank, and grants that full
+the final cold-run tail and the display flip. The Main CPU uses a conservative
+3,200 DMA-word-equivalent budget for each H40 VBlank. A DMA word costs one
+unit. Every CPU-written VDP data word costs four units: a one- or two-tile
+direct run therefore costs four times its logical word count, and a Word-RAM
+DMA also pays four units for its required first-word repair. Main grants a
 budget only after waiting for a new VBlank or while the V counter is still on
 its first blank line (`E0`). Entering an already-running blank later never
 creates a full budget; Main waits for the next head.
 
-The shared path is taken only when the remaining word budget covers the
-complete 64-by-28 name-table DMA (1,792 words), a 128-word timing guard, the
-69-word-equivalent DEBUG HUD staging allowance when present, and the optional
-64-word CRAM replacement. The resulting reserves are 1,920 words in release
-or 1,989 words in DEBUG, plus 64 words for a palette switch. VBlank status is
-checked before and after the V counter, and the terminal `FC..FF` lines are rejected. If any
-condition fails, Main waits for a fresh VBlank before the name-table DMA and
-flip. This shares one physical deadline without treating a mid-blank entry as
-unused capacity. Ordinary DMA runs remain whole. A run that does not fit the
-current residual budget waits for a fresh VBlank as an overload fallback; this
-is not an intended second-VBlank allocation. Only a run longer than one
-complete budget uses the chunk fallback.
+Budgets 1 through N-1 are available to patterns. Before pattern work enters
+budget N, Main withholds the complete display reserve: the 1,792-word
+64-by-28 name-table DMA, a 128-unit timing guard, the 69-unit DEBUG HUD
+staging allowance when present, and an optional CRAM replacement. CRAM is
+written by the CPU, so its 64 words reserve 256 units. The normal reserves are
+1,920 units in release and 1,989 in DEBUG; a palette switch raises them to
+2,176 and 2,245. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
+1,211 pattern units in VBlank 2, or 955 on a palette switch.
+
+A DMA run crossing a residual boundary is split exactly there and continued
+at the next fresh VBlank head. A one- or two-tile CPU run remains whole and
+moves to the next budget when it does not fit. After the pattern tail, Main
+restores the withheld reserve and admits the shared name-table/CRAM/flip path
+only if the current phase is still inside that same VBlank. VBlank status is
+checked before and after the V counter, and terminal lines `FC..FF` are
+rejected. If any condition fails, Main waits for a fresh VBlank.
 
 For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the next fresh VBlank.
 After the final pattern word, it patches only the transfer-final fields and
 the resolved palette segment into the Main-RAM name-table stage. The existing
 single 1,792-word name-table DMA therefore carries both picture and HUD; there
-is no separate 69-cell VDP-port republish after that DMA. Exact word counters
-cover runtime VBlank budgets 1 through 4; `T` exposes a fifth or later budget.
-The staging allowance
+is no separate 69-cell VDP-port republish after that DMA. Exact logical pattern
+word counters cover runtime VBlank budgets 1 through 4; they remain separate
+from the weighted capacity charge. `T` exposes a fifth or later budget. The staging allowance
 keeps the shared admission check conservative even though those HUD words are
 already part of the name-table DMA.
-
-One- or two-tile CPU-write runs also remain whole.
 
 Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
@@ -522,8 +526,8 @@ build-time checkされます。
 
 | Name | Address | Size | 内容 |
 |---|---|---:|---|
-| `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player、transient boot UI、generated handler、guard |
-| `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
+| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated handler、guard |
+| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
 | `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表、15切替+番兵（player内蔵palidx.bin） |
@@ -623,38 +627,41 @@ sequenceDiagram
 ```
 
 TTRC v22 controlは`n_runs`の直後にsource-aware run descriptorを置きます。
-Mainはruntime残budgetに対してwhole runをscheduleします。Fixed Nはhealthyなfresh
+Mainはruntime残budgetに対してrunをscheduleします。Fixed Nはhealthyなfresh
 budget数で、N2は2本、N4は4本です。さらにbudgetを開く処理はboundedのままですがHUD
 warningになります。軽いN4 frameは1〜2 budgetだけを開き、残るcadence windowを
-空きにできます。このcounterはexplicitなbudget openingを記録し、whole runがactive
-displayへoverrunした際に物理的に跨いだblank数は数えません。
+空きにできます。このcounterはexplicitなbudget openingを記録します。
 
 Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
-display flipで共有できます。Main CPUは1 VBlankでpattern transferに使用できる
-budgetを3,400 wordとし、新しいVBlankを待った直後、またはV counterが最初のblank
-line（`E0`）にある場合だけfull budgetを与えます。すでに進行中のblankへそれより
-遅く入った場合はfull budgetを作らず、次のheadを待ちます。
+display flipで共有できます。Main CPUはH40の各VBlankに、安全側の3,200
+DMA-word相当budgetを使います。DMA wordは1 unit、CPUがVDP dataへ書くwordは
+1つ4 unitです。このため1〜2 tileのCPU direct runはlogical word数の4倍、
+Word-RAM DMAは必須の先頭word補修に4 unitを追加します。新しいVBlankを待った直後、
+またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
+すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを待ちます。
 
-Shared pathを使うのは、残りword budgetが64-by-28 name-table DMA全体（1,792
-word）、128-word timing guard、存在する場合の69-word相当のDEBUG HUD staging
-allowance、任意の64-word CRAM replacementを覆う場合だけです。そのreserveは
-releaseで1,920 word、DEBUGで1,989 word、palette switch時はさらに64 wordです。VBlank statusはV
-counterの前後で確認し、terminalの`FC..FF` lineは拒否します。どれかの条件を
-満たさない場合、Mainはname-table DMAとflipの前にfresh VBlankを待ちます。これに
-より、mid-blank entryを未使用capacityと見なさずに、1個のphysical deadlineを共有
-します。通常のDMA runはwholeのままです。Current残budgetに収まらないrunは
-overload fallbackとしてfresh VBlankを待ちますが、これは意図した2本目への配分
-ではありません。1回のfull budgetより長いrunだけがchunk fallbackを使います。
+Budget 1からN-1まではpatternに使えます。Pattern workがbudget Nへ入る前に、
+Mainはdisplay work全体を先に取り置きします。内訳は64-by-28 name-table DMAの
+1,792 word、128-unit timing guard、存在する場合の69-unit DEBUG HUD staging
+allowance、任意のCRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを
+予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,989 unit、palette switch時は
+2,176と2,245です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
+VBlank 2にpattern用1,211 unit、palette switch時は955 unitを持ちます。
+
+DMA runが残budget境界を越える場合はそこで正確に分割し、次のfresh VBlank headから
+続きを行います。1〜2 tileのCPU runはwholeのまま、収まらなければ次のbudgetへ送ります。
+Pattern tail後に取り置いたreserveを戻し、同じVBlank内にまだいる場合だけ
+name-table/CRAM/flip shared pathを許可します。VBlank statusはV counterの前後で確認し、
+terminalの`FC..FF` lineは拒否します。どれかを満たさなければfresh VBlankを待ちます。
 
 multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
 transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
 patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
 DMA後に別の69-cell VDP-port republishは行いません。Runtime VBlank budget
-1〜4のexact word counterを持ち、`T`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
+1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、
+`T`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
 含まれますが、staging allowanceはshared admission checkを保守的に維持します。
-
-1～2 tileのCPU-write runもwholeのままです。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が

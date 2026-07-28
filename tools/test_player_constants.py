@@ -79,7 +79,7 @@ class PlayerConstantsTest(unittest.TestCase):
                           | ttrc_routing.FEATURE_FIXED_N)))
         self.assertEqual(values.screen_cols, 40)
         self.assertEqual(values.vsync_n, 4)
-        self.assertEqual(values.vbudget, 3400)
+        self.assertEqual(values.vbudget, 3200)
         self.assertEqual(values.audio_bytes, 1472)
         self.assertEqual((values.sec_num, values.sec_mod), (1001, 200))
         self.assertEqual((values.sec_base, values.sec_rem), (5, 1))

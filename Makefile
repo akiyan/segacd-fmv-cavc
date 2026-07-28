@@ -277,8 +277,8 @@ $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
 $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
 	@bytes=$$(wc -c < $@); \
-		if [ "$$bytes" -gt 18688 ]; then \
-			echo "ERROR: $@ is $$bytes bytes; transient Main IP data must end before 0xFF4900" >&2; \
+		if [ "$$bytes" -gt 18944 ]; then \
+			echo "ERROR: $@ is $$bytes bytes; transient Main IP data must end before 0xFF4A00" >&2; \
 			rm -f $@; \
 			exit 1; \
 		fi

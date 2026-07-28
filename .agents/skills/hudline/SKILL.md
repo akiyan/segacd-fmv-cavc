@@ -144,9 +144,8 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   Boolean APPLY-block row, `K` as a cumulative MSF-gap row, `H` as exact
   32-byte-pattern occupancy with the physical back-pressure guide, and `X` as
   separate complete-frame and current-slot-sector rows. Render
-  `Y/Z/Y3/Y4` as exact transfer words (16 words per 32-byte pattern), `T` as
-  the count of VBlanks
-  carrying pattern work, and `I` as the pattern-exit V-counter. Preserve HUD units
+  `Y/Z/Y3/Y4` as exact logical pattern words (16 words per 32-byte pattern), `T` as
+  the count of fresh VBlank budgets opened, and `I` as the pattern-exit V-counter. Preserve HUD units
   instead of normalizing each recording to its
   observed peak. Every HUD vertical axis shows only its maximum label; omit
   all midpoint and zero labels.
@@ -195,14 +194,12 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   high byte and current-slot sector position in its low byte. Read them
   together to distinguish useful prefetch from a payload back-pressure event.
   These fields are diagnostic and never change the upload gate.
-- `Y/Z/Y3/Y4` are exact word shares charged to the first four runtime
-  VBlank budgets, `O/I` are the current frame's first/final
-  pattern-exit V-counters, and `T` is the number of budgets opened. A whole
-  run can physically continue through active display without opening another
-  budget, so `T=1` does not prove that the work fit inside one VBlank. Use
-  `O=00..DF` to identify a first share that ran into active display, and use
-  `I` for the final tail. `T>N` at fixed cadence is a warning; the word shares
-  and phases are diagnostic.
+- `Y/Z/Y3/Y4` are exact logical pattern-word shares in the first four runtime
+  VBlank budgets; weighted CPU/DMA capacity cost is separate. `O/I` are the
+  current frame's first/final pattern-exit V-counters, and `T` is the number
+  of budgets opened. Use `O=00..DF` to identify a first share that ran into
+  active display despite the model, and use `I` for the final tail. `T>N` at
+  fixed cadence is a warning; the word shares and phases are diagnostic.
 - When a gate fails, never report only the maximum. Include the over-limit
   table from `report_overages.py` so the exact workload and phase values at
   each gate event are preserved. Keep VBLANK warnings aggregate-only.

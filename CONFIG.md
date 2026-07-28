@@ -192,9 +192,9 @@ useful data at five sectors. Rates without fixed-N use the delivery-paced
 `75 / fps_int` accumulator.
 
 `FEATURE_COLD_RUNS` appends four-byte source-aware run descriptors after one
-`n_runs` word. Sub validates and copies them. Main schedules whole runs against
-the remaining measured VBlank word budget; the stream carries no encoded
-VBlank boundaries.
+`n_runs` word. Sub validates and copies them. Main schedules them against the
+remaining weighted VBlank budget and splits a DMA run at a residual boundary;
+the stream carries no encoded VBlank boundaries.
 Allocator slots are physical VRAM slots; pattern loads are emitted in ascending
 slot order while name updates remain in cell order.
 
@@ -202,10 +202,11 @@ slot order while name updates remain in cell order.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
-| `VB_WORDS_H40` | 3,400 words/VBlank | ip | H40 VBlank transfer budget. |
-| `VB_WORDS_H32` | 2,800 words/VBlank | ip | H32 VBlank transfer budget. |
+| `VB_WORDS_H40` | 3,200 DMA-word equivalents/VBlank | ip | Conservative H40 VBlank work budget. |
+| `VB_WORDS_H32` | 2,800 DMA-word equivalents/VBlank | ip | Conservative H32 VBlank work budget. |
+| `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
-| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2000..0xFF65FF` | ip | Generated Main-CPU handlers and blitters. |
+| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU handlers and blitters. |
 | `RUN_TABLE` | 488 records | ip / pack | Maximum source-aware physical cold runs in one frame. |
 | run record size | 22 bytes | ip | Pre-swizzled VDP length/source words, command, and fallback fields. |
 
@@ -614,18 +615,19 @@ fixed-Nでないrateはdelivery-paced `75 / fps_int` accumulatorを使います�
 
 `FEATURE_COLD_RUNS` は各controlへ1個の`n_runs` wordと、それに続く4-byte
 source-aware run descriptorを追加します。Subはdescriptorを検証してcopyします。
-Mainは実測VBlank word budgetの残量に対してwhole runをscheduleし、streamはencoded
-VBlank boundaryを持ちません。Allocator slotは物理VRAM slotで、
+Mainはweighted VBlank budgetの残量に対してscheduleし、DMA runを残budget境界で
+分割します。Streamはencoded VBlank boundaryを持ちません。Allocator slotは物理VRAM slotで、
 pattern loadはslot昇順、name updateはcell順です。
 
 ## Main-CPU transfer budget
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
-| `VB_WORDS_H40` | 3,400 words/VBlank | ip | H40 VBlank transfer budget。 |
-| `VB_WORDS_H32` | 2,800 words/VBlank | ip | H32 VBlank transfer budget。 |
+| `VB_WORDS_H40` | 3,200 DMA-word相当/VBlank | ip | 安全側のH40 VBlank work budget。 |
+| `VB_WORDS_H32` | 2,800 DMA-word相当/VBlank | ip | 安全側のH32 VBlank work budget。 |
+| `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
-| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2000..0xFF65FF` | ip | 生成するMain-CPU handlerとblitter。 |
+| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU handlerとblitter。 |
 | `RUN_TABLE` | 488 records | ip / pack | 1 frameのsource-aware physical cold run上限。 |
 | run record size | 22 bytes | ip | 事前変換済みVDP length/source word、command、fallback field。 |
 

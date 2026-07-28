@@ -14,10 +14,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-CODEGEN_BASE = 0x00FF2000
+CODEGEN_BASE = 0x00FF2100
 TABLE_BYTES = 256 * 2
 HANDLERS_BASE = CODEGEN_BASE + TABLE_BYTES
-CODEGEN_LIMIT = 0x00FF6600
+CODEGEN_LIMIT = 0x00FF6700
 
 # The real address moves as movieplay_ip.s changes. It is deliberately placed
 # below CODEGEN_BASE here so every generated BRA.W exercises the same backward
@@ -40,7 +40,7 @@ PLAYER_CONSTANTS = {
     "MAIN_CODEGEN_LIMIT": CODEGEN_LIMIT,
     "MAIN_CODEGEN_TABLE_BYTES": TABLE_BYTES,
     "MAIN_CODEGEN_HANDLER_MAX": 70,
-    "MAIN_CODEGEN_EXPECTED_END": 0x00FF4900,
+    "MAIN_CODEGEN_EXPECTED_END": 0x00FF4A00,
     "CG_OP_MOVE_ENTRY_D3": OP_MOVE_ENTRY_D3,
     "CG_OP_STRIP_COLD_D6_D3": OP_STRIP_COLD_D6_D3,
     "CG_ENTRY_MASK_LONG": ENTRY_MASK_LONG,
@@ -208,7 +208,7 @@ def apply_full_longwords(entries: list[int], shadow: list[int], cursor: int) -> 
 
 
 def verify_semantics(cases_per_mask: int = 64) -> int:
-    rng = random.Random(0xFF2000)
+    rng = random.Random(0xFF2100)
     checked_entries = 0
     for mask in range(256):
         count = mask.bit_count()
@@ -324,7 +324,7 @@ def main() -> None:
     expected_size = 0x2900
     if len(image) != expected_size:
         raise AssertionError(f"generated size {len(image)} != expected {expected_size}")
-    if CODEGEN_BASE + len(image) != 0x00FF4900:
+    if CODEGEN_BASE + len(image) != 0x00FF4A00:
         raise AssertionError("unexpected generated end address")
     maximum = max(handler.size for handler in handlers)
     if maximum != 70:
