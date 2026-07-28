@@ -1600,8 +1600,7 @@ def main():
         )
         boot_inline_capacity = max(
             0, frame0_inline_pattern_limit - len(frame0_keys))
-        boot_sidecar_capacity = av_config.boot_vram_sidecar_capacity(
-            len(seg_pals))
+        boot_sidecar_capacity = av_config.boot_vram_sidecar_capacity()
         boot_prefetch_capacity = min(
             max(0, VRAM_TILES - len(frame0_keys)),
             boot_inline_capacity + boot_sidecar_capacity,

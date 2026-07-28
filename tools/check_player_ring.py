@@ -234,7 +234,7 @@ print(
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
 
 
-# TTRC v19 has one startup command. HEADER contains only static boot state;
+# TTRC v20 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
@@ -296,7 +296,7 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v19 BODY arm and one-command "
+    "check_player_ring: OK  v20 BODY arm and one-command "
     "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
     "and PCM begins on its first control sector")
 
@@ -305,9 +305,6 @@ print(
 if pattern_supply.PALTAB_STAGE_OFFSET != equ(
         sp_text, "PALTAB_STAGE_OFF", SP):
     sys.exit("check_player_ring: Sub PALTAB stage offset differs from Python")
-if pattern_supply.PALTAB_STAGE_OFFSET != equ(
-        ip_text, "PALTAB_STAGE_OFF", IP):
-    sys.exit("check_player_ring: Main PALTAB stage offset differs from Python")
 if pattern_supply.PALTAB_STAGE_BYTES != equ(
         sp_text, "PALTAB_STAGE_BYTES", SP):
     sys.exit("check_player_ring: Sub PALTAB stage size differs from Python")
@@ -420,8 +417,6 @@ if equ(sp_text, "DIC_STAGE_PATTERNS", SP) != pattern_supply.DIC_BUF_PATTERNS:
 # adjacent, and the dictionary ends below the stack guard.
 ip_paltab_ram = equ(ip_text, "PALTAB_RAM", IP)
 ip_palidx_ram = equ(ip_text, "PALIDX_RAM", IP)
-if equ(ip_text, "PALIDX_STAGE_OFF", IP) != av_config.PALIDX_STAGE_OFFSET:
-    sys.exit("check_player_ring: Main PALIDX stage offset differs from av_config")
 if equ(ip_text, "PALIDX_ENTRIES", IP) != av_config.PALIDX_ENTRIES:
     sys.exit("check_player_ring: Main PALIDX entry count differs from av_config")
 if ip_paltab_ram + av_config.PALTAB_MAX_SEG * 128 != ip_palidx_ram:
@@ -430,6 +425,31 @@ if ip_palidx_ram + av_config.PALIDX_BYTES != pattern_supply.DIC_BUF_BASE:
     sys.exit("check_player_ring: M-DIC does not follow M-PALIDX")
 if pattern_supply.DIC_BUF_END > 0xFFFB00:
     sys.exit("check_player_ring: M-DIC overlaps the stack guard")
+
+# The player image embeds the pack-written palette tables. Validate the build
+# inputs the IP is about to incbin: paltab.bin is n_seg*128 bytes within the
+# fixed M-PALTAB capacity, palidx.bin is the sentinel-terminated 16-entry
+# switch table.
+if args.constants:
+    paltab_path = args.constants.parent / "paltab.bin"
+    palidx_path = args.constants.parent / "palidx.bin"
+    if paltab_path.exists() or palidx_path.exists():
+        paltab_bytes = paltab_path.read_bytes()
+        if (not paltab_bytes or len(paltab_bytes) % 128
+                or len(paltab_bytes) > av_config.PALTAB_MAX_SEG * 128):
+            sys.exit(
+                f"check_player_ring: paltab.bin is {len(paltab_bytes)} bytes; "
+                f"expected n_seg*128 up to {av_config.PALTAB_MAX_SEG * 128}")
+        palidx_bytes = palidx_path.read_bytes()
+        if len(palidx_bytes) != av_config.PALIDX_BYTES:
+            sys.exit(
+                f"check_player_ring: palidx.bin is {len(palidx_bytes)} bytes; "
+                f"expected {av_config.PALIDX_BYTES}")
+        last_frame = int.from_bytes(palidx_bytes[-4:-2], "big")
+        if last_frame != av_config.PALIDX_FRAME_SENTINEL:
+            sys.exit(
+                "check_player_ring: palidx.bin final entry is not the 0xFFFF "
+                "frame sentinel")
 
 
 # PRG-RAM ring and boot-only staging remain independent of movie layout.

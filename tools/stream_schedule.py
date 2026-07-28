@@ -92,7 +92,7 @@ def control_block_lengths(
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES,
     )
     # body prefix: frame_seq and n_upd = 4 bytes (palette switches are
-    # boot-loaded PALIDX data, not stream bytes). Entry words and the run
+    # player-embedded PALIDX data, not stream bytes). Entry words and the run
     # suffix are even-sized; only the pre-suffix body may need a byte.
     pre_suffix = 4 + update_bytes + int(audio_frame_bytes)
     pre_suffix += pre_suffix & 1

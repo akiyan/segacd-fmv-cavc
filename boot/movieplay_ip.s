@@ -33,7 +33,7 @@
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
-.equ STAT_BOOT_STAGE, 0x8001		/* palette/Dic staging bank is available */
+.equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic staging bank is available */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
 
@@ -88,18 +88,17 @@
 .equ HUD_FONT_VTILE, HUD_FONT_ADDR/32	/* = 1664; name-table tile index (11-bit, fits) */
 /* リリースビルドが既定。make movieplay DEBUG=1 でオーバーレイ一式を有効化
    (画面表示専用。ストリームにDEBUG専用データは持たない) */
-/* CRAM pre-load: 全区間パレット表。boot時にWord-RAM(PALTAB_OFF, frame0バンク)から一度だけ
-   コピーする。区間切替もboot搭載のPALIDX表(切替frame番号+区間番号)が起点で、
-   ストリーム到着に依存しない。容量はav_config.PALTAB_MAX_SEGと一致必須
+/* CRAM pre-load: 全区間パレット表(paltab.bin)と切替表(palidx.bin)はpackが書く
+   ビルド入力で、このIPイメージの一時.startup領域に内蔵する。ip_entry冒頭で
+   M-PALTAB/M-PALIDXへコピーし、以後codegenが.startupを上書きしても安全。
+   区間切替は内蔵PALIDX表(切替frame番号+区間番号)が起点で、ストリーム到着に
+   依存しない。容量はav_config.PALTAB_MAX_SEGと一致必須
    (check_player_ring.pyがビルド時検証)。 */
-.equ PALTAB_OFF, 0x1000			/* Word-RAM内ステージ位置(sp.sと一致必須) */
 .equ PALTAB_MAX_SEG, 16			/* Main-RAM表の容量(区間数)。16*128B=2KB */
-.equ PALTAB_STAGE_OFF, 0x0000
 .equ PALTAB_STAGE_BYTES, 0x6000
-.equ PALIDX_STAGE_OFF, 0x0F80		/* stage内の切替表(av_configと一致必須) */
 .equ PALIDX_ENTRIES, 16			/* 15切替 + 0xFFFF frame番兵 */
 .equ PALIDX_RAM, 0x00FFBA00		/* M-PALIDX 0xFFBA00..0xFFBA3F */
-.equ BOOT_VRAM_DIR_OFF, PALTAB_STAGE_OFF+0x0FC0
+.equ BOOT_VRAM_DIR_OFF, 0x0FC0
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
 .equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
 /* 1VBLANKで安全に転送できる語数はモード別(md_vbudget)。実測(dmabench)に基づき保守的に。
@@ -248,6 +247,23 @@
 ip_entry:
 	move.w	#0x2700, sr
 	lea	STACK, sp
+
+	/* IPイメージ内蔵のパレット表(可変長 n_seg*128B)と切替表(64B)をM-RAMへ。
+	   格納元は一時.startup領域で、後段のcodegenが上書きするため最初に写す。
+	   以後の参照(初期CRAM・区間切替・ループ復帰)はすべてM-PALTAB/M-PALIDX。 */
+	lea	paltab_image, a0
+	lea	PALTAB_RAM, a1
+	move.w	#(paltab_image_end-paltab_image)/2-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+	lea	palidx_image, a0
+	lea	PALIDX_RAM, a1
+	moveq	#PALIDX_ENTRIES-1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	move.l	#PALIDX_RAM, palidx_ptr
 
 	jsr	BIOS_LOAD_DEFAULT_VDP_REGS
 	jsr	BIOS_CLEAR_VRAM
@@ -430,7 +446,7 @@ ip_entry:
 	clr.w	frame_no
 	clr.w	started
 	clr.w	vsync_acc			/* v4: ペーシングカウンタ初期化(.bssはMD上でクリアされない) */
-	move.l	#PALIDX_RAM, palidx_ptr		/* boot stageコピーでも設定済み(防御的) */
+	move.l	#PALIDX_RAM, palidx_ptr		/* ip_entry冒頭でも設定済み(防御的) */
 	bsr	prime_fixed_cadence		/* frame0 has no preceding movie flip */
 .ifdef DEBUG
 	clr.w	sub_wait_lines
@@ -470,6 +486,10 @@ movie_end_md:
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
 	bsr	cmd_wait_ready			/* BODY arm + frame0 handoff完了まで待つ */
 	bsr	show_frame_minus_one
+	/* ループ再生: CRAMを区間0へ復帰(最終区間のパレットのままframe0を
+	   表示しない)。frame -1は黒画面なので新VBLANK頭で総入替すれば安全。 */
+	bsr	wait_vb_start
+	bsr	load_movie_palette
 	clr.w	frame_no
 	clr.w	started
 	clr.w	dbg_seg
@@ -845,7 +865,7 @@ bf_upd:
 	PC_ADDA_W md_bmbytes, PC_BMBYTES, a0	/* entries */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_BMBYTES & 1)
-	addq.l	#1, a0				/* v19 retains the aligned 16-bit entry array */
+	addq.l	#1, a0				/* v20 retains the aligned 16-bit entry array */
 .endif
 .else
 	move.w	md_bmbytes, d0
@@ -1154,7 +1174,7 @@ bf_flip:
 	move.w	d0, d5				/* prebuilt reg2 word */
 	/* パレット区間切替: CRAM総入替(64語≈0.1ms)→flip を新しいvblank頭で連続実行=
 	   同一VBLANK内で原子的。DEBUGフォントはP0/index15固定なので切替時作業はない。
-	   トリガはboot搭載のM-PALIDX表: next_switch <= frame_no の間advance
+	   トリガはplayer内蔵のM-PALIDX表: next_switch <= frame_no の間advance
 	   (等値比較にしない=heldフレームで切替frameを跨いでも失われない)。最後に
 	   跨いだentryの区間を採用=絶対値の自己修復性を維持。表は15切替+0xFFFF番兵
 	   で必ず終端されるためadvanceは有界。CRAM本体はboot時に積んだMain-RAMの
@@ -1564,9 +1584,10 @@ set_vram_write:
 	move.l	d0, (VDP_CTRL).l
 	rts
 
+/* 初期CRAM = M-PALTAB[0](区間0)。ip_entry冒頭のコピー後ならいつでも呼べる。 */
 load_movie_palette:
 	move.l	#0xC0000000, (VDP_CTRL).l
-	lea	palettes, a0
+	lea	PALTAB_RAM, a0
 	move.w	#64-1, d0
 1:
 	move.w	(a0)+, (VDP_DATA).l
@@ -1680,32 +1701,8 @@ cmd_wait_startup:
 
 consume_boot_stage:
 	movem.l	d0-d7/a0-a6, -(sp)
-	lea	(PROBE_BANK+STATUS_OFF+0x80).l, a0
-	PC_MOVE_W 20(a0), PC_NSEG, d1
-.ifndef PLAYER_SPECIALIZED
-	cmp.w	#PALTAB_MAX_SEG, d1
-	bls.s	1f
-	move.w	#PALTAB_MAX_SEG, d1
-1:
-	move.w	d1, md_nseg
-.endif
-	lsl.w	#6, d1				/* n_seg * 64 palette words */
-	beq.s	2f
-	subq.w	#1, d1
-	lea	(PROBE_BANK+PALTAB_OFF).l, a1
-	lea	PALTAB_RAM, a2
-1:
-	move.w	(a1)+, (a2)+
-	dbra	d1, 1b
-2:
-	/* PALIDX: boot搭載の切替表(番兵込み16 entry)をM-PALIDXへ。 */
-	lea	(PROBE_BANK+PALTAB_STAGE_OFF+PALIDX_STAGE_OFF).l, a1
-	lea	PALIDX_RAM, a2
-	moveq	#PALIDX_ENTRIES-1, d1
-1:
-	move.l	(a1)+, (a2)+
-	dbra	d1, 1b
-	move.l	#PALIDX_RAM, palidx_ptr
+	/* パレット表と切替表はIPイメージ内蔵(ip_entry冒頭でM-RAMへコピー済み)。
+	   stageに残る内容はDic stagingとBVRM sidecarのみ。 */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0008)
 .if PC_DIC_PATTERNS > 0
@@ -1751,9 +1748,8 @@ start_playback:
 	rts
 /* Boot-stage directory at stage+0x0FC0:
      "BVRM", count_A.w, count_B.w, count_C.w
-   Records are [zero-based physical_slot.w, packed_pattern[32]] in three holes
-   around the directory and palette: +0000..0F00,
-   palette_end..3000, and +5000..6000. */
+   Records are [zero-based physical_slot.w, packed_pattern[32]] in three fixed
+   holes around the directory: +0000..0F00, +1000..3000, and +5000..6000. */
 load_boot_vram_sidecar:
 	movem.l	d0-d7/a0-a2, -(sp)
 	lea	(PROBE_BANK+STATUS_OFF+0x80).l, a0
@@ -1767,33 +1763,22 @@ load_boot_vram_sidecar:
 	bls.s	1f
 	move.w	#0x0F00/34, d7
 1:
-	lea	(PROBE_BANK+PALTAB_STAGE_OFF).l, a1
+	lea	(PROBE_BANK).l, a1
 	bsr	load_boot_vram_records
 
-	moveq	#0, d0
-	move.w	20(a0), d0			/* n_seg */
-	cmpi.w	#PALTAB_MAX_SEG, d0
-	bls.s	1f
-	move.w	#PALTAB_MAX_SEG, d0
-1:
-	lsl.l	#7, d0				/* palette bytes */
-	lea	(PROBE_BANK+PALTAB_OFF).l, a1
-	adda.l	d0, a1
-	move.l	#0x2000, d1
-	sub.l	d0, d1
-	divu.w	#34, d1				/* maximum complete records */
 	move.w	6(a2), d7
-	cmp.w	d1, d7
+	cmpi.w	#0x2000/34, d7
 	bls.s	2f
-	move.w	d1, d7
+	move.w	#0x2000/34, d7
 2:
+	lea	(PROBE_BANK+0x1000).l, a1
 	bsr	load_boot_vram_records
 	move.w	8(a2), d7
 	cmpi.w	#0x1000/34, d7
 	bls.s	3f
 	move.w	#0x1000/34, d7
 3:
-	lea	(PROBE_BANK+PALTAB_STAGE_OFF+0x5000).l, a1
+	lea	(PROBE_BANK+0x5000).l, a1
 	bsr	load_boot_vram_records
 9:
 	movem.l	(sp)+, d0-d7/a0-a2
@@ -2093,10 +2078,27 @@ dbg_put2:
 	addq.l	#4, a0
 	rts
 
+/* パレット表(全区間)と切替表はboot時にM-RAMへ写すだけの一時データなので、
+   codegenが上書きする.startup領域に置いて恒久.dataの8KiB枠を消費しない。 */
+	.section .startup, "a", @progbits
+	.align 2
+paltab_image:
+	.incbin "paltab.bin"
+paltab_image_end:
+.if (paltab_image_end-paltab_image) % 128
+	.error "paltab.bin must be n_seg*128 bytes"
+.endif
+.if (paltab_image_end-paltab_image) > PALTAB_MAX_SEG*128
+	.error "paltab.bin exceeds the fixed M-PALTAB capacity"
+.endif
+palidx_image:
+	.incbin "palidx.bin"
+.if .-palidx_image != PALIDX_ENTRIES*4
+	.error "palidx.bin must be 16 entries of 4 bytes"
+.endif
+
 	.data
 	.align 2
-palettes:
-	.incbin "palettes.bin"
 dbgfont:
 	.incbin "dbgfont.bin"
 .ifdef HUD_HEX_TABLE
@@ -2188,10 +2190,6 @@ wr_ptr0:
 	.space 4				/* next Wr0 preload address in the currently mapped bank */
 wr_ptr1:
 	.space 4				/* next Wr1 preload address in the currently mapped bank */
-.ifndef PLAYER_SPECIALIZED
-md_nseg:
-	.space 2				/* PALTAB区間数(表コピー時にクランプ済み) */
-.endif
 .ifdef MAIN_CODEGEN
 md_codegen:
 	.space 2				/* 1 only after the complete runtime proof succeeds */
