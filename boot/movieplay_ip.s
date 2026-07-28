@@ -845,7 +845,7 @@ bf_upd:
 	PC_ADDA_W md_bmbytes, PC_BMBYTES, a0	/* entries */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_BMBYTES & 1)
-	addq.l	#1, a0				/* v17 retains the aligned 16-bit entry array */
+	addq.l	#1, a0				/* v19 retains the aligned 16-bit entry array */
 .endif
 .else
 	move.w	md_bmbytes, d0

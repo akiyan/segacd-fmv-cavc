@@ -234,7 +234,7 @@ print(
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
 
 
-# TTRC v17+ has one startup command. HEADER contains only static boot state;
+# TTRC v19 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
