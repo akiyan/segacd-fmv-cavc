@@ -282,7 +282,7 @@ sequenceDiagram
 ```
 
 TTRC v22 controls store `n_runs` immediately followed by source-aware run
-descriptors. Main derives every boundary from the runtime residual budget.
+descriptors. Main schedules whole runs against the runtime residual budget.
 Fixed N is the healthy transfer-window count: N2 permits two and N4 permits
 four; using another transfer VBlank remains bounded but raises a HUD warning.
 A light N4 frame may finish in one or two transfer VBlanks and leave the
@@ -303,8 +303,10 @@ or 1,989 words in DEBUG, plus 64 words for a palette switch. VBlank status is
 checked before and after the V counter, and the terminal `FC..FF` lines are rejected. If any
 condition fails, Main waits for a fresh VBlank before the name-table DMA and
 flip. This shares one physical deadline without treating a mid-blank entry as
-unused capacity. A DMA run that crosses the current pattern budget is split at
-that boundary rather than abandoning the first blank's residual capacity.
+unused capacity. Ordinary DMA runs remain whole. A run that does not fit the
+current residual budget waits for a fresh VBlank as an overload fallback; this
+is not an intended second-VBlank allocation. Only a run longer than one
+complete budget uses the chunk fallback.
 
 For a multi-VBlank DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the second VBlank.
@@ -317,8 +319,7 @@ The staging allowance
 keeps the shared admission check conservative even though those HUD words are
 already part of the name-table DMA.
 
-One- or two-tile CPU-write runs remain whole and can leave at most 32 words
-unused.
+One- or two-tile CPU-write runs also remain whole.
 
 Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
@@ -621,7 +622,7 @@ sequenceDiagram
 ```
 
 TTRC v22 controlは`n_runs`の直後にsource-aware run descriptorを置きます。
-Mainはruntime残budgetからすべてのboundaryを導出します。Fixed Nはhealthyな
+Mainはruntime残budgetに対してwhole runをscheduleします。Fixed Nはhealthyな
 transfer-window数で、N2は2本、N4は4本です。さらにtransfer VBlankを使う処理は
 boundedのままですがHUD warningになります。軽いN4 frameは1〜2 transfer VBlankで
 完了し、残るcadence windowを空きにできます。
@@ -639,8 +640,9 @@ releaseで1,920 word、DEBUGで1,989 word、palette switch時はさらに64 word
 counterの前後で確認し、terminalの`FC..FF` lineは拒否します。どれかの条件を
 満たさない場合、Mainはname-table DMAとflipの前にfresh VBlankを待ちます。これに
 より、mid-blank entryを未使用capacityと見なさずに、1個のphysical deadlineを共有
-します。Current pattern budgetをまたぐDMA runは、最初のblankの残りcapacityを
-捨てず、そのboundaryで分割します。
+します。通常のDMA runはwholeのままです。Current残budgetに収まらないrunは
+overload fallbackとしてfresh VBlankを待ちますが、これは意図した2本目への配分
+ではありません。1回のfull budgetより長いrunだけがchunk fallbackを使います。
 
 multi-VBlank DEBUG pattern transferでは、Mainは最初のtransfer budget後、2つ目の
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
@@ -650,7 +652,7 @@ DMA後に別の69-cell VDP-port republishは行いません。Runtime transfer V
 1〜4のexact word counterを持ち、`T`が5本目以降を可視化します。HUD wordはname-table DMAに
 含まれますが、staging allowanceはshared admission checkを保守的に維持します。
 
-1～2 tileのCPU-write runは分割せず、未使用になるのは最大32 wordです。
+1～2 tileのCPU-write runもwholeのままです。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が

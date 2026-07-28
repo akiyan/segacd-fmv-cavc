@@ -1097,19 +1097,26 @@ bf_dma:
 .endif
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port.  A DMA run that crosses the residual
-	   word budget is split at that exact boundary so the first blank's tail is
-	   not discarded before a shared deadline flip. */
+	   straight into the control port. Ordinary runs stay whole. Crossing the
+	   residual budget is an overload fallback, not an intended second-VBlank
+	   schedule: wait for a fresh blank and issue the complete run there. */
 	move.w	(a2)+, d1			/* +0 len(語) */
 .ifdef DMA_RUN_FASTPATH
 	/* A one-time run branch is much cheaper than programming a DMA for one or
-	   two tiles.  Test the original run length here, never a budget-split tail. */
+	   two tiles. Test the original run length here. */
 	cmpi.w	#CPU_DIRECT_MAX_WORDS, d1
 	bls	bf_short_run
 .endif
 	cmp.w	d7, d1				/* whole run fits the remaining budget? */
 	bls.s	1f
-	bra	bf_split_run			/* fill this blank before continuing the run */
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
+	cmp.w	d0, d1
+	bhi	bf_split_run			/* longer than one complete budget */
+.ifdef DEBUG
+	bsr	bf_debug_next_vbudget
+.else
+	bsr	bf_refill_vbudget
+.endif
 1:
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
 	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
@@ -1130,7 +1137,8 @@ bf_run_lp:
 	bra	bf_run_done
 
 bf_split_run:
-	/* Walk the record's raw dst/len/src across one or more budget chunks. */
+	/* Rare physical fallback: a single run longer than one complete VBlank
+	   budget cannot be issued whole without entering active display. */
 	move.w	8(a2), d3			/* +10 dst (a2 is at +2) */
 	movea.l	16(a2), a3			/* +18 src */
 	adda.w	#20, a2				/* advance to the next record */

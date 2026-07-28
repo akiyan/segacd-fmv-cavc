@@ -25,8 +25,9 @@ For every case it requires:
 - fixed-N H40 starts each 3,400-word transfer budget only at a proven VBlank
   head, keeps the cold-tail/name-table/flip reserve in the disassembly, and
   retains status, terminal-line, and fresh-VBlank fallback guards;
-- a DMA run that crosses a VBlank word-budget boundary is split there instead
-  of discarding the residual capacity needed by the shared deadline;
+- an ordinary DMA run that crosses the residual word budget waits whole for a
+  fresh VBlank, while a run longer than one complete budget keeps the bounded
+  chunk fallback;
 - the fixed cadence is generated as N2 at 30 fps and N4 at 15 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;

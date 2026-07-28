@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p125: Keep ordinary DMA runs whole. A run that does not fit the residual
+#         word budget spills intact to a fresh VBlank as an overload fallback;
+#         only a run longer than one complete budget uses chunk splitting.
+#         Preserve the v22 controls and exact VB1--VB4/T diagnostics.
 #   p124: Consume TTRC v22 controls without the removed encoder VBlank plan,
 #         restore the compact O_PALW/O_NLOAD/O_LOADS Word-RAM header, and keep
 #         p112's runtime residual-budget splitting as the sole transfer policy.
@@ -1075,4 +1079,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=155
-p=124
+p=125

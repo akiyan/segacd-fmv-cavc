@@ -421,12 +421,14 @@ the destination buffers have space, but lead concurrent with `H=3440` proves
 that physical PrgBuf back-pressure can stop a continuously arriving payload
 sector. Both fields are observational and have no upload-gate threshold.
 
-### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer split
+### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer VBlanks
 
 `Y`, `Z`, `Y3`, and `Y4` are the exact word counts issued by the pattern path
 in its first four runtime transfer VBlanks. Sixteen words make one 32-byte
-pattern. A DMA run may be cut at a word-budget boundary, so any value can
-contain a partial pattern. An unused cadence window remains zero.
+pattern. Ordinary runs spill whole to a fresh VBlank. Only the rare fallback
+for a run longer than one complete budget may cut at a boundary, so a value
+can contain a partial run only in that case. An unused cadence window remains
+zero.
 
 `T` counts every VBlank that carried pattern work. `T=01` means all pattern
 work fit in one VBlank and `T=02` means two VBlanks were used. For fixed-N
@@ -1019,12 +1021,13 @@ Destination bufferに空きがあるreader leadは有用なprefetchですが、`
 continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得る状態です。
 両fieldとも観測専用でupload-gate thresholdはありません。
 
-### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer split
+### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer VBlank
 
 `Y`、`Z`、`Y3`、`Y4`はpattern pathが最初の4つのruntime transfer VBlankで発行した
-exact word countです。16 wordで1つの32-byte patternです。DMA runはword-budget
-boundaryで分割され得るため、各値がpartial patternを含む場合があります。使わなかった
-cadence windowはzeroのままです。
+exact word countです。16 wordで1つの32-byte patternです。通常runはwholeのまま
+次のfresh VBlankへspillします。1回のfull budgetより長いrunのrare chunk fallback
+だけはboundaryで分割されるため、その場合は各値がpartial runを含みます。
+使わなかったcadence windowはzeroのままです。
 
 `T`はpattern workを行った全VBlankを数えます。`T=01`は1 VBlank内、`T=02`は2
 VBlankを使ったことを表します。Fixed-Nでは`T>N`がcadence window超過の証拠で、

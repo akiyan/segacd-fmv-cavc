@@ -192,8 +192,8 @@ useful data at five sectors. Rates without fixed-N use the delivery-paced
 `75 / fps_int` accumulator.
 
 `FEATURE_COLD_RUNS` appends four-byte source-aware run descriptors after one
-`n_runs` word. Sub validates and copies them. Main derives each runtime split
-from the remaining measured VBlank word budget; the stream carries no encoded
+`n_runs` word. Sub validates and copies them. Main schedules whole runs against
+the remaining measured VBlank word budget; the stream carries no encoded
 VBlank boundaries.
 Allocator slots are physical VRAM slots; pattern loads are emitted in ascending
 slot order while name updates remain in cell order.
@@ -210,11 +210,11 @@ slot order while name updates remain in cell order.
 | run record size | 22 bytes | ip | Pre-swizzled VDP length/source words, command, and fallback fields. |
 
 A one- or two-tile run uses direct CPU writes. Longer runs use Word-RAM DMA,
-split at VBlank boundaries when needed, with the required first-word repair.
+with the required first-word repair. An ordinary run that does not fit the
+current residual waits whole for a fresh VBlank as an overload fallback. Only
+a run longer than one complete budget is split into chunks.
 Prg/WordBuf/DicBuf source boundaries split runs. The 488-record limit is a
-fragmentation limit, not the cold-tile cap. Runtime splitting greedily fills
-earlier VBlanks so the final cadence VBlank retains the largest possible margin
-for name table, HUD, CRAM, and flip work.
+fragmentation limit, not the cold-tile cap.
 
 ## Physical delivery allowance
 
@@ -614,7 +614,7 @@ fixed-Nでないrateはdelivery-paced `75 / fps_int` accumulatorを使います�
 
 `FEATURE_COLD_RUNS` は各controlへ1個の`n_runs` wordと、それに続く4-byte
 source-aware run descriptorを追加します。Subはdescriptorを検証してcopyします。
-Mainは実測VBlank word budgetの残量からruntime splitを導出し、streamはencoded
+Mainは実測VBlank word budgetの残量に対してwhole runをscheduleし、streamはencoded
 VBlank boundaryを持ちません。Allocator slotは物理VRAM slotで、
 pattern loadはslot昇順、name updateはcell順です。
 
@@ -629,11 +629,11 @@ pattern loadはslot昇順、name updateはcell順です。
 | `RUN_TABLE` | 488 records | ip / pack | 1 frameのsource-aware physical cold run上限。 |
 | run record size | 22 bytes | ip | 事前変換済みVDP length/source word、command、fallback field。 |
 
-1〜2 tileのrunはCPUで直接copyします。長いrunはWord-RAM DMAを使い、必要ならVBlank
-境界で分割し、必須のfirst-word repairを行います。Prg/WordBuf/DicBufのsource境界は
-runを分けます。488-record上限はfragmentation上限であり、cold tile capではありません。
-Runtime splitは早いVBlankからgreedyに埋め、最終cadence VBlankへname table、HUD、
-CRAM、flipの最大marginを残します。
+1〜2 tileのrunはCPUで直接copyします。長いrunはWord-RAM DMAを使い、必須の
+first-word repairを行います。Current残budgetに収まらない通常runは、overload
+fallbackとしてwholeのままfresh VBlankを待ちます。1回のfull budgetより長いrun
+だけをchunk分割します。Prg/WordBuf/DicBufのsource境界はrunを分けます。
+488-record上限はfragmentation上限であり、cold tile capではありません。
 
 ## 物理delivery allowance
 

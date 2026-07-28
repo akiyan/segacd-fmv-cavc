@@ -300,15 +300,28 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
 
     run_loop = block("bf_run_lp", "bf_split_run")
     residual_compare = re.search(r"\bcmpw\s+%d7,%d1", run_loop)
-    split_crossing = re.search(
-        r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop)
-    if not residual_compare or not split_crossing:
+    full_budget = re.search(r"\bmovew\s+#3400,%d0", run_loop)
+    full_compare = re.search(r"\bcmpw\s+%d0,%d1", run_loop)
+    split_oversize = re.search(
+        r"\bbhi\w*\s+[^\n]*<bf_split_run>", run_loop)
+    spill_whole = re.search(
+        r"\bbsr\w*\s+[^\n]*<bf_debug_next_vbudget>", run_loop)
+    if not all((
+        residual_compare, full_budget, full_compare,
+        split_oversize, spill_whole,
+    )):
         raise AssertionError(
-            f"{obj}: a DMA run crossing the residual budget is not split")
-    between = run_loop[residual_compare.end():split_crossing.start()]
-    if "<bf_refill_vbudget>" in between:
+            f"{obj}: missing whole-run residual-overload fallback")
+    positions = (
+        residual_compare.start(), full_budget.start(), full_compare.start(),
+        split_oversize.start(), spill_whole.start(),
+    )
+    if positions != tuple(sorted(positions)):
         raise AssertionError(
-            f"{obj}: a crossing DMA run discards the first VBlank tail")
+            f"{obj}: whole-run residual-overload fallback is out of order")
+    if re.search(r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop):
+        raise AssertionError(
+            f"{obj}: an ordinary residual crossing still splits the run")
 
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
     if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
@@ -367,7 +380,7 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
 def verify_runtime_vblank_cadence(
     objdump: Path, obj: Path, *, expected_n: int,
 ) -> None:
-    """Prove runtime split diagnostics cover every supported fixed-N window."""
+    """Prove runtime transfer diagnostics cover every fixed-N window."""
     disassembly = run([str(objdump), "-d", str(obj)])
     start = re.search(
         r"^[0-9a-f]+ <bf_wait_fixed_flip_vblank>:$",
