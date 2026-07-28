@@ -25,7 +25,7 @@ and are listed in place.
 |---|---|
 | Sub PRG-RAM | `SCRATCH` 4.50 KiB (rewritten-scratch use is marker-qualified); `HOT-TAIL` 992 B; the `SP-RES` tail, currently 4,032–4,128 B with no loaded content (not qualified as scratch) |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
-| Main RAM | `M-FREE` 2,690 B (2.627 KiB) |
+| Main RAM | none — the 192 B cushion below `M-STACK` is a guard, not an allocatable range |
 
 ## Sub PRG-RAM Map
 
@@ -134,8 +134,9 @@ end. The fixed tail is packed immediately below routing:
 | `CTRL-SCR` | next | 8,192 B | linear control scratch |
 | `DBG-HDR` | next | 256 B | DEBUG counters and copied header |
 
-The front of each bank starts with `W-HDR` (`O_PALW` and `O_NLOAD`, four
-bytes total), followed by `LOADS` (`O_LOADS`). Main reads name updates
+The front of each bank starts with `W-HDR` (the reserved `O_PALW` word and
+`O_NLOAD`, four bytes total; palette switches are M-PALIDX driven), followed
+by `LOADS` (`O_LOADS`). Main reads name updates
 directly from `CTRL-SCR`; `O_CRAM`, `O_NUPD`, and `O_UPDS` do not exist.
 
 `WORDBUF` starts after the parity-specific `LOADS` envelope and ends before
@@ -158,10 +159,11 @@ For a 6,576-frame, 40x28-cell, cold-180 example:
 `WORDBUF` capacity is 4,992 patterns. The two regions contain different
 parity-selected streams.
 
-During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` with PALTAB at `+0x1000`;
-`DIC-STG` uses `+0x6000..+0x7FFF` for DicBuf staging. Sub gives that bank to
-Main, Main copies the palette, dictionary, and optional VRAM sidecar to their
-persistent homes, and Main returns the bank. Sub stops `HEADER.DAT` before
+During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` with PALIDX at `+0x0F80` and
+PALTAB at `+0x1000`; `DIC-STG` uses `+0x6000..+0x9FFF` for DicBuf staging. Sub
+gives that bank to Main, Main copies the palette, switch table, dictionary,
+and optional VRAM sidecar to their persistent homes, and Main returns the
+bank. Sub stops `HEADER.DAT` before
 this handoff and restarts at the exact first unread sector after the return,
 so the copy interval cannot create a sector slip. Sub then reads the finite
 untimed BODY arm and expands frame 0; frame 0 and `WORDBUF` may overwrite the
@@ -170,24 +172,26 @@ temporary staging range safely. Dump diagnostics write list-form updates into
 
 ## Main RAM Map
 
-Main RAM is `0xFF0000..0xFFFFFF`. This map is identical at every fps.
-Generated code grows upward and is build-time checked against the persistent
-DicBuf boundary.
+Main RAM is `0xFF0000..0xFFFFFF`. This map is completely fixed: it is
+identical in every build, profile, and fps. Generated code grows upward and is
+build-time checked against the `M-STATE` base.
 
 | Name | Address | Size | Contents |
 |---|---|---:|---|
 | `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player, transient boot UI, generated handlers and guard |
-| `M-DIC` | `0xFF6600..0xFF85FF` | 8.00 KiB | persistent DicBuf |
-| `M-RUNTBL` | `0xFF8600..0xFFAFFF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
-| `M-PALTAB` | `0xFFB000..0xFFCFFF` | 8.00 KiB | 64-entry PALTAB |
-| `M-STATE` | `0xFFD000..0xFFF07D` | 8,318 B | BSS, shadow, DEBUG HUD row, name-table stage, state |
-| `M-FREE` | `0xFFF07E..0xFFFAFF` | 2,690 B | unallocated, below the stack guard |
+| `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
+| `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
+| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB |
+| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table (15 switches + sentinel) |
+| `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
+| guard | `0xFFFA40..0xFFFAFF` | 192 B | cushion below the stack guard |
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stack and interrupt reserve |
 | `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | area above stack top / BIOS reserve |
 
-The realized generated-code end inside `M-CODE` and the realized RUN_TABLE
-maximum inside `M-RUNTBL` vary per profile; build-time assertions keep each
-inside its range.
+The realized generated-code end inside `M-CODE`, the realized `.bss` end
+inside `M-STATE`, and the realized RUN_TABLE maximum inside `M-RUNTBL` vary
+per build and profile; build-time assertions keep each inside its fixed
+range.
 
 ## Startup and Per-Frame CPU Sequence
 
@@ -198,7 +202,7 @@ differs.
 
 One `CMD_STREAM` command spans the complete startup. The BOOT_STAGE ownership
 exchange still uses `STAT_BOOT_STAGE` plus `COMCMD1`, because Main must copy
-palette, dictionary, and sidecar data before Sub reuses that physical bank.
+palette, switch table, dictionary, and sidecar data before Sub reuses that physical bank.
 There is no separate frame-0/BODY-start handshake.
 
 `STAT_READY` exposes the completed frame-0 bank while the timed CD reader is
@@ -220,7 +224,7 @@ sequenceDiagram
     M->>S: Assert CMD_STREAM
     CD-->>S: Static HEADER
     S-->>M: STAT_BOOT_STAGE
-    M->>W: Copy PALTAB, DicBuf, sidecar
+    M->>W: Copy PALTAB, PALIDX, DicBuf, sidecar
     M->>S: COMCMD1 stage acknowledgement
     CD-->>S: Finish static HEADER
     CD-->>S: Finite BODY arm (PCM + frame 0)
@@ -326,7 +330,7 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 |---|---|
 | Sub PRG-RAM | `SCRATCH` 4.50 KiB（書き直しscratch利用はmarker検証済み）。`HOT-TAIL` 992 B。`SP-RES`のtail、現在4,032–4,128 Bでloaded contentなし（scratchとしては未検証） |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
-| Main RAM | `M-FREE` 2,690 B（2.627 KiB） |
+| Main RAM | なし — `M-STACK` 直下の192 Bクッションはguardであり割当可能領域ではない |
 
 ## Sub PRG-RAM map
 
@@ -431,8 +435,8 @@ Routingはbank末尾に`ceil(frames / 2048) * 2048` byteを使います。Fixed 
 | `CTRL-SCR` | 次 | 8,192 B | linear control scratch |
 | `DBG-HDR` | 次 | 256 B | DEBUG counterとcopied header |
 
-各bankの先頭は`W-HDR`（`O_PALW`と`O_NLOAD`、合計4 byte）、続いて`LOADS`
-（`O_LOADS`）です。Mainはname updateを`CTRL-SCR`から直接読むため、
+各bankの先頭は`W-HDR`（reservedの`O_PALW` wordと`O_NLOAD`、合計4 byte。palette
+切替はM-PALIDX起点）、続いて`LOADS`（`O_LOADS`）です。Mainはname updateを`CTRL-SCR`から直接読むため、
 `O_CRAM`、`O_NUPD`、`O_UPDS`は存在しません。
 
 `WORDBUF`はparity別`LOADS` envelopeの直後からfixed tailの手前までです。Wr0
@@ -453,9 +457,9 @@ patternにつき32 pattern byteと4 byte descriptorを予約します。容量�
 この例の`ROUTE`は8 KiBで、`+0x1E000`から始まります。`WORDBUF`合計容量は
 4,992 patternsです。2つのregionにはparity別の異なるstreamが入ります。
 
-Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（PALTABは`+0x1000`）、`DIC-STG`が
-`+0x6000..+0x7FFF`をDicBuf stagingに使います。SubがそのbankをMainへ渡し、
-Mainはpalette、dictionary、任意のVRAM sidecarをpersistentな保存先へcopyして
+Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（PALIDXは`+0x0F80`、PALTABは`+0x1000`）、
+`DIC-STG`が`+0x6000..+0x9FFF`をDicBuf stagingに使います。SubがそのbankをMainへ渡し、
+Mainはpalette、切替表、dictionary、任意のVRAM sidecarをpersistentな保存先へcopyして
 bankを返します。Subはhandoff前に`HEADER.DAT`を停止し、返却後に正確な最初の
 未読sectorから再開するため、copy intervalがsector slipを発生させません。
 続いてSubは有限でuntimedなBODY armを読み、frame 0を展開します。その後は
@@ -464,23 +468,25 @@ diagnosticはlist形式のupdateを`CTRL-SCR`へ書きます。
 
 ## Main RAM map
 
-Main RAMは`0xFF0000..0xFFFFFF`です。このmapはすべてのfpsで同一です。
-Generated codeは上方向へ伸び、persistent DicBuf boundaryに対してbuild-time
-checkされます。
+Main RAMは`0xFF0000..0xFFFFFF`です。このmapは完全固定で、すべてのbuild・
+profile・fpsで同一です。Generated codeは上方向へ伸び、`M-STATE` baseに対して
+build-time checkされます。
 
 | Name | Address | Size | 内容 |
 |---|---|---:|---|
 | `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player、transient boot UI、generated handler、guard |
-| `M-DIC` | `0xFF6600..0xFF85FF` | 8.00 KiB | persistent DicBuf |
-| `M-RUNTBL` | `0xFF8600..0xFFAFFF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
-| `M-PALTAB` | `0xFFB000..0xFFCFFF` | 8.00 KiB | 64-entry PALTAB |
-| `M-STATE` | `0xFFD000..0xFFF07D` | 8,318 B | BSS、shadow、DEBUG HUD row、name-table stage、state |
-| `M-FREE` | `0xFFF07E..0xFFFAFF` | 2,690 B | stack guard下の未割当領域 |
+| `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
+| `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
+| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB |
+| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表（15切替+番兵） |
+| `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
+| guard | `0xFFFA40..0xFFFAFF` | 192 B | stack guard直下のクッション |
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stackとinterrupt reserve |
 | `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | stack topより上 / BIOS reserve |
 
-`M-CODE`内の実generated-code末尾と`M-RUNTBL`内の実RUN_TABLE最大値はprofile
-ごとに変わり、build-time assertionが各rangeの内側に保ちます。
+`M-CODE`内の実generated-code末尾、`M-STATE`内の実`.bss`末尾、`M-RUNTBL`内の
+実RUN_TABLE最大値はbuildとprofileごとに変わり、build-time assertionが各固定
+rangeの内側に保ちます。
 
 ## StartupとframeごとのCPU sequence
 
@@ -490,7 +496,7 @@ checkされます。
 
 1個の`CMD_STREAM` commandがstartup全体を通してassertされたままです。
 BOOT_STAGEのownership交換には引き続き`STAT_BOOT_STAGE`と`COMCMD1`を使います。
-Subが同じ物理bankを再利用する前に、Mainがpalette、dictionary、sidecar data
+Subが同じ物理bankを再利用する前に、Mainがpalette、切替表、dictionary、sidecar data
 をcopyする必要があるためです。frame-0/BODY-start専用の2個目のhandshakeは
 ありません。
 
@@ -513,7 +519,7 @@ sequenceDiagram
     M->>S: CMD_STREAMをassert
     CD-->>S: static HEADER
     S-->>M: STAT_BOOT_STAGE
-    M->>W: PALTAB、DicBuf、sidecarをcopy
+    M->>W: PALTAB、PALIDX、DicBuf、sidecarをcopy
     M->>S: COMCMD1 stage acknowledgement
     CD-->>S: static HEADERの残り
     CD-->>S: finite BODY arm（PCM + frame 0）

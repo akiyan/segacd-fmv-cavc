@@ -30,7 +30,7 @@ frames that need new patterns.
   future patterns. WordBuf0 and WordBuf1 are boot-preloaded rings in the two
   physical Word-RAM banks for their respective frame parities, refilled during
   streaming by leading BODY payload sectors where delivery has spare room.
-  DicBuf in Main RAM keeps 256 frequently reused exact patterns available
+  DicBuf in Main RAM keeps 512 frequently reused exact patterns available
   throughout the movie.
 - **Coordinate multiple CPUs.** The Sub CPU routes CD sectors, manages PrgBuf,
   decodes ADPCM, and expands the next frame into Word RAM. The Main CPU builds
@@ -361,7 +361,7 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
 - **分割memoryを使い切る。** PRG-RAMのPrgBufは将来patternを連続streamingします。
   2つのphysical Word-RAM bankには、frame parity別のWordBuf0 / WordBuf1 ringを
   起動時にpreloadし、配送に余裕がある場所ではstream中に先頭BODY payload sectorで
-  補充します。Main RAMのDicBufは、頻出exact patternを256-entry dictionaryとして
+  補充します。Main RAMのDicBufは、頻出exact patternを512-entry dictionaryとして
   全編で再利用します。
 - **複数CPUを協調させる。** Sub CPUはCD sectorのroute、PrgBuf、ADPCM decode、次frameの
   Word RAM展開を担当します。Main CPUはcurrent frameのrun構築、VRAM transfer、CRAM

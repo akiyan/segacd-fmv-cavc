@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 17
+VERSION        = 19
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 17. Bitmap controls insert one zero byte after an
+The player accepts version 19. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -37,7 +37,7 @@ HEADER.DAT
 +--------------------------------------------------+  sector 0
 | HEADER (1 sector, zero-padded)                   |
 +--------------------------------------------------+
-| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + optional VRAM sidecar
+| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + PALIDX + optional VRAM sidecar
 +--------------------------------------------------+
 | DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
 +--------------------------------------------------+
@@ -109,7 +109,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | exactly `17` |
+| 4 | 2 | version | exactly `19` |
 | 6 | 2 | frames | total frame count (`nfr`) |
 | 8 | 2 | tcols | tile-grid columns |
 | 10 | 2 | trows | tile-grid rows |
@@ -117,7 +117,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | 14 | 2 | pool | resident VRAM tile-pool size |
 | 16 | 2 | base | tile index of physical slot 0 |
 | 18 | 2 | frame_sectors | maximum useful sectors per routing entry, `5` |
-| 20 | 2 | n_seg | palette-segment count |
+| 20 | 2 | n_seg | palette-segment count, at most 16 |
 
 The next 16 bytes are `struct ">LLLL"`.
 
@@ -169,6 +169,7 @@ mismatch stops with a diagnostic.
 | 5 | `FEATURE_VRAM_RAW_PREFETCH` | cold runs may load future Prg patterns without a same-frame name update |
 | 6 | `FEATURE_DICBUF_INDEXED_RUNS` | DicBuf runs carry reusable dictionary indices |
 | 7 | `FEATURE_BOOT_VRAM_SIDECAR` | BOOT_STAGE contains direct-to-VRAM records |
+| 8 | `FEATURE_WORDBUF_RING` | routing entries may stage leading payload sectors to the parity WordBuf ring |
 
 Unknown feature bits are rejected.
 
@@ -183,7 +184,7 @@ PSUP is `struct ">4s9H"`.
 | 202 | 2 | reserved | zero |
 | 204 | 2 | wr0_patterns | WordBuf0 count, at most the generated Wr0 capacity |
 | 206 | 2 | wr1_patterns | WordBuf1 count, at most the generated Wr1 capacity |
-| 208 | 2 | dic_patterns | DicBuf count, at most 256 |
+| 208 | 2 | dic_patterns | DicBuf count, at most 512 |
 | 210 | 2 | wr0_sectors | WR0_PRELOAD sectors |
 | 212 | 2 | wr1_sectors | WR1_PRELOAD sectors |
 | 214 | 2 | dic_sectors | DIC_PRELOAD sectors |
@@ -202,9 +203,17 @@ line 0/index 15 before quantisation. Only their positions change.
 
 BOOT_STAGE is 24 KiB and is copied to Word-RAM bank offset `+0x0000`. All
 palette segments are stored consecutively at `+0x1000`, 128 bytes each. Main
-copies them once to the 8 KiB PALTAB at `0xFFB000..0xFFD000`. The capacity is
-64 segments. A timed palette switch reads PALTAB through the control block's
-`pal` field, so CRAM data does not depend on same-frame CD delivery.
+copies them once to the 2 KiB PALTAB at `0xFFB200..0xFFB9FF`. The capacity is
+a fixed 16 segments.
+
+The palette-switch index PALIDX sits at `+0x0F80`, 64 bytes: sixteen
+`(u16 switch_frame, u16 segment)` entries covering at most 15 switches,
+terminated by a `0xFFFF` frame sentinel that also fills unused entries.
+Switch frames are strictly ascending and segment numbers advance one at a
+time. Main copies the table to `0xFFBA00..0xFFBA3F` during the same handoff
+and performs each CRAM total-replace when its frame counter reaches the next
+entry, so palette data and switch timing are both independent of same-frame
+CD delivery.
 
 When feature bit 7 is set, a directory at `+0x0FC0` contains `"BVRM"` and three
 big-endian `u16` record counts. Each record is `u16 physical_slot` followed by
@@ -214,11 +223,11 @@ one 32-byte pattern. Records occupy these preserved holes:
 - the unused palette-table tail through `+0x3000`
 - `+0x5000..+0x6000`
 
-DicBuf is staged at `+0x6000..+0x7FFF`. Main copies the palette, DicBuf, and
-sidecar records before returning the bank to Sub. Frame 0 and WordBuf may then
-reuse these temporary ranges. `HEADER.DAT` is stopped at this handoff and
-resumed from the exact first unread sector after the bank returns. The same
-sequence runs on movie restart.
+DicBuf is staged at `+0x6000..+0x9FFF`. Main copies the palette, PALIDX,
+DicBuf, and sidecar records before returning the bank to Sub. Frame 0 and
+WordBuf may then reuse these temporary ranges. `HEADER.DAT` is stopped at this
+handoff and resumed from the exact first unread sector after the bank returns.
+The same sequence runs on movie restart.
 
 ## ADPCM table
 
@@ -266,9 +275,10 @@ parity ring; write and read cursors both advance forward and wrap at the
 declared capacity, and the packer's replay proves every refill sector commits
 before its frame begins expanding.
 
-DicBuf holds at most 256 reusable patterns. It is staged at Word RAM `+0x6000`
-and copied once to Main RAM `0xFF6600..0xFF8600`. Controls address entries by
-8-bit index.
+DicBuf holds at most 512 reusable patterns. It is staged at Word RAM
+`+0x6000..+0x9FFF` and copied once to Main RAM `0xFFBA40..0xFFFA3F`. Run
+descriptors address entries by a 9-bit index whose top bit rides the run
+source field.
 
 ## BODY arm audio
 
@@ -378,7 +388,6 @@ payload.
 | 2 | total_len | complete even block length, including this word |
 | 2 | frame_seq | expected frame sequence, low 16 bits |
 | 2 | n_upd/format | bits 0-14 update count; bit 15 selects completed list |
-| 2 | pal | PALTAB index plus one; zero means no CRAM change |
 | variable | shadow updates | bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
 | `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
 | 0/1 | audio pad | zero byte when needed for word alignment |
@@ -415,6 +424,11 @@ A cold-run descriptor contains two words:
 - word 1: count in bits 0-10, DicBuf index bits 0-2 in bits 11-13, and source in
   bits 14-15.
 
+Run source `0` is Prg and `1` is WordBuf. Sources `2` and `3` are both DicBuf:
+`2` addresses dictionary entries 0..255 and `3` addresses entries 256..511, so
+the descriptor carries a 9-bit index without growing. A Dic run never crosses
+that 256-entry block boundary; the encoder splits it there.
+
 Non-Dic runs require zero index bits. A source change starts another run. A Dic
 run also splits unless both slot and dictionary index remain consecutive.
 Without raw prefetch, masked run counts equal cold update entries. With raw
@@ -429,7 +443,8 @@ buffer.
 ## Player reconstruction
 
 Sub copies exactly `total_len` bytes from the APPLY ring into Word RAM and
-advances by that even length. Main optionally reloads CRAM from PALTAB, applies
+advances by that even length. Main reloads CRAM from PALTAB whenever the
+boot-loaded PALIDX table's next switch frame has been reached, applies
 source-aware physical pattern transfers to the resident VRAM pool, and updates
 the shadow name table. Most reused cells require only a two-byte name entry.
 Audio is decoded and written to the PCM chip. The two 1M Word-RAM banks swap at
@@ -456,13 +471,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 17
+VERSION        = 19
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は17です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は19です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -474,7 +489,7 @@ HEADER.DAT
 +--------------------------------------------------+  sector 0
 | HEADER (1 sector, zero-padded)                   |
 +--------------------------------------------------+
-| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + optional VRAM sidecar
+| BOOT_STAGE (paltab_sec sectors)                  |  PALTAB + PALIDX + optional VRAM sidecar
 +--------------------------------------------------+
 | DIC_PRELOAD (dic_sec sectors)                    |  DicBuf staging
 +--------------------------------------------------+
@@ -541,7 +556,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | 必ず `17` |
+| 4 | 2 | version | 必ず `19` |
 | 6 | 2 | frames | 総frame数（`nfr`） |
 | 8 | 2 | tcols | tile gridの列数 |
 | 10 | 2 | trows | tile gridの行数 |
@@ -549,7 +564,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 14 | 2 | pool | resident VRAM tile poolの大きさ |
 | 16 | 2 | base | physical slot 0のtile index |
 | 18 | 2 | frame_sectors | routing entry当たりの有効sector上限、`5` |
-| 20 | 2 | n_seg | palette segment数 |
+| 20 | 2 | n_seg | palette segment数、最大16 |
 
 次の16 byteは `struct ">LLLL"` です。
 
@@ -600,6 +615,7 @@ player signatureは同じheader sectorから生成する `player_constants.inc` 
 | 5 | `FEATURE_VRAM_RAW_PREFETCH` | 同frameのname updateなしに将来Prg patternをcold runで置ける |
 | 6 | `FEATURE_DICBUF_INDEXED_RUNS` | DicBuf runが再利用可能なdictionary indexを持つ |
 | 7 | `FEATURE_BOOT_VRAM_SIDECAR` | BOOT_STAGEがdirect-to-VRAM recordを持つ |
+| 8 | `FEATURE_WORDBUF_RING` | routing entryが先頭payload sectorをparity WordBuf ringへstageし得る |
 
 未知のfeature bitは拒否します。
 
@@ -614,7 +630,7 @@ PSUPは `struct ">4s9H"` です。
 | 202 | 2 | reserved | zero |
 | 204 | 2 | wr0_patterns | WordBuf0数、generated Wr0 capacity以下 |
 | 206 | 2 | wr1_patterns | WordBuf1数、generated Wr1 capacity以下 |
-| 208 | 2 | dic_patterns | DicBuf数、最大256 |
+| 208 | 2 | dic_patterns | DicBuf数、最大512 |
 | 210 | 2 | wr0_sectors | WR0_PRELOAD sector数 |
 | 212 | 2 | wr1_sectors | WR1_PRELOAD sector数 |
 | 214 | 2 | dic_sectors | DIC_PRELOAD sector数 |
@@ -633,9 +649,14 @@ player constantsがpreload値、routing allocation、compact-tail offset、parit
 
 BOOT_STAGEは24 KiBで、Word-RAM bank offset `+0x0000` へcopyします。全palette
 segmentは `+0x1000` から128 byteずつ連続配置します。Mainは起動時に1回だけ
-8 KiBのPALTAB（`0xFFB000..0xFFD000`）へcopyします。上限は64 segmentです。
-timed palette switchはcontrol blockの `pal` でPALTABを参照するため、CRAM dataは
-同じframeのCD deliveryに依存しません。
+2 KiBのPALTAB（`0xFFB200..0xFFB9FF`）へcopyします。上限は固定16 segmentです。
+
+palette切替indexのPALIDXは `+0x0F80` の64 byteです。16個の
+`(u16 switch_frame, u16 segment)` entryで最大15切替を持ち、`0xFFFF` frame番兵で
+終端します（未使用entryも番兵で埋めます）。switch frameは厳密に昇順で、segment
+番号は1ずつ進みます。Mainは同じhandoffで表を `0xFFBA00..0xFFBA3F` へcopyし、
+frame counterが次のentryへ達したときにCRAM総入替を実行します。palette dataと
+切替タイミングの両方が同じframeのCD deliveryに依存しません。
 
 feature bit 7がsetなら、`+0x0FC0` のdirectoryに `"BVRM"` と3個のbig-endian
 `u16` record countがあります。各recordは `u16 physical_slot` と32-byte pattern
@@ -645,8 +666,8 @@ feature bit 7がsetなら、`+0x0FC0` のdirectoryに `"BVRM"` と3個のbig-end
 - palette tableの未使用末尾から `+0x3000`
 - `+0x5000..+0x6000`
 
-DicBufは `+0x6000..+0x7FFF` にstageします。Mainはpalette、DicBuf、sidecar recordを
-copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemporary rangeを
+DicBufは `+0x6000..+0x9FFF` にstageします。Mainはpalette、PALIDX、DicBuf、
+sidecar recordをcopyしてからbankをSubへ返します。その後、frame 0とWordBufがtemporary rangeを
 再利用できます。このhandoffで `HEADER.DAT` を停止し、bank返却後に最初の未読sector
 から正確に再開します。movie restartでも同じ手順を実行します。
 
@@ -691,9 +712,9 @@ payload sectorが到着frameのparity ringへ64 patternずつ追記されます�
 readのcursorはともに前進のみで宣言capacityでwrapし、packerのreplayは全refill
 sectorがそのframeの展開開始前にcommitされることを証明します。
 
-DicBufは最大256個の再利用可能patternを持ちます。Word RAM `+0x6000` に一時配置し、
-Main RAM `0xFF6600..0xFF8600` へ起動時に1回copyします。controlは8-bit indexで
-entryを参照します。
+DicBufは最大512個の再利用可能patternを持ちます。Word RAM `+0x6000..+0x9FFF` に
+一時配置し、Main RAM `0xFFBA40..0xFFFA3F` へ起動時に1回copyします。run descriptor
+は9-bit indexでentryを参照し、その最上位bitはrun source fieldに載ります。
 
 ## BODY arm音声
 
@@ -796,7 +817,6 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 | 2 | total_len | このwordを含むblock全体の偶数長 |
 | 2 | frame_seq | 期待frame sequenceの下位16 bit |
 | 2 | n_upd/format | bits 0-14はupdate数、bit 15はcompleted list |
-| 2 | pal | PALTAB index + 1、zeroはCRAM変更なし |
 | variable | shadow updates | bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
 | `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
 | 0/1 | audio pad | word alignmentに必要なzero byte |
@@ -832,6 +852,11 @@ cold-run descriptorは2 wordです。
 - word 1: bits 0-10がcount、bits 11-13がDicBuf indexのbits 0-2、
   bits 14-15がsource
 
+run source `0` はPrg、`1` はWordBufです。`2` と `3` はともにDicBufで、`2` は
+dictionary entry 0..255、`3` は256..511を参照します。descriptorはサイズを変えずに
+9-bit indexを運びます。Dic runはこの256-entry block境界を跨ぎません（encoderが
+そこで分割します）。
+
 Dic以外のrunはindex bitがzeroでなければなりません。sourceが変われば別runです。
 Dic runはslotとdictionary indexの両方が連続しなければ分割します。raw prefetchなし
 ではmasked run count合計がcold update数です。raw prefetchありでは全physical load
@@ -844,7 +869,8 @@ audioは常にcheckpointed IMA ADPCMです。chunk先頭に `s16 predictor`、
 ## Playerでの再構築
 
 SubはAPPLY ringから正確に `total_len` byteをWord RAMへcopyし、その偶数長だけcursorを
-進めます。Mainは必要ならPALTABからCRAMを切り替え、source-aware physical pattern
-transferをresident VRAM poolへ適用し、shadow name tableを更新します。再利用cellの
+進めます。Mainはboot搭載PALIDX表の次回switch frameへ達していればPALTABからCRAMを
+切り替え、source-aware physical pattern transferをresident VRAM poolへ適用し、
+shadow name tableを更新します。再利用cellの
 大半は2-byte name entryだけで済みます。audioをdecodeしてPCM chipへ書き、frame境界
 で2つの1M Word-RAM bankを交換します。
