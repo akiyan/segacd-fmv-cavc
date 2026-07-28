@@ -66,10 +66,9 @@ HUD_H40_FIELD_DIGITS = HUD_FIELD_DIGITS
 # diagnostic, then three flip-phase fields:
 # Q = per-frame minimum logical PrgBuf balance in 32-byte patterns. It is a
 #     four-digit signed 16-bit value (0000 empty, FFFF one-pattern underflow).
-# V = V-counter at the previous accepted flip, O = that flip's interval
-# excess over 1024 stopwatch ticks (nominal N2 interval ~1086; clamped FF),
-# E = this frame's Pass2 entry delay since the previous flip in 4-tick
-# units (clamped FF).
+# V = V-counter at the previous accepted flip, O = V-counter immediately after
+# this frame's first pattern-transfer share, and E = this frame's Pass2 entry
+# delay since the previous flip in 4-tick units (clamped FF).
 HUD_H40_FLIP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
     ("Q", 4),
     ("V", 2),

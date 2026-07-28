@@ -71,6 +71,7 @@ MAXIMUM_COLUMN = {
 
 HEX_COLUMNS = {
     "flip_vcounter",
+    "pattern_vblank1_exit_vcounter",
     "pattern_exit_vcounter",
 }
 
@@ -316,6 +317,8 @@ def validate(
          "prgbuf_physical_peak_patterns"),
         ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
         ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
+        ("O", "pattern_vblank1_exit_vcounter",
+         "pattern_vblank1_exit_vcounter_max"),
         ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
         ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
         ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
@@ -598,7 +601,7 @@ def row_specs(
     optional = (
         ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",
          (124, 193, 113)),
-        ("flip_interval_excess_ticks", "O  INTERVAL", "30.72 us ticks, F-1",
+        ("pattern_vblank1_exit_vcounter", "O  FIRST EXIT", "VDP line",
          (112, 178, 216)),
         ("pass2_entry_q4", "E  PASS2 ENTRY", "4 ticks",
          (223, 182, 91)),
@@ -927,6 +930,7 @@ def main() -> None:
         )
         for key, column in (
             ("Y", "pattern_vblank1_words"),
+            ("O", "pattern_vblank1_exit_vcounter"),
             ("Z", "pattern_vblank2_words"),
             ("T", "pattern_transfer_vblanks"),
             ("I", "pattern_exit_vcounter"),
@@ -957,18 +961,19 @@ def main() -> None:
         if x_maximum is not None else ""
     )
     transfer_split_text = (
-        "Y/Z max "
+        "Y/Z words max "
         f"{split_maxima['Y']}/{split_maxima['Z']} words "
         f"({split_maxima['Y'] / 16:g}/{split_maxima['Z'] / 16:g} patterns); "
+        f"O first-exit max {split_maxima['O']:02X}; "
         f"T max {split_maxima['T']}; I max {split_maxima['I']:02X}; "
         if all(value is not None for value in split_maxima.values())
         else ""
     )
     phase_note = (
         "G is the maximum Sub pump-opportunity interval; "
-        "O on frame F describes the flip for F-1; "
+        "O/I are this frame's first/final pattern exits; "
         if g_stats is not None
-        else "V/O on frame F describe the flip for F-1; "
+        else "V is the preceding flip; O/I are this frame's pattern exits; "
     )
     coverage_text = (
         f"Complete DEBUG HUD timeline | {axis_frames} frames | "
@@ -1159,6 +1164,7 @@ def main() -> None:
             x_maximum & 0xFF if x_maximum is not None else None
         ),
         "pattern_vblank1_max_words": split_maxima["Y"],
+        "pattern_vblank1_exit_vcounter_max": split_maxima["O"],
         "pattern_vblank2_max_words": split_maxima["Z"],
         "pattern_transfer_vblank_max": split_maxima["T"],
         "pattern_exit_vcounter_max": split_maxima["I"],

@@ -180,24 +180,24 @@ available.
 | `H` | Sub | per frame | Maximum physical PrgBuf occupancy, in exact 32-byte patterns | Below `3440` stays below the 418 KiB payload back-pressure boundary |
 | `X` | Sub | per frame | CD reader position ahead of the next frame expansion; high byte is complete frame slots, low byte is sector position in the current slot | Read with `H`; large lead is safe only while every destination retains space |
 | `Y` | Main | per frame | Exact pattern-transfer words issued in the first transfer VBlank | Divide by 16 for whole 32-byte patterns; read with `Z/T` |
+| `O` | Main | per frame | V-counter immediately after the first pattern-transfer share | `E0..FF` remains in VBlank; `00..DF` proves that the first share ran into active display |
 | `Z` | Main | per frame | Exact pattern-transfer words issued in the second transfer VBlank | The second share should leave enough time for name table, HUD, palette work, and flip |
 | `T` | Main | per frame | Number of VBlanks that carried pattern transfer | `01` or `02` is the intended one-/two-VBlank path; `03+` proves a further transfer spill |
-| `I` | Main | per frame | V-counter when pattern transfer ended, before the remaining deadline work | Read with `Z` and the following row's `V/O`; it measures phase, not gate status |
+| `I` | Main | per frame | V-counter when pattern transfer ended, before the remaining deadline work | Read with `Z` and same-frame `O`; it measures phase, not gate status |
 | `V` | Main | previous frame | V-counter at the last accepted display flip | `E0` = flip at the VBlank start; higher blank lines mean the flip ran late inside its blank |
-| `O` | Main | previous frame | That flip's interval excess over 1024 stopwatch ticks | About `3E` (62 = nominal 1086-tick N2 interval); `FF` marks a slipped 3-field frame |
 | `E` | Main | per frame | Pass2 entry delay since the previous flip, in 4-tick units | Below one field (`88` = 544 ticks) with margin; approaching the field-1 blank end means the transfer is about to miss its VBlank |
 
 `S`, `D`, and `R` are cumulative counters. They should be read as transitions:
 once incremented, they remain nonzero until playback restarts, and the displayed
 low byte wraps from `FF` to `00`. `J` is also cumulative but retains the
 largest observed excess rather than counting events. `C`, `W`, `M`, `A`, `U`,
-`N`, `Q`, `G`, `B`, `H`, `X`, `Y`, `Z`, `T`, and `I` describe one frame.
+`N`, `Q`, `G`, `B`, `H`, `X`, `Y`, `O`, `Z`, `T`, and `I` describe one frame.
 `K` is cumulative. `F`, `P`, and `L` describe current player state.
-`V` and `O` are sampled at `do_flip` *after* the flip register write, so the
-row that carries them was built one frame later: frame `F`'s row shows the
+`V` is sampled at `do_flip` *after* the flip register write, so the
+row that carries it was built one frame later: frame `F`'s row shows the
 flip that published frame `F - 1`. Shift by one frame when correlating them
-with per-frame workload. `E` is sampled during frame `F`'s own build, before
-its transfer VBlank wait, and needs no shift.
+with per-frame workload. `O` and `E` are sampled during frame `F`'s own build
+and need no shift.
 
 ## Field details
 
@@ -408,7 +408,7 @@ the destination buffers have space, but lead concurrent with `H=3440` proves
 that physical PrgBuf back-pressure can stop a continuously arriving payload
 sector. Both fields are observational and have no upload-gate threshold.
 
-### `Y` / `Z` / `T` / `I`: Main pattern-transfer split
+### `Y` / `O` / `Z` / `T` / `I`: Main pattern-transfer split
 
 `Y` and `Z` are the exact word counts issued by the pattern path in its first
 and second transfer VBlanks. Sixteen words make one 32-byte pattern. A DMA run
@@ -421,11 +421,15 @@ and `T=03` or more proves that the transfer itself needed an additional blank.
 When `T<=02`, `Y+Z` equals the frame's complete pattern word count. When
 `T>=03`, `Y+Z` intentionally covers only the first two VBlanks.
 
-`I` is the raw V-counter high byte sampled when the pattern path finishes,
+`O` is the raw V-counter high byte sampled immediately after the first
+pattern-transfer share. A value in `E0..FF` remains inside VBlank; `00..DF`
+proves that payload plus run/CPU overhead continued into active display.
+
+`I` is the raw V-counter high byte sampled when the complete pattern path finishes,
 before HUD publication, name-table DMA, CRAM replacement, and display flip.
-Read it with the second share `Z` and with `V/O` from the following HUD row.
-It distinguishes a late pattern tail from work that spills after the tail.
-All four fields are observational and have no upload-gate threshold.
+Read it with the second share `Z` and same-frame `O`. Together they separate
+an overloaded first share, a late second tail, and work after the tail.
+All five fields are observational and have no upload-gate threshold.
 
 ### `G` / `B` / `K`: Sub pump and control back-pressure
 
@@ -446,18 +450,15 @@ sector-sequence gap. `S` remains the total recovery count, so `S-K` identifies
 CDC_TRN retry-exhaustion recoveries modulo 256. All three fields are diagnostic
 and have no upload-gate threshold.
 
-### `V` / `O` / `E`: flip phase and Pass2 entry phase
+### `V` / `O` / `E`: flip, first-share exit, and Pass2 entry phases
 
 `V` is the raw V-counter high byte read immediately after the accepted
 display flip's register write. `E0` (line 224) is a flip taken exactly at
 the VBlank start — the dominant healthy value; higher blank lines mean the
 flip ran late inside its blank, and the guarded terminal lines (`FC..FF`)
-are never accepted. `O` is the flip-to-flip stopwatch interval minus `N*512`
-ticks, clamped to `0..FF`: the nominal fixed-N2 interval of ~1086 ticks reads
-as about `3E` (62), while fixed N4's ~2172 ticks reads as about `7C` (124).
-Late-in-blank flips read higher, and a sufficiently slipped frame saturates at
-`FF`. Both describe the flip that published the
-*previous* frame (see above).
+are never accepted. It describes the flip that published the *previous*
+frame (see above). `O` is this frame's first pattern-share exit V-counter,
+described with `Y/Z/T/I` above.
 
 `E` is sampled at the Pass2 entry (`bf_dma`), before its VBlank wait: the
 stopwatch distance from the previous flip in 4-tick units. It measures the
@@ -483,7 +484,8 @@ VBlank.
 | `U` rises while `N` stays modest | Larger pattern volume or VBlank splitting dominates rather than descriptor count |
 | `T=02` and `Y+Z` matches the frame's pattern words | The intended two-VBlank pattern split completed |
 | `T>=03` | Pattern transfer itself consumed a third or later VBlank |
-| `T=02`, `I` is early, but the following row's `O=FF` | Pattern work finished in the second blank; later HUD/name-table/palette/flip work caused the visible hold |
+| `O=00..DF` | The first pattern share itself ran beyond VBlank; its raw-word budget ignored too much run/CPU overhead |
+| `O=E0..FF`, `T=02`, and `I` is early | Both pattern shares ended in their intended blanks; investigate HUD/name-table/palette/flip work |
 | `T=02` and `I` is near the terminal blank | The second pattern share left little margin for the remaining deadline work |
 | `M` reaches `02` or more | Main pattern work crossed an extra VBlank deadline |
 | `P` changes with stable `S/D` | Normal scheduled CRAM segment switch |
@@ -795,22 +797,22 @@ Final frameは次のmovie-frame transitionがないため、derived VBlankはunk
 | `H` | Sub | per frame | exact 32-byte pattern単位のphysical PrgBuf maximum | `3440`未満なら418 KiB payload back-pressure boundary未満 |
 | `X` | Sub | per frame | 次frame展開に対するCD reader位置。high byteは完了frame slot数、low byteはcurrent slot内sector位置 | `H`と一緒に読み、全destinationに空きがある場合だけ大きなleadが安全 |
 | `Y` | Main | per frame | 1つ目のtransfer VBlankで発行したexact pattern-transfer word数 | 16で割るとcompleteな32-byte pattern数。`Z/T`と一緒に読む |
+| `O` | Main | per frame | 1つ目のpattern-transfer share直後のV-counter | `E0..FF`ならVBlank内、`00..DF`なら1つ目のshareがactive displayへはみ出した証拠 |
 | `Z` | Main | per frame | 2つ目のtransfer VBlankで発行したexact pattern-transfer word数 | name table、HUD、palette work、flipの時間を残す必要がある |
 | `T` | Main | per frame | pattern transferを行ったVBlank数 | `01`または`02`が意図した1/2-VBlank path。`03+`は追加transfer spill |
-| `I` | Main | per frame | pattern transfer終了時、残りdeadline work前のV-counter | `Z`と次rowの`V/O`を一緒に読むphase値。Gate statusではない |
+| `I` | Main | per frame | pattern transfer終了時、残りdeadline work前のV-counter | `Z`と同frameの`O`を一緒に読むphase値。Gate statusではない |
 | `V` | Main | previous frame | accepted display flip時のV-counter | `E0`ならVBlank start。大きいblank lineはlate flip |
-| `O` | Main | previous frame | flip intervalの1024 tick超過分 | nominal N2は約`3E`、`FF`は3-field slip |
 | `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位 | 1 field未満で余裕を持つ。`88`は544 tick |
 
 `S`、`D`、`R`はcumulative counterで、一度増えるとrestartまでnonzeroです。表示low byteは
 `FF`から`00`へwrapします。`J`もcumulativeですがevent数ではなく最大excessを保持します。
-`C/W/M/A/U/N/Q/G/B/H/X/Y/Z/T/I`は1 frame、`K`はcumulative、`F/P/L`は
+`C/W/M/A/U/N/Q/G/B/H/X/Y/O/Z/T/I`は1 frame、`K`はcumulative、`F/P/L`は
 current stateです。
 
-`V/O`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
+`V`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
 作られます。Frame `F`のrowはframe `F - 1`をpublishしたflipを示すため、per-frame
-workloadと比較するとき1 frame shiftします。`E`はframe `F`自身のbuild中、transfer
-VBlank wait前にsampleし、shift不要です。
+workloadと比較するとき1 frame shiftします。`O/E`はframe `F`自身のbuild中にsampleし、
+shift不要です。
 
 ## Field詳細
 
@@ -989,7 +991,7 @@ Destination bufferに空きがあるreader leadは有用なprefetchですが、`
 continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得る状態です。
 両fieldとも観測専用でupload-gate thresholdはありません。
 
-### `Y` / `Z` / `T` / `I`: Main pattern-transfer split
+### `Y` / `O` / `Z` / `T` / `I`: Main pattern-transfer split
 
 `Y`と`Z`はpattern pathが1つ目と2つ目のtransfer VBlankで発行したexact word countです。
 16 wordで1つの32-byte patternです。DMA runはword-budget boundaryで分割され得るため、
@@ -1000,10 +1002,14 @@ continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得
 なら`Y+Z`はframe全体のpattern word数です。`T>=03`なら`Y+Z`は意図的に最初の2
 VBlankだけを表します。
 
-`I`はpattern path終了時、HUD publication、name-table DMA、CRAM replacement、
-display flipより前にsampleしたraw V-counter high byteです。2つ目のshare `Z`と、
-次のHUD rowの`V/O`を一緒に読みます。Pattern tailがlateなのか、tail後のworkが
-spillしたのかを分けます。4 fieldとも観測専用でupload-gate thresholdはありません。
+`O`は1つ目のpattern-transfer share直後にsampleしたraw V-counter high byteです。
+`E0..FF`ならVBlank内、`00..DF`ならpayloadにrun/CPU overheadを加えた実作業がactive
+displayへ続いた証拠です。
+
+`I`はpattern path全体の終了時、HUD publication、name-table DMA、CRAM replacement、
+display flipより前にsampleしたraw V-counter high byteです。2つ目のshare `Z`と同frameの
+`O`を一緒に読み、過負荷な1つ目のshare、lateな2つ目のtail、tail後のworkを分けます。
+5 fieldとも観測専用でupload-gate thresholdはありません。
 
 ### `G` / `B` / `K`: Sub pumpとcontrol back-pressure
 
@@ -1022,16 +1028,14 @@ control-sector pumpを拒否したframeで立ちます。Playerはper-frame cont
 全recovery countのままなので、`S-K`がCDC_TRN retry-exhaustion recoveryを示します。
 差はmodulo 256で読みます。3 fieldともdiagnostic専用でupload-gate thresholdはありません。
 
-### `V` / `O` / `E`: flip phaseとPass2 entry phase
+### `V` / `O` / `E`: flip、first-share exit、Pass2 entry phase
 
 `V`はaccepted display flipのregister write直後に読むraw V-counter high byteです。
 `E0`（line 224）はVBlank startちょうどのflipで、dominant healthy valueです。大きい
 blank lineはlate flipで、terminal line `FC..FF`はacceptしません。
 
-`O`はflip-to-flip stopwatch intervalから`N*512` tickを引き、`0..FF`へclampします。
-Nominal fixed-N2の約1086 tickは約`3E`、fixed N4の約2172 tickは約`7C`です。
-Late-in-blank flipは大きくなり、slipが十分大きいと`FF`になります。`V/O`はprevious
-frameをpublishしたflipを示します。
+`V`はprevious frameをpublishしたflipを示します。`O`はこのframeの1つ目の
+pattern-share exit V-counterで、上の`Y/O/Z/T/I`と一緒に読みます。
 
 `E`はPass2 entry（`bf_dma`）でVBlank wait前にsampleする、previous flipからの
 stopwatch distanceです。4-tick unitで、CMD_SWAP wait（`W`）、control parse、
@@ -1053,7 +1057,8 @@ bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main pha
 | `U`上昇、`N`は小さい | Descriptor数よりpattern volumeまたはVBlank splitが支配 |
 | `T=02`かつ`Y+Z`がframeのpattern word数と一致 | 意図した2-VBlank pattern splitが完了 |
 | `T>=03` | Pattern transfer自体が3つ目以降のVBlankを消費 |
-| `T=02`で`I`はearly、次rowの`O=FF` | Pattern workは2つ目のblankで完了し、後続HUD/name-table/palette/flip workがvisible holdを発生 |
+| `O=00..DF` | 1つ目のpattern share自体がVBlankを越え、raw-word budgetがrun/CPU overheadを過小評価 |
+| `O=E0..FF`、`T=02`、`I`はearly | 両pattern shareは意図したblank内で終了。HUD/name-table/palette/flip workを調べる |
 | `T=02`で`I`がterminal blank近く | 2つ目のpattern share後に残るdeadline marginが小さい |
 | `M>=02` | Main pattern workがextra VBlank deadlineをcross |
 | `P`変化、`S/D`安定 | 正常なscheduled CRAM segment switch |

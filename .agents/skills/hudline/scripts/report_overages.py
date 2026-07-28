@@ -59,11 +59,11 @@ HUD_COLUMNS = (
     ("H", "prgbuf_physical_peak_patterns", 4),
     ("X", "reader_ahead_raw16", 4),
     ("Y", "pattern_vblank1_words", 3),
+    ("O", "pattern_vblank1_exit_vcounter", 2),
     ("Z", "pattern_vblank2_words", 3),
     ("T", "pattern_transfer_vblanks", 1),
     ("I", "pattern_exit_vcounter", 2),
     ("V", "flip_vcounter", 2),
-    ("O", "flip_interval_excess_ticks", 2),
     ("E", "pass2_entry_q4", 2),
 )
 
@@ -267,6 +267,8 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
          "prgbuf_physical_peak_patterns"),
         ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
         ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
+        ("O", "pattern_vblank1_exit_vcounter",
+         "pattern_vblank1_exit_vcounter_max"),
         ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
         ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
         ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
@@ -390,11 +392,11 @@ def render_markdown(
                     "prgbuf_physical_peak_patterns",
                     "reader_ahead_raw16",
                     "pattern_vblank1_words",
+                    "pattern_vblank1_exit_vcounter",
                     "pattern_vblank2_words",
                     "pattern_transfer_vblanks",
                     "pattern_exit_vcounter",
                     "flip_vcounter",
-                    "flip_interval_excess_ticks",
                     "pass2_entry_q4",
                 }
                 or has_values(rows, column)
@@ -462,6 +464,7 @@ def render_markdown(
         )
     split_columns = (
         ("Y", "pattern_vblank1_words"),
+        ("O", "pattern_vblank1_exit_vcounter"),
         ("Z", "pattern_vblank2_words"),
         ("T", "pattern_transfer_vblanks"),
         ("I", "pattern_exit_vcounter"),
@@ -475,13 +478,14 @@ def render_markdown(
             for field, column in split_columns
         }
         summary.append(
-            "Y/Z/T/I Main transfer split maxima "
+            "Y/O/Z/T/I Main transfer split maxima "
             f"(timed first loop): {split_maxima['Y']}/"
             f"{split_maxima['Z']} words "
             f"({split_maxima['Y'] / 16:g}/"
             f"{split_maxima['Z'] / 16:g} patterns), "
+            f"first exit V-counter {split_maxima['O']:02X}, "
             f"{split_maxima['T']} VBlanks, "
-            f"exit V-counter {split_maxima['I']:02X}."
+            f"final exit V-counter {split_maxima['I']:02X}."
         )
     summary.append(
         "C is diagnostic only and does not affect the HUD gate status."

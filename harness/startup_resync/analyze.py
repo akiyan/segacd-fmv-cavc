@@ -16,8 +16,8 @@ that APPLY back-pressure rejected a control-sector pump. H is the per-frame
 physical PrgBuf peak in exact patterns. X packs complete reader frame slots
 ahead in its high byte and the current slot's sector index in its low byte.
 Y/Z are the exact pattern words transferred in the first/second transfer
-VBlank, T is the number of pattern-transfer VBlanks, and I is the V-counter at
-Pass2 pattern exit. A supplied H32 or H40 profile selects its combined layout
+VBlank, O/I are the V-counters after the first/final pattern share, and T is
+the number of pattern-transfer VBlanks. A supplied H32 or H40 profile selects its combined layout
 automatically. Legacy one-row recordings remain readable through their
 explicit layout options.
 
@@ -583,7 +583,7 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
         "apply_guard_blocked",
         "slip_msf_gap_count", "slip_trn_retry_count",
-        "flip_vcounter", "flip_interval_excess_ticks", "pass2_entry_q4",
+        "flip_vcounter", "pattern_vblank1_exit_vcounter", "pass2_entry_q4",
         "r_transition", "prev_frame",
         "prev_lead_256b", "next_frame", "next_lead_256b",
     ]
@@ -686,7 +686,9 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "flip_vcounter": (
                     f"{values['V']:02X}" if "V" in values else ""
                 ),
-                "flip_interval_excess_ticks": values.get("O", ""),
+                "pattern_vblank1_exit_vcounter": (
+                    f"{values['O']:02X}" if "O" in values else ""
+                ),
                 "pass2_entry_q4": values.get("E", ""),
                 "r_transition": (
                     f"{previous.values['R']:02X}->{values['R']:02X}" if previous else ""
@@ -849,7 +851,7 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 8,
+        "schema_version": 9,
         "gate": gate,
         "alert": alert,
         # Keep the old fields while stored schema-5 results and external
@@ -882,9 +884,9 @@ def evaluate_upload_gate(
             *(["H"] if "H" in first_loop[0].values else []),
             *(["X"] if "X" in first_loop[0].values else []),
             *([
-                "Y", "Z", "T", "I"
+                "Y", "O", "Z", "T", "I"
             ] if all(
-                field in first_loop[0].values for field in "YZTI"
+                field in first_loop[0].values for field in "YOZTI"
             ) else []),
         ],
         "maxima": maxima,
@@ -937,6 +939,11 @@ def evaluate_upload_gate(
         )
         result["pattern_exit_vcounter_max"] = max(
             (group.values["I"] for group in timed_loop),
+            default=0,
+        )
+    if "O" in first_loop[0].values:
+        result["pattern_vblank1_exit_vcounter_max"] = max(
+            (group.values["O"] for group in timed_loop),
             default=0,
         )
     if profile is not None:
@@ -1003,9 +1010,11 @@ def write_gate_json(path: Path, result: dict) -> None:
         )
     if "pattern_transfer_vblank_max" in result:
         print(
-            "  Y/Z/T/I diagnostics: first max="
+            "  Y/O/Z/T/I diagnostics: first max="
             f"{result['pattern_vblank1_max_words']} words "
             f"({result['pattern_vblank1_max_words'] / 16:g} patterns), "
+            f"first exit max="
+            f"{result.get('pattern_vblank1_exit_vcounter_max', 0):02X}, "
             f"second max={result['pattern_vblank2_max_words']} words "
             f"({result['pattern_vblank2_max_words'] / 16:g} patterns), "
             f"transfer VBlanks max={result['pattern_transfer_vblank_max']}, "

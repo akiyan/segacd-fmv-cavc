@@ -1,6 +1,6 @@
 ---
 name: hudline
-description: Render, inspect, and publicly publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON, then require the matching codec timeline and publicly publish their combined mixline. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A/Q/G/B/K/H/X/Y/Z/T/I fields need frame-by-frame visual comparison.
+description: Render, inspect, and publicly publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON, then require the matching codec timeline and publicly publish their combined mixline. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A/Q/G/B/K/H/X/Y/O/Z/T/I fields need frame-by-frame visual comparison.
 ---
 
 # Playback HUD Timeline
@@ -59,9 +59,10 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
    maximum after separating `B`; also report the B APPLY-back-pressure frame
    count. When `H/X` are available, validate and report the exact maximum
    physical PrgBuf occupancy and maximum packed reader lead against the gate
-   JSON. When `Y/Z/T/I` are available, validate and report the exact maxima for
-   the first two VBlank word shares, transfer-VBlank count, and pattern-exit
-   V-counter. `G/B/K/H/X/Y/Z/T/I` remain diagnostic and never change the gate.
+   JSON. When `Y/O/Z/T/I` are available, validate and report the exact maxima
+   for the first two VBlank word shares, first/final pattern-exit V-counters,
+   and transfer-VBlank count. `G/B/K/H/X/Y/O/Z/T/I` remain diagnostic and
+   never change the gate.
 
    For exact integer-VBlank rates, treat every timed derived `VBLANK` value
    different from the normal cadence as a warning: 15 fps expects 4 and 30 fps expects 2.
@@ -124,7 +125,7 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   measured row but defer its normal-line and warning rule until its 2/3 cadence
   is specified.
 - Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J`, plus
-  `Q/V/O/E`, `G/K`, `H/X`, and `Y/Z/T/I` whenever present. Decode packed `G` bit 15 into
+  `Q/V/O/E`, `G/K`, `H/X`, and `Y/O/Z/T/I` whenever present. Decode packed `G` bit 15 into
   a separate `B` row. Split `X` into its high-byte complete-frame lead and
   low-byte current-slot sector rows. `F` is the x-axis. Do not allocate a
   separate `P` row: palette is
@@ -165,7 +166,7 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 - Write a `<output>.json` layout receipt containing the input hashes, frame
   mapping, expected and observed frame counts, row geometry, fixed scales,
   gate limits, `C/A` minimum, mean, median, and maximum, optional G statistics
-  and B frame count, optional H/X and Y/Z/T/I maxima, and recording identity. `/mixline`
+  and B frame count, optional H/X and Y/O/Z/T/I maxima, and recording identity. `/mixline`
   should consume this receipt rather than rediscovering geometry from pixels.
 
 ## Interpretation safeguards
@@ -193,19 +194,18 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   together to distinguish useful prefetch from a payload back-pressure event.
   These fields are diagnostic and never change the upload gate.
 - `Y/Z` are exact word shares for the first two pattern-transfer VBlanks,
-  `T` is the total transfer-VBlank count, and `I` is the V-counter when pattern
-  work ends before HUD/name-table/palette/flip work. Use `T` to distinguish a
-  third transfer blank from a post-transfer spill, then align `I` with the
-  following row's shifted `V/O`. These fields are diagnostic and never change
-  the upload gate.
+  `O/I` are the current frame's first/final pattern-exit V-counters, and `T`
+  is the total transfer-VBlank count. Use `O=00..DF` to identify a first share
+  that ran into active display, and use `I` for the final tail. These fields
+  are diagnostic and never change the upload gate.
 - When a gate fails, never report only the maximum. Include the over-limit
   table from `report_overages.py` so the exact workload and phase values at
   each gate event are preserved. Keep VBLANK warnings aggregate-only.
 - `C` is diagnostic only: it has no gate line and never changes gate or alert.
   Nonzero `M` is not automatically a failure; compare it with the
   cadence-specific gate line.
-- `V` and `O` displayed on frame F describe the flip that published frame
-  F-1. `E` belongs to frame F.
+- `V` displayed on frame F describes the flip that published frame F-1.
+  `O` and `E` belong to frame F.
 - OCR confidence and sample repetition are extraction evidence, not player HUD
   fields. Keep their minima/totals in the heading rather than inventing rows.
 - Call an emulator capture an emulator recording, not a physical-hardware

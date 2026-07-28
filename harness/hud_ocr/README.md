@@ -18,7 +18,9 @@ contain four hexadecimal digits, `Y/Z` contain three, and `T` contains one.
 `U` is the Main pattern-transfer time in 30.72 us Mega-CD stopwatch ticks, and
 `N` is the low byte of the packed cold-run descriptor count (wrapping at 256).
 `Q` is the signed per-frame minimum logical PrgBuf balance in exact 32-byte
-patterns (`0000` empty, `FFFF` one-pattern underflow). `G` low 12 bits are the
+patterns (`0000` empty, `FFFF` one-pattern underflow). `O/I` are the
+first/final pattern-transfer exit V-counters; unlike `V`, they belong to the
+current frame. `G` low 12 bits are the
 longest interval outside a Sub CDC pump opportunity in 30.72 us ticks; bit 15
 is decoded separately as `B`, the per-frame APPLY back-pressure marker. `K`
 counts cumulative MSF-gap recoveries. `H` is the per-frame physical PrgBuf peak

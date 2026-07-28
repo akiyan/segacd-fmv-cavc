@@ -133,7 +133,6 @@
 .equ WR1_OFF, PC_WR1_OFFSET
 .equ WR1_END, PC_WR1_END
 .equ PACE_FIXED_ARM_TICKS, PC_VSYNC_N*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS
-.equ PACE_FIXED_HUD_TICKS, PC_VSYNC_N*512
 .else
 .equ CTRL_SCR_OFF, 0x10000
 .equ STATUS_OFF, 0x0AF00
@@ -492,7 +491,7 @@ ip_entry:
 	clr.w	dma_start_tick
 .ifdef HUD_FLIP_FIELDS
 	clr.w	flip_hv_v
-	clr.w	arm_overshoot
+	clr.w	pattern_vblank1_exit_v
 	clr.w	pass2_entry_q
 .endif
 .endif
@@ -1082,6 +1081,7 @@ bf_dma:
 	clr.w	pattern_vblank2_words
 	clr.w	pattern_transfer_vblanks
 	clr.w	pattern_exit_v
+	clr.w	pattern_vblank1_exit_v
 .endif
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
@@ -1392,6 +1392,9 @@ bf_debug_snapshot_vbudget:
 	cmpi.w	#1, pattern_transfer_vblanks
 	bne.s	1f
 	move.w	d0, pattern_vblank1_words
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, pattern_vblank1_exit_v
 	rts
 1:
 	cmpi.w	#2, pattern_transfer_vblanks
@@ -1602,26 +1605,13 @@ do_flip:
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
 .ifdef HUD_FLIP_FIELDS
-	/* Off the critical path (after the flip write): record the flip's
-	   V-counter and its lateness past the arm point, then restamp.  The
-	   pair exposes the flip-phase drift that the plain HUD cannot see. */
+	/* Off the critical path, record the accepted flip V-counter and make this
+	   exact flip the next fixed-N cadence origin. */
 	move.w	d1, -(sp)
 	move.w	(VDP_HV).l, d1
 	lsr.w	#8, d1
 	move.w	d1, flip_hv_v
 	move.w	(GA_STOPWATCH).l, d1
-	move.w	d1, d0
-	sub.w	pace_flip_tick, d0
-	andi.w	#0x0FFF, d0
-	subi.w	#PACE_FIXED_HUD_TICKS, d0	/* coarse fixed-N interval baseline */
-	bpl.s	8f
-	moveq	#0, d0				/* frame0/loop priming can restamp early */
-8:
-	cmpi.w	#0xFF, d0
-	bls.s	9f
-	move.w	#0xFF, d0
-9:
-	move.w	d0, arm_overshoot
 	move.w	d1, pace_flip_tick		/* exact flip-to-flip deadline */
 	move.w	(sp)+, d1
 .else
@@ -2107,7 +2097,7 @@ wait_vblank:
    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx = 30 words.
    Both modes append Q/V/O/E/G/K/H/X/Y/Z/T/I for 63 words total. H32 wraps at
    32 words and H40 wraps at 40 words. Y/Z are three-digit exact VBlank word
-   counts, T is one digit, and I is the Pass2-exit V-counter.
+   counts, O/I are the first/final transfer exit V-counters, and T is one digit.
 	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
@@ -2186,8 +2176,8 @@ prepare_dbg:
 	   its own frame's flip, so the freshest sample is one frame old). */
 	move.w	flip_hv_v, d4
 	DBG_PUT2
-	/* O: that flip's interval excess over 1024 ticks (nominal N2 ~1086) */
-	move.w	arm_overshoot, d4
+	/* O: V-counter immediately after transfer VBlank 1's pattern work. */
+	move.w	pattern_vblank1_exit_v, d4
 	DBG_PUT2
 	/* E: this frame's Pass2 entry delay since the previous flip, ticks/4 */
 	move.w	pass2_entry_q, d4
@@ -2475,8 +2465,8 @@ vbudget_from_head:
 	.space 2				/* current d7 began at a proven VBlank head */
 flip_hv_v:
 	.space 2				/* DEBUG HUD V: V-counter at the last accepted flip */
-arm_overshoot:
-	.space 2				/* DEBUG HUD O: flip interval excess over 1024 ticks */
+pattern_vblank1_exit_v:
+	.space 2				/* DEBUG HUD O: V-counter after transfer VBlank 1 */
 pass2_entry_q:
 	.space 2				/* DEBUG HUD E: Pass2 entry delay since prev flip, ticks/4 */
 pattern_vblank1_words:

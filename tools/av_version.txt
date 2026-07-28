@@ -11,6 +11,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p119: Replace HUD O's redundant flip-interval estimate with the exact
+#         V-counter immediately after pattern-transfer VBlank 1. Keep V for
+#         the accepted flip and I for the final pattern exit, so Y/O and Z/I
+#         directly expose whether either scheduled share ran into active
+#         display without changing release playback decisions.
 #   p118: Use the specialized HUD tile-pair table for every deadline-side
 #         P/M/U/Y/Z/I stage patch. Keep the staged-HUD design from p117 while
 #         reducing the remaining second-VBlank patch work.
@@ -1039,4 +1044,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=152
-p=118
+p=119

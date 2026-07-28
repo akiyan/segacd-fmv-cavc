@@ -36,8 +36,8 @@ TSV derives CDC_TRN retry exhaustion as `(S-K) & 0xFF`. `H` is the per-frame
 physical PrgBuf peak in exact 32-byte patterns. `X` packs complete reader
 frame slots ahead in its high byte and the current slot's sector index in its
 low byte. `Y/Z` are the exact word shares of the first two pattern-transfer
-VBlanks, `T` counts all pattern-transfer VBlanks, and `I` is the pattern-exit
-V-counter. Keep `--flip-fields`
+VBlanks, `O/I` are their first/final exit V-counters, and `T` is the number of
+VBlanks that carried pattern work. Keep `--flip-fields`
 and `--poll-gap-fields` only for legacy one-row H40 recordings; use
 `--combined-fields` only when parsing a standard H32/H40 recording without a
 profile.
