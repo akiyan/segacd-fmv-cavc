@@ -11,7 +11,7 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v17): HEADER.DAT = Header(1sec) + BOOT_STAGE(全区間パレット
+TTRCレイアウト(v19): HEADER.DAT = Header(1sec) + BOOT_STAGE(全区間パレット
               n_seg×128B + optional boot-VRAM sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
@@ -217,21 +217,21 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v17: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v19: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v17: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v19: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v17: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v19: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v17: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v19: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
 
 
@@ -363,7 +363,8 @@ def sourced_cold_runs(entries, colds, sources, dic_indices=None):
         item_dic = int(item_dic)
         split_dic = (
             bool(count) and item_source == pattern_supply.SOURCE_DIC
-            and item_dic != previous_dic + 1)
+            and (item_dic != previous_dic + 1
+                 or item_dic % pattern_supply.DIC_RUN_BLOCK == 0))
         if count and (
                 slot != previous + 1 or item_source != source or split_dic):
             runs.append((start, count, source, start_dic))
@@ -789,16 +790,15 @@ def build_audio_chunks(audio_path, frame_count):
 
 
 def build_control(
-        log, per, n_upd, pal_w, audio_path, sources=None, update_lists=None,
+        log, per, n_upd, audio_path, sources=None, update_lists=None,
         prefetch_per=None, dic_indices=None, transfer_orders=None):
     """Build control blocks and return their reconstructed source PCM chunks."""
     seg_cram = [pals_to_bytes_128(p) for p in log["seg_pals"]]
-    frame_seg = np.asarray(log["frame_seg"], np.int64)
     audio_chunks, pcm_chunks = build_audio_chunks(audio_path, len(per))
     # CRAM pre-load(PALTAB): パレット本体はヘッダ直後のPALTAB領域で一括配送し、実機は
-    # boot時にMain-RAM表へコピー済み。ストリームのpalワードは「区間番号+1」(0=切替なし)の
-    # 参照だけにし、in-streamの128B CRAM payloadは廃止(切替コマの予算が空く+到着タイミング
-    # 非依存=スリップ回復に強い)。区間数は av_config.PALTAB_MAX_SEG が上限(実機表の容量)。
+    # boot時にMain-RAM表へコピー済み。切替トリガもboot搭載のPALIDX表(frame番号+区間番号)で、
+    # controlブロックに切替バイトは存在しない(到着タイミング非依存=スリップ回復に強い)。
+    # 区間数は av_config.PALTAB_MAX_SEG が上限(実機表の容量)。
     n_seg = len(seg_cram)
     cap_seg = min(int(av_config.PALTAB_MAX_SEG), 255)
     if n_seg > cap_seg:
@@ -830,8 +830,6 @@ def build_control(
         body += struct.pack(">H", i & 0xFFFF)
         use_list = bool(update_lists[i])
         body += struct.pack(">H", shadow_updates.encode_count(n_upd[i], use_list))
-        pal_ref = (int(frame_seg[i]) + 1) if pal_w[i] else 0
-        body += struct.pack(">H", pal_ref)
         sourced_entries = []
         for e, cold, source in zip(entries, colds, frame_sources):
             sourced_entry = pattern_supply.encode_entry_source(
@@ -841,7 +839,7 @@ def build_control(
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v17 keeps the 16-bit entry array word-aligned even when
+            # TTRC v19 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -878,7 +876,7 @@ def control_audio_bounds(block):
         n_upd * shadow_updates.LIST_ITEM_BYTES if use_list
         else shadow_updates.aligned_bitmap_bytes(C_CELLS)
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES)
-    pos = 8 + update_bytes
+    pos = 6 + update_bytes
     return pos, pos + AUDIO_CONTROL
 
 
@@ -1032,11 +1030,6 @@ def decode_verify(
         p += 2                                        # skip frame_seq(同期マーカー)
         nupd, use_list = shadow_updates.decode_count(
             struct.unpack(">H", blk[p:p + 2])[0]); p += 2
-        palw = struct.unpack_from(">H", blk, p)[0]; p += 2
-        # v3: palw = 区間番号+1 の参照のみ(in-stream CRAMは無い)。PALTAB表と一致するか検証。
-        if palw and (palw - 1) != int(frame_seg[i]):
-            print(f"  !! palref mismatch frame {i}: pal={palw - 1} != seg={int(frame_seg[i])}")
-            bad += 1
         if use_list:
             update_items = []
             for _ in range(nupd):
@@ -1138,7 +1131,7 @@ def _decode_control_chunk(chunk):
 def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v17 split stream and a combined tooling container.
+    """Write the v19 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
@@ -1223,7 +1216,7 @@ def write_stream(
 
     control = b"".join(disc_blocks)
     # Split frame 0 from the timed stream. It remains an untimed exact
-    # construction, but v17 carries its bytes in the BODY arm rather than HEADER.
+    # construction, but v19 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1282,6 +1275,31 @@ def write_stream(
     paltab = bytearray(stage_bytes)
     palette_offset = 0x1000
     paltab[palette_offset:palette_offset + len(palette_table)] = palette_table
+    # PALIDX: boot-loaded palette-switch table. frame_seg is forward-only, so
+    # each (frame.u16, segment.u16) entry advances to a strictly later frame.
+    # The player advances while next_switch <= frame_no; the 0xFFFF frame
+    # sentinel terminates the table.
+    switches = [
+        (i, int(frame_seg[i]))
+        for i in range(1, nfr)
+        if frame_seg[i] != frame_seg[i - 1]
+    ]
+    if len(switches) > av_config.PALIDX_ENTRIES - 1:
+        raise SystemExit(
+            f"pack: {len(switches)} palette switches exceed the "
+            f"{av_config.PALIDX_ENTRIES - 1}-entry PALIDX capacity")
+    if len(switches) != len(log["seg_pals"]) - 1 or any(
+            seg != index + 1 for index, (_frame, seg) in enumerate(switches)):
+        raise SystemExit(
+            "pack: frame_seg is not a forward-only segment progression")
+    palidx = bytearray()
+    for frame, seg in switches:
+        palidx += struct.pack(">HH", frame, seg)
+    while len(palidx) < av_config.PALIDX_BYTES:
+        palidx += struct.pack(">HH", av_config.PALIDX_FRAME_SENTINEL, 0)
+    paltab[
+        av_config.PALIDX_STAGE_OFFSET:
+        av_config.PALIDX_STAGE_OFFSET + av_config.PALIDX_BYTES] = palidx
     region_offsets = (
         0x0000,
         palette_offset + len(palette_table),
@@ -1337,7 +1355,7 @@ def write_stream(
     fps_int = int(round(FPS))                         # 名目fps。FEATURE_FIXED_N時はvsync_n由来のCD rate
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v17 requires an untimed frame0 BODY arm")
+        raise SystemExit("pack v19 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
     if av_config.uses_fixed_n_cadence(FPS):
         features |= FEATURE_FIXED_N
@@ -1359,7 +1377,7 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v17 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v19 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
@@ -1495,7 +1513,7 @@ def write_stream(
           f"{len(supply_plan.wr1_patterns)}/{len(supply_plan.dic_patterns)} "
           f"frame0 {f0_ctrl_sec}+{f0_pat_sec} backside={sidecar_count} "
           f"routing {routing_sec} prebuf {prebuf_sec} frames {frames_stream_sec}) "
-          f"ring_peak {ring_peak*PAT/1024:.0f}KB  v17 N={vsync_n}"
+          f"ring_peak {ring_peak*PAT/1024:.0f}KB  v{VERSION} N={vsync_n}"
           f"(={PLAYBACK_FPS:.3f}fps) AUDIO=adpcm22 "
           f"control={AUDIO_CONTROL}B pcm={AUDIO_PCM}B FD=0x{audio_fd:04X}")
     print(f"  initial CRAM: {palette_path} ({len(seg0)}B, canonical segment {int(frame_seg[0])})")
@@ -1582,14 +1600,14 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v17 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v19 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
     wordram_layout = pattern_supply.word_ram_layout(
         len(per), C_CELLS, int(sim_cold))
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:
         raise SystemExit(
-            "pack v17 requires a decision log with a frozen Word-RAM layout; "
+            "pack v19 requires a decision log with a frozen Word-RAM layout; "
             "re-run sim with the current encoder")
     expected_layout = dataclasses.asdict(wordram_layout)
     if frozen_layout != expected_layout:
@@ -1701,7 +1719,7 @@ def main():
         frame = int(np.flatnonzero(update_lists & (recomputed_list >= recomputed_legacy))[0])
         raise SystemExit(f"pack: selected shadow list is not faster at frame {frame}")
     blocks, source_pcm_chunks = build_control(
-        log, per, n_upd, pal_w, audio_path, supply_plan.sources, update_lists,
+        log, per, n_upd, audio_path, supply_plan.sources, update_lists,
         inline_prefetch_per, supply_plan.dic_indices, transfer_orders)
     print(
         f"  shadow updates: list={int(update_lists.sum())}/{len(update_lists)} "

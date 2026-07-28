@@ -46,6 +46,12 @@ Report the Gist page, raw PNG URL, and clickable local image path.
   diagnostic maximum. When present, also show G's diagnostic maximum and the
   B APPLY-back-pressure frame count. The full G/B/K rows remain in the
   pixel-preserved hudline body. Do not retain two full, repetitive headers.
+- Directly below the hud summary line, repeat the timeline's whole-movie
+  category-totals legend (swatch, category name, EVAL-scope displayed tile
+  total per `analysis_style.LEGEND_ORDER` item). Read the values, order, and
+  scope string from the timeline layout receipt (`legend_totals`,
+  `legend_totals_order`, `legend_totals_scope`); omit the line only when a
+  pre-totals receipt lacks them.
 - Preserve both source graph bodies pixel-for-pixel. Crop the duplicated
   headers. Also crop `/timeline` immediately after its final data row so its
   horizontal ticks and lower explanation are omitted; `/hudline` owns the one

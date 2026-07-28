@@ -26,13 +26,13 @@ SECTIONS
 
   ASSERT(. <= 0xFF4900, "startup section exceeds generated-code area")
 
-  /* Runtime state occupies the free high-RAM area after the resident palette
-     table. This keeps the permanent image out of the generated
-     handler/blitter range. */
-  .bss 0xFFD000 (NOLOAD) :
+  /* Runtime state (M-STATE) sits in its fixed 8.5 KiB reservation right
+     after the generated handler/blitter range (M-CODE ends at 0xFF6600).
+     The reservation covers the worst-case DEBUG/H40 build. */
+  .bss 0xFF6600 (NOLOAD) :
   {
     *(.bss)
   }
 
-  ASSERT(. <= 0xFFFB00, "Main IP runtime state overlaps the stack guard")
+  ASSERT(. <= 0xFF8800, "Main IP runtime state overflows the fixed 8.5 KiB M-STATE reservation")
 }

@@ -76,6 +76,34 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             (12, 175, supply.SOURCE_PRG, 0),
         )
 
+    def test_dic_run_descriptor_high_block_uses_source_three(self):
+        for index, count in ((256, 1), (300, 12), (511, 1), (509, 3)):
+            words = supply.encode_run_descriptor(
+                7, count, supply.SOURCE_DIC, index)
+            raw_source = (words[1] & supply.RUN_SOURCE_MASK) >> (
+                supply.RUN_SOURCE_SHIFT)
+            self.assertEqual(raw_source, 3)
+            self.assertEqual(
+                supply.decode_run_descriptor(*words),
+                (7, count, supply.SOURCE_DIC, index),
+            )
+
+    def test_dic_run_descriptor_rejects_block_boundary_cross(self):
+        with self.assertRaises(ValueError):
+            supply.encode_run_descriptor(0, 2, supply.SOURCE_DIC, 255)
+        with self.assertRaises(ValueError):
+            supply.encode_run_descriptor(0, 2, supply.SOURCE_DIC, 511)
+        with self.assertRaises(ValueError):
+            supply.encode_run_descriptor(0, 1, supply.SOURCE_DIC, 512)
+
+    def test_count_source_runs_splits_at_dic_block_boundary(self):
+        slots = (10, 11, 12, 13)
+        sources = (supply.SOURCE_DIC,) * 4
+        self.assertEqual(
+            supply.count_source_runs(slots, sources, (254, 255, 256, 257)), 2)
+        self.assertEqual(
+            supply.count_source_runs(slots, sources, (256, 257, 258, 259)), 1)
+
 
 class PatternSupplyPlannerTests(unittest.TestCase):
     def test_dicbuf_is_selected_first_and_hits_persist(self):

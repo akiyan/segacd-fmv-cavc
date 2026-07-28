@@ -234,7 +234,7 @@ print(
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
 
 
-# TTRC v17+ has one startup command. HEADER contains only static boot state;
+# TTRC v19 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
@@ -296,7 +296,7 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v18 BODY arm and one-command "
+    "check_player_ring: OK  v19 BODY arm and one-command "
     "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
     "and PCM begins on its first control sector")
 
@@ -410,8 +410,26 @@ if equ(ip_text, "DIC_BUF_PATTERNS", IP) != pattern_supply.DIC_BUF_PATTERNS:
     sys.exit("check_player_ring: Main DicBuf capacity differs from Python")
 if equ(ip_text, "DIC_BUF", IP) != pattern_supply.DIC_BUF_BASE:
     sys.exit("check_player_ring: Main DicBuf base differs from Python")
-if equ(ip_text, "RUN_TABLE", IP) != pattern_supply.DIC_BUF_END:
+if equ(ip_text, "DIC_BUF_END", IP) != pattern_supply.DIC_BUF_END:
     sys.exit("check_player_ring: Main DicBuf end differs from Python")
+if equ(sp_text, "DIC_STAGE_PATTERNS", SP) != pattern_supply.DIC_BUF_PATTERNS:
+    sys.exit("check_player_ring: Sub DicBuf stage capacity differs from Python")
+
+
+# The fixed Main-RAM map holds in every build: PALTAB, PALIDX and DicBuf are
+# adjacent, and the dictionary ends below the stack guard.
+ip_paltab_ram = equ(ip_text, "PALTAB_RAM", IP)
+ip_palidx_ram = equ(ip_text, "PALIDX_RAM", IP)
+if equ(ip_text, "PALIDX_STAGE_OFF", IP) != av_config.PALIDX_STAGE_OFFSET:
+    sys.exit("check_player_ring: Main PALIDX stage offset differs from av_config")
+if equ(ip_text, "PALIDX_ENTRIES", IP) != av_config.PALIDX_ENTRIES:
+    sys.exit("check_player_ring: Main PALIDX entry count differs from av_config")
+if ip_paltab_ram + av_config.PALTAB_MAX_SEG * 128 != ip_palidx_ram:
+    sys.exit("check_player_ring: M-PALIDX does not follow the fixed PALTAB")
+if ip_palidx_ram + av_config.PALIDX_BYTES != pattern_supply.DIC_BUF_BASE:
+    sys.exit("check_player_ring: M-DIC does not follow M-PALIDX")
+if pattern_supply.DIC_BUF_END > 0xFFFB00:
+    sys.exit("check_player_ring: M-DIC overlaps the stack guard")
 
 
 # PRG-RAM ring and boot-only staging remain independent of movie layout.

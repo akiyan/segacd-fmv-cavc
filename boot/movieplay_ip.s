@@ -42,14 +42,22 @@
 
 /* 0xFF2000..0xFF65FF is no longer a tile staging buffer: streamed pattern DMA
    reads Word RAM directly and repairs the first destination word on the CPU.
-   Keep this range for boot-time Main-CPU code generation, then use the gap up
-   to RUN_TABLE as the immutable DicBuf pattern dictionary. */
+   Keep this range for boot-time Main-CPU code generation.  The complete fixed
+   Main-RAM map (identical in every build and profile) is:
+     M-CODE   0xFF0000..0xFF65FF  resident IP + generated handlers/blitters
+     M-STATE  0xFF6600..0xFF87FF  runtime .bss (8.5 KiB worst-case reserve)
+     M-RUNTBL 0xFF8800..0xFFB1FF  pre-swizzled 22B cold-run records
+     M-PALTAB 0xFFB200..0xFFB9FF  16 x 128B palette segments
+     M-PALIDX 0xFFBA00..0xFFBA3F  16 x 4B palette-switch entries
+     M-DIC    0xFFBA40..0xFFFA3F  512-pattern persistent dictionary
+     guard    0xFFFA40..0xFFFAFF  cushion below the stack
+     M-STACK  0xFFFB00..0xFFFCFF  / M-TOP 0xFFFD00.. BIOS reserve */
 .equ MAIN_CODEGEN_BASE,  0x00FF2000
-.equ RUN_TABLE,          0x00FF8600	/* pre-swizzled 22B cold-run records; 0x2A00B capacity */
-.equ DIC_BUF,            0x00FF6600	/* persistent dictionary; direct Main-RAM VDP DMA */
-.equ DIC_BUF_END,        RUN_TABLE
-.equ DIC_BUF_PATTERNS,   256
-.equ MAIN_CODEGEN_LIMIT, DIC_BUF
+.equ MAIN_CODEGEN_LIMIT, 0x00FF6600	/* M-STATE base = end of M-CODE */
+.equ RUN_TABLE,          0x00FF8800	/* pre-swizzled 22B cold-run records; 0x2A00B capacity */
+.equ DIC_BUF,            0x00FFBA40	/* persistent dictionary; direct Main-RAM VDP DMA */
+.equ DIC_BUF_END,        0x00FFFA40
+.equ DIC_BUF_PATTERNS,   512
 .equ MAIN_CODEGEN_TABLE_BYTES, 0x0200	/* 256 signed word offsets */
 .equ MAIN_CODEGEN_HANDLER_MAX, 70	/* mask FF: guarded before writing */
 .equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4900
@@ -81,15 +89,19 @@
 /* リリースビルドが既定。make movieplay DEBUG=1 でオーバーレイ一式を有効化
    (画面表示専用。ストリームにDEBUG専用データは持たない) */
 /* CRAM pre-load: 全区間パレット表。boot時にWord-RAM(PALTAB_OFF, frame0バンク)から一度だけ
-   コピーし、以降の区間切替はO_PALWの区間番号+1でこの表を引く(ストリーム到着に依存しない)。
-   容量はav_config.PALTAB_MAX_SEGと一致必須(check_player_ring.pyがビルド時検証)。 */
+   コピーする。区間切替もboot搭載のPALIDX表(切替frame番号+区間番号)が起点で、
+   ストリーム到着に依存しない。容量はav_config.PALTAB_MAX_SEGと一致必須
+   (check_player_ring.pyがビルド時検証)。 */
 .equ PALTAB_OFF, 0x1000			/* Word-RAM内ステージ位置(sp.sと一致必須) */
-.equ PALTAB_MAX_SEG, 64			/* Main-RAM表の容量(区間数)。64*128B=8KB */
+.equ PALTAB_MAX_SEG, 16			/* Main-RAM表の容量(区間数)。16*128B=2KB */
 .equ PALTAB_STAGE_OFF, 0x0000
 .equ PALTAB_STAGE_BYTES, 0x6000
+.equ PALIDX_STAGE_OFF, 0x0F80		/* stage内の切替表(av_configと一致必須) */
+.equ PALIDX_ENTRIES, 16			/* 15切替 + 0xFFFF frame番兵 */
+.equ PALIDX_RAM, 0x00FFBA00		/* M-PALIDX 0xFFBA00..0xFFBA3F */
 .equ BOOT_VRAM_DIR_OFF, PALTAB_STAGE_OFF+0x0FC0
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
-.equ PALTAB_RAM, 0x00FFB000		/* 表本体 0xFFB000..0xFFD000; high BSS follows */
+.equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
 /* 1VBLANKで安全に転送できる語数はモード別(md_vbudget)。実測(dmabench)に基づき保守的に。
    これを超える転送はランをまたいで次VBLANKへ分割=active表示中へのはみ出し防止(ares対策)。 */
 .equ VB_WORDS_H32, 2800		/* H32 V28 NTSC */
@@ -418,6 +430,7 @@ ip_entry:
 	clr.w	frame_no
 	clr.w	started
 	clr.w	vsync_acc			/* v4: ペーシングカウンタ初期化(.bssはMD上でクリアされない) */
+	move.l	#PALIDX_RAM, palidx_ptr		/* boot stageコピーでも設定済み(防御的) */
 	bsr	prime_fixed_cadence		/* frame0 has no preceding movie flip */
 .ifdef DEBUG
 	clr.w	sub_wait_lines
@@ -460,6 +473,7 @@ movie_end_md:
 	clr.w	frame_no
 	clr.w	started
 	clr.w	dbg_seg
+	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0008)
 	bsr	reset_pattern_supply
@@ -684,7 +698,7 @@ bf_stage:
 	andi.w	#7, d1				/* Dic index low3 */
 	or.w	d1, d5
 	move.w	d6, d3
-	andi.w	#0xC000, d3			/* 0=Prg inline, 1=Wr current bank, 2=Dic */
+	andi.w	#0xC000, d3			/* 0=Prg inline, 1=Wr current bank, 2/3=Dic */
 	andi.w	#0x07FF, d6
 	beq	bf_stage_done			/* count=0 打切り */
 	cmp.w	d7, d6				/* count>残り 切詰め */
@@ -769,9 +783,12 @@ bf_stage_preload:
 	bsr	bf_emit_src_wr
 	bra	bf_stage_recorded
 bf_stage_dic:
+	/* source 2 = Dic index 0..255, source 3 = Dic index 256..511 (bit 8). */
 	cmpi.w	#0x8000, d3
-	bne	bf_stage_done			/* source 3 is reserved */
-	lsl.w	#5, d5				/* DicBuf index * 32 */
+	beq.s	1f
+	ori.w	#0x0100, d5			/* Dic index bit 8 */
+1:
+	lsl.w	#5, d5				/* DicBuf index * 32 (max 511*32=16352) */
 	lea	DIC_BUF, a3
 	adda.w	d5, a3
 	move.l	a3, d3
@@ -822,14 +839,13 @@ bf_upd:
 	move.w	d7, d6			/* preserve format tag */
 	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
 	beq	bf_blit
-	move.w	(a0)+, d0			/* skip pal:u16 */
 	btst	#SHADOW_UPDATE_LIST_BIT, d6
 	bne	bf_update_list
 	movea.l	a0, a2				/* bitmap */
 	PC_ADDA_W md_bmbytes, PC_BMBYTES, a0	/* entries */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_BMBYTES & 1)
-	addq.l	#1, a0				/* v17 retains the aligned 16-bit entry array */
+	addq.l	#1, a0				/* v19 retains the aligned 16-bit entry array */
 .endif
 .else
 	move.w	md_bmbytes, d0
@@ -1138,17 +1154,25 @@ bf_flip:
 	move.w	d0, d5				/* prebuilt reg2 word */
 	/* パレット区間切替: CRAM総入替(64語≈0.1ms)→flip を新しいvblank頭で連続実行=
 	   同一VBLANK内で原子的。DEBUGフォントはP0/index15固定なので切替時作業はない。
-	   v3: pal = 区間番号+1。CRAM本体はboot時に積んだMain-RAMのPALTAB表から引く
-	   (ストリーム到着タイミング非依存=スリップ回復でも色が壊れない)。 */
-	move.w	(PROBE_BANK).l, d0		/* pal(=区間番号+1) @ +0 */
-	beq	bf_doflip
-	PC_CMP_W md_nseg, PC_NSEG, d0	/* 壊れた参照対策: 表の範囲外は切替しない */
-	bhi	bf_doflip
-	subq.w	#1, d0				/* 区間番号 */
+	   トリガはboot搭載のM-PALIDX表: next_switch <= frame_no の間advance
+	   (等値比較にしない=heldフレームで切替frameを跨いでも失われない)。最後に
+	   跨いだentryの区間を採用=絶対値の自己修復性を維持。表は15切替+0xFFFF番兵
+	   で必ず終端されるためadvanceは有界。CRAM本体はboot時に積んだMain-RAMの
+	   PALTAB表から引く(ストリーム到着タイミング非依存)。 */
+	movea.l	palidx_ptr, a0
+	move.w	frame_no, d1
+	cmp.w	(a0), d1
+	blo	bf_doflip			/* next_switch > frame_no: 切替なし */
+1:
+	move.w	2(a0), d0			/* PALTAB区間番号 */
+	addq.l	#4, a0
+	cmp.w	(a0), d1
+	bhs.s	1b				/* 複数跨ぎは最後のentryを採用 */
+	move.l	a0, palidx_ptr
 	move.w	d0, dbg_seg			/* 絶対値で更新(増分でなく自己修復) */
 	lsl.w	#7, d0				/* *128B */
 	lea	PALTAB_RAM, a0
-	adda.w	d0, a0				/* src = 表[区間] (最大63*128=8064<32767でadda.w可) */
+	adda.w	d0, a0				/* src = 表[区間] (最大15*128=1920でadda.w可) */
 .ifdef DEBUG
 	bsr	prepare_dbg			/* build the inactive HUD row before the deadline */
 .ifndef NT_DMA_FLIP
@@ -1674,6 +1698,14 @@ consume_boot_stage:
 	move.w	(a1)+, (a2)+
 	dbra	d1, 1b
 2:
+	/* PALIDX: boot搭載の切替表(番兵込み16 entry)をM-PALIDXへ。 */
+	lea	(PROBE_BANK+PALTAB_STAGE_OFF+PALIDX_STAGE_OFF).l, a1
+	lea	PALIDX_RAM, a2
+	moveq	#PALIDX_ENTRIES-1, d1
+1:
+	move.l	(a1)+, (a2)+
+	dbra	d1, 1b
+	move.l	#PALIDX_RAM, palidx_ptr
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0008)
 .if PC_DIC_PATTERNS > 0
@@ -2136,6 +2168,8 @@ n_runs:
 	.space 2
 dbg_seg:
 	.space 2
+palidx_ptr:
+	.space 4				/* next unconsumed M-PALIDX switch entry */
 sub_wait_lines:
 	.space 2				/* DEBUG HUD W: Main wait for Sub at last bank swap */
 frame_vblank_waits:

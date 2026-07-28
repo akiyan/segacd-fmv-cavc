@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v17 files and reconstructs every current control and payload byte. The
+TTRC v19 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -47,6 +47,8 @@ SOURCE_DIC = 2
 NAME_ENTRY_MASK = 0x67FF
 RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
+DIC_RUN_BLOCK = 256
+DIC_CAPACITY = 512
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 DEFAULT_DECISIONS = Path(
@@ -182,7 +184,7 @@ def parse_control(
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells}")
 
-    bitmap_start = 8
+    bitmap_start = 6
     bitmap_bytes = (cells + 7) // 8
     bitmap_end = bitmap_start + bitmap_bytes
     entries_start = (bitmap_end + 1) & ~1
@@ -248,9 +250,9 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, pool, base = struct.unpack_from(
         ">4sHHHHHHH", header
     )
-    if magic != b"TTRC" or version != 17:
+    if magic != b"TTRC" or version != 19:
         raise AssertionError(
-            f"expected split TTRC v17, got {magic!r} v{version}")
+            f"expected split TTRC v19, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
@@ -289,6 +291,9 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
             wr0_sectors, wr1_sectors, dic_sectors,
             _cold_cap,
         ) = supply[3:]
+        if dic_patterns > DIC_CAPACITY:
+            raise AssertionError(
+                f"Dic preload {dic_patterns} exceeds {DIC_CAPACITY} patterns")
 
     cursor = (1 + palette_sectors) * SECTOR
     wr0_payload = wr1_payload = dic_payload = b""
@@ -555,11 +560,20 @@ def per_run_descriptors(
             entries, colds, sources, dic_indices, strict=True):
         if not cold:
             continue
+        if source == SOURCE_DIC:
+            if not 0 <= dic_index < DIC_CAPACITY:
+                raise AssertionError(f"invalid Dic index {dic_index}")
+        elif dic_index:
+            raise AssertionError("non-Dic record carries a dictionary index")
         slot = (entry & 0x07FF) - base
         if (result and result[-1][0] + result[-1][1] == slot
                 and result[-1][2] == source
                 and (source != SOURCE_DIC
-                     or result[-1][3] + result[-1][1] == dic_index)):
+                     or (
+                         result[-1][3] + result[-1][1] == dic_index
+                         and result[-1][3] // DIC_RUN_BLOCK
+                         == dic_index // DIC_RUN_BLOCK
+                     ))):
             start, count, _source, start_dic = result[-1]
             result[-1] = start, count + 1, source, start_dic
         else:
@@ -579,11 +593,25 @@ def encode_descriptors(
             raise AssertionError(f"invalid run ({slot_start}, {count}, {source})")
         if source_aware and source not in (SOURCE_PRG, SOURCE_WR, SOURCE_DIC):
             raise AssertionError(f"invalid run source {source}")
-        if source != SOURCE_DIC and dic_index:
+        encoded_source = source
+        encoded_dic_index = dic_index
+        if source == SOURCE_DIC:
+            if (
+                not 0 <= dic_index < DIC_CAPACITY
+                or dic_index % DIC_RUN_BLOCK + count > DIC_RUN_BLOCK
+            ):
+                raise AssertionError(
+                    f"Dic run exceeds its 256-entry block: "
+                    f"index={dic_index} count={count}")
+            encoded_source += dic_index // DIC_RUN_BLOCK
+            encoded_dic_index %= DIC_RUN_BLOCK
+        elif dic_index:
             raise AssertionError("non-Dic run carries a dictionary index")
-        word0 = slot_start | ((dic_index >> 3) << 11)
+        word0 = slot_start | ((encoded_dic_index >> 3) << 11)
         source_count = (
-            count | (source << RUN_SOURCE_SHIFT) | ((dic_index & 7) << 11)
+            count
+            | (encoded_source << RUN_SOURCE_SHIFT)
+            | ((encoded_dic_index & 7) << 11)
             if source_aware else count)
         raw += struct.pack(">HH", word0, source_count)
     return bytes(raw)
@@ -605,15 +633,59 @@ def decode_descriptors(
         slot = word0 & 0x07FF
         if source_aware:
             count = source_count & RUN_COUNT_MASK
-            source = source_count >> RUN_SOURCE_SHIFT
+            raw_source = source_count >> RUN_SOURCE_SHIFT
             dic_index = ((word0 >> 11) << 3) | ((source_count >> 11) & 7)
-            if source not in (SOURCE_PRG, SOURCE_WR, SOURCE_DIC) or not count:
+            if not count:
                 raise AssertionError(
                     f"invalid source-aware run ({slot}, 0x{source_count:04X})")
+            if raw_source >= SOURCE_DIC:
+                if dic_index + count > DIC_RUN_BLOCK:
+                    raise AssertionError(
+                        f"Dic run crosses its 256-entry block "
+                        f"({slot}, 0x{source_count:04X})")
+                dic_index += (raw_source - SOURCE_DIC) * DIC_RUN_BLOCK
+                source = SOURCE_DIC
+                if dic_index + count > DIC_CAPACITY:
+                    raise AssertionError(
+                        f"Dic run exceeds {DIC_CAPACITY} entries")
+            else:
+                source = raw_source
+                if dic_index:
+                    raise AssertionError(
+                        f"non-Dic run carries index {dic_index}")
         else:
             count, source, dic_index = source_count, SOURCE_PRG, 0
         result.append((slot, count, source, dic_index))
     return tuple(result)
+
+
+def verify_dic512_descriptor_codec() -> None:
+    """Prove source 2/3 encode one logical 512-entry Dic without overrun."""
+    runs = (
+        (5, 1, SOURCE_DIC, 255),
+        (6, 2, SOURCE_DIC, 256),
+        (8, 3, SOURCE_PRG, 0),
+    )
+    raw = encode_descriptors(runs, True)
+    if decode_descriptors(raw, True) != runs:
+        raise AssertionError("Dic512 descriptor round trip differs")
+    encoded_sources = tuple(
+        struct.unpack_from(">H", raw, 4 + index * 4)[0] >> RUN_SOURCE_SHIFT
+        for index in range(len(runs))
+    )
+    if encoded_sources != (2, 3, 0):
+        raise AssertionError(
+            f"Dic512 descriptor sources differ: {encoded_sources}")
+    for invalid in (
+        ((5, 2, SOURCE_DIC, 255),),
+        ((5, 2, SOURCE_DIC, 511),),
+    ):
+        try:
+            encode_descriptors(invalid, True)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("Dic block-crossing run was accepted")
 
 
 def expanded_slots(
@@ -630,7 +702,7 @@ def verify_descriptor_alignment() -> None:
     """Prove the assembly's absolute alignment for even and odd audio starts."""
     for bitmap_bytes in range(1, 141):
         for audio_bytes in (372, 443, 887, 444, 888):
-            audio_start = 8 + ((bitmap_bytes + 1) & ~1) + 2 * 17
+            audio_start = 6 + ((bitmap_bytes + 1) & ~1) + 2 * 17
             packed_suffix = (audio_start + audio_bytes + 1) & ~1
             player_suffix = audio_start + audio_bytes
             if player_suffix & 1:
@@ -678,6 +750,7 @@ def main() -> None:
 
     stream = read_stream(args.header, args.body)
     verify_descriptor_alignment()
+    verify_dic512_descriptor_codec()
     with args.decisions.open("rb") as handle:
         decisions = pickle.load(handle)
     decision_frames = decisions["frames"]

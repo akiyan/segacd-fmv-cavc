@@ -196,20 +196,26 @@ PALETTE_SEGMENT_GAIN_PER_PIXEL = 0.002
 
 # --- Boot stage / CRAM pre-load table (PALTAB) capacity ---
 # A fixed 24 KiB boot stage ships right after the header.  All segment palettes
-# occupy its +0x1000..+0x3000 middle region and are copied at boot into a
-# Main-RAM table (player `.equ PALTAB_MAX_SEG` in
-# boot/movieplay_ip.s, asserted equal at build time by
-# tools/check_player_ring.py). The per-frame stream then carries only a 1-byte
-# segment reference (pal = seg+1, 0 = no switch) instead of a 128-byte CRAM
-# payload, so palettes are independent of stream timing (slip/recovery safe)
-# and the switch frame's budget is freed.
-# Capacity = Main-RAM table size = PALTAB_MAX_SEG * 128 bytes (64 -> 8 KB at
-# PALTAB_RAM 0xFFB000..0xFFD000). Keep this constant and the player equ equal
-# (build-checked). Raising it beyond 64 also requires a new boot-stage layout:
-#   * palette part of the Word-RAM boot stage             -> 64 segments max
-#   * pal byte = seg+1 in one byte                        -> 255 segments max
-PALTAB_MAX_SEG = 64
+# occupy its +0x1000.. middle region and are copied at boot into a Main-RAM
+# table (player `.equ PALTAB_MAX_SEG` in boot/movieplay_ip.s, asserted equal at
+# build time by tools/check_player_ring.py).  Palette switches are boot-loaded
+# too: the PALIDX switch table (frame.u16 + PALTAB segment.u16 entries) rides
+# the same stage, so CRAM is fully independent of stream timing
+# (slip/recovery safe) and no per-frame switch bytes exist in BODY.
+# Capacity = Main-RAM table size = PALTAB_MAX_SEG * 128 bytes (16 -> 2 KB at
+# PALTAB_RAM 0xFFB200..0xFFBA00). Keep this constant and the player equ equal
+# (build-checked).  The 16-segment cap is a fixed Main-RAM map decision; the
+# encoder merges detected palette ranges down to it (quality trade accepted).
+PALTAB_MAX_SEG = 16
 PALTAB_STAGE_KB = 24
+# PALIDX: boot-loaded palette-switch table inside the boot stage, just below
+# the BVRM sidecar directory at +0x0FC0.  16 entries * 4 bytes: up to
+# PALTAB_MAX_SEG-1 (frame.u16, segment.u16) switches followed by a 0xFFFF
+# frame sentinel; unused entries repeat the sentinel.
+PALIDX_STAGE_OFFSET = 0x0F80
+PALIDX_ENTRIES = 16
+PALIDX_BYTES = PALIDX_ENTRIES * 4
+PALIDX_FRAME_SENTINEL = 0xFFFF
 BOOT_VRAM_SIDECAR_ENTRY_BYTES = 34  # slot.u16 + packed 32-byte pattern
 BOOT_VRAM_REGION_A_BYTES = 0x0F00   # bank +0x0000..+0x0F00
 BOOT_VRAM_REGION_B_BYTES = 0x2000   # palette tail through bank +0x3000
@@ -218,9 +224,9 @@ BOOT_VRAM_REGION_C_BYTES = 0x1000   # bank +0x5000..+0x6000
 
 def boot_vram_sidecar_capacity(palette_segments):
     """Records preserved around the directory and palette in BOOT_STAGE."""
+    if not 0 <= int(palette_segments) <= PALTAB_MAX_SEG:
+        raise ValueError("palette table exceeds the fixed PALTAB capacity")
     palette_bytes = int(palette_segments) * 128
-    if not 0 <= palette_bytes <= BOOT_VRAM_REGION_B_BYTES:
-        raise ValueError("palette table exceeds the boot-sidecar middle region")
     entry = BOOT_VRAM_SIDECAR_ENTRY_BYTES
     return (
         BOOT_VRAM_REGION_A_BYTES // entry
@@ -230,7 +236,12 @@ def boot_vram_sidecar_capacity(palette_segments):
 
 assert PALTAB_MAX_SEG * 128 <= BOOT_VRAM_REGION_B_BYTES, (
     "PALTAB exceeds the middle region of the v13 Word-RAM boot stage")
-assert PALTAB_MAX_SEG <= 255, "pal byte = seg+1 addresses at most 255 segments"
+assert PALTAB_MAX_SEG <= PALIDX_ENTRIES, (
+    "PALIDX must hold one entry per palette switch plus the sentinel")
+assert BOOT_VRAM_REGION_A_BYTES <= PALIDX_STAGE_OFFSET, (
+    "PALIDX overlaps boot-sidecar region A records")
+assert PALIDX_STAGE_OFFSET + PALIDX_BYTES <= 0x0FC0, (
+    "PALIDX overlaps the BVRM sidecar directory at stage +0x0FC0")
 
 # --- Content timing shared by sim and pack ---
 # SEGA-CD 1x is the codec's physical delivery source.  The encoder's fresh

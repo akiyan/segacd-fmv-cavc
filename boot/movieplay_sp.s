@@ -122,7 +122,7 @@
 .equ SUB_BANK_1M, 0x000C0000
 
 /* --- TTRC v18 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       18
+.equ ROUTING_VERSION,       19
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -281,7 +281,7 @@
 /* --- Word-RAM 出力(MDが読む) ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
    starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
-.equ O_PALW,   SUB_BANK_1M+0x0000
+.equ O_PALW,   SUB_BANK_1M+0x0000	/* reserved word; palette switches are M-PALIDX driven */
 .equ O_NLOAD,  SUB_BANK_1M+0x0002
 .equ O_LOADS,  SUB_BANK_1M+0x0004
 .equ O_SLIP,   O_STATUS+0x00
@@ -305,7 +305,7 @@
 .equ O_PALTAB, SUB_BANK_1M+PALTAB_OFF
 .equ DIC_STAGE_OFF, 0x6000
 .equ DIC_STAGE, SUB_BANK_1M+DIC_STAGE_OFF
-.equ DIC_STAGE_PATTERNS, 256
+.equ DIC_STAGE_PATTERNS, 512
 
 /* --- RF5C164 output reconstructed from ADPCM --- */
 .equ PCM_ENV,   0x00FF0001
@@ -335,7 +335,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v17ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v19ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -483,11 +483,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v17: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v19: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v17: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v19: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -517,9 +517,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v17 optional stream features */
+	move.w	62(a0), h_features		/* v19 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v17 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v19 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -935,7 +935,7 @@ dump_ring_head:
 	swap	d0
 	move.w	desync_count, d0
 	move.l	d0, 16(a3)			/* [4]=drain_frame|desync_count */
-	clr.w	(O_PALW).l			/* keep the active boot-loaded palette */
+	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
 	/* O_LOADS: slot0=黒(0x0000), slot1=白(0xFFFF) */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
@@ -987,7 +987,7 @@ uh_put:
    全面ノイズなら 0xC000 のリング内容が壊れている。 */
 dump_pats:
 	movem.l	d0-d7/a0-a6, -(sp)
-	clr.w	(O_PALW).l			/* keep the active boot-loaded palette */
+	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
 	move.w	#1120, (a1)+			/* count=1120 */
@@ -1843,9 +1843,9 @@ fc_copy_even:
 	rts
 
 /* CTRL_SCR(線形 control block) を Word-RAM へ展開。cold は ring pop。
-   block = >H total_len >H frame_seq >H n_upd >H pal
+   block = >H total_len >H frame_seq >H n_upd
            72 bitmap n_upd*(entry) h_audio_bytes audio [even pad]   (MOVIE.md 準拠)
-   v3: pal = 区間番号+1(0=切替なし)。CRAM本体はboot時にMain-RAM表へ渡し済み(PALTAB)。
+   パレット切替はboot搭載のM-PALIDX表がMain側で起点となり、controlに切替バイトは無い。
    loads はラン形式: [slot_start.w count.w pattern(count*32B)] の列。エンコーダが
    フレーム内coldを連番スロットに割当てるので、MDは1ランを1回の大DMAで転送できる。 */
 expand_frame:
@@ -1860,13 +1860,11 @@ expand_frame:
 	bls	1f
 	move.w	d1, d5
 1:
-	move.w	(a0)+, d4			/* pal = 区間番号+1(0=切替なし) — MDはMain-RAM表を引く */
-	move.w	d4, (O_PALW).l
 ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v17 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v19 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2146,7 +2144,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v17 streams use run descriptors above. Retain a final-balance
+	/* Canonical v19 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2698,7 +2696,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v17: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v19: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:

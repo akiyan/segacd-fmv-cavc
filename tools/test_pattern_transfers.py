@@ -25,6 +25,23 @@ class PatternTransferTests(unittest.TestCase):
              (11, 2, pack.pattern_supply.SOURCE_DIC, 9)],
         )
 
+    def test_dic_runs_split_at_the_256_entry_block_boundary(self) -> None:
+        entries = [pack.BASE + 10, pack.BASE + 11, pack.BASE + 12]
+        runs = pack.sourced_cold_runs(
+            entries,
+            [True, True, True],
+            [pack.pattern_supply.SOURCE_DIC] * 3,
+            [255, 256, 257],
+        )
+        self.assertEqual(
+            runs,
+            [(10, 1, pack.pattern_supply.SOURCE_DIC, 255),
+             (11, 2, pack.pattern_supply.SOURCE_DIC, 256)],
+        )
+        for slot, count, source, dic_index in runs:
+            pack.pattern_supply.encode_run_descriptor(
+                slot, count, source, dic_index)
+
     def test_packer_omits_reuse_without_splitting_a_run(self) -> None:
         entries = [pack.BASE + 10, pack.BASE + 99, pack.BASE + 11]
         self.assertEqual(pack.cold_runs(entries, [True, False, True]), [(10, 2)])

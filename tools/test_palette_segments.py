@@ -40,6 +40,29 @@ class PaletteSegmentTests(unittest.TestCase):
         )
         self.assertEqual(ranges, [(0, 3), (3, 7), (7, 9)])
 
+    def test_max_segments_merges_smallest_adjacent_ranges(self) -> None:
+        dark = [0.0] * 12
+        for cut in (2, 4, 6, 9):
+            dark[cut] = 1.0
+        ranges = palette_segments.segment_ranges(dark, [0.0] * 12, gap=0)
+        self.assertEqual(len(ranges), 5)
+        capped = palette_segments.segment_ranges(
+            dark, [0.0] * 12, gap=0, max_segments=3)
+        self.assertEqual(len(capped), 3)
+        self.assertEqual(capped[0][0], 0)
+        self.assertEqual(capped[-1][1], 12)
+        for left, right in zip(capped, capped[1:]):
+            self.assertEqual(left[1], right[0])
+
+    def test_max_segments_leaves_small_counts_alone(self) -> None:
+        ranges = palette_segments.segment_ranges(
+            [0.0, 0.1, 1.0, 0.2, 0.0],
+            [0.0, 0.1, 1.0, 0.2, 0.0],
+            gap=0,
+            max_segments=16,
+        )
+        self.assertEqual(ranges, [(0, 3), (3, 5)])
+
 
 if __name__ == "__main__":
     unittest.main()

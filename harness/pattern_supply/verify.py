@@ -20,7 +20,7 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 17
+VERSION = 19
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
@@ -35,6 +35,8 @@ SOURCE_MASK = 0x1800
 SOURCE_SHIFT = 11
 RUN_COUNT_MASK = 0x07FF
 RUN_SOURCE_SHIFT = 14
+DIC_RUN_BLOCK = 256
+DIC_CAPACITY = 512
 ENTRY_DISPLAY_MASK = 0x67FF
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
@@ -140,7 +142,7 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
         raise AssertionError(
             f"frame {seq}: packed seq/count is {packed_seq}/{n_upd}, cells={cells}")
 
-    bitmap_start = 8
+    bitmap_start = 6
     bitmap_bytes = (cells + 7) // 8
     bitmap_end = bitmap_start + bitmap_bytes
     entries_start = (bitmap_end + 1) & ~1
@@ -191,13 +193,23 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
         word0, encoded = struct.unpack_from(">HH", raw, suffix_start + 2 + index * 4)
         slot = word0 & 0x07FF
         count = encoded & RUN_COUNT_MASK
-        source = encoded >> RUN_SOURCE_SHIFT
+        raw_source = encoded >> RUN_SOURCE_SHIFT
         dic_index = ((word0 >> 11) << 3) | ((encoded >> 11) & 7)
-        if not count or source > SOURCE_DIC:
+        if not count or raw_source > 3:
             raise AssertionError(
-                f"frame {seq}: invalid run {index}: slot={slot} count={count} source={source}")
-        if source != SOURCE_DIC and dic_index:
-            raise AssertionError(f"frame {seq}: non-Dic run carries index {dic_index}")
+                f"frame {seq}: invalid run {index}: "
+                f"slot={slot} count={count} source={raw_source}")
+        if raw_source >= SOURCE_DIC:
+            if dic_index + count > DIC_RUN_BLOCK:
+                raise AssertionError(
+                    f"frame {seq}: Dic run {index} crosses its 256-entry block")
+            dic_index += (raw_source - SOURCE_DIC) * DIC_RUN_BLOCK
+            source = SOURCE_DIC
+        else:
+            source = raw_source
+            if dic_index:
+                raise AssertionError(
+                    f"frame {seq}: non-Dic run carries index {dic_index}")
         runs.append((slot, count, source, dic_index))
     return Control(seq, bitmap, entries, tuple(runs), use_list)
 
@@ -309,7 +321,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v17 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v19 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -331,7 +343,7 @@ def main() -> None:
     for label, count, sectors, capacity in (
         ("Wr0", wr0_count, wr0_sec, 0xFFFF),
         ("Wr1", wr1_count, wr1_sec, 0xFFFF),
-        ("Dic", dic_count, dic_sec, 256),
+        ("Dic", dic_count, dic_sec, DIC_CAPACITY),
     ):
         if count > capacity or sectors != (count + 63) // 64:
             raise AssertionError(

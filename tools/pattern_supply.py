@@ -33,14 +33,18 @@ RUN_SOURCE_MASK = 0xC000
 RUN_COUNT_MASK = 0x3FFF
 
 # v12 indexed DicBuf run descriptor, still four bytes total:
-#   word0: Dic index high 5 bits | zero-based VRAM slot (11 bits)
-#   word1: source (2 bits) | Dic index low 3 bits | count (11 bits)
-# Non-Dic sources keep all index bits zero.
+#   word0: Dic index bits 7..3 (5 bits) | zero-based VRAM slot (11 bits)
+#   word1: source (2 bits) | Dic index bits 2..0 (3 bits) | count (11 bits)
+# Non-Dic sources keep all index bits zero.  Dic index bit 8 lives in the
+# source field: source 2 = Dic block 0 (index 0..255), source 3 = Dic block 1
+# (index 256..511).  A Dic run therefore never crosses a 256-entry block
+# boundary; the encoder splits it there.
 RUN_V12_SLOT_MASK = 0x07FF
 RUN_V12_INDEX_HIGH_SHIFT = 11
 RUN_V12_INDEX_LOW_SHIFT = 11
 RUN_V12_INDEX_LOW_MASK = 0x3800
 RUN_V12_COUNT_MASK = 0x07FF
+DIC_RUN_BLOCK = 256
 
 # The specialized player derives its physical 1M Word-RAM map from the packed
 # movie. Both parity banks share the compact fixed tail below, while their
@@ -62,10 +66,10 @@ PCM_DEC_BUF_BYTES = 0x0600
 PALTAB_STAGE_OFFSET = 0x0000
 PALTAB_STAGE_BYTES = 0x6000
 DIC_STAGE_OFFSET = PALTAB_STAGE_OFFSET + PALTAB_STAGE_BYTES
-BOOT_STAGE_END = DIC_STAGE_OFFSET + 0x2000
+BOOT_STAGE_END = DIC_STAGE_OFFSET + 0x4000
 
-DIC_BUF_BASE = 0x00FF6600
-DIC_BUF_END = 0x00FF8600
+DIC_BUF_BASE = 0x00FFBA40
+DIC_BUF_END = 0x00FFFA40
 DIC_BUF_PATTERNS = (DIC_BUF_END - DIC_BUF_BASE) // PATTERN_BYTES
 
 
@@ -231,8 +235,10 @@ def encode_run_descriptor(
     if source == SOURCE_DIC:
         if not 0 <= dic_index < DIC_BUF_PATTERNS:
             raise ValueError(f"invalid DicBuf index: {dic_index}")
-        if dic_index + count > DIC_BUF_PATTERNS:
-            raise ValueError("DicBuf run exceeds dictionary capacity")
+        if (dic_index % DIC_RUN_BLOCK) + count > DIC_RUN_BLOCK:
+            raise ValueError("DicBuf run crosses a 256-entry block boundary")
+        source += dic_index // DIC_RUN_BLOCK
+        dic_index %= DIC_RUN_BLOCK
     elif dic_index:
         raise ValueError("non-Dic run cannot carry a dictionary index")
     word0 = slot | ((dic_index >> 3) << RUN_V12_INDEX_HIGH_SHIFT)
@@ -257,9 +263,11 @@ def decode_run_descriptor(word0: int, word1: int) -> tuple[int, int, int, int]:
     )
     if not count:
         raise ValueError("run count is zero")
-    if source not in (SOURCE_PRG, SOURCE_WR, SOURCE_DIC):
-        raise ValueError(f"invalid pattern source: {source}")
-    if source == SOURCE_DIC:
+    if source >= SOURCE_DIC:
+        if dic_index + count > DIC_RUN_BLOCK:
+            raise ValueError("DicBuf run crosses a 256-entry block boundary")
+        dic_index += (source - SOURCE_DIC) * DIC_RUN_BLOCK
+        source = SOURCE_DIC
         if dic_index + count > DIC_BUF_PATTERNS:
             raise ValueError("DicBuf run exceeds dictionary capacity")
     elif dic_index:
@@ -291,7 +299,9 @@ def count_source_runs(
             raise ValueError(f"invalid pattern source: {source}")
         if (previous_slot is None or slot != previous_slot + 1
                 or source != previous_source
-                or (source == SOURCE_DIC and dic_index != previous_dic + 1)):
+                or (source == SOURCE_DIC
+                    and (dic_index != previous_dic + 1
+                         or dic_index % DIC_RUN_BLOCK == 0))):
             runs += 1
         previous_slot = slot
         previous_source = source

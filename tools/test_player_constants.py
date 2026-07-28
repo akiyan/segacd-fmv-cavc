@@ -150,14 +150,17 @@ class PlayerConstantsTest(unittest.TestCase):
                       | ttrc_routing.FEATURE_FIXED_N
                       | ttrc_routing.FEATURE_PATTERN_SUPPLY
                       | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
-            supply_counts=(layout.wr0_patterns, layout.wr1_patterns, 256),
+            supply_counts=(
+                layout.wr0_patterns, layout.wr1_patterns,
+                pattern_supply.DIC_BUF_PATTERNS),
         ))
         self.assertEqual(values.wr0_patterns, layout.wr0_patterns)
         self.assertEqual(values.wr1_patterns, layout.wr1_patterns)
         self.assertEqual(values.dic_patterns, pattern_supply.DIC_BUF_PATTERNS)
         self.assertEqual((values.wr0_sectors, values.wr1_sectors, values.dic_sectors),
                          ((layout.wr0_patterns + 63) // 64,
-                          (layout.wr1_patterns + 63) // 64, 4))
+                          (layout.wr1_patterns + 63) // 64,
+                          (pattern_supply.DIC_BUF_PATTERNS + 63) // 64))
         self.assertEqual(values.routing_bytes, 4096)
         self.assertEqual(values.routing_offset, layout.routing_offset)
         self.assertEqual(values.wr0_offset, layout.wr0_offset)

@@ -1,6 +1,6 @@
 # Pattern supply replay
 
-This harness independently verifies the v17 boot-preloaded pattern supplies.
+This harness independently verifies the v19 boot-preloaded pattern supplies.
 It does not import the production packer, scheduler, or planner.
 
 The player has four pattern sources:
@@ -9,11 +9,13 @@ The player has four pattern sources:
 - `WordBuf0`: immutable patterns in the physical Word-RAM bank handed to Main
   for even movie frames.
 - `WordBuf1`: the corresponding bank for odd movie frames.
-- `DicBuf`: a persistent 256-entry dictionary copied once into Main RAM.
+- `DicBuf`: a persistent 512-entry dictionary copied once into Main RAM.
 
 On-disc cold entries use the otherwise unused name-table flip bits to identify
-`Prg`, `Wr`, or `Dic`. Cold-run descriptors carry the source and an 8-bit
-DicBuf start index.
+`Prg`, `Wr`, or `Dic`. Cold-run descriptor source `2` addresses Dic entries
+0--255 and source `3` addresses entries 256--511. Together with the remaining
+index bits, the descriptor carries a 9-bit DicBuf start index without growing.
+A Dic run must split at the 256-entry boundary.
 `Wr` resolves to `Wr0` or `Wr1` from movie-frame parity.
 Timed raw-prefetch records have no corresponding name-table update. They follow
 the visible cold records as a separately slot-sorted Prg suffix. The verifier
@@ -37,4 +39,4 @@ pattern against the decision log. It also requires every consumptive preload
 and every useful Prg pattern to be consumed exactly once, while DicBuf entries
 may be reused by index.
 
-Run this proof again after a current v17 full encode.
+Run this proof again after a current v19 full encode.

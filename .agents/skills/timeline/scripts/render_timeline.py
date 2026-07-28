@@ -41,12 +41,15 @@ TIMELINE_TOP = 185
 REQ_HEIGHT = 347
 SUPPLY_HEIGHT = 60
 RUN_HEIGHT = 32
+DIC_HEIGHT = 32
 BAND_HEIGHT = 32
 
 REQ_ORDER = tuple(style.REQ_TIMELINE_CATS)
 REQ_COLORS = {name: style.CATEGORY_COLORS[name] for name in REQ_ORDER}
 SUPPLY_SOURCE_ORDER = tuple(style.METER_SUPPLY_SOURCE_ORDER)
-REQ_LEGEND_ORDER = ("Raw", "Prg", "Wrd", "Dic", "Near", "Flbk", "Miss")
+# The whole-movie totals legend mirrors the analysis overlay's category legend
+# (tools/analysis_style.LEGEND_ORDER), with EVAL-scope tile totals per item.
+LEGEND_TOTAL_ORDER = tuple(style.LEGEND_ORDER)
 
 REQUIRED_COLUMNS = {
     "frame", "time_seconds", "palette_segment", "cells", "active_tiles",
@@ -517,16 +520,33 @@ def draw_text_block(
             y += 25
 
 
-def draw_legend(draw: ImageDraw.ImageDraw, x: int, y: int) -> None:
+def compute_legend_totals(
+    data: dict[str, np.ndarray], selection: np.ndarray,
+) -> dict[str, int]:
+    """Whole-movie displayed-cell totals per analysis legend category."""
+    take = lambda key: int(data[key][selection].sum())
+    totals = {}
+    for name in LEGEND_TOTAL_ORDER:
+        if name == "Wrd":
+            totals[name] = take("legend_wr0") + take("legend_wr1")
+        else:
+            totals[name] = take(f"legend_{name.lower()}")
+    return totals
+
+
+def draw_legend(
+    draw: ImageDraw.ImageDraw, x: int, y: int,
+    totals: dict[str, int], scope_label: str,
+) -> None:
     label_font = font(19)
-    for name in REQ_LEGEND_ORDER:
-        color = (
-            style.COL_WRD if name == "Wrd"
-            else REQ_COLORS[name]
-        )
+    draw.text((x, y), scope_label, fill=DIM, font=label_font)
+    x += int(draw.textlength(scope_label, font=label_font)) + 26
+    for name in LEGEND_TOTAL_ORDER:
+        color = style.CATEGORY_COLORS[name]
         draw.rectangle((x, y + 3, x + 21, y + 23), fill=color)
-        draw.text((x + 29, y), name, fill=TEXT, font=label_font)
-        x += 104
+        text = f"{name} {fmt_int(totals[name])}"
+        draw.text((x + 29, y), text, fill=TEXT, font=label_font)
+        x += 29 + int(draw.textlength(text, font=label_font)) + 34
 
 
 def draw_timeline(
@@ -539,16 +559,19 @@ def draw_timeline(
     req_h = REQ_HEIGHT
     supply_h = SUPPLY_HEIGHT
     run_h = RUN_HEIGHT
+    dic_h = DIC_HEIGHT
     band_h = BAND_HEIGHT
     req_top = top
     supply_top = req_top + req_h
     run_top = supply_top + supply_h
-    band_top = run_top + run_h
+    dic_top = run_top + run_h
+    band_top = dic_top + dic_h
     bottom = band_top + band_h
     for y0, height in (
         (req_top, req_h),
         (supply_top, supply_h),
         (run_top, run_h),
+        (dic_top, dic_h),
         (band_top, band_h),
     ):
         draw.rectangle((left, y0, left + width - 1, y0 + height - 1), fill=PANEL, outline=GRID)
@@ -560,6 +583,7 @@ def draw_timeline(
     }
     total_capacity = sum(capacities.values())
     run_capacity = run_scale_max(data["status_run"])
+    dic_capacity = run_scale_max(data["legend_dic"])
     for frame_index in range(n):
         x0 = left + frame_index * ppf
         x1 = x0 + ppf - 1
@@ -594,6 +618,14 @@ def draw_timeline(
             draw.rectangle(
                 (x0, run_top + run_h - run_height, x1, run_top + run_h - 1),
                 fill=style.COL_RUN,
+            )
+
+        dic_value = min(float(data["legend_dic"][frame_index]), dic_capacity)
+        dic_height = int(dic_h * dic_value / dic_capacity)
+        if dic_height:
+            draw.rectangle(
+                (x0, dic_top + dic_h - dic_height, x1, dic_top + dic_h - 1),
+                fill=style.CATEGORY_COLORS["Dic"],
             )
 
         physical = max(float(data["body_physical_bytes"][frame_index]), 1.0)
@@ -658,6 +690,7 @@ def draw_timeline(
     draw_scale(req_top, req_h, cells)
     draw_scale(supply_top, supply_h, total_capacity)
     draw_scale(run_top, run_h, run_capacity, show_midpoint=False)
+    draw_scale(dic_top, dic_h, dic_capacity, show_midpoint=False)
     draw_scale(
         band_top,
         band_h,
@@ -711,6 +744,7 @@ def draw_timeline(
     draw.text((18, supply_top + 8), "SUPPLY", fill=TEXT, font=label_font)
     draw.text((18, supply_top + 37), "patterns", fill=DIM, font=small)
     draw.text((18, run_top + 3), "RUN", fill=TEXT, font=label_font)
+    draw.text((18, dic_top + 3), "DIC", fill=TEXT, font=label_font)
     draw.text((18, band_top + 3), "BAND", fill=TEXT, font=label_font)
     return width, bottom
 
@@ -744,6 +778,7 @@ def main() -> None:
         + REQ_HEIGHT
         + SUPPLY_HEIGHT
         + RUN_HEIGHT
+        + DIC_HEIGHT
         + BAND_HEIGHT
         + 105
     )
@@ -761,7 +796,13 @@ def main() -> None:
         prg_cap_summary(measured_cold_cap),
         fill=style.COL_PRG_CAP, font=font(18),
     )
-    draw_legend(draw, left, timeline_top - 42)
+    eval_last = (n if evaluation_end is None else min(evaluation_end, n)) - 1
+    eval_selection = np.arange(1, eval_last + 1, dtype=np.int64)
+    totals = compute_legend_totals(data, eval_selection)
+    legend_scope = (
+        f"EVAL totals {fmt_frame(1, n)}-{fmt_frame(eval_last, n)}"
+    )
+    draw_legend(draw, left, timeline_top - 42, totals, legend_scope)
     _, bottom = draw_timeline(
         image, data, left, timeline_top, ppf, evaluation_end)
     draw = ImageDraw.Draw(image)
@@ -828,6 +869,10 @@ def main() -> None:
         "evaluation_end_frame": evaluation_end,
         "cold_cap_tiles": measured_cold_cap,
         "run_max": run_scale_max(data["status_run"]),
+        "dic_max": run_scale_max(data["legend_dic"]),
+        "legend_totals": totals,
+        "legend_totals_order": list(LEGEND_TOTAL_ORDER),
+        "legend_totals_scope": legend_scope,
         "prg_cap_summary": prg_cap_summary(measured_cold_cap),
         "rows": [
             {
@@ -849,12 +894,21 @@ def main() -> None:
                 "unit": "runs",
             },
             {
+                "key": "dic",
+                "top": (
+                    timeline_top + REQ_HEIGHT + SUPPLY_HEIGHT + RUN_HEIGHT
+                ),
+                "height": DIC_HEIGHT,
+                "unit": "tiles served from DicBuf",
+            },
+            {
                 "key": "band",
                 "top": (
                     timeline_top
                     + REQ_HEIGHT
                     + SUPPLY_HEIGHT
                     + RUN_HEIGHT
+                    + DIC_HEIGHT
                 ),
                 "height": BAND_HEIGHT,
                 "unit": "percent of physical slot",

@@ -6,7 +6,7 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For current v17 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+For current v19 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
 that each frame's control block and cold patterns are ready before that frame
 can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
@@ -30,6 +30,11 @@ ROUTING_TOTAL_MAX = 5
 FEATURE_FIXED_N = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 ADPCM_TABLE_SECTORS = 5
+SOURCE_PRG = 0
+SOURCE_WR = 1
+SOURCE_DIC = 2
+DIC_RUN_BLOCK = 256
+DIC_CAPACITY = 512
 
 
 def frame_sectors(
@@ -116,10 +121,12 @@ def runs(entries: list[int]) -> list[tuple[int, int, int]]:
     return out
 
 
-def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
-    """Return the validated current boot-preload sector total."""
+def pattern_supply_layout(
+    header: bytes, version: int, features: int,
+) -> tuple[int, int]:
+    """Return the validated boot-preload sector total and Dic pattern count."""
     if not features & FEATURE_PATTERN_SUPPLY:
-        return 0
+        return 0, 0
     values = player_constants.PATTERN_SUPPLY_STRUCT.unpack_from(
         header, player_constants.PATTERN_SUPPLY_OFFSET)
     magic, supply_version, reserved = values[:3]
@@ -128,11 +135,16 @@ def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
                 1, 2, player_constants.PATTERN_SUPPLY_VERSION)
             or reserved):
         raise AssertionError(f"invalid pattern-supply extension: {values!r}")
-    return sum(values[6:9])
+    dic_patterns = values[5]
+    if dic_patterns > DIC_CAPACITY:
+        raise AssertionError(
+            f"Dic preload {dic_patterns} exceeds {DIC_CAPACITY} patterns")
+    return sum(values[6:9]), dic_patterns
 
 
 def verify_block(
     block: bytes, seq: int, cells: int, pool: int, audio_bytes: int,
+    dic_patterns: int,
 ) -> tuple[int, int, int]:
     if len(block) < 8:
         raise AssertionError(f"frame {seq}: short control block")
@@ -146,7 +158,7 @@ def verify_block(
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells} cells")
 
-    bitmap_off = 8
+    bitmap_off = 6
     if use_list:
         list_end = bitmap_off + n_upd * 4
         if list_end > len(block):
@@ -175,11 +187,24 @@ def verify_block(
                 ">HH", block, suffix + index * 4)
             slot = slot_word & 0x07FF
             count = encoded & 0x07FF
-            source = encoded >> 14
-            if not count or slot + count > pool or source > 2:
+            raw_source = encoded >> 14
+            local_dic = ((slot_word >> 11) << 3) | ((encoded >> 11) & 7)
+            invalid = not count or slot + count > pool
+            if raw_source >= SOURCE_DIC:
+                dic_index = (
+                    local_dic
+                    + (raw_source - SOURCE_DIC) * DIC_RUN_BLOCK
+                )
+                invalid = invalid or (
+                    local_dic + count > DIC_RUN_BLOCK
+                    or dic_index + count > dic_patterns
+                )
+            else:
+                invalid = invalid or bool(local_dic)
+            if invalid:
                 raise AssertionError(f"frame {seq}: invalid run descriptor")
             cold += count
-            if source == 0:
+            if raw_source == SOURCE_PRG:
                 prg_cold += count
         return n_upd, cold, prg_cold
     bitmap_len = (cells + 7) // 8
@@ -214,10 +239,14 @@ def verify_block(
     for entry in direct:
         if entry & 0x8000:
             slot_plus_one = entry & 0x07FF
+            source = (entry & 0x1800) >> 11
             if not 1 <= slot_plus_one <= pool:
                 raise AssertionError(
                     f"frame {seq}: cold slot+1 {slot_plus_one} outside pool {pool}"
                 )
+            if source > SOURCE_DIC:
+                raise AssertionError(
+                    f"frame {seq}: name-table entry uses invalid source {source}")
     cold = sum(bool(entry & 0x8000) for entry in direct)
     prg_cold = sum(
         bool(entry & 0x8000) and not entry & 0x1800 for entry in direct)
@@ -255,8 +284,8 @@ def main() -> None:
     magic, version, nfr, _cols, _rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", data, 0
     )
-    if magic != b"TTRC" or version != 17:
-        raise SystemExit(f"expected TTRC v17, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 19:
+        raise SystemExit(f"expected TTRC v19, got {magic!r} v{version}")
     prebuf_pat = struct.unpack_from(">L", data, 22)[0]
     routing_sec = struct.unpack_from(">L", data, 26)[0]
     prebuf_sec = struct.unpack_from(">L", data, 30)[0]
@@ -268,7 +297,7 @@ def main() -> None:
     decoded_audio_bytes = struct.unpack_from(">H", data, 54)[0]
     audio_bytes = 4 + decoded_audio_bytes // 2
     table_sec = ADPCM_TABLE_SECTORS
-    supply_sec = pattern_supply_sectors(data, version, features)
+    supply_sec, dic_patterns = pattern_supply_layout(data, version, features)
 
     routing_off = (
         1 + paltab_sec + table_sec + supply_sec
@@ -344,7 +373,7 @@ def main() -> None:
     prg_by_frame = []
     for seq, block in enumerate(controls):
         frame_updates, frame_cold, frame_prg = verify_block(
-            block, seq, cells, pool, audio_bytes)
+            block, seq, cells, pool, audio_bytes, dic_patterns)
         updates += frame_updates
         cold += frame_cold
         prg_by_frame.append(frame_prg)

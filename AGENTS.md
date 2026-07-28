@@ -218,6 +218,9 @@ tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
 
 The on-disc stream is split into static boot state in `HEADER.DAT` and an
 untimed audio/frame-0 arm followed by timed frame-1+ slots in `BODY.DAT`.
+On-disc data compatibility across format versions (including between
+specialized and generic player builds) is not maintained: bump the format
+version and update every consumer of the shared format together.
 The packer also writes a concatenated `MOVIE.DAT` compatibility container for
 offline tools; the player does not read it.
 

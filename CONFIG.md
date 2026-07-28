@@ -66,7 +66,7 @@ memory.
 | `quality_budget_kb(fps)` | same as `prg_buf_cap_kb` | cfg / sim | Offline whole-movie quality-accounting capacity. It has no physical meter. |
 | `WordBuf0` | build-derived; 2,048 patterns in the 6,576-frame H40 example | sp / ip / sim / pack | Boot-preloaded sequence in the frame-0 physical bank; its start follows the frame-0 `O_LOADS` envelope. |
 | `WordBuf1` | build-derived; 2,944 patterns in the same example | sp / ip / sim / pack | Different boot-preloaded sequence in the other bank; its start follows the timed cold/run envelope. |
-| `DicBuf` | 256 patterns, 8 KiB | ip / sim / pack | Persistent Main-RAM dictionary, reusable by 8-bit index. |
+| `DicBuf` | 512 patterns, 16 KiB | ip / sim / pack | Persistent Main-RAM dictionary, reusable by 9-bit index (top bit in the run source field). |
 | routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 16,384 frames. |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | Circular control-block queue. |
 | frame-0 pattern stage | 36 KiB | sp | Boot-only PRG area `0x72000..0x7B000`. |
@@ -82,17 +82,19 @@ allowance or a boot-preload credit. It is not a physical buffer.
 
 ## Palette table
 
-All segment palettes are shipped once in BOOT_STAGE and copied to Main RAM.
-Timed controls carry only `pal = segment + 1`; zero means no switch. A palette
-switch therefore consumes reserved control/name-table work but no same-frame
-CRAM payload.
+All segment palettes are shipped once in BOOT_STAGE and copied to Main RAM,
+and the switch schedule ships the same way: the PALIDX table lists every
+switch as `(frame, segment)` and the player advances through it while
+`next_switch <= frame_no`. Timed controls carry no palette bytes at all, so a
+palette switch consumes no same-frame stream payload.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
-| `PALTAB_MAX_SEG` | 64 | cfg / ip | Palette-segment capacity. |
-| PALTAB size | 8 KiB | ip | Main RAM `0xFFB000..0xFFD000`. |
+| `PALTAB_MAX_SEG` | 16 | cfg / ip | Fixed palette-segment capacity; the encoder merges detected ranges down to it. |
+| PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`. |
+| `PALIDX_ENTRIES` | 16 (15 switches + sentinel) | cfg / ip | Boot-loaded switch table at Main RAM `0xFFBA00..0xFFBA3F`. |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size. |
-| stage / palette offset | `+0x0000` / `+0x1000` | sp / ip | Temporary Word-RAM boot image and palette-table start. |
+| stage / PALIDX / palette offset | `+0x0000` / `+0x0F80` / `+0x1000` | sp / ip | Temporary Word-RAM boot image, switch-table and palette-table starts. |
 | P0/index1 | darkest usable RGB333 colour | sim / pack / ip | Opaque DEBUG HUD background. |
 | P0/index15 | brightest usable RGB333 colour | sim / pack / ip | DEBUG HUD text. |
 
@@ -486,7 +488,7 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 | `quality_budget_kb(fps)` | `prg_buf_cap_kb` と同じ | cfg / sim | offlineのmovie全体quality accounting容量。物理meterはない。 |
 | `WordBuf0` | buildから導出。6,576-frame H40例では2,048 patterns | sp / ip / sim / pack | frame-0 physical bankのboot preload sequence。開始位置はframe-0 `O_LOADS` envelope直後。 |
 | `WordBuf1` | buildから導出。同じ例では2,944 patterns | sp / ip / sim / pack | 反対bankの異なるboot preload sequence。開始位置はtimed cold/run envelope直後。 |
-| `DicBuf` | 256 patterns、8 KiB | ip / sim / pack | 8-bit indexで再利用するpersistent Main-RAM dictionary。 |
+| `DicBuf` | 512 patterns、16 KiB | ip / sim / pack | 9-bit index（最上位bitはrun source field）で再利用するpersistent Main-RAM dictionary。 |
 | routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大16,384 frame。 |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | control blockのcircular queue。 |
 | frame-0 pattern stage | 36 KiB | sp | boot専用PRG領域 `0x72000..0x7B000`。 |
@@ -501,16 +503,18 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 
 ## Palette table
 
-全segment paletteをBOOT_STAGEで1回だけ送り、Main RAMへcopyします。timed controlは
-`pal = segment + 1` だけを持ち、zeroは切り替えなしです。palette switchは予約済みの
-control/name-table workを消費しますが、同frameのCRAM payloadは不要です。
+全segment paletteをBOOT_STAGEで1回だけ送り、Main RAMへcopyします。切替スケジュール
+も同じ経路で送ります: PALIDX表が全切替を `(frame, segment)` で列挙し、playerは
+`next_switch <= frame_no` の間advanceします。timed controlはpalette byteを一切
+持たないため、palette switchは同frameのstream payloadを消費しません。
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
-| `PALTAB_MAX_SEG` | 64 | cfg / ip | palette segment上限。 |
-| PALTAB size | 8 KiB | ip | Main RAM `0xFFB000..0xFFD000`。 |
+| `PALTAB_MAX_SEG` | 16 | cfg / ip | 固定palette segment上限。encoderは検出rangeをここまでmergeする。 |
+| PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`。 |
+| `PALIDX_ENTRIES` | 16（15切替+番兵） | cfg / ip | boot搭載切替表。Main RAM `0xFFBA00..0xFFBA3F`。 |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size。 |
-| stage / palette offset | `+0x0000` / `+0x1000` | sp / ip | temporary Word-RAM boot imageとpalette tableの開始。 |
+| stage / PALIDX / palette offset | `+0x0000` / `+0x0F80` / `+0x1000` | sp / ip | temporary Word-RAM boot image、切替表、palette tableの開始。 |
 | P0/index1 | 使用可能な最暗RGB333色 | sim / pack / ip | 不透明DEBUG HUD background。 |
 | P0/index15 | 使用可能な最明RGB333色 | sim / pack / ip | DEBUG HUD text。 |
 
