@@ -154,8 +154,8 @@ CAPTURE_DIR="${OUTDIR:-$ROOT/videos}"
 
 if [ "${SEGACD_RECORD_OUTPUT_LOCKED:-0}" != "1" ]; then
   OUTPUT_LOCK="$(
-    realpath -m "$CAPTURE_DIR/${TAG}"
-  )|$(realpath -m "$OUT")"
+    realpath -m -s "$CAPTURE_DIR/${TAG}"
+  )|$(realpath -m -s "$OUT")"
   exec "$PYTHON" tools/resource_tokens.py run-stem \
     --stem "record-output:$OUTPUT_LOCK" -- \
     env SEGACD_RECORD_OUTPUT_LOCKED=1 "$0" "${ORIGINAL_ARGS[@]}"
@@ -317,7 +317,10 @@ ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
   -t "$REC_SECS" -map 0:v:0 -map '0:a:0?' -c copy "$BOUNDED_MKV"
 
 echo ">> transcoding verification preview -> $OUT"
-OUT_ABS="$(realpath -m "$OUT")"
+# Keep the requested alias path lexical. A disposable preview may be a broken
+# symlink after its old tmpfs entry is evicted; following it here would make a
+# videos/ output look like a direct /dev/shm output and bypass run-file.
+OUT_ABS="$(realpath -m -s "$OUT")"
 RECORD_CPU_WORKERS="$(
   "$PYTHON" tools/resource_tokens.py cpu-workers
 )"
