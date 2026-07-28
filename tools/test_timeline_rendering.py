@@ -56,6 +56,12 @@ class TimelineRenderingTests(unittest.TestCase):
         np.testing.assert_array_equal(
             components["words"], [1792, 5173, 5180])
 
+    def test_r2v_scale_uses_exact_timed_calculated_maximum(self):
+        values = np.asarray([9999, 1792, 5183, 2400], np.int64)
+        self.assertEqual(timeline.r2v_scale_max(values), 5183)
+        self.assertEqual(
+            timeline.r2v_scale_max(np.asarray([9999, 0], np.int64)), 1)
+
     def test_r2v_rejects_more_short_runs_than_total_runs(self):
         with self.assertRaisesRegex(ValueError, "short-run"):
             timeline.calculate_r2v_words(

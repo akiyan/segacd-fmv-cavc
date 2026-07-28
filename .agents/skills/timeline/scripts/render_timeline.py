@@ -44,8 +44,6 @@ RUN_HEIGHT = 32
 R2V_HEIGHT = 32
 DIC_HEIGHT = 32
 BAND_HEIGHT = 32
-DEFAULT_R2V_VBLANK_WORDS = 3200
-DEFAULT_R2V_VBLANKS_PER_FRAME = 2
 R2V_WORDS_PER_PATTERN = 16
 R2V_CPU_WORD_COST = 1
 R2V_DMA_REPAIR_WORDS = 1
@@ -95,21 +93,6 @@ def parse_args() -> argparse.Namespace:
             "and palette-switch CRAM words"
         ),
     )
-    parser.add_argument(
-        "--r2v-vblank-words", type=int, default=DEFAULT_R2V_VBLANK_WORDS,
-        help=(
-            "assumed transfer-word capacity of one VBlank for the optional "
-            f"R2V row (default: {DEFAULT_R2V_VBLANK_WORDS})"
-        ),
-    )
-    parser.add_argument(
-        "--r2v-vblanks-per-frame", type=int,
-        default=DEFAULT_R2V_VBLANKS_PER_FRAME,
-        help=(
-            "number of VBlank capacities in the per-frame R2V comparison "
-            f"(default: {DEFAULT_R2V_VBLANKS_PER_FRAME})"
-        ),
-    )
     return parser.parse_args()
 
 
@@ -148,6 +131,13 @@ def run_scale_max(values: np.ndarray) -> float:
     timed = np.asarray(values, dtype=np.float64)[1:]
     timed = timed[np.isfinite(timed)]
     return max(float(timed.max(initial=0)), 1.0)
+
+
+def r2v_scale_max(values: np.ndarray) -> int:
+    """Return the exact calculated timed-frame maximum for the R2V axis."""
+
+    timed = np.asarray(values, dtype=np.int64)[1:]
+    return max(int(timed.max(initial=0)), 1)
 
 
 def calculate_r2v_words(
@@ -704,9 +694,6 @@ def draw_timeline(
     image: Image.Image, data: dict[str, np.ndarray], left: int, top: int,
     ppf: int, evaluation_end: int | None,
     r2v: dict[str, np.ndarray] | None = None,
-    r2v_budget_words: int = (
-        DEFAULT_R2V_VBLANK_WORDS * DEFAULT_R2V_VBLANKS_PER_FRAME
-    ),
 ) -> tuple[int, int]:
     draw = ImageDraw.Draw(image)
     n = len(data["frame"])
@@ -743,6 +730,9 @@ def draw_timeline(
     }
     total_capacity = sum(capacities.values())
     run_capacity = run_scale_max(data["status_run"])
+    r2v_capacity = (
+        r2v_scale_max(r2v["words"]) if r2v is not None else 1
+    )
     dic_capacity = run_scale_max(data["legend_dic"])
     for frame_index in range(n):
         x0 = left + frame_index * ppf
@@ -783,8 +773,7 @@ def draw_timeline(
         if r2v is not None:
             r2v_value = int(r2v["words"][frame_index])
             r2v_height = int(
-                r2v_h * min(r2v_value, r2v_budget_words)
-                / r2v_budget_words
+                r2v_h * min(r2v_value, r2v_capacity) / r2v_capacity
             )
             if r2v_height:
                 draw.rectangle(
@@ -794,11 +783,7 @@ def draw_timeline(
                         x1,
                         r2v_top + r2v_h - 1,
                     ),
-                    fill=(
-                        style.COL_OVER
-                        if r2v_value > r2v_budget_words
-                        else style.COL_DMA
-                    ),
+                    fill=style.COL_DMA,
                 )
 
         dic_value = min(float(data["legend_dic"][frame_index]), dic_capacity)
@@ -872,8 +857,7 @@ def draw_timeline(
     draw_scale(supply_top, supply_h, total_capacity)
     draw_scale(run_top, run_h, run_capacity, show_midpoint=False)
     if r2v is not None:
-        draw_scale(
-            r2v_top, r2v_h, r2v_budget_words, show_midpoint=False)
+        draw_scale(r2v_top, r2v_h, r2v_capacity, show_midpoint=False)
     draw_scale(dic_top, dic_h, dic_capacity, show_midpoint=False)
     draw_scale(
         band_top,
@@ -949,13 +933,6 @@ def main() -> None:
         raise SystemExit("pixels per frame must be positive")
     if args.evaluation_end_frame is not None and args.evaluation_end_frame <= 1:
         raise SystemExit("evaluation end frame must be greater than frame 1")
-    if args.r2v_vblank_words <= 0:
-        raise SystemExit("R2V VBlank words must be positive")
-    if args.r2v_vblanks_per_frame <= 0:
-        raise SystemExit("R2V VBlanks per frame must be positive")
-    r2v_budget_words = (
-        args.r2v_vblank_words * args.r2v_vblanks_per_frame
-    )
     r2v_path = (
         args.r2v_workload_tsv.resolve()
         if args.r2v_workload_tsv else None
@@ -999,16 +976,13 @@ def main() -> None:
         fill=style.COL_PRG_CAP, font=font(18),
     )
     if r2v is not None:
-        over = int(np.count_nonzero(
-            r2v["words"][1:] > r2v_budget_words))
+        r2v_max_words = r2v_scale_max(r2v["words"])
         draw.text(
             (24, 126),
             (
                 f"R2V = pattern x{R2V_CPU_WORD_COST} + DMA repair + "
                 f"NT {P125_H40_NAME_TABLE_WORDS} + CRAM {P125_CRAM_WORDS}"
-                f"@switch; budget={args.r2v_vblanks_per_frame}x"
-                f"{args.r2v_vblank_words}={r2v_budget_words} words; "
-                f"over={over} timed frames"
+                f"@switch; timed max={fmt_int(r2v_max_words)} words"
             ),
             fill=style.COL_DMA,
             font=font(18),
@@ -1022,7 +996,7 @@ def main() -> None:
     draw_legend(draw, left, timeline_top - 42, totals, legend_scope)
     _, bottom = draw_timeline(
         image, data, left, timeline_top, ppf, evaluation_end,
-        r2v=r2v, r2v_budget_words=r2v_budget_words)
+        r2v=r2v)
     draw = ImageDraw.Draw(image)
     draw.text(
         (left, bottom + 69),
@@ -1158,22 +1132,14 @@ def main() -> None:
         "r2v_dma_repair_words_per_run": (
             R2V_DMA_REPAIR_WORDS if r2v is not None else None
         ),
-        "r2v_vblank_words": (
-            args.r2v_vblank_words if r2v is not None else None
+        "r2v_scale_mode": (
+            "timed-calculated-maximum" if r2v is not None else None
         ),
-        "r2v_vblanks_per_frame": (
-            args.r2v_vblanks_per_frame if r2v is not None else None
-        ),
-        "r2v_budget_words_per_frame": (
-            r2v_budget_words if r2v is not None else None
+        "r2v_axis_max_words": (
+            r2v_scale_max(r2v["words"]) if r2v is not None else None
         ),
         "r2v_max_words": (
-            int(r2v["words"][1:].max(initial=0))
-            if r2v is not None else None
-        ),
-        "r2v_over_budget_frames": (
-            int(np.count_nonzero(
-                r2v["words"][1:] > r2v_budget_words))
+            r2v_scale_max(r2v["words"])
             if r2v is not None else None
         ),
         "r2v_pattern_words_total": (
