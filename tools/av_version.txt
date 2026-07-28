@@ -11,6 +11,9 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p122: Preserve the hidden name-table base across each compact final DEBUG
+#         HUD address command. The VDP command helper clobbers d2, so keep the
+#         base in d3 and restore accurate M/U/O/Y/Z/T/I values after group 2.
 #   p121: Move the fixed-N H40 hidden name-table copy into active display time
 #         between encoder-authored pattern groups 1 and 2. Keep both pattern
 #         shares at fresh VBlank heads, patch only final HUD values in group 2,
@@ -1061,4 +1064,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=154
-p=121
+p=122

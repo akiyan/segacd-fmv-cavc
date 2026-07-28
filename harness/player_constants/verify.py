@@ -492,7 +492,7 @@ def verify_hidden_nt_active_gap(
         raise AssertionError(f"{obj}: active-gap path does not call generated blitter")
 
     patch = disassembly[patch_match.end():]
-    if not re.search(r"\bandiw\s+#56,%d2", patch):
+    if not re.search(r"\bandiw\s+#56,%d3", patch):
         raise AssertionError(
             f"{obj}: compact HUD patch does not derive the hidden NT from reg2")
 

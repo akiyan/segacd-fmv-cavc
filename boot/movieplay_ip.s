@@ -1536,37 +1536,37 @@ bf_patch_dbg_gap:
 	movem.l	d0-d4/a0-a1, -(sp)
 	lea	dbg_hex_pairs, a1
 
-	moveq	#0, d2
-	move.w	d5, d2				/* prebuilt reg2 retains back-base bits 3..5 */
-	andi.w	#0x0038, d2
-	lsl.l	#8, d2
-	lsl.l	#2, d2				/* hidden NT 0xC000/0xE000, unchanged until flip */
+	moveq	#0, d3
+	move.w	d5, d3				/* prebuilt reg2 retains back-base bits 3..5 */
+	andi.w	#0x0038, d3
+	lsl.l	#8, d3
+	lsl.l	#2, d3				/* hidden NT 0xC000/0xE000, unchanged until flip */
 
-	move.l	d2, d0
+	move.l	d3, d0
 	addq.w	#4*2, d0			/* P */
 	bsr	set_vram_write
 	move.w	dbg_seg, d4
 	bsr	dbg_gap_put2
 
-	move.l	d2, d0
+	move.l	d3, d0
 	addi.w	#18*2, d0			/* M */
 	bsr	set_vram_write
 	move.w	frame_vblank_waits, d4
 	bsr.s	dbg_gap_put2
 
-	move.l	d2, d0
+	move.l	d3, d0
 	addi.w	#22*2, d0			/* U */
 	bsr	set_vram_write
 	move.w	dma_elapsed_ticks, d4
 	bsr.s	dbg_gap_put4
 
-	move.l	d2, d0
+	move.l	d3, d0
 	addi.w	#36*2, d0			/* O */
 	bsr	set_vram_write
 	move.w	pattern_vblank1_exit_v, d4
 	bsr.s	dbg_gap_put2
 
-	move.l	d2, d0
+	move.l	d3, d0
 	addi.w	#0x80+14*2, d0			/* Y/Z/T/I on H40 row 1 */
 	bsr	set_vram_write
 	move.w	pattern_vblank1_words, d4
@@ -1584,17 +1584,17 @@ bf_patch_dbg_gap:
 /* Direct deadline patch formatters.  The destination has already been set to
    the hidden NT, so sequential calls advance only that inactive table. */
 dbg_gap_put4:
-	move.w	d4, d3
+	move.w	d4, d2
 	lsr.w	#8, d4
 	bsr.s	dbg_gap_put2
-	move.w	d3, d4
+	move.w	d2, d4
 	bra.s	dbg_gap_put2
 
 dbg_gap_put3:
-	move.w	d4, d3
+	move.w	d4, d2
 	lsr.w	#8, d4
 	bsr.s	dbg_gap_put1
-	move.w	d3, d4
+	move.w	d2, d4
 	bra.s	dbg_gap_put2
 
 dbg_gap_put1:
