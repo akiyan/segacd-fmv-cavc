@@ -4,11 +4,10 @@
 The feature-bit-0 control suffix is appended after the existing audio and an
 absolute-address alignment pad:
 
-    n_runs:u16, n_vblank_groups:u16,
-    group_pattern_count[8]:u16, repeated indexed four-byte descriptors
+    n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v21 files and reconstructs every current control and payload byte. The
+TTRC v22 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -51,9 +50,8 @@ RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 21
-MAX_VBLANK_GROUPS = 8
-CONTROL_SUFFIX_HEADER_BYTES = 4 + MAX_VBLANK_GROUPS * 2
+VERSION = 22
+CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 DEFAULT_DECISIONS = Path(
@@ -605,29 +603,11 @@ def per_run_descriptors(
 
 
 def encode_descriptors(
-    runs: tuple[tuple[int, int, int, int], ...],
-    source_aware: bool,
-    *,
-    vblank_groups: int = 1,
-    vblank_patterns: tuple[int, ...] | None = None,
+    runs: tuple[tuple[int, int, int, int], ...], source_aware: bool,
 ) -> bytes:
     if len(runs) > 0xFFFF:
         raise AssertionError("descriptor count does not fit u16")
-    if not 1 <= vblank_groups <= MAX_VBLANK_GROUPS:
-        raise AssertionError(f"invalid VBlank group count {vblank_groups}")
-    total_patterns = sum(run[1] for run in runs)
-    if vblank_patterns is None:
-        vblank_patterns = (
-            total_patterns, *([0] * (MAX_VBLANK_GROUPS - 1)))
-    if len(vblank_patterns) != MAX_VBLANK_GROUPS:
-        raise AssertionError("VBlank pattern plan must contain eight words")
-    if any(vblank_patterns[vblank_groups:]):
-        raise AssertionError("unused VBlank pattern counts must be zero")
-    if sum(vblank_patterns[:vblank_groups]) != total_patterns:
-        raise AssertionError("VBlank plan/load totals differ")
-    raw = bytearray(struct.pack(
-        f">HH{MAX_VBLANK_GROUPS}H",
-        len(runs), vblank_groups, *vblank_patterns))
+    raw = bytearray(struct.pack(">H", len(runs)))
     for slot_start, count, source, dic_index in runs:
         count_limit = RUN_COUNT_MASK if source_aware else 0xFFFF
         if not 0 <= slot_start <= 0xFFFF or not 1 <= count <= count_limit:
@@ -663,13 +643,7 @@ def decode_descriptors(
 ) -> tuple[tuple[int, int, int, int], ...]:
     if len(raw) < CONTROL_SUFFIX_HEADER_BYTES:
         raise AssertionError("descriptor suffix is truncated")
-    n_runs, n_groups = struct.unpack_from(">HH", raw)
-    if not 1 <= n_groups <= MAX_VBLANK_GROUPS:
-        raise AssertionError(f"invalid VBlank group count {n_groups}")
-    group_patterns = struct.unpack_from(
-        f">{MAX_VBLANK_GROUPS}H", raw, 4)
-    if any(group_patterns[n_groups:]):
-        raise AssertionError("unused VBlank pattern counts are nonzero")
+    n_runs = struct.unpack_from(">H", raw)[0]
     if len(raw) != CONTROL_SUFFIX_HEADER_BYTES + 4 * n_runs:
         raise AssertionError(
             f"descriptor suffix is {len(raw)} bytes for {n_runs} runs"
@@ -704,19 +678,7 @@ def decode_descriptors(
         else:
             count, source, dic_index = source_count, SOURCE_PRG, 0
         result.append((slot, count, source, dic_index))
-    if sum(group_patterns[:n_groups]) != sum(run[1] for run in result):
-        raise AssertionError("VBlank plan/load totals differ")
     return tuple(result)
-
-
-def decode_vblank_plan(
-    raw: bytes, source_aware: bool,
-) -> tuple[int, tuple[int, ...]]:
-    """Return the already-validated fixed-width plan from one suffix."""
-    decode_descriptors(raw, source_aware)
-    n_groups = struct.unpack_from(">H", raw, 2)[0]
-    patterns = struct.unpack_from(f">{MAX_VBLANK_GROUPS}H", raw, 4)
-    return n_groups, tuple(patterns)
 
 
 def verify_dic512_descriptor_codec() -> None:
@@ -731,7 +693,7 @@ def verify_dic512_descriptor_codec() -> None:
         raise AssertionError("Dic512 descriptor round trip differs")
     encoded_sources = tuple(
         struct.unpack_from(
-            ">H", raw, CONTROL_SUFFIX_HEADER_BYTES + 2 + index * 4,
+            ">H", raw, 4 + index * 4,
         )[0] >> RUN_SOURCE_SHIFT
         for index in range(len(runs))
     )
@@ -1017,17 +979,7 @@ def main() -> None:
             physical_dic_indices,
             stream.base,
         )
-        if packed_suffix is not None:
-            plan_groups, plan_patterns = decode_vblank_plan(
-                packed_suffix, source_aware)
-        else:
-            plan_groups, plan_patterns = 1, None
-        expected_suffix = encode_descriptors(
-            expected_runs,
-            source_aware,
-            vblank_groups=plan_groups,
-            vblank_patterns=plan_patterns,
-        )
+        expected_suffix = encode_descriptors(expected_runs, source_aware)
         suffix = packed_suffix or expected_suffix
         if packed_suffix is not None and suffix != expected_suffix:
             raise AssertionError(

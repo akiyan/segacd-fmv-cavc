@@ -8,7 +8,7 @@ therefore perform the same single poll after consuming its runs. H40 can
 contain up to 1120 cells, so the fallback retains its possible short-prefix
 poll followed by the final poll.
 
-This checker reads the real split TTRC v21 stream, compares the fallback DBRA
+This checker reads the real split TTRC v22 stream, compares the fallback DBRA
 countdown with an equivalent grouped model for every frame, and confirms that
 entry order and cold-slot run grouping are unchanged.  It additionally checks
 every synthetic update count up to the format's H40 maximum.
@@ -32,7 +32,7 @@ SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 ADPCM_TABLE_SECTORS = 5
 PATTERN_SUPPLY_OFFSET = 196
-VERSION = 21
+VERSION = 22
 
 
 @dataclass(frozen=True)

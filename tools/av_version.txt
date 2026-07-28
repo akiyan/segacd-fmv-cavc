@@ -11,6 +11,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p124: Consume TTRC v22 controls without the removed encoder VBlank plan,
+#         restore the compact O_PALW/O_NLOAD/O_LOADS Word-RAM header, and keep
+#         p112's runtime residual-budget splitting as the sole transfer policy.
+#   e155: TTRC v22 removes the unused 18-byte fixed-width encoder VBlank plan
+#         from every control block. The stream now stores n_runs immediately
+#         followed by source-aware run descriptors; cadence splitting is live.
 #   p123: Restore p112's runtime residual-budget run splitting on the current
 #         TTRC v21 stream. Preserve the first VBlank tail, share the guarded
 #         fixed-N deadline with the final name-table/HUD/CRAM/flip work, derive
@@ -1068,5 +1074,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=154
-p=123
+e=155
+p=124

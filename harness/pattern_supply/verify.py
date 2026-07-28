@@ -20,9 +20,8 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 21
-MAX_VBLANK_GROUPS = 8
-CONTROL_SUFFIX_HEADER_BYTES = 4 + MAX_VBLANK_GROUPS * 2
+VERSION = 22
+CONTROL_SUFFIX_HEADER_BYTES = 2
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
@@ -50,7 +49,6 @@ class Control:
     bitmap: bytes
     entries: tuple[int, ...]
     runs: tuple[tuple[int, int, int, int], ...]
-    vblank_patterns: tuple[int, ...]
     use_list: bool
 
 
@@ -186,15 +184,7 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
         )
     if sum(value.bit_count() for value in bitmap) != n_upd:
         raise AssertionError(f"frame {seq}: update cell population differs from n_upd")
-    n_runs, n_groups = struct.unpack_from(">HH", raw, suffix_start)
-    if not 1 <= n_groups <= MAX_VBLANK_GROUPS:
-        raise AssertionError(
-            f"frame {seq}: invalid VBlank group count {n_groups}")
-    vblank_patterns = struct.unpack_from(
-        f">{MAX_VBLANK_GROUPS}H", raw, suffix_start + 4)
-    if any(vblank_patterns[n_groups:]):
-        raise AssertionError(
-            f"frame {seq}: unused VBlank pattern counts are nonzero")
+    n_runs = struct.unpack_from(">H", raw, suffix_start)[0]
     descriptor_start = suffix_start + CONTROL_SUFFIX_HEADER_BYTES
     suffix_end = descriptor_start + n_runs * 4
     if suffix_end != len(raw):
@@ -224,11 +214,7 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
                 raise AssertionError(
                     f"frame {seq}: non-Dic run carries index {dic_index}")
         runs.append((slot, count, source, dic_index))
-    if sum(vblank_patterns[:n_groups]) != sum(run[1] for run in runs):
-        raise AssertionError(
-            f"frame {seq}: VBlank plan/load totals differ")
-    return Control(
-        seq, bitmap, entries, tuple(runs), tuple(vblank_patterns), use_list)
+    return Control(seq, bitmap, entries, tuple(runs), use_list)
 
 
 def expected_runs(entries: tuple[int, ...], base: int) -> tuple[tuple[int, int, int], ...]:
@@ -348,7 +334,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v21 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v22 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -380,7 +366,7 @@ def main() -> None:
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]
     if len(boot_stage) != paltab_sectors * SECTOR:
         raise AssertionError("boot stage is truncated")
-    # v21: no palette rides the boot stage; the sidecar regions are fixed.
+    # v22: no palette rides the boot stage; the sidecar regions are fixed.
     sidecar_vram = {}
     if boot_stage[0x0FC0:0x0FC4] == b"BVRM":
         region_counts = struct.unpack_from(">3H", boot_stage, 0x0FC4)

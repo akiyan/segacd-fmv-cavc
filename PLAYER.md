@@ -281,13 +281,12 @@ sequenceDiagram
     M->>S: Next CMD_SWAP
 ```
 
-TTRC v21 controls retain one fixed-width encoder VBlank plan. Sub validates
-and copies it, while Main skips those 18 bytes and derives the actual boundaries
-from the runtime residual budget. This preserves byte-identical player-only A/B
-tests. Fixed N is the healthy transfer-window count: N2 permits two and N4
-permits four; using another transfer VBlank remains bounded but raises a HUD
-warning. A light N4 frame may finish in one or two transfer VBlanks and leave
-the remaining cadence windows empty.
+TTRC v22 controls store `n_runs` immediately followed by source-aware run
+descriptors. Main derives every boundary from the runtime residual budget.
+Fixed N is the healthy transfer-window count: N2 permits two and N4 permits
+four; using another transfer VBlank remains bounded but raises a HUD warning.
+A light N4 frame may finish in one or two transfer VBlanks and leave the
+remaining cadence windows empty.
 
 For specialized fixed-N H40 playback, one transfer deadline can serve both
 the final cold-run tail and the display flip. The Main CPU treats 3,400 words
@@ -621,12 +620,11 @@ sequenceDiagram
     M->>S: 次のCMD_SWAP
 ```
 
-TTRC v21 controlはfixed-widthのencoder VBlank planを保持します。Subは検証して
-copyしますが、Mainはその18 byteを読み飛ばし、runtime残budgetから実際のboundaryを
-導出します。これによりplayer-only A/Bはbyte-identicalなstreamを使えます。Fixed Nは
-healthyなtransfer-window数で、N2は2本、N4は4本です。さらにtransfer VBlankを使う
-処理はboundedのままですがHUD warningになります。軽いN4 frameは1〜2 transfer
-VBlankで完了し、残るcadence windowを空きにできます。
+TTRC v22 controlは`n_runs`の直後にsource-aware run descriptorを置きます。
+Mainはruntime残budgetからすべてのboundaryを導出します。Fixed Nはhealthyな
+transfer-window数で、N2は2本、N4は4本です。さらにtransfer VBlankを使う処理は
+boundedのままですがHUD warningになります。軽いN4 frameは1〜2 transfer VBlankで
+完了し、残るcadence windowを空きにできます。
 
 Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
 display flipで共有できます。Main CPUは1 VBlankでpattern transferに使用できる

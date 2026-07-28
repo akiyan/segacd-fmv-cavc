@@ -36,7 +36,7 @@ SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 DEFAULT_DECISIONS = Path(
     "videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/decisions.pkl"
 )
-VERSION = 21
+VERSION = 22
 
 
 @dataclass(frozen=True)

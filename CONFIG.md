@@ -129,7 +129,7 @@ playback.
 
 ## Audio
 
-On-disc format version 21 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+On-disc format version 22 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
@@ -191,11 +191,10 @@ The N=4 sixth sector is physical pad only because the routing byte still caps
 useful data at five sectors. Rates without fixed-N use the delivery-paced
 `75 / fps_int` accumulator.
 
-`FEATURE_COLD_RUNS` appends TTRC v21's fixed-width VBlank-plan metadata followed
-by four-byte source-aware run descriptors. Sub validates and copies both. The
-current Main player deliberately ignores the encoded boundaries and derives its
-actual split from the remaining measured VBlank word budget; keeping the
-metadata makes player-only A/B tests use byte-identical packed streams.
+`FEATURE_COLD_RUNS` appends four-byte source-aware run descriptors after one
+`n_runs` word. Sub validates and copies them. Main derives each runtime split
+from the remaining measured VBlank word budget; the stream carries no encoded
+VBlank boundaries.
 Allocator slots are physical VRAM slots; pattern loads are emitted in ascending
 slot order while name updates remain in cell order.
 
@@ -205,7 +204,6 @@ slot order while name updates remain in cell order.
 |---|---:|---|---|
 | `VB_WORDS_H40` | 3,400 words/VBlank | ip | H40 VBlank transfer budget. |
 | `VB_WORDS_H32` | 2,800 words/VBlank | ip | H32 VBlank transfer budget. |
-| v21 plan metadata | 18 bytes/frame | pack / sp | Construction-time schedule check and compatibility metadata; not the current Main split boundary. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2000..0xFF65FF` | ip | Generated Main-CPU handlers and blitters. |
 | `RUN_TABLE` | 488 records | ip / pack | Maximum source-aware physical cold runs in one frame. |
@@ -555,7 +553,7 @@ untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-On-disc format version 21のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+On-disc format version 22のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |
@@ -614,11 +612,10 @@ back-pressureは次sectorの行き先で決まります。
 N=4の6個目はphysical padだけです。routing byteの有効data上限は5 sectorのままです。
 fixed-Nでないrateはdelivery-paced `75 / fps_int` accumulatorを使います。
 
-`FEATURE_COLD_RUNS` は各controlへTTRC v21のfixed-width VBlank-plan metadataと、
-それに続く4-byte source-aware run descriptorを追加します。Subは両方を検証して
-copyします。現在のMain playerはencoded boundaryを意図的に使わず、実測VBlank word
-budgetの残量から実際のsplitを導出します。Metadataを残すことでplayer-only A/Bは
-byte-identicalなpacked streamを使えます。Allocator slotは物理VRAM slotで、
+`FEATURE_COLD_RUNS` は各controlへ1個の`n_runs` wordと、それに続く4-byte
+source-aware run descriptorを追加します。Subはdescriptorを検証してcopyします。
+Mainは実測VBlank word budgetの残量からruntime splitを導出し、streamはencoded
+VBlank boundaryを持ちません。Allocator slotは物理VRAM slotで、
 pattern loadはslot昇順、name updateはcell順です。
 
 ## Main-CPU transfer budget
@@ -627,7 +624,6 @@ pattern loadはslot昇順、name updateはcell順です。
 |---|---:|---|---|
 | `VB_WORDS_H40` | 3,400 words/VBlank | ip | H40 VBlank transfer budget。 |
 | `VB_WORDS_H32` | 2,800 words/VBlank | ip | H32 VBlank transfer budget。 |
-| v21 plan metadata | 18 bytes/frame | pack / sp | 構築時schedule checkと互換metadata。現在のMain split boundaryではない。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2000..0xFF65FF` | ip | 生成するMain-CPU handlerとblitter。 |
 | `RUN_TABLE` | 488 records | ip / pack | 1 frameのsource-aware physical cold run上限。 |

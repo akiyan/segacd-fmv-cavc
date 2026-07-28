@@ -89,7 +89,7 @@ class ControlLengthTests(unittest.TestCase):
     def test_lengths_match_the_packed_layout_formula(self) -> None:
         lengths = schedule.control_block_lengths(
             [0, 17], [0, 3], cells=1120, audio_frame_bytes=888)
-        self.assertEqual(lengths.tolist(), [1054, 1100])
+        self.assertEqual(lengths.tolist(), [1036, 1082])
 
     def test_body_supply_reserves_fixed_control_before_variable_work(self) -> None:
         supply = schedule.body_fresh_byte_supply(
@@ -98,8 +98,8 @@ class ControlLengthTests(unittest.TestCase):
             audio_frame_bytes=736,
         )
         self.assertEqual(supply["gross"].tolist(), [0, 4096, 6144, 4096, 6144])
-        self.assertEqual(supply["fixed_control"].tolist(), [0, 902, 902, 902, 902])
-        self.assertEqual(supply["variable"].tolist(), [0, 3194, 5242, 3194, 5242])
+        self.assertEqual(supply["fixed_control"].tolist(), [0, 884, 884, 884, 884])
+        self.assertEqual(supply["variable"].tolist(), [0, 3212, 5260, 3212, 5260])
 
     def test_funded_work_includes_all_control_and_prg_patterns(self) -> None:
         useful = schedule.body_funded_work_bytes(
@@ -107,7 +107,7 @@ class ControlLengthTests(unittest.TestCase):
             cells=1120,
             audio_frame_bytes=736,
         )
-        self.assertEqual(useful.tolist(), [0, 1238])
+        self.assertEqual(useful.tolist(), [0, 1220])
 
     def test_run_control_reservation_uses_cold_cap_or_active_tiles(self) -> None:
         self.assertEqual(schedule.max_run_control_reservation(178, 1120), 712)

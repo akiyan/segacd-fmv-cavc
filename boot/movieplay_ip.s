@@ -30,11 +30,8 @@
 .equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72 us/tick, Main read-only */
 
 .equ PROBE_BANK, 0x00200000
-/* TTRC v21 keeps an encoder-authored group plan ahead of the physical loads.
-   Sub validates and copies that compatibility metadata. Main deliberately
-   derives the actual run split from the measured residual VBlank budget. */
 .equ O_NLOAD_OFF, 0x0002
-.equ O_LOADS_OFF, 0x0014
+.equ O_LOADS_OFF, 0x0004
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -739,7 +736,7 @@ build_frame:
 	   src は Word-RAM 内のパターン先頭。Pass2は長runをDMA+先頭補修、短runをCPU直書きする。 */
 	lea	(PROBE_BANK+O_NLOAD_OFF), a0
 	move.w	(a0), d7			/* n_load 合計タイル数 */
-	lea	(PROBE_BANK+O_LOADS_OFF), a0	/* skip the validated v21 plan */
+	lea	(PROBE_BANK+O_LOADS_OFF), a0
 	lea	RUN_TABLE, a2
 	moveq	#0, d4				/* run count */
 	tst.w	d7
