@@ -232,7 +232,7 @@ within Sega CD limits, not fixed presets:
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
   CPU through full lookup tables duplicated in both physical 1M Word-RAM
-  banks. It is the only audio format in on-disc format version 17. Physical
+  banks. It is the only audio format in on-disc format version 19. Physical
   hardware and additional modes/cadences are broader compatibility checks
   rather than implementation blockers (see [ADPCM.md](ADPCM.md)). Z80 offload
   remains shelved because BUSREQ-based feeding contends with Main CPU video
@@ -249,11 +249,17 @@ pair is `out/PROFILE.iso` + `out/PROFILE.cue`.
 
 Generated media paths stay under `videos/` (git-ignored, never committed — they
 embed source frames). Disposable sim directories, derived MP4s (analysis,
-straight-sim, verification preview, and upload compilation), and timeline PNGs
-are symlinks into the project-managed tmpfs workspace under
-`/dev/shm/segacd-fmv-ttrc`; inactive oldest entries are evicted when the next
-run needs room, while active leases are never removed. Native lossless emulator
-captures remain ordinary disk files because compilation reuses them. Do not
+straight-sim, verification preview, and upload compilation), and the timeline,
+hudline, and mixline PNGs are symlinks into the project-managed tmpfs workspace
+under `/dev/shm/segacd-fmv-ttrc`; inactive oldest entries are evicted when the
+next run needs room, while active leases are never removed. Those three
+renderers take the tmpfs path only when their output stays under `videos/`; an
+output path outside it is written as an ordinary file. The layout JSON
+(`<image>.json`) and Gist receipt (`<image>.gist.json`) written next to each
+image are always ordinary disk files, so a receipt can outlive the evicted PNG
+it describes; re-render from the TSV rather than treating the receipt as proof
+the image is still present. Native lossless emulator captures remain ordinary
+disk files because compilation reuses them. Do not
 accumulate video output in `tmp/`. Per-frame codec timeline and playback HUD
 TSVs are the other exception: keep every run persistently under git-ignored
 `logs/`. Their filenames include both encoder and player versions. Use one stem
