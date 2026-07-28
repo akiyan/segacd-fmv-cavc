@@ -156,26 +156,29 @@
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
 .if PC_MODE == 1
-/* Fixed-N specialized H40 builds copy only the encoded grid from the compact
-   shadow into the 64-entry-pitch back name table with one Main-RAM DMA per
-   row.  This avoids both the old 64x28 transfer and its active-time staging
-   copy while preserving the ~8 ms saving over the FIFO-throttled CPU blit. */
+/* Fixed-N specialized H40 builds copy the back name table with one linear
+   Main-RAM DMA inside the flip VBlank (64-entry-pitch staging, ~18 blank
+   lines) instead of the FIFO-throttled CPU blit (~8 ms of active display).
+   The complete 40x28 visible aperture is staged so a smaller encoded grid
+   stays centered with zero entries around it.  This frees the pre-transfer
+   phase so Pass2 can catch field 1's VBlank. */
 .equ NT_DMA_FLIP, 1
-.equ NT_FLIP_WORDS, PC_TCOLS*PC_TROWS
+.equ NT_STAGE_PITCH, 64
+.equ NT_STAGE_ROWS, 28
+.equ NT_STAGE_WORDS, NT_STAGE_PITCH*NT_STAGE_ROWS
+.equ NT_STAGE_ROW_SKIP, (NT_STAGE_PITCH-PC_TCOLS)*2
 /* A shared deadline VBlank must retain enough of the measured word budget for
-   the compact row DMAs, their repeated setup, the optional DEBUG HUD
-   republish, CRAM on a palette switch, and non-payload control/setup time.
-   The per-row allowance and 128-word guard are both in addition to
-   VB_WORDS_H40's existing ~495-word margin below the measured theoretical
-   blank capacity. */
-.equ NT_ROW_DMA_SETUP_WORDS, PC_TROWS*16
+   the complete 64-pitch NT DMA, the optional DEBUG HUD republish, CRAM on a
+   palette switch, and non-payload control/setup time.  The 128-word guard is
+   in addition to VB_WORDS_H40's existing ~495-word margin below the measured
+   theoretical blank capacity. */
 .ifdef DEBUG
 .equ NT_FLIP_HUD_WORDS, HUD_COMBINED_WORDS
 .else
 .equ NT_FLIP_HUD_WORDS, 0
 .endif
 .equ NT_FLIP_GUARD_WORDS, 128
-.equ NT_FLIP_RESERVE_WORDS, NT_FLIP_WORDS+NT_ROW_DMA_SETUP_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
+.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
 .equ NT_CRAM_FLIP_RESERVE_WORDS, NT_FLIP_RESERVE_WORDS+64
 .endif
 .endif
@@ -306,6 +309,17 @@ ip_entry:
 	move.w	#0x8174, (VDP_CTRL).l		/* reg1: 表示on+vint+DMA許可(M1)+mode5 */
 
 	clr.w	dbg_seg
+
+.ifdef NT_DMA_FLIP
+	/* Main RAM .bss is not initialized by the BIOS.  Clear every staged name
+	   entry once so columns/rows outside a centered movie remain transparent. */
+	lea	nt_stage, a0
+	moveq	#0, d0
+	move.w	#(NT_STAGE_WORDS/2)-1, d1
+1:
+	move.l	d0, (a0)+
+	dbra	d1, 1b
+.endif
 
 	clr.w	back_idx			/* 裏=NT0(0) から構築, 表示=NT1 */
 
@@ -946,7 +960,22 @@ bf_blit:
 	lsl.l	#5, d5				/* back_idx*0x2000 */
 	add.l	#NT0, d5			/* back_base = 0xC000 or 0xE000 (flipまで保持) */
 .ifdef NT_DMA_FLIP
-	bra	bf_dma				/* compact shadow is row-DMAed inside the flip blank */
+	/* Re-stage only the encoded grid at its centered location inside the
+	   zeroed 64-entry-pitch visible aperture.  The flip-blank copy remains
+	   ONE linear DMA. */
+	lea	shadow, a0
+	lea	nt_stage+((PC_ROW0*NT_STAGE_PITCH+PC_COL0)*2), a1
+	move.w	#PC_TROWS-1, d0
+9:
+	.rept PC_TCOLS/2
+	move.l	(a0)+, (a1)+
+	.endr
+.if (PC_TCOLS & 1) != 0
+	move.w	(a0)+, (a1)+
+.endif
+	lea	NT_STAGE_ROW_SKIP(a1), a1
+	dbra	d0, 9b
+	bra	bf_dma				/* NT copied by DMA inside the flip blank */
 .endif
 .ifdef MAIN_CODEGEN
 	move.w	(md_codegen_blit).l, d0
@@ -1593,29 +1622,41 @@ wait_dma_done:
 	rts
 
 .ifdef NT_DMA_FLIP
-/* Copy only the compact encoded grid from shadow into the inactive 64-pitch
-   name table.  One DMA per row preserves the hardware pitch without sending
-   the 24 unused words between H40 rows.  VRAM was cleared at startup and the
-   geometry is fixed for the stream, so the centered outer border remains
-   transparent.  Call inside the flip VBlank.  trashes d0,d2. */
+/* Copy the complete 40x28 visible name-table aperture into the inactive back
+   table with one Main-RAM DMA.  Call inside the flip VBlank.  trashes d0,d2. */
 nt_dma_flip:
-	movem.l	d1/d3/d6/a3, -(sp)
-	lea	shadow, a3
+	move.w	#0x8F02, (VDP_CTRL).l
+	move.w	#0x9300|(NT_STAGE_WORDS&0xFF), (VDP_CTRL).l
+	move.w	#0x9400|((NT_STAGE_WORDS>>8)&0xFF), (VDP_CTRL).l
+	move.l	#nt_stage, d2
+	lsr.l	#1, d2
+	move.w	#0x9500, d0
+	move.b	d2, d0
+	move.w	d0, (VDP_CTRL).l
+	lsr.l	#8, d2
+	move.w	#0x9600, d0
+	move.b	d2, d0
+	move.w	d0, (VDP_CTRL).l
+	lsr.l	#8, d2
+	move.w	#0x9700, d0
+	move.b	d2, d0
+	move.w	d0, (VDP_CTRL).l
 	moveq	#0, d0
 	move.w	back_idx, d0
 	lsl.l	#8, d0
 	lsl.l	#5, d0
-	addi.l	#NT0+(PC_ROW0*128)+(PC_COL0*2), d0
-	move.l	d0, d3				/* first encoded destination row */
-	move.w	#PC_TROWS-1, d1
-1:
-	move.w	#PC_TCOLS, d6
-	bsr	dma_chunk			/* Main RAM has no first-word defect */
-	adda.w	#PC_TCOLS*2, a3
-	addi.l	#128, d3			/* next physical 64-entry NT row */
-	dbra	d1, 1b
-	movem.l	(sp)+, d1/d3/d6/a3
-	rts
+	add.l	#NT0, d0			/* back_base */
+	move.l	d0, d2
+	andi.l	#0x00003FFF, d0
+	swap	d0
+	ori.l	#0x40000000, d0
+	lsr.w	#7, d2
+	lsr.w	#7, d2
+	andi.w	#0x0003, d2
+	or.w	d2, d0
+	ori.w	#0x0080, d0			/* CD5 */
+	move.l	d0, (VDP_CTRL).l
+	bra	wait_dma_done
 .endif
 
 /* d0 = VRAM addr(<=0xFFFF) -> VDP_CTRL に write コマンド。trashes d0,d2 */
@@ -2182,6 +2223,8 @@ dbg_row:
 .else
 	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
 .endif
+nt_stage:
+	.space 64*28*2				/* zero-bordered visible H40 staging for flip-blank DMA */
 .ifndef PLAYER_SPECIALIZED
 md_mode:
 	.space 2

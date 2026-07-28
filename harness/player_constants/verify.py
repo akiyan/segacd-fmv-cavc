@@ -266,9 +266,7 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
         raise AssertionError(f"{obj}: do_flip branch escaped its region: {details}")
 
 
-def verify_shared_deadline_vblank(
-    objdump: Path, obj: Path, *, tcols: int, trows: int,
-) -> None:
+def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     """Prove the H40 fixed-N cold-tail/NT shared-VBlank guards."""
     disassembly = run([str(objdump), "-d", str(obj)])
 
@@ -347,7 +345,7 @@ def verify_shared_deadline_vblank(
             f"{obj}: shared deadline path lacks its two status reads")
 
     flip = block("bf_flip", "bf_after_flip")
-    normal_reserve = tcols * trows + trows * 16 + 54 + 128
+    normal_reserve = 64 * 28 + 54 + 128
     palette_reserve = normal_reserve + 64
     for reserve, description in (
             (normal_reserve, "normal NT/HUD/guard reserve"),
@@ -358,6 +356,7 @@ def verify_shared_deadline_vblank(
             r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", flip)) != 2:
         raise AssertionError(
             f"{obj}: normal and palette flips do not share the guarded helper")
+
 
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
     """Prove the single startup command spans frame -1 through frame 0."""
@@ -452,7 +451,7 @@ def verify_adpcm_decode_pump(
 def verify_centered_nt_dma(
     objdump: Path, obj: Path, *, tcols: int, trows: int,
 ) -> None:
-    """Prove that fixed-N H40 row DMA centers the compact encoded grid."""
+    """Prove that fixed-N H40 staging centers the encoded grid."""
     disassembly = run([str(objdump), "-dr", str(obj)])
     start_match = re.search(
         r"^[0-9a-f]+ <bf_blit>:$", disassembly, re.MULTILINE)
@@ -461,34 +460,45 @@ def verify_centered_nt_dma(
     if not start_match or not end_match:
         raise AssertionError(f"{obj}: missing bf_blit/bf_dma symbols")
     block = disassembly[start_match.end():end_match.start()]
-    if not re.search(r"\bbra\w*\s+[^\n]*<bf_dma>", block):
+    long_copies = len(re.findall(r"\bmovel\s+%a0@\+,%a1@\+", block))
+    word_copies = len(re.findall(r"\bmovew\s+%a0@\+,%a1@\+", block))
+    if (long_copies, word_copies) != (tcols // 2, tcols & 1):
         raise AssertionError(
-            f"{obj}: fixed-N H40 still stages the name table before Pass2")
+            f"{obj}: NT stage row copies {long_copies} longs/{word_copies} words, "
+            f"expected {tcols // 2}/{tcols & 1}")
+    row_skip = (64 - tcols) * 2
+    if not re.search(rf"\blea\s+%a1@\({row_skip}\),%a1", block):
+        raise AssertionError(f"{obj}: NT stage row skip is not {row_skip} bytes")
+    if not re.search(rf"\bmovew\s+#{trows - 1},%d0", block):
+        raise AssertionError(f"{obj}: NT stage row count is not {trows}")
+
+    stage_match = re.search(
+        r"\blea\s+0 [^\n]*,%a1\n"
+        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
+        block,
+    )
     dma_match = re.search(
         r"^[0-9a-f]+ <nt_dma_flip>:$", disassembly, re.MULTILINE)
     dma_end_match = re.search(
         r"^[0-9a-f]+ <set_vram_write>:$", disassembly, re.MULTILINE)
-    if not dma_match or not dma_end_match:
-        raise AssertionError(f"{obj}: missing compact NT DMA symbols")
+    if not stage_match or not dma_match or not dma_end_match:
+        raise AssertionError(f"{obj}: missing NT stage/DMA symbols")
     dma = disassembly[dma_match.end():dma_end_match.start()]
-    expected = (
-        (rf"\bmovew\s+#{trows - 1},%d1", "row count"),
-        (rf"\bmovew\s+#{tcols},%d6", "row width"),
-        (rf"\baddaw\s+#{tcols * 2},%a3", "compact source stride"),
-        (r"\baddil\s+#128,%d3", "64-word destination pitch"),
-        (r"\bbsr\w*\s+[^\n]*<dma_chunk>", "row DMA call"),
+    base_match = re.search(
+        r"\bmovel\s+#0,%d2\n"
+        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
+        dma,
     )
-    for pattern, description in expected:
-        if not re.search(pattern, dma):
-            raise AssertionError(
-                f"{obj}: compact NT DMA lacks {description}")
-    row0 = (28 - trows) // 2
-    col0 = (40 - tcols) // 2
-    destination = 0xC000 + row0 * 128 + col0 * 2
-    if not re.search(rf"\baddil\s+#{destination},%d0", dma):
+    if not base_match:
+        raise AssertionError(f"{obj}: missing NT stage base relocation")
+    actual_offset = int(stage_match.group(1), 16) - int(base_match.group(1), 16)
+    expected_offset = (((28 - trows) // 2) * 64 + (40 - tcols) // 2) * 2
+    if actual_offset != expected_offset:
         raise AssertionError(
-            f"{obj}: compact NT DMA destination is not centered at "
-            f"0x{destination:04X}")
+            f"{obj}: NT stage offset is {actual_offset}, expected {expected_offset}")
+    if "#-27904" not in dma or "#-27641" not in dma:
+        raise AssertionError(
+            f"{obj}: NT DMA length is not the full 64x28 aperture")
 
 
 def build_case(
@@ -538,8 +548,7 @@ def build_case(
         if case.mode == 1 and av_config.uses_fixed_n_cadence(case.fps):
             verify_centered_nt_dma(
                 objdump, ip_obj, tcols=case.tcols or 40, trows=case.trows)
-            verify_shared_deadline_vblank(
-                objdump, ip_obj, tcols=case.tcols or 40, trows=case.trows)
+            verify_shared_deadline_vblank(objdump, ip_obj)
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"

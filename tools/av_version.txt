@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p115: Restore the single 64x28 name-table DMA after the p114 row-DMA A/B.
+#         Repeating DMA setup for all 28 rows slowed every displayed frame,
+#         drove the reader 25 slots ahead, and reached S2F/R0E by frame 218.
+#         The measured result rejects compact row DMA as a deadline fix.
 #   p114: Replace the fixed-N H40 flip's 1,792-word 64x28 name-table DMA and
 #         active-time staging copy with direct compact row DMAs from shadow.
 #         The shared-deadline reserve now covers only the encoded grid plus a
@@ -1011,4 +1015,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=149
-p=114
+p=115
