@@ -20,6 +20,7 @@ class CadenceTests(unittest.TestCase):
         groups = schedule.nominal_group_counts(9, 24)
         self.assertEqual(groups[:6], (1, 2, 3, 2, 3, 2))
         self.assertEqual(set(groups[1:]), {2, 3})
+        self.assertEqual(sum(groups[1:]), 20)
 
 
 class PlannerTests(unittest.TestCase):
@@ -63,6 +64,29 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(
             len(plan.patterns), schedule.MAX_VBLANK_GROUPS)
         self.assertEqual(plan.patterns, (0,) * schedule.MAX_VBLANK_GROUPS)
+
+    def test_non_nt_final_group_reserves_hud_format_and_flip(self) -> None:
+        self.assertEqual(
+            schedule.final_reserved_work(
+                "H32", nt_dma_flip=False, palette_switch=False),
+            schedule.DEBUG_FORMAT_WORK
+            + schedule.DEBUG_STAGE_WORK
+            + schedule.FLIP_GUARD_WORK,
+        )
+
+    def test_every_modeled_group_fits_its_physical_blank(self) -> None:
+        plan = schedule.plan_frame(
+            tuple((index * 3, 3, 0, 0) for index in range(80)),
+            2,
+            mode="H32",
+            nt_dma_flip=False,
+            palette_switch=True,
+        )
+        limit = schedule.VBLANK_WORK_LIMIT["H32"]
+        for group in range(plan.groups):
+            reserve = (
+                plan.final_reserved_work if group == plan.groups - 1 else 0)
+            self.assertLessEqual(plan.pattern_work[group] + reserve, limit)
 
 
 if __name__ == "__main__":

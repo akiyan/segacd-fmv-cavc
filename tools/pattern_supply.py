@@ -52,7 +52,7 @@ DIC_RUN_BLOCK = 256
 # in Wr0; Wr1 needs only the timed cold/run envelope.
 WORD_RAM_BANK_BYTES = 0x20000
 SECTOR_BYTES = 2048
-OUTPUT_HEADER_BYTES = 4  # O_PALW + O_NLOAD; O_LOADS starts immediately after.
+OUTPUT_HEADER_BYTES = 20  # O_NGROUPS + O_NLOAD + eight pattern-count words.
 RUN_DESCRIPTOR_BYTES = 4
 STATUS_BYTES = 0x100
 CTRL_SCR_BYTES = 0x2000

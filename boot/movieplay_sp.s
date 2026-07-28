@@ -121,8 +121,8 @@
 
 .equ SUB_BANK_1M, 0x000C0000
 
-/* --- TTRC v20 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       20
+/* --- TTRC v21 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
+.equ ROUTING_VERSION,       21
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -280,10 +280,13 @@
 
 /* --- Word-RAM 出力(MDが読む) ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
-   starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
-.equ O_PALW,   SUB_BANK_1M+0x0000	/* reserved word; palette switches are M-PALIDX driven */
-.equ O_NLOAD,  SUB_BANK_1M+0x0002
-.equ O_LOADS,  SUB_BANK_1M+0x0004
+   starts reserve the complete parity-specific transfer-plan/O_LOADS peak
+   before WordBuf. */
+.equ O_NGROUPS, SUB_BANK_1M+0x0000
+.equ O_NLOAD,   SUB_BANK_1M+0x0002
+.equ O_GROUP_PATTERNS, SUB_BANK_1M+0x0004
+.equ O_LOADS,   SUB_BANK_1M+0x0014
+.equ O_MAX_GROUPS, 8
 .equ O_SLIP,   O_STATUS+0x00
 .equ O_DSY,    O_STATUS+0x7E
 .equ O_CTRLWAIT,O_STATUS+0x18
@@ -337,7 +340,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v20ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v21ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -489,11 +492,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v20: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v21: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v20: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v21: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -523,9 +526,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v20 optional stream features */
+	move.w	62(a0), h_features		/* v21 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v20 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v21 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -941,7 +944,12 @@ dump_ring_head:
 	swap	d0
 	move.w	desync_count, d0
 	move.l	d0, 16(a3)			/* [4]=drain_frame|desync_count */
-	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
+	move.w	#1, (O_NGROUPS).l
+	move.w	#2, (O_GROUP_PATTERNS).l
+	clr.l	(O_GROUP_PATTERNS+2).l
+	clr.l	(O_GROUP_PATTERNS+6).l
+	clr.l	(O_GROUP_PATTERNS+10).l
+	clr.w	(O_GROUP_PATTERNS+14).l
 	/* O_LOADS: slot0=黒(0x0000), slot1=白(0xFFFF) */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
@@ -993,7 +1001,12 @@ uh_put:
    全面ノイズなら 0xC000 のリング内容が壊れている。 */
 dump_pats:
 	movem.l	d0-d7/a0-a6, -(sp)
-	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
+	move.w	#1, (O_NGROUPS).l
+	move.w	#1, (O_GROUP_PATTERNS).l
+	clr.l	(O_GROUP_PATTERNS+2).l
+	clr.l	(O_GROUP_PATTERNS+6).l
+	clr.l	(O_GROUP_PATTERNS+10).l
+	clr.w	(O_GROUP_PATTERNS+14).l
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
 	move.w	#1120, (a1)+			/* count=1120 */
@@ -1828,6 +1841,11 @@ dsd_w:
 	bra	dsd_lp
 1:
 .endif
+	move.w	#1, (O_NGROUPS).l
+	clr.l	(O_GROUP_PATTERNS).l
+	clr.l	(O_GROUP_PATTERNS+4).l
+	clr.l	(O_GROUP_PATTERNS+8).l
+	clr.l	(O_GROUP_PATTERNS+12).l
 	move.w	#0, (O_NLOAD).l			/* このコマは更新破棄=前コマ維持 */
 	bsr	pump_poll_core
 	rts
@@ -1922,7 +1940,7 @@ ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v20 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v21 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2018,6 +2036,26 @@ ef_runs_setup:
 	addq.l	#1, a0
 1:
 	move.w	(a0)+, d7			/* n_runs */
+	move.w	(a0)+, d0			/* encoder-authored VBlank group count */
+	tst.w	d0
+	bne.s	1f
+	moveq	#1, d0				/* corrupt zero: keep one bounded display group */
+1:
+	cmpi.w	#O_MAX_GROUPS, d0
+	bls.s	1f
+	moveq	#O_MAX_GROUPS, d0
+1:
+	move.w	d0, (O_NGROUPS).l
+	/* The fixed eight-word table keeps every control block's byte funding
+	   independent of how many groups this frame actually needs. */
+	move.l	(a0)+, d0
+	move.l	d0, (O_GROUP_PATTERNS+0).l
+	move.l	(a0)+, d0
+	move.l	d0, (O_GROUP_PATTERNS+4).l
+	move.l	(a0)+, d0
+	move.l	d0, (O_GROUP_PATTERNS+8).l
+	move.l	(a0)+, d0
+	move.l	d0, (O_GROUP_PATTERNS+12).l
 	move.w	d5, d1				/* ordinary streams: runs/cold cannot exceed updates */
 	PC_MOVE_W h_features, PC_FEATURES, d0
 	btst	#FEATURE_VRAM_RAW_PREFETCH_BIT, d0
@@ -2202,7 +2240,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v20 streams use run descriptors above. Retain a final-balance
+	/* Canonical v21 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2754,7 +2792,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v20: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v21: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:

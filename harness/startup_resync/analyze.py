@@ -15,9 +15,9 @@ sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
 that APPLY back-pressure rejected a control-sector pump. H is the per-frame
 physical PrgBuf peak in exact patterns. X packs complete reader frame slots
 ahead in its high byte and the current slot's sector index in its low byte.
-Y/Z are the exact pattern words transferred in the first/second transfer
-VBlank, O/I are the V-counters after the first/final pattern share, and T is
-the number of pattern-transfer VBlanks. A supplied H32 or H40 profile selects its combined layout
+Y/Z are the exact pattern words assigned to and transferred in encoded groups
+1/2, O/I are the V-counters after the first/last actual pattern share, and T is
+the complete planned VBlank-group count, including an empty final group. A supplied H32 or H40 profile selects its combined layout
 automatically. Legacy one-row recordings remain readable through their
 explicit layout options.
 
@@ -1017,7 +1017,7 @@ def write_gate_json(path: Path, result: dict) -> None:
             f"{result.get('pattern_vblank1_exit_vcounter_max', 0):02X}, "
             f"second max={result['pattern_vblank2_max_words']} words "
             f"({result['pattern_vblank2_max_words'] / 16:g} patterns), "
-            f"transfer VBlanks max={result['pattern_transfer_vblank_max']}, "
+            f"planned VBlank groups max={result['pattern_transfer_vblank_max']}, "
             f"exit V-counter max={result['pattern_exit_vcounter_max']:02X}"
         )
     if "sub_poll_gap_statistics" in result:

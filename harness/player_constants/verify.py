@@ -267,7 +267,7 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
 
 
 def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
-    """Prove the H40 fixed-N cold-tail/NT shared-VBlank guards."""
+    """Prove the encoder-authored VBlank plan and shared final H40 work."""
     disassembly = run([str(objdump), "-d", str(obj)])
 
     def block(start_name: str, end_name: str) -> str:
@@ -287,78 +287,54 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         return disassembly[start.end():end.start()]
 
     dma_entry = block("bf_dma", "bf_run_lp")
-    clear_state = re.search(r"\bclrw\s+0 [^\n]*", dma_entry)
-    load_runs = re.search(r"\bmovew\s+0 [^\n]*,%d4", dma_entry)
-    branch_empty = re.search(
-        r"\bbeq\w*\s+[^\n]*<bf_flip>", dma_entry)
-    if not clear_state or not load_runs or not branch_empty:
+    if not re.search(
+            r"\bbsr\w*\s+[^\n]*<bf_enter_planned_group>", dma_entry):
         raise AssertionError(
-            f"{obj}: missing shared-state clear/n_runs/empty-frame branch")
-    if not clear_state.start() < load_runs.start() < branch_empty.start():
+            f"{obj}: Pass2 does not enter the encoder-authored first group")
+    if not re.search(
+            r"\bbeq\w*\s+[^\n]*<bf_plan_complete>", dma_entry):
         raise AssertionError(
-            f"{obj}: shared-state clear overwrites the n_runs zero flag")
-
+            f"{obj}: an empty frame does not retain its planned cadence")
     run_loop = block("bf_run_lp", "bf_split_run")
     residual_compare = re.search(r"\bcmpw\s+%d7,%d1", run_loop)
     split_crossing = re.search(
         r"\bbra\w*\s+[^\n]*<bf_split_run>", run_loop)
     if not residual_compare or not split_crossing:
         raise AssertionError(
-            f"{obj}: a DMA run crossing the residual budget is not split")
-    between = run_loop[residual_compare.end():split_crossing.start()]
-    if "<bf_refill_vbudget>" in between:
-        raise AssertionError(
-            f"{obj}: a crossing DMA run discards the first VBlank tail")
+            f"{obj}: a DMA run crossing its encoded group is not split")
 
-    start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
-    if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
-        raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")
-    if not re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", start_budget):
-        raise AssertionError(f"{obj}: initial VBlank budget lacks HV guard")
-    if not re.search(r"\bcmpiw\s+#224,%d0", start_budget):
-        raise AssertionError(f"{obj}: initial VBlank budget is not limited to E0")
-    if len(re.findall(r"<bf_refill_vbudget>", start_budget)) < 2:
-        raise AssertionError(
-            f"{obj}: active and mid-blank budget entries do not refill")
-
-    refill = block("bf_refill_vbudget", "bf_wait_fixed_flip_vblank")
-    if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
-        raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
-    if not re.search(r"\bmovew\s+#3400,%d7", refill):
-        raise AssertionError(f"{obj}: H40 budget refill is not 3400 words")
-
-    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_stage")
+    enter = block("bf_enter_planned_group", "bf_debug_snapshot_group")
     required = (
-        (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
-        (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
-        (r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", "terminal-HV guard"),
-        (r"\bcmpiw\s+#-1024,%d0", "terminal FC00 comparison"),
-        (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh-VBlank fallback"),
+        (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh VBlank head"),
+        # The relocatable object has no symbol annotation on this absolute
+        # operand; the enclosing function keeps the check unambiguous.
+        (r"\bsubqw\s+#1,", "group countdown"),
+        (r"\bmovew\s+%a0@\+,%d7", "encoded pattern count load"),
+        (r"\blslw\s+#4,%d7", "pattern-to-word conversion"),
     )
     for pattern, description in required:
-        if not re.search(pattern, shared):
-            raise AssertionError(f"{obj}: shared deadline path lacks {description}")
-    if len(re.findall(
-            r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", shared)) != 2:
+        if not re.search(pattern, enter):
+            raise AssertionError(
+                f"{obj}: planned group entry lacks {description}")
+
+    next_group = block("bf_next_planned_group", "bf_patch_dbg_stage")
+    if not re.search(
+            r"\bbra\w*\s+[^\n]*<bf_enter_planned_group>", next_group):
         raise AssertionError(
-            f"{obj}: shared deadline path lacks its two status reads")
+            f"{obj}: group transition does not enter the next encoded group")
 
     flip = block("bf_flip", "bf_after_flip")
-    normal_reserve = 64 * 28 + 63 + 128
-    palette_reserve = normal_reserve + 64
-    for reserve, description in (
-            (normal_reserve, "normal NT/HUD/guard reserve"),
-            (palette_reserve, "palette NT/HUD/CRAM/guard reserve")):
-        if not re.search(rf"\bmovew\s+#{reserve},%d6", flip):
-            raise AssertionError(f"{obj}: missing {description} ({reserve} words)")
-    if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", flip)) != 2:
-        raise AssertionError(
-            f"{obj}: normal and palette flips do not share the guarded helper")
     if len(re.findall(
             r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_stage>", flip)) != 2:
         raise AssertionError(
             f"{obj}: normal and palette flips do not patch the staged HUD")
+    if len(re.findall(
+            r"\bbsr\w*\s+[^\n]*<nt_dma_flip>", flip)) != 2:
+        raise AssertionError(
+            f"{obj}: normal and palette plans do not execute one final NT DMA")
+    if "<wait_fixed_flip>" in flip or "<wait_vb_start>" in flip:
+        raise AssertionError(
+            f"{obj}: final path adds an unencoded cadence wait")
     if "<publish_dbg>" in flip:
         raise AssertionError(
             f"{obj}: H40 flip path still republishes HUD through the VDP port")

@@ -13,6 +13,7 @@ import numpy as np
 
 import av_config
 import shadow_updates
+import vblank_schedule
 
 
 SECTOR_BYTES = av_config.CD_SECTOR_BYTES
@@ -21,7 +22,8 @@ CD_BYTES_PER_SECOND = av_config.CD_BYTES_PER_SECOND
 PATTERN_BYTES = 32
 PATTERNS_PER_SECTOR = SECTOR_BYTES // PATTERN_BYTES
 RUN_DESCRIPTOR_BYTES = 4
-STREAM_SCHEDULE_SCHEMA_VERSION = 6
+VBLANK_PLAN_BYTES = 2 + vblank_schedule.GROUP_COUNT_BYTES
+STREAM_SCHEDULE_SCHEMA_VERSION = 7
 
 
 class ScheduleError(ValueError):
@@ -96,8 +98,14 @@ def control_block_lengths(
     # suffix are even-sized; only the pre-suffix body may need a byte.
     pre_suffix = 4 + update_bytes + int(audio_frame_bytes)
     pre_suffix += pre_suffix & 1
-    # total_len word + aligned body + n_runs word + four bytes per run.
-    return (2 + pre_suffix + 2 + n_runs * RUN_DESCRIPTOR_BYTES).astype(np.int64)
+    # total_len word + aligned body + n_runs word + the fixed-width VBlank
+    # group plan + four bytes per run. Keeping all eight pattern-count words in
+    # every block makes physical control funding independent of how many safe
+    # groups the encoder ultimately selects.
+    return (
+        2 + pre_suffix + 2 + VBLANK_PLAN_BYTES
+        + n_runs * RUN_DESCRIPTOR_BYTES
+    ).astype(np.int64)
 
 
 def body_fresh_byte_supply(

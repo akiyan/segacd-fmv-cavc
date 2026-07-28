@@ -11,6 +11,15 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p120: Read the TTRC v21 fixed-width per-frame VBlank pattern plan from
+#         Word RAM and execute every encoded group at a fresh VBlank head.
+#         Split long runs exactly at group boundaries, preserve empty final
+#         groups for their planned cadence, and perform name-table/HUD/CRAM/
+#         flip work only in the final encoded group.
+#   e153: TTRC v21: encode eight per-VBlank pattern-count words in every
+#         control block. Plan each frame with explicit payload, run/chunk,
+#         HUD/name-table/CRAM, and flip work so cold quality remains unchanged
+#         while physically unsafe work gains a warning-level extra VBlank.
 #   p119: Replace HUD O's redundant flip-interval estimate with the exact
 #         V-counter immediately after pattern-transfer VBlank 1. Keep V for
 #         the accepted flip and I for the final pattern exit, so Y/O and Z/I
@@ -1043,5 +1052,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=152
-p=119
+e=153
+p=120

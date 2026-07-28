@@ -42,6 +42,7 @@ TRANSFER_CHUNK_WORK = 64
 NT_STAGE_WORDS = 64 * 28
 NT_DMA_SETUP_WORK = 64
 DEBUG_STAGE_WORK = 63
+DEBUG_FORMAT_WORK = 512
 FLIP_GUARD_WORK = 128
 CRAM_REPLACE_WORK = 128
 H40_NT_FINAL_WORK = (
@@ -49,6 +50,9 @@ H40_NT_FINAL_WORK = (
     + NT_DMA_SETUP_WORK
     + DEBUG_STAGE_WORK
     + FLIP_GUARD_WORK
+)
+NON_NT_FINAL_WORK = (
+    DEBUG_FORMAT_WORK + DEBUG_STAGE_WORK + FLIP_GUARD_WORK
 )
 
 
@@ -119,7 +123,7 @@ def final_reserved_work(
     normalized = str(mode).upper()
     if normalized not in VBLANK_WORK_LIMIT:
         raise ValueError(f"unsupported display mode: {mode!r}")
-    reserve = H40_NT_FINAL_WORK if nt_dma_flip else FLIP_GUARD_WORK
+    reserve = H40_NT_FINAL_WORK if nt_dma_flip else NON_NT_FINAL_WORK
     if palette_switch:
         reserve += CRAM_REPLACE_WORK
     return reserve

@@ -30,6 +30,11 @@
 .equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72 us/tick, Main read-only */
 
 .equ PROBE_BANK, 0x00200000
+.equ O_NGROUPS_OFF, 0x0000
+.equ O_NLOAD_OFF, 0x0002
+.equ O_GROUP_PATTERNS_OFF, 0x0004
+.equ O_LOADS_OFF, 0x0014
+.equ MAX_VBLANK_GROUPS, 8
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -736,8 +741,39 @@ build_frame:
 .endif
 	/* Pass1: パターンコピー無し。(dst.w, len.w, src.l)のラン表だけ作る。
 	   src は Word-RAM 内のパターン先頭。Pass2は長runをDMA+先頭補修、短runをCPU直書きする。 */
-	lea	(PROBE_BANK+0x02), a0		/* n_load @ +2, loads @ +4 */
+	lea	(PROBE_BANK+O_NGROUPS_OFF), a0
+	move.w	(a0)+, d6			/* encoder-authored VBlank group count */
+	tst.w	d6
+	bne.s	1f
+	moveq	#1, d6
+1:
+	cmpi.w	#MAX_VBLANK_GROUPS, d6
+	bls.s	1f
+	moveq	#MAX_VBLANK_GROUPS, d6
+1:
+	move.w	d6, n_vblank_groups
 	move.w	(a0)+, d7			/* n_load 合計タイル数 */
+	lea	vblank_group_patterns, a1
+	moveq	#0, d3				/* encoded group-pattern sum */
+	moveq	#MAX_VBLANK_GROUPS-1, d5
+1:
+	move.w	(a0)+, d0
+	move.w	d0, (a1)+
+	add.w	d0, d3
+	dbra	d5, 1b
+	cmp.w	d7, d3
+	beq.s	1f
+	/* A corrupt plan must not turn into an unbounded active-display transfer.
+	   Sub has already consumed the source payload, so hold the prior picture. */
+	moveq	#0, d7
+	move.w	#1, n_vblank_groups
+	lea	vblank_group_patterns, a1
+	moveq	#0, d0
+	.rept MAX_VBLANK_GROUPS/2
+	move.l	d0, (a1)+
+	.endr
+1:
+	/* a0 now points at O_LOADS after the fixed eight-word plan. */
 	lea	RUN_TABLE, a2
 	moveq	#0, d4				/* run count */
 	tst.w	d7
@@ -902,7 +938,7 @@ bf_upd:
 	PC_ADDA_W md_bmbytes, PC_BMBYTES, a0	/* entries */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_BMBYTES & 1)
-	addq.l	#1, a0				/* v20 retains the aligned 16-bit entry array */
+	addq.l	#1, a0				/* v21 retains the aligned 16-bit entry array */
 .endif
 .else
 	move.w	md_bmbytes, d0
@@ -1056,9 +1092,10 @@ bf_bdone:
 	   タイルDMAが複数vblankに渡る間「旧フレーム表示×新パレット」が見える
 	   (パレット区間切替の瞬間に実機側だけ明るいゴミタイルが出る実バグ)。 */
 bf_dma:
-	/* Pass2: 表を順に Word-RAM からVRAMへ転送。VBLANK予算(d7)でランをまたいで分割。
-	   長runのWord-RAM DMAは先頭1ワードが化ける(実測/Sega文書)ため、src+2/full lengthを
-	   dstへDMAした後、チャンク先頭の1ワードをCPUで上書き修復する。短runはCPU直書き。 */
+	/* Pass2: execute the encoder-authored pattern count for each VBlank.
+	   d7 is the exact remaining word count in the current encoded group, not
+	   an optimistic payload-only hardware budget. Long Word-RAM DMA still uses
+	   src+2/full length plus the required first-word CPU repair. */
 .ifdef HUD_FLIP_FIELDS
 	/* E: how late the pre-transfer Main work (swap wait, parse, bitmap, NT
 	   blit) reached this point, in 4-tick units since the previous flip.
@@ -1074,8 +1111,6 @@ bf_dma:
 7:
 	move.w	d0, pass2_entry_q
 .endif
-	/* Keep this clear before the n_runs load: MOVE supplies the Z flag consumed
-	   by the following BEQ. */
 .ifdef DEBUG
 	clr.w	pattern_vblank1_words
 	clr.w	pattern_vblank2_words
@@ -1083,23 +1118,33 @@ bf_dma:
 	clr.w	pattern_exit_v
 	clr.w	pattern_vblank1_exit_v
 .endif
-	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
+	move.w	n_vblank_groups, vblank_groups_left
+	lea	vblank_group_patterns, a0
+	move.l	a0, vblank_group_ptr
 	move.w	n_runs, d4
-	beq	bf_flip
-.ifdef DEBUG
-	move.w	#1, pattern_transfer_vblanks
-.endif
 	lea	RUN_TABLE, a2
-	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
+.ifdef NT_DMA_FLIP
+	/* Format the static HUD in active time. Final transfer fields are patched
+	   into the same Main-RAM NT stage after the last planned pattern chunk. */
+	bsr	prepare_dbg
+	bsr	stamp_dbg_stage
+.endif
+.endif
+	bsr	bf_enter_planned_group		/* every encoded group starts at a fresh head */
+.ifdef DEBUG
+	tst.w	n_runs
+	beq.s	1f
 	move.w	(GA_STOPWATCH).l, d0
 	move.w	d0, dma_start_tick		/* begin inside the first transfer VBlank */
+1:
 .endif
+	tst.w	d4
+	beq	bf_plan_complete
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port.  A DMA run that crosses the residual
-	   word budget is split at that exact boundary so the first blank's tail is
-	   not discarded before a shared deadline flip. */
+	   straight into the control port. A run crossing the encoded group count
+	   is split at exactly that deterministic boundary. */
 	move.w	(a2)+, d1			/* +0 len(語) */
 .ifdef DMA_RUN_FASTPATH
 	/* A one-time run branch is much cheaper than programming a DMA for one or
@@ -1135,13 +1180,9 @@ bf_split_run:
 	movea.l	16(a2), a3			/* +18 src */
 	adda.w	#20, a2				/* advance to the next record */
 bf_chunk:
-	tst.w	d7				/* 予算切れなら次vblank開始まで待って補充 */
+	tst.w	d7				/* encoded group exhausted: enter the next one */
 	bgt	1f
-.ifdef DEBUG
-	bsr	bf_debug_next_vbudget
-.else
-	bsr	bf_refill_vbudget
-.endif
+	bsr	bf_next_planned_group
 1:
 	move.w	d1, d6				/* chunk = min(ラン残, 予算) */
 	cmp.w	d7, d6
@@ -1166,15 +1207,11 @@ bf_chunk:
 
 .ifdef DMA_RUN_FASTPATH
 bf_short_run:
-	/* Keep the whole short run in one VBlank.  H40's 3400-word budget leaves
-	   an 8-word tail, so a 16/32-word run may need to start in the next blank. */
+	/* The encoder keeps ordinary one-/two-pattern runs intact. A corrupt plan
+	   that cuts one still takes the bounded DMA split path. */
 	cmp.w	d7, d1
 	bls.s	1f
-.ifdef DEBUG
-	bsr	bf_debug_next_vbudget
-.else
-	bsr	bf_refill_vbudget
-.endif
+	bra	bf_split_run
 1:
 	addq.l	#4, a2				/* skip reg93/94 */
 	move.l	(a2)+, d0			/* +6 cmd = ordinary VRAM write address */
@@ -1193,12 +1230,16 @@ bf_short_run:
 .endif
 bf_run_done:
 	subq.w	#1, d4
+	beq	bf_plan_complete
+	tst.w	d7
 	bne	bf_run_lp
-bf_flip:
+	bsr	bf_next_planned_group
+	bra	bf_run_lp
+bf_plan_complete:
 .ifdef DEBUG
+	bsr	bf_debug_snapshot_group
 	tst.w	n_runs
 	beq.s	1f
-	bsr	bf_debug_snapshot_vbudget
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
 	move.w	d0, pattern_exit_v
@@ -1207,23 +1248,30 @@ bf_flip:
 	andi.w	#0x0FFF, d0			/* stopwatch wraps naturally after 4096 ticks */
 	move.w	d0, dma_elapsed_ticks
 1:
+.endif
+	/* Empty trailing groups are intentional: they preserve the display
+	   cadence and leave the final VBlank wholly available to NT/HUD/flip. */
+1:
+	tst.w	vblank_groups_left
+	beq	bf_flip
+	bsr	bf_enter_planned_group
+.ifdef DEBUG
+	bsr	bf_debug_snapshot_group
+.endif
+	bra	1b
+bf_flip:
+.ifdef DEBUG
 	move.w	vsync_acc, frame_vblank_waits	/* exclude display pacing from workload HUD M */
+	tst.w	frame_vblank_waits
+	beq.s	1f
+	subq.w	#1, frame_vblank_waits		/* final planned group is the display VBlank */
+1:
 	tst.w	frame_no			/* frame 0 is an untimed boot construction */
 	bne.s	1f
 	clr.w	frame_vblank_waits		/* its VBlank count is not playback load */
 1:
-.ifdef NT_DMA_FLIP
-	/* A two-VBlank transfer formatted the static HUD after its first budget.
-	   One-/zero-VBlank frames still have the whole inter-flip active interval
-	   available here. Patch only transfer-final fields on the deadline path. */
-	cmpi.w	#2, pattern_transfer_vblanks
-	bhs.s	2f
-	bsr	prepare_dbg
-	bsr	stamp_dbg_stage
-2:
 .endif
-.endif
-	/* Precompute the display-register write before the cadence wait.
+	/* Precompute the display-register write before the final shared work.
 	   do_flip performs only a final VBlank check followed by this command, so
 	   the check-to-reg2 race is a few bus cycles instead of an address/branch
 	   calculation at the end of VBlank. */
@@ -1262,28 +1310,10 @@ bf_flip:
 	bsr	publish_dbg
 .endif
 .endif
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0002) != 0
 .ifdef NT_DMA_FLIP
-	move.w	#NT_CRAM_FLIP_RESERVE_WORDS, d6
-	bsr	bf_wait_fixed_flip_vblank	/* share the budgeted deadline blank when safe */
 .ifdef DEBUG
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
 .endif
-.else
-	bsr	wait_fixed_palette_flip		/* cadence target plus a fresh CRAM VBlank */
-.endif
-.else
-	bsr	wait_vb_start			/* 頭から使える新しいvblank(CRAM+flipが確実に収まる) */
-.endif
-.else
-	tst.w	md_fixed_n
-	beq.s	1f
-	bsr	wait_fixed_palette_flip		/* cadence target plus a fresh CRAM VBlank */
-	bra.s	2f
-1:
-	bsr	wait_vb_start			/* 頭から使える新しいvblank(CRAM+flipが確実に収まる) */
-2:
 .endif
 .ifdef NT_DMA_FLIP
 	bsr	nt_dma_flip			/* whole back NT in ~11 blank lines */
@@ -1312,24 +1342,11 @@ bf_doflip:
 	bsr	publish_dbg
 .endif
 .endif
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0002) != 0
 .ifdef NT_DMA_FLIP
-	move.w	#NT_FLIP_RESERVE_WORDS, d6
-	bsr	bf_wait_fixed_flip_vblank	/* cold tail + NT DMA + flip share the deadline */
 .ifdef DEBUG
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
 .endif
 	bsr	nt_dma_flip
-.else
-	bsr	wait_fixed_flip			/* normal frame: exactly N flip-to-flip VBlanks */
-.endif
-.endif
-.else
-	tst.w	md_fixed_n
-	beq.s	1f
-	bsr	wait_fixed_flip			/* normal frame: exactly N flip-to-flip VBlanks */
-1:
 .endif
 	bsr	do_flip
 bf_after_flip:
@@ -1358,36 +1375,32 @@ bf_update_list:
 	dbra	d7, 1b
 	bra	bf_blit
 
-/* Start Pass2 with one honest VBlank word budget.  An already-active display
-   waits for the next blank.  An already-entered blank may keep the full budget
-   only on its first V-counter line; later entry waits for the following head
-   instead of pretending all md_vbudget words remain.  d7 returns the full
-   budget and vbudget_from_head records that its time origin is trustworthy.
-   Trashes d0. */
-bf_start_vbudget:
-	move.w	(VDP_CTRL).l, d0
-	btst	#3, d0
-	beq	bf_refill_vbudget
-	move.w	(VDP_HV).l, d0
-	lsr.w	#8, d0
-	cmpi.w	#0x00E0, d0
-	bne	bf_refill_vbudget
-	move.w	#1, vbudget_from_head
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+/* Enter the next encoder-authored group at a fresh VBlank head.  The fixed
+   table stores pattern counts; Pass2 uses words, hence the x16 conversion.
+   Empty groups still consume their VBlank and preserve display cadence. */
+bf_enter_planned_group:
+	tst.w	vblank_groups_left
+	bne.s	1f
+	moveq	#0, d7				/* corrupt exhaustion: bounded no-work group */
 	rts
-
-bf_refill_vbudget:
+1:
 	bsr	wait_vb_start
-	move.w	#1, vbudget_from_head
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
+	subq.w	#1, vblank_groups_left
+	movea.l	vblank_group_ptr, a0
+	move.w	(a0)+, d7
+	move.l	a0, vblank_group_ptr
+	lsl.w	#4, d7				/* patterns -> VDP words */
+	move.w	d7, vblank_group_start_words
+.ifdef DEBUG
+	addq.w	#1, pattern_transfer_vblanks
+.endif
 	rts
 
 .ifdef DEBUG
-/* Snapshot the exact pattern words consumed from the current VBlank budget.
-   Only the first two transfer VBlanks need dedicated counters: T retains the
-   total count, so T>=3 identifies an additional transfer blank. Trashes d0. */
-bf_debug_snapshot_vbudget:
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
+/* Snapshot exact words consumed from the current encoded group.  Y/O and Z/I
+   retain the first two groups while T reports the complete planned count. */
+bf_debug_snapshot_group:
+	move.w	vblank_group_start_words, d0
 	sub.w	d7, d0
 	cmpi.w	#1, pattern_transfer_vblanks
 	bne.s	1f
@@ -1402,64 +1415,18 @@ bf_debug_snapshot_vbudget:
 	move.w	d0, pattern_vblank2_words
 2:
 	rts
+.endif
 
-/* Finish the current budget snapshot before waiting for the next fresh head.
-   The bookkeeping happens after the previous blank's selected transfer work,
-   never inside the per-run issue path. */
-bf_debug_next_vbudget:
-	bsr	bf_debug_snapshot_vbudget
-.ifdef NT_DMA_FLIP
-	/* On the first split only, spend the active-display gap before VBlank 2
-	   formatting every HUD field that is already known. Transfer-final fields
-	   are patched after the last pattern word. */
-	cmpi.w	#1, pattern_transfer_vblanks
-	bne.s	1f
-	bsr	prepare_dbg
-	bsr	stamp_dbg_stage
-1:
+bf_next_planned_group:
+.ifdef DEBUG
+	bsr	bf_debug_snapshot_group
 .endif
-	addq.w	#1, pattern_transfer_vblanks
-	bra	bf_refill_vbudget
-.endif
+	bra	bf_enter_planned_group
 
 .ifdef NT_DMA_FLIP
-/* Fixed-N H40 only. d6 is the word reserve for NT/HUD/optional CRAM/guard.
-   If Pass2 ended inside a VBlank whose budget began at its head, and the
-   residual word budget covers all flip work, keep that exact cadence VBlank.
-   Otherwise retain the old fresh-start path.  The target blank is display
-   pacing as well as the final pattern chunk, so DEBUG M excludes that shared
-   wait and continues to count only intervening pattern-work blanks.
-   Trashes d0. */
-bf_wait_fixed_flip_vblank:
-	bsr	wait_fixed_flip
-	tst.w	vbudget_from_head
-	beq.s	2f
-	cmp.w	d6, d7
-	blo.s	2f
-	move.w	(VDP_CTRL).l, d0
-	btst	#3, d0
-	beq.s	2f
-	move.w	(VDP_HV).l, d0
-	cmpi.w	#0xFC00, d0
-	bhs.s	2f
-	move.w	(VDP_CTRL).l, d0
-	btst	#3, d0
-	beq.s	2f
 .ifdef DEBUG
-	tst.w	frame_vblank_waits
-	beq.s	1f
-	subq.w	#1, frame_vblank_waits
-1:
-.endif
-	rts
-2:
-	bsr	wait_vb_start
-	rts
-
-.ifdef DEBUG
-/* Refresh fields whose final values are not available when a split frame
-   preformats and stages its HUD between transfer VBlanks. Write directly into
-   the H40 64-entry-pitch stage consumed by the imminent one NT DMA.
+/* Refresh fields unavailable when the encoder-planned transfer began. Write
+   directly into the H40 64-entry-pitch stage consumed by the imminent NT DMA.
    Trashes d0/d3/d4/a0. */
 bf_patch_dbg_stage:
 	lea	dbg_hex_pairs, a1
@@ -1472,6 +1439,9 @@ bf_patch_dbg_stage:
 	lea	nt_stage+22*2, a0		/* U */
 	move.w	dma_elapsed_ticks, d4
 	bsr	dbg_stage_put4
+	lea	nt_stage+36*2, a0		/* O: first group exit V-counter */
+	move.w	pattern_vblank1_exit_v, d4
+	bsr	dbg_stage_put2
 	lea	nt_stage+0x80+14*2, a0		/* Y/Z/T/I on H40 row 1 */
 	move.w	pattern_vblank1_words, d4
 	bsr	dbg_stage_put3
@@ -2212,8 +2182,9 @@ prepare_dbg:
 	DBG_PUT3
 	move.w	pattern_vblank2_words, d4
 	DBG_PUT3
-	/* T: number of VBlanks that carried pattern work; I: V-counter when
-	   Pass2 pattern transfer ended, before HUD/NT/CRAM/flip work. */
+	/* T: encoder-authored VBlank group count (an empty final group is valid);
+	   I: V-counter when pattern transfer ended, before trailing groups and
+	   HUD/NT/CRAM/flip work. */
 	move.w	pattern_transfer_vblanks, d4
 	DBG_PUT1
 	move.w	pattern_exit_v, d4
@@ -2449,6 +2420,16 @@ started:
 	.space 2
 n_runs:
 	.space 2
+n_vblank_groups:
+	.space 2				/* encoder-authored groups used by this frame */
+vblank_group_patterns:
+	.space MAX_VBLANK_GROUPS*2		/* fixed v21 pattern-count table */
+vblank_groups_left:
+	.space 2
+vblank_group_ptr:
+	.space 4
+vblank_group_start_words:
+	.space 2
 dbg_seg:
 	.space 2
 palidx_ptr:
@@ -2461,8 +2442,6 @@ dma_elapsed_ticks:
 	.space 2				/* DEBUG Uxxxx: 30.72 us stopwatch ticks */
 dma_start_tick:
 	.space 2				/* DEBUG stopwatch sample at first pattern transfer */
-vbudget_from_head:
-	.space 2				/* current d7 began at a proven VBlank head */
 flip_hv_v:
 	.space 2				/* DEBUG HUD V: V-counter at the last accepted flip */
 pattern_vblank1_exit_v:

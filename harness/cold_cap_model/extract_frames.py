@@ -7,12 +7,12 @@ VBlank cadence: cell updates, physical pattern loads by source
 runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
 CD slot schedule (control/payload sectors, rate lead).
 
-Supports the current TTRC v17 stream, including PSUP v3 variable Word-RAM
-preload capacities.  The fixed per-frame audio size from HEADER.DAT
-locates the cold-run suffix (`[u16 n_runs][n_runs x 4]`), which is
-validated against the update entries.  The low byte of `n_runs` can
-additionally be cross-checked against the DEBUG HUD `N` column of a
-recording of the same stream.
+Supports the current TTRC v21 stream, including PSUP v3 variable Word-RAM
+preload capacities.  The fixed per-frame audio size from HEADER.DAT locates
+the cold-run suffix: `n_runs`, the fixed eight-word VBlank pattern plan, then
+the run descriptors.  The plan and descriptors are cross-validated against
+the update entries.  The low byte of `n_runs` can additionally be checked
+against the DEBUG HUD `N` column of a recording of the same stream.
 
 Usage:
   tools/python.sh harness/cold_cap_model/extract_frames.py \
@@ -47,6 +47,9 @@ SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 WORDS_PER_PATTERN = 16
 SHORT_RUN_MAX_WORDS = 32
+VERSION = 21
+MAX_VBLANK_GROUPS = 8
+CONTROL_SUFFIX_HEADER_BYTES = 4 + MAX_VBLANK_GROUPS * 2
 
 SOURCE_NAMES = ("prg", "wr", "dic")
 
@@ -59,6 +62,15 @@ class FrameRow:
     pal_switch: int          # 0 = none, else segment index + 1
     cold_entries: int        # legacy entries with bit15 (0 for list frames)
     n_runs: int
+    vblank_groups: int
+    vb1_patterns: int
+    vb2_patterns: int
+    vb3_patterns: int
+    vb4_patterns: int
+    vb5_patterns: int
+    vb6_patterns: int
+    vb7_patterns: int
+    vb8_patterns: int
     loads_total: int         # sum of run counts (= physical pattern loads)
     loads_prg: int
     loads_wr: int
@@ -138,16 +150,28 @@ def decode_run_words(raw: bytes, pos: int, k: int, pool: int,
 
 
 def parse_runs_at(raw: bytes, seq: int, pool: int,
-                  suffix_pos: int) -> list[tuple[int, int, int, int]]:
+                  suffix_pos: int) -> tuple[
+                      list[tuple[int, int, int, int]], int, tuple[int, ...]]:
     """Decode the suffix at a known position and require an exact fit."""
-    k = struct.unpack_from(">H", raw, suffix_pos)[0]
-    if suffix_pos + 2 + 4 * k != len(raw):
+    if suffix_pos + CONTROL_SUFFIX_HEADER_BYTES > len(raw):
+        die(f"frame {seq}: VBlank/run suffix is truncated")
+    k, n_groups = struct.unpack_from(">HH", raw, suffix_pos)
+    if not 1 <= n_groups <= MAX_VBLANK_GROUPS:
+        die(f"frame {seq}: invalid VBlank group count {n_groups}")
+    group_patterns = struct.unpack_from(
+        f">{MAX_VBLANK_GROUPS}H", raw, suffix_pos + 4)
+    if any(group_patterns[n_groups:]):
+        die(f"frame {seq}: unused VBlank pattern counts are nonzero")
+    descriptor_pos = suffix_pos + CONTROL_SUFFIX_HEADER_BYTES
+    if descriptor_pos + 4 * k != len(raw):
         die(f"frame {seq}: suffix at {suffix_pos} with n_runs={k} "
             f"does not end the {len(raw)}-byte block")
-    runs = decode_run_words(raw, suffix_pos + 2, k, pool, seq)
+    runs = decode_run_words(raw, descriptor_pos, k, pool, seq)
     if runs is None:
         die(f"frame {seq}: invalid run descriptor in positional parse")
-    return runs
+    if sum(group_patterns[:n_groups]) != sum(run[1] for run in runs):
+        die(f"frame {seq}: VBlank plan/load totals differ")
+    return runs, n_groups, tuple(group_patterns)
 
 
 def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
@@ -178,7 +202,8 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
         if suffix_pos >= len(raw) or raw[suffix_pos] != 0:
             die(f"frame {seq}: cold-run alignment pad is missing or nonzero")
         suffix_pos += 1
-    runs = parse_runs_at(raw, seq, pool, suffix_pos)
+    runs, n_groups, group_patterns = parse_runs_at(
+        raw, seq, pool, suffix_pos)
 
     if (not use_list
             and not features & FEATURE_VRAM_RAW_PREFETCH
@@ -198,7 +223,12 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
     row = FrameRow(
         frame=seq, n_upd=n_upd, use_list=use_list, pal_switch=0,
         cold_entries=cold_entries if cold_entries is not None else -1,
-        n_runs=len(runs), loads_total=loads_total,
+        n_runs=len(runs), vblank_groups=n_groups,
+        vb1_patterns=group_patterns[0], vb2_patterns=group_patterns[1],
+        vb3_patterns=group_patterns[2], vb4_patterns=group_patterns[3],
+        vb5_patterns=group_patterns[4], vb6_patterns=group_patterns[5],
+        vb7_patterns=group_patterns[6], vb8_patterns=group_patterns[7],
+        loads_total=loads_total,
         loads_prg=loads[0], loads_wr=loads[1], loads_dic=loads[2],
         pass2_words=loads_total * WORDS_PER_PATTERN,
         short_runs=short_runs, max_run_words=max_run_words,
@@ -213,8 +243,8 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     body = (pack_dir / "BODY.DAT").read_bytes()
     magic, version, nfr, cols, rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", header)
-    if magic != b"TTRC" or version != 20:
-        die(f"expected TTRC v20, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != VERSION:
+        die(f"expected TTRC v{VERSION}, got {magic!r} v{version}")
     if cols * rows != cells:
         die(f"grid {cols}x{rows} != {cells} cells")
     routing_sec = struct.unpack_from(">L", header, 26)[0]
@@ -238,7 +268,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         features, audio_control_bytes)
     rows_out = [row0]
 
-    # v20: palette switches are the player-embedded PALIDX table written by
+    # v21: palette switches are the player-embedded PALIDX table written by
     # pack as palidx.bin beside the split stream (frame.u16, segment.u16
     # entries terminated by a 0xFFFF frame sentinel).
     palidx_switches: dict[int, int] = {}

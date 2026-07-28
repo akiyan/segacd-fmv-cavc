@@ -36,6 +36,7 @@ SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 DEFAULT_DECISIONS = Path(
     "videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/decisions.pkl"
 )
+VERSION = 21
 
 
 @dataclass(frozen=True)
@@ -200,8 +201,9 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, _pool = struct.unpack_from(
         ">4sHHHHHH", header
     )
-    if magic != b"TTRC" or version != 20:
-        raise AssertionError(f"expected split TTRC v20, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != VERSION:
+        raise AssertionError(
+            f"expected split TTRC v{VERSION}, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 

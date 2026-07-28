@@ -149,7 +149,7 @@ def _word_rgb_sum(word):
 
 
 def check_header(path, log=None):
-    """v20: the packed palettes live in paltab.bin beside HEADER.DAT."""
+    """v21: the packed palettes live in paltab.bin beside HEADER.DAT."""
     data = Path(path).read_bytes()
     if len(data) < 2 * SECTOR or data[:4] != b"TTRC":
         raise SystemExit(f"{path}: not a complete TTRC HEADER.DAT")
