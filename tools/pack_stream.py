@@ -363,7 +363,8 @@ def sourced_cold_runs(entries, colds, sources, dic_indices=None):
         item_dic = int(item_dic)
         split_dic = (
             bool(count) and item_source == pattern_supply.SOURCE_DIC
-            and item_dic != previous_dic + 1)
+            and (item_dic != previous_dic + 1
+                 or item_dic % pattern_supply.DIC_RUN_BLOCK == 0))
         if count and (
                 slot != previous + 1 or item_source != source or split_dic):
             runs.append((start, count, source, start_dic))
@@ -789,16 +790,15 @@ def build_audio_chunks(audio_path, frame_count):
 
 
 def build_control(
-        log, per, n_upd, pal_w, audio_path, sources=None, update_lists=None,
+        log, per, n_upd, audio_path, sources=None, update_lists=None,
         prefetch_per=None, dic_indices=None, transfer_orders=None):
     """Build control blocks and return their reconstructed source PCM chunks."""
     seg_cram = [pals_to_bytes_128(p) for p in log["seg_pals"]]
-    frame_seg = np.asarray(log["frame_seg"], np.int64)
     audio_chunks, pcm_chunks = build_audio_chunks(audio_path, len(per))
     # CRAM pre-load(PALTAB): パレット本体はヘッダ直後のPALTAB領域で一括配送し、実機は
-    # boot時にMain-RAM表へコピー済み。ストリームのpalワードは「区間番号+1」(0=切替なし)の
-    # 参照だけにし、in-streamの128B CRAM payloadは廃止(切替コマの予算が空く+到着タイミング
-    # 非依存=スリップ回復に強い)。区間数は av_config.PALTAB_MAX_SEG が上限(実機表の容量)。
+    # boot時にMain-RAM表へコピー済み。切替トリガもboot搭載のPALIDX表(frame番号+区間番号)で、
+    # controlブロックに切替バイトは存在しない(到着タイミング非依存=スリップ回復に強い)。
+    # 区間数は av_config.PALTAB_MAX_SEG が上限(実機表の容量)。
     n_seg = len(seg_cram)
     cap_seg = min(int(av_config.PALTAB_MAX_SEG), 255)
     if n_seg > cap_seg:
@@ -830,8 +830,6 @@ def build_control(
         body += struct.pack(">H", i & 0xFFFF)
         use_list = bool(update_lists[i])
         body += struct.pack(">H", shadow_updates.encode_count(n_upd[i], use_list))
-        pal_ref = (int(frame_seg[i]) + 1) if pal_w[i] else 0
-        body += struct.pack(">H", pal_ref)
         sourced_entries = []
         for e, cold, source in zip(entries, colds, frame_sources):
             sourced_entry = pattern_supply.encode_entry_source(
@@ -878,7 +876,7 @@ def control_audio_bounds(block):
         n_upd * shadow_updates.LIST_ITEM_BYTES if use_list
         else shadow_updates.aligned_bitmap_bytes(C_CELLS)
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES)
-    pos = 8 + update_bytes
+    pos = 6 + update_bytes
     return pos, pos + AUDIO_CONTROL
 
 
@@ -1032,11 +1030,6 @@ def decode_verify(
         p += 2                                        # skip frame_seq(同期マーカー)
         nupd, use_list = shadow_updates.decode_count(
             struct.unpack(">H", blk[p:p + 2])[0]); p += 2
-        palw = struct.unpack_from(">H", blk, p)[0]; p += 2
-        # v3: palw = 区間番号+1 の参照のみ(in-stream CRAMは無い)。PALTAB表と一致するか検証。
-        if palw and (palw - 1) != int(frame_seg[i]):
-            print(f"  !! palref mismatch frame {i}: pal={palw - 1} != seg={int(frame_seg[i])}")
-            bad += 1
         if use_list:
             update_items = []
             for _ in range(nupd):
@@ -1282,6 +1275,31 @@ def write_stream(
     paltab = bytearray(stage_bytes)
     palette_offset = 0x1000
     paltab[palette_offset:palette_offset + len(palette_table)] = palette_table
+    # PALIDX: boot-loaded palette-switch table. frame_seg is forward-only, so
+    # each (frame.u16, segment.u16) entry advances to a strictly later frame.
+    # The player advances while next_switch <= frame_no; the 0xFFFF frame
+    # sentinel terminates the table.
+    switches = [
+        (i, int(frame_seg[i]))
+        for i in range(1, nfr)
+        if frame_seg[i] != frame_seg[i - 1]
+    ]
+    if len(switches) > av_config.PALIDX_ENTRIES - 1:
+        raise SystemExit(
+            f"pack: {len(switches)} palette switches exceed the "
+            f"{av_config.PALIDX_ENTRIES - 1}-entry PALIDX capacity")
+    if len(switches) != len(log["seg_pals"]) - 1 or any(
+            seg != index + 1 for index, (_frame, seg) in enumerate(switches)):
+        raise SystemExit(
+            "pack: frame_seg is not a forward-only segment progression")
+    palidx = bytearray()
+    for frame, seg in switches:
+        palidx += struct.pack(">HH", frame, seg)
+    while len(palidx) < av_config.PALIDX_BYTES:
+        palidx += struct.pack(">HH", av_config.PALIDX_FRAME_SENTINEL, 0)
+    paltab[
+        av_config.PALIDX_STAGE_OFFSET:
+        av_config.PALIDX_STAGE_OFFSET + av_config.PALIDX_BYTES] = palidx
     region_offsets = (
         0x0000,
         palette_offset + len(palette_table),
@@ -1701,7 +1719,7 @@ def main():
         frame = int(np.flatnonzero(update_lists & (recomputed_list >= recomputed_legacy))[0])
         raise SystemExit(f"pack: selected shadow list is not faster at frame {frame}")
     blocks, source_pcm_chunks = build_control(
-        log, per, n_upd, pal_w, audio_path, supply_plan.sources, update_lists,
+        log, per, n_upd, audio_path, supply_plan.sources, update_lists,
         inline_prefetch_per, supply_plan.dic_indices, transfer_orders)
     print(
         f"  shadow updates: list={int(update_lists.sum())}/{len(update_lists)} "

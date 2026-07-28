@@ -154,9 +154,11 @@ def check_header(path, log=None):
         raise SystemExit(f"{path}: not a complete TTRC HEADER.DAT")
     nseg = struct.unpack_from(">H", data, 20)[0]
     paltab_sec = struct.unpack_from(">L", data, 48)[0]
-    if paltab_sec * SECTOR < nseg * 128 or len(data) < SECTOR + paltab_sec * SECTOR:
+    palette_base = SECTOR + 0x1000  # segment palettes sit at stage +0x1000
+    if (paltab_sec * SECTOR < 0x1000 + nseg * 128
+            or len(data) < SECTOR + paltab_sec * SECTOR):
         raise SystemExit(f"{path}: truncated PALTAB")
-    blocks = [data[SECTOR + seg * 128:SECTOR + (seg + 1) * 128]
+    blocks = [data[palette_base + seg * 128:palette_base + (seg + 1) * 128]
               for seg in range(nseg)]
     for seg, block in enumerate(blocks):
         words = np.frombuffer(block, dtype=">u2").astype(np.uint16).reshape(4, 16)

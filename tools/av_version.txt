@@ -11,6 +11,19 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e148: TTRC v19: drop the per-frame pal word from every control block and
+#         ship palette switches as the boot-loaded PALIDX table (frame.u16 +
+#         segment.u16, 15 switches + sentinel) inside BOOT_STAGE. Cap palette
+#         segmentation at the fixed 16-segment PALTAB, grow DicBuf to 512
+#         patterns via run-descriptor source 3 (Dic index bit 8), split Dic
+#         runs at the 256-entry block boundary, and extend DIC_PRELOAD
+#         staging to 16 KiB.
+#   p108: Fixed Main-RAM map for TTRC v19: M-STATE 8.5 KiB at 0xFF6600,
+#         RUN_TABLE 0xFF8800, PALTAB 16x128B at 0xFFB200, PALIDX at 0xFFBA00,
+#         DicBuf 512x32B at 0xFFBA40. Decode run-descriptor source 3 as Dic
+#         index 256..511, trigger CRAM switches from M-PALIDX (advance while
+#         next_switch <= frame_no) instead of the control pal word, and copy
+#         the PALIDX table during the boot-stage handoff.
 #   p107: Accept a Word refill sector whose frame is at or ahead of the
 #         expanding frame instead of demanding equality. A mid-stream refill
 #         turn arrives with residual drain lead, and the equality gate stalled
@@ -965,6 +978,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260727
-e=147
-p=107
+date=20260728
+e=148
+p=108

@@ -148,8 +148,7 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
         die(f"frame {seq}: packed sequence is {packed_seq}")
     n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
     use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
-    pal = struct.unpack_from(">H", raw, 6)[0]
-    pos = 8
+    pos = 6
 
     cold_entries: int | None = None
     if use_list:
@@ -186,7 +185,7 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
             short_runs += 1
     loads_total = sum(loads)
     row = FrameRow(
-        frame=seq, n_upd=n_upd, use_list=use_list, pal_switch=pal,
+        frame=seq, n_upd=n_upd, use_list=use_list, pal_switch=0,
         cold_entries=cold_entries if cold_entries is not None else -1,
         n_runs=len(runs), loads_total=loads_total,
         loads_prg=loads[0], loads_wr=loads[1], loads_dic=loads[2],
@@ -203,8 +202,8 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     body = (pack_dir / "BODY.DAT").read_bytes()
     magic, version, nfr, cols, rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", header)
-    if magic != b"TTRC" or version != 17:
-        die(f"expected TTRC v17, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 19:
+        die(f"expected TTRC v19, got {magic!r} v{version}")
     if cols * rows != cells:
         die(f"grid {cols}x{rows} != {cells} cells")
     routing_sec = struct.unpack_from(">L", header, 26)[0]
@@ -227,6 +226,16 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         body[frame0_offset:frame0_offset + frame0_len], 0, cells, pool,
         features, audio_control_bytes)
     rows_out = [row0]
+
+    # v19: palette switches ride the boot stage as the PALIDX table
+    # (frame.u16, segment.u16 entries terminated by a 0xFFFF frame sentinel).
+    palidx_switches: dict[int, int] = {}
+    stage = header[SECTOR:(1 + paltab_sec) * SECTOR]
+    for entry in range(16):
+        frame, seg = struct.unpack_from(">HH", stage, 0x0F80 + entry * 4)
+        if frame == 0xFFFF:
+            break
+        palidx_switches[frame] = seg + 1
 
     routing_offset = (
         1 + paltab_sec + table_sec + supply_sec
@@ -269,6 +278,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         row = parse_frame(
             bytes(control_stream[control_pos:control_pos + block_len]),
             seq, cells, pool, features, audio_control_bytes)
+        row.pal_switch = palidx_switches.get(seq, 0)
         (row.n_pay_sec, row.n_ctrl_sec, row.slot_sec, row.rated_sec,
          row.lead_sec) = schedule[seq]
         rows_out.append(row)

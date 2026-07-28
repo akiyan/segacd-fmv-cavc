@@ -90,11 +90,11 @@ class RingGeometryTests(unittest.TestCase):
         # A one-segment Sonic-style clip has 469 physical record slots.  The
         # resident-pool limit, rather than this stage, caps its 396 requests.
         self.assertEqual(av_config.boot_vram_sidecar_capacity(1), 469)
-        # At the maximum palette count, the middle hole is fully occupied;
-        # the two outer holes still hold 232 records.
+        # At the fixed 16-segment maximum, the middle hole keeps 6 KiB free;
+        # all three holes together hold 412 records.
         self.assertEqual(
             av_config.boot_vram_sidecar_capacity(av_config.PALTAB_MAX_SEG),
-            232)
+            412)
 
     def test_boot_sidecar_rejects_palette_stage_overflow(self) -> None:
         with self.assertRaisesRegex(ValueError, "palette table exceeds"):

@@ -150,6 +150,10 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     if tcols <= 0 or trows <= 0 or cells != tcols * trows:
         raise ValueError(
             f"invalid tile geometry: {tcols}x{trows} cells={cells}")
+    if not 0 < nseg <= av_config.PALTAB_MAX_SEG:
+        raise ValueError(
+            f"palette segments {nseg} exceed the fixed "
+            f"{av_config.PALTAB_MAX_SEG}-segment PALTAB")
     if mode not in MODE_SPECS:
         raise ValueError(f"player constants do not support display mode {mode}")
     _mode_name, screen_cols, vbudget = MODE_SPECS[mode]

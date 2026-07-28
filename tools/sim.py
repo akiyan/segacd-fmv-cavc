@@ -390,6 +390,7 @@ def detect_palette_segments(frames, metrics=None):
         dark_threshold=DARK_THR,
         uniform_threshold=UNI_THR,
         uniform_near=UNI_NEAR,
+        max_segments=av_config.PALTAB_MAX_SEG,
     )
 
 

@@ -122,7 +122,7 @@
 .equ SUB_BANK_1M, 0x000C0000
 
 /* --- TTRC v18 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       18
+.equ ROUTING_VERSION,       19
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -281,7 +281,7 @@
 /* --- Word-RAM 出力(MDが読む) ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
    starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
-.equ O_PALW,   SUB_BANK_1M+0x0000
+.equ O_PALW,   SUB_BANK_1M+0x0000	/* reserved word; palette switches are M-PALIDX driven */
 .equ O_NLOAD,  SUB_BANK_1M+0x0002
 .equ O_LOADS,  SUB_BANK_1M+0x0004
 .equ O_SLIP,   O_STATUS+0x00
@@ -305,7 +305,7 @@
 .equ O_PALTAB, SUB_BANK_1M+PALTAB_OFF
 .equ DIC_STAGE_OFF, 0x6000
 .equ DIC_STAGE, SUB_BANK_1M+DIC_STAGE_OFF
-.equ DIC_STAGE_PATTERNS, 256
+.equ DIC_STAGE_PATTERNS, 512
 
 /* --- RF5C164 output reconstructed from ADPCM --- */
 .equ PCM_ENV,   0x00FF0001
@@ -935,7 +935,7 @@ dump_ring_head:
 	swap	d0
 	move.w	desync_count, d0
 	move.l	d0, 16(a3)			/* [4]=drain_frame|desync_count */
-	clr.w	(O_PALW).l			/* keep the active boot-loaded palette */
+	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
 	/* O_LOADS: slot0=黒(0x0000), slot1=白(0xFFFF) */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
@@ -987,7 +987,7 @@ uh_put:
    全面ノイズなら 0xC000 のリング内容が壊れている。 */
 dump_pats:
 	movem.l	d0-d7/a0-a6, -(sp)
-	clr.w	(O_PALW).l			/* keep the active boot-loaded palette */
+	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
 	lea	(O_LOADS).l, a1
 	move.w	#0, (a1)+			/* slot_start=0 */
 	move.w	#1120, (a1)+			/* count=1120 */
@@ -1843,9 +1843,9 @@ fc_copy_even:
 	rts
 
 /* CTRL_SCR(線形 control block) を Word-RAM へ展開。cold は ring pop。
-   block = >H total_len >H frame_seq >H n_upd >H pal
+   block = >H total_len >H frame_seq >H n_upd
            72 bitmap n_upd*(entry) h_audio_bytes audio [even pad]   (MOVIE.md 準拠)
-   v3: pal = 区間番号+1(0=切替なし)。CRAM本体はboot時にMain-RAM表へ渡し済み(PALTAB)。
+   パレット切替はboot搭載のM-PALIDX表がMain側で起点となり、controlに切替バイトは無い。
    loads はラン形式: [slot_start.w count.w pattern(count*32B)] の列。エンコーダが
    フレーム内coldを連番スロットに割当てるので、MDは1ランを1回の大DMAで転送できる。 */
 expand_frame:
@@ -1860,8 +1860,6 @@ expand_frame:
 	bls	1f
 	move.w	d1, d5
 1:
-	move.w	(a0)+, d4			/* pal = 区間番号+1(0=切替なし) — MDはMain-RAM表を引く */
-	move.w	d4, (O_PALW).l
 ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7

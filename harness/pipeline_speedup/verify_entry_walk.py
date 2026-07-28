@@ -146,7 +146,7 @@ def verify_block(
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells} cells")
 
-    bitmap_off = 8
+    bitmap_off = 6
     if use_list:
         list_end = bitmap_off + n_upd * 4
         if list_end > len(block):
@@ -255,8 +255,8 @@ def main() -> None:
     magic, version, nfr, _cols, _rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", data, 0
     )
-    if magic != b"TTRC" or version != 17:
-        raise SystemExit(f"expected TTRC v17, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != 19:
+        raise SystemExit(f"expected TTRC v19, got {magic!r} v{version}")
     prebuf_pat = struct.unpack_from(">L", data, 22)[0]
     routing_sec = struct.unpack_from(">L", data, 26)[0]
     prebuf_sec = struct.unpack_from(">L", data, 30)[0]

@@ -12,14 +12,22 @@ import numpy as np
 
 def segment_ranges(
         dark, uniform, *, gap=24, min_frames=2, dark_threshold=0.90,
-        uniform_threshold=0.88, uniform_near=8):
-    """Return half-open palette ranges from dark and uniform frame metrics."""
+        uniform_threshold=0.88, uniform_near=8, max_segments=None):
+    """Return half-open palette ranges from dark and uniform frame metrics.
+
+    ``max_segments`` caps the range count to the player's fixed PALTAB
+    capacity by repeatedly merging the adjacent pair with the smallest
+    combined frame span.  This is an accepted quality trade for sources
+    whose metric cuts exceed the capacity.
+    """
     dark = np.asarray(dark, dtype=np.float64)
     uniform = np.asarray(uniform, dtype=np.float64)
     if dark.ndim != 1 or uniform.shape != dark.shape:
         raise ValueError("dark and uniform metrics must be equal-length vectors")
     if gap < 0 or min_frames <= 0 or uniform_near < 0:
         raise ValueError("gap/uniform_near must be non-negative and min_frames positive")
+    if max_segments is not None and max_segments <= 0:
+        raise ValueError("max_segments must be positive")
     n = len(dark)
 
     def cluster(metric, hit):
@@ -49,8 +57,17 @@ def segment_ranges(
         ) > uniform_near
     ]
     edges = sorted(set([0, *dark_boundaries, *additions, n]))
-    return [
+    ranges = [
         (edges[index], edges[index + 1])
         for index in range(len(edges) - 1)
         if edges[index + 1] - edges[index] >= min_frames
     ]
+    if max_segments is not None:
+        while len(ranges) > max_segments:
+            merge_at = min(
+                range(len(ranges) - 1),
+                key=lambda index: ranges[index + 1][1] - ranges[index][0],
+            )
+            ranges[merge_at:merge_at + 2] = [
+                (ranges[merge_at][0], ranges[merge_at + 1][1])]
+    return ranges

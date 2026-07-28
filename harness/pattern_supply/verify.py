@@ -20,7 +20,7 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 17
+VERSION = 19
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
@@ -140,7 +140,7 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
         raise AssertionError(
             f"frame {seq}: packed seq/count is {packed_seq}/{n_upd}, cells={cells}")
 
-    bitmap_start = 8
+    bitmap_start = 6
     bitmap_bytes = (cells + 7) // 8
     bitmap_end = bitmap_start + bitmap_bytes
     entries_start = (bitmap_end + 1) & ~1

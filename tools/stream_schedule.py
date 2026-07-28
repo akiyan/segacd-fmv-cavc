@@ -91,9 +91,10 @@ def control_block_lengths(
         shadow_updates.aligned_bitmap_bytes(cells)
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES,
     )
-    # body prefix: frame_seq, n_upd and pal:u16 = 6 bytes. Entry words and the
-    # run suffix are even-sized; only the pre-suffix body may need a byte.
-    pre_suffix = 6 + update_bytes + int(audio_frame_bytes)
+    # body prefix: frame_seq and n_upd = 4 bytes (palette switches are
+    # boot-loaded PALIDX data, not stream bytes). Entry words and the run
+    # suffix are even-sized; only the pre-suffix body may need a byte.
+    pre_suffix = 4 + update_bytes + int(audio_frame_bytes)
     pre_suffix += pre_suffix & 1
     # total_len word + aligned body + n_runs word + four bytes per run.
     return (2 + pre_suffix + 2 + n_runs * RUN_DESCRIPTOR_BYTES).astype(np.int64)

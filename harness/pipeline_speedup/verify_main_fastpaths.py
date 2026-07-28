@@ -147,7 +147,7 @@ def parse_control(raw: bytes, seq: int, cells: int) -> ControlBlock:
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: {n_upd} updates exceed {cells} cells")
 
-    bitmap_start = 8
+    bitmap_start = 6
     bitmap_len = (cells + 7) // 8
     bitmap_end = bitmap_start + bitmap_len
     entries_start = (bitmap_end + 1) & ~1
@@ -193,7 +193,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, _pool = struct.unpack_from(
         ">4sHHHHHH", header
     )
-    if magic != b"TTRC" or version != 17:
+    if magic != b"TTRC" or version != 19:
         raise AssertionError(f"expected split TTRC v17, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")

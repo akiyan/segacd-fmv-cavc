@@ -182,7 +182,7 @@ def parse_control(
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells}")
 
-    bitmap_start = 8
+    bitmap_start = 6
     bitmap_bytes = (cells + 7) // 8
     bitmap_end = bitmap_start + bitmap_bytes
     entries_start = (bitmap_end + 1) & ~1
@@ -248,7 +248,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, pool, base = struct.unpack_from(
         ">4sHHHHHHH", header
     )
-    if magic != b"TTRC" or version != 17:
+    if magic != b"TTRC" or version != 19:
         raise AssertionError(
             f"expected split TTRC v17, got {magic!r} v{version}")
     if cols * rows != cells:
@@ -630,7 +630,7 @@ def verify_descriptor_alignment() -> None:
     """Prove the assembly's absolute alignment for even and odd audio starts."""
     for bitmap_bytes in range(1, 141):
         for audio_bytes in (372, 443, 887, 444, 888):
-            audio_start = 8 + ((bitmap_bytes + 1) & ~1) + 2 * 17
+            audio_start = 6 + ((bitmap_bytes + 1) & ~1) + 2 * 17
             packed_suffix = (audio_start + audio_bytes + 1) & ~1
             player_suffix = audio_start + audio_bytes
             if player_suffix & 1:
