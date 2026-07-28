@@ -11,7 +11,7 @@ drawing functions and layout constants in `tools/layout_preview.py`
 only in `tools/analysis_style.py` and are shared with the sim category map and
 the whole-movie timeline. The reference for every element is `ANALYSIS.md`.
 
-## The set (do all four, in order)
+## The set (do all three, in order)
 
 1. **Change the layout in `tools/layout_preview.py`** (the source of truth).
    Change semantic colours or category-border styles in
@@ -45,11 +45,8 @@ the whole-movie timeline. The reference for every element is `ANALYSIS.md`.
   especially precise about the tile categories (Raw/Same/Near/Flbk/
    Buf/Miss): their meaning, byte cost, thresholds, and selection order.
 
-4. **Notify with the preview via Telegram** (the user reviews layout there):
-   ```sh
-   ~/.claude/skills/telegram-notify/telegram_send.sh file tmp/layout_preview.png \
-     "<one line: what changed and why>"
-   ```
+Show the preview image in the chat response so the layout change can be
+reviewed there.
 
 ## Then
 

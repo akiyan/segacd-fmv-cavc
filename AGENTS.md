@@ -451,8 +451,9 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   lossless. Use CRF 10 to give YouTube a clean high-resolution input.
 - Do not add `-ss`, `-t`, an fps filter, or `-r` to the standard upload path.
 - Do not guess a mode4 PAR; verify it in the geometry harness before adding it.
-- Telegram's bot limit is 50MB; send a `896x576` crf20 preview and keep the
-  full-quality file on disk (or upload to YouTube).
+- Keep the full-quality file on disk, or upload it to YouTube. Do not downscale
+  the deliverable itself to fit a file-transfer size limit; render a separate
+  `896x576` crf20 preview when a small copy is needed.
 
 ## Debugging Method — additions
 
