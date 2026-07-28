@@ -1050,8 +1050,10 @@ bf_dma:
 7:
 	move.w	d0, pass2_entry_q
 .endif
-	move.w	n_runs, d4
+	/* Keep this clear before the n_runs load: MOVE supplies the Z flag consumed
+	   by the following BEQ. */
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
+	move.w	n_runs, d4
 	beq	bf_flip
 	lea	RUN_TABLE, a2
 	bsr	bf_start_vbudget		/* full budget only from a proven blank head */

@@ -286,6 +286,18 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
                 f"{obj}: missing or reordered {start_name}/{end_name}")
         return disassembly[start.end():end.start()]
 
+    dma_entry = block("bf_dma", "bf_run_lp")
+    clear_state = re.search(r"\bclrw\s+0 [^\n]*", dma_entry)
+    load_runs = re.search(r"\bmovew\s+0 [^\n]*,%d4", dma_entry)
+    branch_empty = re.search(
+        r"\bbeq\w*\s+[^\n]*<bf_flip>", dma_entry)
+    if not clear_state or not load_runs or not branch_empty:
+        raise AssertionError(
+            f"{obj}: missing shared-state clear/n_runs/empty-frame branch")
+    if not clear_state.start() < load_runs.start() < branch_empty.start():
+        raise AssertionError(
+            f"{obj}: shared-state clear overwrites the n_runs zero flag")
+
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
     if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
         raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")

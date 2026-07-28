@@ -11,6 +11,9 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p111: Preserve the n_runs zero flag while clearing the shared-VBlank budget
+#         origin. The p110 instruction order made the empty-frame branch
+#         unconditional and skipped every timed cold transfer.
 #   p110: Let fixed-N H40 share its display-deadline VBlank between the final
 #         cold-transfer tail and the complete name-table DMA, optional CRAM
 #         replacement, DEBUG HUD republish, and flip. Start each 3,400-word
@@ -997,4 +1000,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
 e=149
-p=110
+p=111
