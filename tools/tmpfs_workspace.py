@@ -99,7 +99,7 @@ def ensure_root(root: Path | None = None) -> Path:
     if fs_type != "tmpfs" and not allow_non_tmpfs:
         raise TmpfsWorkspaceError(
             f"managed artifact root is not tmpfs: {root} ({fs_type or 'unknown'})")
-    for name in ("artifacts", "runs", "leases"):
+    for name in ("artifacts", "leases"):
         (root / name).mkdir(exist_ok=True)
     return root
 
@@ -301,16 +301,15 @@ def _evict_old_entries_locked(
     active = _active_entries(root)
     excluded = {path.resolve() for path in exclude}
     candidates = []
-    for parent in (root / "artifacts", root / "runs"):
-        for entry in parent.iterdir():
-            resolved = entry.resolve()
-            if resolved in active or resolved in excluded:
-                continue
-            try:
-                stamp = entry.stat().st_mtime_ns
-            except FileNotFoundError:
-                continue
-            candidates.append((stamp, entry))
+    for entry in (root / "artifacts").iterdir():
+        resolved = entry.resolve()
+        if resolved in active or resolved in excluded:
+            continue
+        try:
+            stamp = entry.stat().st_mtime_ns
+        except FileNotFoundError:
+            continue
+        candidates.append((stamp, entry))
     candidates.sort(key=lambda item: (item[0], item[1].name))
 
     removed = []
@@ -323,7 +322,7 @@ def _evict_old_entries_locked(
     if _available_bytes(root) < target_free:
         raise TmpfsWorkspaceError(
             "tmpfs filesystem/quota space is still short after deleting every "
-            "inactive project artifact; active runs were preserved")
+            "inactive project artifact; leased artifacts were preserved")
     return removed
 
 
@@ -559,31 +558,6 @@ def lease_managed_alias(
             required_bytes, root=root, exclude=(entry,))
         return _acquire_lease_locked(
             entry, root=root, required_bytes=required_bytes)
-
-
-def create_run_directory(
-    key: str,
-    *,
-    required_bytes: int = 0,
-    root: Path | None = None,
-) -> Lease:
-    root = ensure_root(root)
-    with _workspace_lock(root):
-        _evict_old_entries_locked(required_bytes, root=root)
-        entry = root / "runs" / (
-            f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}-"
-            f"{_slug(key, 40)}-{uuid.uuid4().hex[:8]}")
-        entry.mkdir(parents=True)
-        return _acquire_lease_locked(
-            entry, root=root, required_bytes=required_bytes)
-
-
-def remove_run_directory(lease: Lease) -> None:
-    root = lease.marker.parent.parent
-    with _workspace_lock(root):
-        lease.marker.unlink(missing_ok=True)
-        if lease.entry.exists():
-            shutil.rmtree(lease.entry)
 
 
 def run_file_command(

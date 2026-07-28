@@ -50,8 +50,8 @@ Other fixed defaults:
   Prg/Wr0/Wr1/Dic pattern supply at every supported cadence. Remove a source's
   existing dither with an edge-preserving `video.master_filter` before the
   fixed output dither; verify candidate filters on source gradients and edges.
-- Audio = `adpcm22`. Use `pcm13` only when explicitly requested or when a
-  physical-console-qualified fallback is required.
+- Audio = `adpcm22`. It is the only audio format the on-disc stream carries;
+  there is no alternate encoder audio path to select.
 - PrgBuf and offline quality-budget ceilings come from `tools/av_config.py`.
   WordBuf0, WordBuf1, and DicBuf capacities come from
   `tools/pattern_supply.py`; none are normal per-source overrides.
@@ -211,13 +211,13 @@ After completion:
   or below CD 1x (150 KiB/s). `codec_work_bps` is a separate
   quality-allocation diagnostic.
 - Starvation is allowed, but report it.
-- Output appears under `videos/<stem>/`:
+- Output appears under `videos/<stem>/tmp/`:
   - `stats.npz`
-  - `audio_13k3_u8_mono.wav`, or for ADPCM22 both the packer input
-    `audio_22k05_s16_mono.wav` and the analysis/straight-video playback model
+  - both the packer input `audio_22k05_s16_mono.wav` and the
+    analysis/straight-video playback model
     `audio_playback_adpcm22_rf5c.wav`
 
-For ADPCM22, `stats.npz:audio_playback_file` is authoritative for waveform and
+`stats.npz:audio_playback_file` is authoritative for waveform and
 mux selection. It contains the shared packer-reference continuous IMA decode
 after RF5C164 sign-magnitude conversion. Never select the first `audio_*.wav`
 by filename order; that would silently restore the clean source audio.
@@ -320,13 +320,16 @@ Standalone `/sim` uploads are unaffected.
 PY=~/.config/youtube/venv/bin/python
 [ -x "$PY" ] || { echo "bootstrap the separate YouTube environment from README.md" >&2; exit 1; }
 "$PY" ~/.claude/skills/youtube/youtube.py upload videos/<stem>_analysis.mp4 \
-  --title "<source name> OP SEGA-CD delta codec analysis (WxH/WcxHc/fps/aspect/13.3kHz) YYYYMMDD" \
+  --title "SEGA-CD FMV of <work> - <specs> YYYYMMDD.eNN.pNN" \
   --desc "<specs, four-rule choices, starvation rate>" \
   --tags "SEGA-CD,SegaCD,FMV,homebrew,codec" \
   --category 20 --privacy unlisted
 ```
 
-Analysis-video titles should be descriptive, not version-number titles such as
+Titles follow AGENTS.md "YouTube Upload Style": `SEGA-CD FMV of <work> -
+<specs> <ver>`, where `<specs>` is the descriptive spec suffix (mode,
+resolution/grid) and `<ver>` is the build version `YYYYMMDD.eN.pM` read from
+`tools/av_version.txt`. Descriptive, never a sequence version such as
 `vNNN`. Write the exact UTF-8 description to
 `videos/<stem>_analysis_description.txt`, target 4,800 characters or fewer,
 and hard-fail before upload when its Python character count exceeds YouTube's
