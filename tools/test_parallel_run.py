@@ -71,7 +71,10 @@ class ParallelRunTests(unittest.TestCase):
             profile_path = Path(tmp) / "movie.toml"
             write_profile(profile_path, source="assets/movie.mp4")
             profile = load_profile(profile_path)
-            self.assertEqual(parallel_run.RECORD_MARGIN_SECONDS, 45)
+            # 14.9 s measured Mega-CD startup plus the player's 15 s
+            # end-of-movie hold must both fit inside the bounded capture.
+            self.assertEqual(parallel_run.RECORD_MARGIN_SECONDS, 30)
+            self.assertGreaterEqual(parallel_run.RECORD_MARGIN_SECONDS, 15 + 15)
             self.assertEqual(
                 parallel_run._record_seconds(profile, None),
                 8 + parallel_run.RECORD_MARGIN_SECONDS,
