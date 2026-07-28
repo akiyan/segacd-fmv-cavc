@@ -28,12 +28,15 @@ the whole-movie timeline. The reference for every element is `ANALYSIS.md`.
    ```
    Crop and view the changed region to confirm it looks right. If the change
    depends on real encoder values (e.g. a value newly saved by the sim), also
-   render one real frame to verify - respecting the exclusion rule
-   (see AGENTS.md "Shared-Machine Exclusion"):
+   render one real frame to verify - respecting the shared-machine tokens
+   (see AGENTS.md "Shared-Machine Resource Tokens and Profile Isolation"):
    ```sh
-   CBRSIM_OUT=tmp/<somesim> CBRSIM_SRC=<src> CBRSIM_MODE=<mode> \
-     tools/python.sh tools/render_analysis.py <N> <N+1>   # one frame, no mp4
+   tools/python.sh tools/render_analysis.py profiles/PROFILE.toml <N> <N+1>
+   # frame range only: PNGs, no mp4
    ```
+   The profile TOML is a required first positional argument; it also selects the
+   sim working directory through its `[output].directory`. Do not substitute a
+   working directory with `CBRSIM_OUT`.
 
 3. **Update `ANALYSIS.md`** so every element still matches exactly: the ASCII
    layout map at the top, the affected meter/timeline/category description, the
