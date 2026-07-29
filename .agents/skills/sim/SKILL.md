@@ -21,7 +21,8 @@ Encode any video with the Sega CD delta stream codec and produce the usual
 The analysis frame contains:
 
 - left: Sega CD output
-- right column: Source, category map, Miss + MissCarry map
+- right column: Source, category map, whole-clip category totals, and
+  60 fps audio waveform/spectrum
 - bottom: status bar and palette state
 
 Argument: source MP4 path, optionally plus display name or upload instruction.
@@ -250,7 +251,7 @@ When only the persistent timeline TSV is needed, run
 `tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml
 --tsv-only`; this skips all analysis-frame rendering and MP4 muxing.
 
-Every invocation first writes the complete per-frame numeric sidecar to a
+Every invocation first writes the complete per-content-frame numeric sidecar to a
 unique persistent file below `logs/`. Its filename includes local date/time,
 the profile name, the first 10 profile-SHA characters, encoder version, player
 version, and the `timeline` kind:
@@ -258,9 +259,11 @@ version, and the `timeline` kind:
 No latest-run symlink is created. `ANALYSIS_TSV`, when explicitly set, is a
 real output file rather than an alias. Use the printed `logs/` file for maxima,
 totals, and frame-to-frame comparisons instead of OCR. The full render then
-generates all PNG frames in parallel (`nproc-2`) and calls FFmpeg, usually with
-`h264_nvenc`, `-r 60`, and audio. Disposable PNG/MP4 bytes live directly in the
-managed tmpfs workspace; use the printed real path.
+generates content PNGs and independent 60 fps audio-panel PNGs in parallel
+(`nproc-2`). FFmpeg holds the content panels to their next content timestamp
+and overlays a new waveform/spectrum pair at every exact 1/60-second output
+timestamp. Disposable PNG/MP4 bytes live directly in the managed tmpfs
+workspace; use the printed real path.
 
 Frame-range check only:
 
@@ -292,7 +295,9 @@ Important rendering notes:
   - Raw uses a thin black/white dashed border in both legend and category map
   - Dic/Prg/Wr use a thin colour-and-black dashed border; both Wr banks
     use the Wr1 cyan display colour
-  - scrolling audio waveform with +/-2 seconds and now centered
+  - signed waveform covering one exact 60 fps analysis-video interval, paired
+    with the spectrum centred on that interval; both change at every analysis
+    output frame, and the `Audio` subheading shows the sim audio specification
   - status uses Req / Cold / Band / R2V / Run / Prg / Wrd / Pre
   - Pre is the number of future patterns actually written to VRAM in the frame;
     a prefetched pattern used later is displayed as Same
@@ -365,8 +370,9 @@ language sections. Never use the binary magic as a codec or format name.
 - Never kill another session's process. Kill only jobs you started.
 - Keep every profile on its deterministic managed tmpfs sim path. Do not use a
   shared `tmp/sim` for player decision output.
-- The analysis layout is consolidated into:
+- The analysis specification lives beside its implementation:
   - `tools/layout_preview.py`: canonical layout
+  - `tools/analysis_style.py`: category semantics and colours
   - `tools/render_analysis.py`: render real data using that layout
 - Change the layout in `layout_preview.py`; `render_analysis.py` imports it.
 - Keep `tools/sim.py` as the simulation core.

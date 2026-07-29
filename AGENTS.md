@@ -114,7 +114,7 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
      (resolution, fps, audio).
   3. How to read the analysis layout — what each panel, meter, and timeline
      shows and how to interpret it (left = SEGA-CD sim output; right = Source /
-     category map / audio waveform; bottom status = Req / Cold / Band /
+     category map / 60 fps audio waveform and spectrum; bottom status = Req / Cold / Band /
      Prg / Wr0 / Wr1 / DMA / Run plus the stacked timelines, and Dic in the category legend). Define Band as useful
      `BODY.DAT` payload + control bytes in the physical delivery slot, excluding
      all pad and the untimed `HEADER.DAT` / BODY-arm / frame-0 regions, divided
