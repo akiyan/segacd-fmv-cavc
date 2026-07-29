@@ -676,15 +676,6 @@ pm_set:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
 	jsr	ADPCM_BOOT_COPY
-	/* The extension remains intact in the HEADER staging image. Run its
-	   one-shot wave clear before frame-0 data reuses that scratch. */
-.ifdef PLAYER_SPECIALIZED
-	move.w	#PC_AUDIO_FD, d0
-.else
-	move.w	h_audio_fd, d0
-.endif
-	jsr	(SP_EXTENSION_LOAD_BASE+PCM_BOOT_INIT_OFF).l
-	move.w	#SYNC_LEAD, write_ptr
 	/* Wr0 is the physical frame-0 bank and Wr1 is the other bank. Their
 	   generated starts and sector-rounded capacities differ. Two toggles
 	   restore the frame-0 bank phase. */
@@ -750,6 +741,22 @@ pb_lp:
 	move.w	d7, (COMSTAT1).l		/* boot UI: remaining PrgBuf preload sectors */
 	bne	pb_lp
 pb_done:
+	/* Clearing all 32 KiB of wave RAM is intentionally outside the finite
+	   HEADER read. Running this extension while sectors are still arriving
+	   leaves a long unpumped interval and can lose the next sector. The staged
+	   copy survives a short route; longer routes preserve the complete copy at
+	   its execution address. */
+.ifdef PLAYER_SPECIALIZED
+	move.w	#PC_AUDIO_FD, d0
+.else
+	move.w	h_audio_fd, d0
+.endif
+.ifdef ROUTING_EXTENSION_IN_STAGE
+	jsr	(SP_EXTENSION_LOAD_BASE+PCM_BOOT_INIT_OFF).l
+.else
+	jsr	(SP_EXTENSION_EXEC_BASE+PCM_BOOT_INIT_OFF).l
+.endif
+	move.w	#SYNC_LEAD, write_ptr
 	/* HEADER.DAT is exhausted, so a boot-only copy cannot delay its continuous
 	   drain. Validate every packed route and duplicate the sector-sized routing
 	   reservation into both physical 1M Word-RAM banks. This boot-only work runs
