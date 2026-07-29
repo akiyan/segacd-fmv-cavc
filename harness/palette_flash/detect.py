@@ -55,7 +55,7 @@ def grab(mkv, t, fps=None, n=1):
 
 
 def find_t0(mkv, probe_ts=(108.0, 112.0, 120.0)):
-    """F0000 seek time from HUD reads at a few probe points (linear)."""
+    """Movie frame-0000 seek time from HUD reads at a few probe points."""
     ests = []
     for t in probe_ts:
         img = grab(mkv, t)[0]
@@ -63,7 +63,7 @@ def find_t0(mkv, probe_ts=(108.0, 112.0, 120.0)):
         if conf >= 0.9 and f >= 0:
             ests.append(t - f / 15.0)
     if not ests:
-        raise SystemExit("could not read HUD F to establish t0")
+        raise SystemExit("could not read HUD frame to establish t0")
     ests.sort()
     return ests[len(ests) // 2]
 
@@ -176,7 +176,7 @@ def main():
             any_flash = True
             fr = real_flashes[len(real_flashes) // 2]
             print("  FLASH @ boundary f%d (P%d->P%d): %d capture frame(s), type=%s "
-                  "margin=%.1f  (HUD F~%d)" %
+                  "margin=%.1f  (HUD frame~%d)" %
                   (b, seg, seg + 1, len(real_flashes), fr[3], fr[5], fr[2]))
             if args.dump:
                 # dump the worst flash frame + candidates

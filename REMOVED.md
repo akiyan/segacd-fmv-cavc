@@ -116,8 +116,8 @@ limit, and physical CD/PrgBuf scheduling remain valid without it.
 3. Verify frame 0 inline/sidecar membership and every raw-prefetch deadline.
 4. Run focused tests for malformed maps, source boundaries, retry convergence,
    and cache identity.
-5. Complete a full DEBUG playback gate and compare HUD `N` with the packed run
-   trace before treating lower run counts as a usable improvement.
+5. Complete a full DEBUG playback gate and compare HUD `cold_runs` with the
+   packed run trace before treating lower run counts as a usable improvement.
 
 ---
 
@@ -225,5 +225,5 @@ byte会計、Prg/Wr/Dicのsource分割、playerの488 record上限、物理CD/Pr
 3. Frame 0のinline/sidecar membershipと全raw-prefetch deadlineを検証します。
 4. malformed map、source境界、retry convergence、cache identityのfocused testを
    実行します。
-5. full DEBUG playback gateを完了し、HUD `N`とpacked run traceを比較してから、
+5. full DEBUG playback gateを完了し、HUD `cold_runs`とpacked run traceを比較してから、
    run数低下を利用可能な改善として扱います。

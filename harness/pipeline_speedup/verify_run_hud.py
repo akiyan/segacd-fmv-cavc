@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare recorded H40 HUD N values with packed cold-run descriptors."""
+"""Compare recorded H40 HUD cold-run values with packed descriptors."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ def packed_run_counts(header: Path, body: Path) -> list[int]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Verify OCR'd H40 HUD N against packed cold-run counts."
+        description="Verify OCR'd H40 HUD cold_runs against packed counts."
     )
     parser.add_argument("--header", type=Path, required=True)
     parser.add_argument("--body", type=Path, required=True)
@@ -45,7 +45,7 @@ def main() -> None:
     parser.add_argument(
         "--column",
         default="",
-        help="HUD N column (default: cold_runs_low8, then legacy dma_calls)",
+        help="HUD cold-run column (default: cold_runs)",
     )
     args = parser.parse_args()
     if args.tsv.suffix.lower() != ".tsv":
@@ -61,15 +61,7 @@ def main() -> None:
         fields = rows.fieldnames or []
         column = args.column
         if not column:
-            if "cold_runs_low8" in fields:
-                column = "cold_runs_low8"
-            elif "dma_calls" in fields:
-                # Early p45 diagnostic logs used this name before N was
-                # documented as a descriptor count. It is not a DMA-call count.
-                column = "dma_calls"
-            else:
-                raise SystemExit(
-                    "TSV has neither cold_runs_low8 nor legacy dma_calls")
+            column = "cold_runs"
         if column not in fields:
             raise SystemExit(f"TSV has no {column!r} column")
         if "frame" not in fields:
@@ -97,15 +89,18 @@ def main() -> None:
 
     if mismatches:
         sample = ", ".join(
-            f"F{frame}: HUD={observed} packed={packed} conf={confidence:.3f}"
+            f"frame={frame}: HUD={observed} packed={packed} "
+            f"conf={confidence:.3f}"
             for frame, observed, packed, confidence in mismatches[:8]
         )
         raise SystemExit(
-            f"HUD N mismatch: {len(mismatches)}/{compared} observations; {sample}")
+            "HUD cold_runs mismatch: "
+            f"{len(mismatches)}/{compared} observations; {sample}"
+        )
     if not compared:
-        raise SystemExit("no eligible HUD N observations")
+        raise SystemExit("no eligible HUD cold_runs observations")
     print(
-        "recorded HUD N equivalence: OK "
+        "recorded HUD cold_runs equivalence: OK "
         f"({compared} observations, {len(expected)} packed frames, "
         f"column={column}, min_confidence={args.min_confidence:g}, "
         f"skipped_low_confidence={skipped_confidence}, skipped_empty={skipped_empty})"

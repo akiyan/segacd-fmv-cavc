@@ -7,7 +7,7 @@ paths such as the 30 fps player's two-VBlank schedule.
 `verify.py` decodes the recording sequentially at its native 256x224 or 320x224
 geometry.  It sends only the top-left 40x24 pixels to
 `tools/read_frameno.py:read_frameno`, so no other DEBUG field influences the
-result.  A plausible exact sequence beginning at `F0000` anchors the movie.
+result. A plausible exact sequence beginning at `frame=0000` anchors the movie.
 From that point the verifier rejects:
 
 - a skipped F value;
@@ -21,7 +21,7 @@ the matching packed `HEADER.DAT`:
 
 ```sh
 tools/python.sh harness/frame_cadence/verify.py \
-  videos/BadApple_H40_320x224_pcm_emu_lossless.mkv \
+  "$LOSSLESS" \
   --header out/bad-apple/HEADER.DAT
 ```
 
@@ -43,7 +43,8 @@ tools/python.sh harness/frame_cadence/verify.py RECORDING.mkv \
 Once the requested final F first appears, later recording frames are outside
 the proof.  This deliberately excludes the normal held tail after the movie or
 after a bounded diagnostic capture.  The initial anchor still uses four movie
-frames by default so an isolated startup OCR match cannot impersonate `F0000`.
+frames by default so an isolated startup OCR match cannot impersonate
+`frame=0000`.
 
 The default confidence threshold is `0.90`.  `--crop-x 32` supports an old H32
 image centered in a 320-pixel capture.  Do not run this against the enlarged

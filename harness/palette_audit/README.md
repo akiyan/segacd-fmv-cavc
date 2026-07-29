@@ -12,10 +12,12 @@ source frames and reports the complete quantised-source colour set.
 Run from the repository root:
 
 ```sh
+SIM_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/bad-apple.toml --print-sim-output)"
 tools/python.sh harness/palette_audit/audit.py \
-  videos/BadApple_H32_256x224_adpcm22/decisions.pkl \
-  --master-dir videos/BadApple_H32_256x224_adpcm22/master \
-  --output-dir videos/BadApple_H32_256x224_adpcm22/tmp/palette_audit \
+  "$SIM_OUT/decisions.pkl" \
+  --master-dir "$SIM_OUT/master" \
+  --output-dir tmp/palette_audit \
   --upload-offset 19
 ```
 
@@ -33,8 +35,8 @@ grouped by the number of `666` pixels:
 
 ```sh
 tools/python.sh harness/palette_audit/near_white.py \
-  videos/BadApple_H32_256x224_adpcm22/decisions.pkl \
-  videos/BadApple_H32_256x224_adpcm22/master
+  "$SIM_OUT/decisions.pkl" \
+  "$SIM_OUT/master"
 ```
 
 The digital RGB labels use the encoder/emulator levels

@@ -79,6 +79,7 @@ the answer is unambiguous. Ask only when a missing title or source identity
 would make public metadata materially wrong.
 
 Use one profile and one stem throughout sim, pack, record, and compilation.
+Retain every printed direct tmpfs artifact path in the run record.
 Never hand-copy different geometry or timing into a later stage.
 
 ## Enforce Resource Tokens and CUDA Safety
@@ -124,7 +125,7 @@ algorithm in the profile. ADPCM22, the 1,535-tile VRAM pool, GPU, Bayer
 dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
 pattern supply, forward fill, and startup-audio policy are fixed pipeline
 behavior and must not be repeated as TOML keys. Use the filename-derived
-profile identity and canonical `videos/` artifact paths from `AGENTS.md`.
+profile identity and canonical tmpfs/log artifact paths from `AGENTS.md`.
 
 Do not bump `tools/av_version.txt` merely for a new source profile. Apply the
 version policy in `AGENTS.md` if output-affecting encoder or player code changes.
@@ -181,7 +182,7 @@ prevents the configured cap from being mistaken for the realized maximum:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  videos/STEM/tmp/decisions.pkl
+  /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data/decisions.pkl
 ```
 
 Write the persistent TSV immediately with the zero-frame analysis-data mode,
@@ -223,7 +224,7 @@ qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 - `ffv1-flac`;
 - `--record-size 256x224` for H32 or `320x224` for H40;
 - automatic private X-display allocation;
-- the canonical `videos/<stem>_emu_lossless.mkv` and preview paths.
+- the direct tmpfs lossless MKV and preview paths printed by the recorder.
 
 Record emulator-synchronized A/V. "Offline" means unpaced emulation, not an
 offline audio replacement. Never replace the recorded audio with the source
@@ -240,31 +241,32 @@ Before accepting the recording, verify:
 - representative lossless frames against the sim when timing or fps behavior is new or suspect.
 - one complete HUD loop with `harness/startup_resync/analyze.py --gate-json`;
   pass the encode profile as the required second positional argument and
-  require every expected movie frame. Every cadence requires `S/D/R=00`.
-  `M>01` at fixed N2, `M>03` at fixed N4, or `M>03` at delivery-paced
-  24 fps raises alert `WARNING` without failing the gate. `C` is diagnostic
-  only and never changes the gate status. Always report the `C/A` minimum,
-  mean, median, and maximum. The
-  generated gate uses
-  the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
-  and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's
-  normal jitter interval (`28`, `19`, or `14` respectively).
-  Preserve the encoder/player-versioned HUD TSV body under `logs/`, its
-  run-specific compatibility symlink, and the upload-capable gate JSON next to
-  the recording.
-  Fixed-N `T>N` also raises alert `WARNING` without failing the gate. Both H32
-  and H40 profiles select the same 69-cell diagnostic field set; OCR wraps it
-  into three H32 rows or two H40 rows.
+  require every expected movie frame. Every cadence requires
+  `sector_slip`, `control_desync`, and `audio_resync` to remain zero.
+  `vblank_spill` above its cadence-derived limit raises alert `WARNING`
+  without failing the gate. `cd_wait_count` is diagnostic only and never
+  changes gate status. Always report `cd_wait_count` and
+  `adpcm_decode_units` minimum, mean, median, and maximum. The generated gate
+  derives the `prgbuf_jitter_peak_kib` limit from the fps-specific normal
+  PrgBuf ceiling and the physical ring.
+  Preserve the encoder/player-versioned HUD TSV body and matching
+  upload-capable `_gate.json` under `logs/`. Use their direct paths; no
+  compatibility symlink is created.
+  Fixed-cadence `transfer_vblanks` above the cadence interval also raises
+  alert `WARNING` without failing the gate. Both H32 and H40 profiles select
+  the same 39-cell diagnostic set; OCR wraps H32 after 32 cells and keeps H40
+  on one row.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
-timestamps and a `videos/<stem>/record_check` base; inspect only the new directory and its
-manifest/montage. Never build a montage from a shared `*.png` glob or loose stills left by a
-previous capture.
+timestamps and a `$(dirname "$LOSSLESS")/record_check` base; inspect only the new directory
+and its manifest/montage. Never build a montage from a shared `*.png` glob or loose stills
+left by a previous capture.
 
 Immediately after the HUD TSV and gate JSON exist, invoke the `hudline` skill
 with those exact sidecars and the same profile. Inspect and show its complete
-first-loop PNG, publish it to a public Gist, and preserve the image, layout
-receipt, and Gist receipt beside the recording. Do this for alert `NONE`,
+first-loop PNG, publish it to a public Gist, and preserve the content-keyed
+layout and Gist receipts under `logs/`; the image is a direct tmpfs artifact.
+Do this for alert `NONE`,
 `WARNING`, and `FAIL`; gate `FAIL` is still published as diagnostic evidence
 but stops Stage 5.
 `hudline` shares `/timeline`'s frame x-coordinate contract so a future
@@ -306,8 +308,8 @@ the analysis `status_cold` maximum equals the physical transfer trace:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  videos/STEM/tmp/decisions.pkl \
-  --analysis-tsv videos/STEM_analysis.tsv
+  /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data/decisions.pkl \
+  --analysis-tsv logs/RUN_timeline.tsv
 ```
 
 Regenerate `mixline` against this final analysis timeline and the already
@@ -327,14 +329,15 @@ explanatory prose without removing CRAM chapters, required specs/layout/
 technique sections, both project links, or the current timeline links.
 
 ```sh
-tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_analysis_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
+tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
 ```
 
 Upload the newly rebuilt analysis as unlisted, category 20. Use `--force` only
 for a re-upload and retain the returned URL.
 
-After the analysis upload succeeds, report the exact `S/D/R/M/J` gate maxima,
-the diagnostic C maximum, and the `C/A` minimum, mean, median, and maximum.
+After the analysis upload succeeds, report the five descriptive gate maxima,
+the diagnostic `cd_wait_count` maximum, and the `cd_wait_count` /
+`adpcm_decode_units` minimum, mean, median, and maximum.
 Continue to the already-authorized playback compilation/upload. Do not request
 another approval merely because the gate ran.
 
@@ -347,7 +350,7 @@ validated H32/H40 pixel aspect into 2048x1568 square pixels using nearest-neighb
 scaling, H.264 CRF 10 slow, yuv420p, AAC 192 kbps, and faststart. Do not add
 `-ss`, `-t`, an fps filter, or `-r`.
 
-Use the matching complete HUD gate's verified `F=FFFF` to `F=0000` transition
+Use the matching complete HUD gate's verified `frame=FFFF` to `frame=0000` transition
 as the CRAM chapter offset. Pass that gate through
 `tools/youtube_chapters.py --hud-gate-json`; do not trim the video.
 
@@ -359,7 +362,7 @@ Verify the final MP4 has:
 - video, audio, and undistorted movie content.
 
 Extract startup/movie/tail stills with `tools/extract_verification_frames.sh`, using
-`videos/<stem>/compilation_check` as the base. Inspect only that invocation's printed
+`$(dirname "$COMPILATION_MP4")/compilation_check` as the base. Inspect only that invocation's printed
 `CHECK_DIR`; do not mix files from an older compilation.
 
 Generate boot-aware CRAM chapters and current bilingual metadata according to
@@ -378,7 +381,7 @@ unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
 fix it when the requested scope permits, and rerun the failed stage plus every
 downstream stage whose inputs changed.
 
-An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. Alert `WARNING`
+An absent or `FAIL` descriptive schema-12 HUD gate is a Stage 4 failure. Alert `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
 public MP4 until a complete loop returns gate `PASS`.
 
@@ -407,7 +410,8 @@ Report one compact result block per source with:
 - analysis URL, output path, average rate, and starvation result;
 - pack verification result;
 - lossless recording and preview paths, duration, raster/fps, and audio metrics;
-- hudline path, `S/D/R/M/J` gate maxima, diagnostic C maximum, `C/A`
+- hudline path, five descriptive gate maxima, diagnostic `cd_wait_count`
+  maximum, `cd_wait_count` / `adpcm_decode_units`
   minimum/mean/median/maximum, and public Gist/raw image URLs;
 - timeline and final mixline paths plus their public Gist/raw image URLs;
 - whether startup was retained and whether human listening was performed;

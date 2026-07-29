@@ -68,20 +68,27 @@ def make_hud(width, values, origin=(5, 4), complete=True, black_backing=False,
 def check_case(width, values, origin, layout=None):
     image = make_hud(width, values, origin, black_backing=True, layout=layout)
     got = read_frameno.read_hud(image, layout=layout)
-    for name, _col, digits in (layout
-                               or read_frameno.hud_layout_for_width(width)):
-        mask = (1 << (digits * 4)) - 1
-        expected = values[name] & mask
+    expected_values = dict(values)
+    transfer = expected_values.pop("vblank_spill_transfer_ticks")
+    expected_values["vblank_spill"] = (transfer >> 12) & 0xF
+    expected_values["transfer_ticks"] = transfer & 0x0FFF
+    pump_gap = expected_values.pop("pump_gap_apply_backpressure")
+    expected_values["pump_gap_ticks"] = pump_gap & 0x0FFF
+    expected_values["apply_backpressure"] = int(bool(pump_gap & 0x8000))
+    reader = expected_values.pop("reader_ahead_slot")
+    expected_values["reader_ahead_frames"] = (reader >> 4) & 0xF
+    expected_values["reader_slot_sector"] = reader & 0xF
+    for name, expected in expected_values.items():
         if got[name][0] != expected:
             raise SystemExit(
                 f"{width}px {name}: read {got[name][0]:X}, expected {expected:X}")
         if got[name][1] < 0.90:
             raise SystemExit(f"{width}px {name}: low confidence {got[name][1]:.3f}")
     frame, confidence = read_frameno.read_frameno(image)
-    if frame != values["F"] or confidence < 0.90:
+    if frame != values["frame"] or confidence < 0.90:
         raise SystemExit(
             f"{width}px F-only API: got {frame:04X}/{confidence:.3f}, "
-            f"expected {values['F']:04X}")
+            f"expected {values['frame']:04X}")
 
 
 def main():
@@ -92,70 +99,45 @@ def main():
                            for bit in range(3, -1, -1))
         if rows[0] != expected:
             raise SystemExit(f"glyph {value:X} barcode {rows[0]!r}, expected {expected!r}")
-    if read_frameno.HUD_CELLS != 30:
-        raise SystemExit(f"H32 HUD is {read_frameno.HUD_CELLS} cells, expected 30")
-    if read_frameno.HUD_H40_CELLS != 30:
-        raise SystemExit(
-            f"H40 HUD is {read_frameno.HUD_H40_CELLS} cells, expected 30")
-    check_case(256, {"F": 0x1234, "P": 0xAB, "S": 0xFF,
-                     "D": 0x00, "R": 0x7E, "L": 0x68,
-                     "C": 0x02, "W": 0x03, "M": 0x04, "A": 0x1E,
-                     "U": 0x2345, "N": 0x17, "J": 0x0A}, (0, 5),
-               layout=read_frameno.HUD_LAYOUT)
-    check_case(320, {"F": 0x0000, "P": 0xFF, "S": 0x00,
-                     "D": 0xFF, "R": 0x00, "L": 0x7F,
-                     "C": 0x00, "W": 0xFF, "M": 0x02, "A": 0x00,
-                     "U": 0x1234, "N": 0x2F, "J": 0x28}, (0, 3),
-               layout=read_frameno.HUD_H40_LAYOUT)
-    if read_frameno.HUD_H40_FLIP_CELLS != 40:
-        raise SystemExit(
-            f"H40 flip HUD is {read_frameno.HUD_H40_FLIP_CELLS} cells, "
-            "expected 40")
-    check_case(320, {"F": 0x0A99, "P": 0x0C, "S": 0x00,
-                     "D": 0x00, "R": 0x00, "L": 0x38,
-                     "C": 0x00, "W": 0x63, "M": 0x01, "A": 0x42,
-                     "U": 0x023D, "N": 0x87, "J": 0x0E,
-                     "Q": 0xFFFD,
-                     "V": 0xF2, "O": 0x3E, "E": 0x88}, (0, 3),
-               layout=read_frameno.HUD_H40_FLIP_LAYOUT)
-    if read_frameno.HUD_H40_POLL_GAP_CELLS != 40:
-        raise SystemExit(
-            f"H40 poll-gap HUD is {read_frameno.HUD_H40_POLL_GAP_CELLS} cells, "
-            "expected 40")
-    check_case(320, {"F": 0x0A99, "P": 0x0C, "S": 0x00,
-                     "D": 0x00, "R": 0x00, "L": 0x38,
-                     "C": 0x00, "W": 0x63, "M": 0x01, "A": 0x42,
-                     "U": 0x023D, "N": 0x87, "J": 0x0E,
-                     "G": 0x0456,
-                     "K": 0x12, "O": 0x3E, "E": 0x88}, (0, 3),
-               layout=read_frameno.HUD_H40_POLL_GAP_LAYOUT)
-    if read_frameno.HUD_H32_COMBINED_CELLS != 69:
+    if read_frameno.HUD_H32_COMBINED_CELLS != 39:
         raise SystemExit(
             f"H32 combined HUD has "
-            f"{read_frameno.HUD_H32_COMBINED_CELLS} cells, expected 69"
+            f"{read_frameno.HUD_H32_COMBINED_CELLS} cells, expected 39"
         )
-    if read_frameno.HUD_H40_COMBINED_CELLS != 69:
+    if read_frameno.HUD_H40_COMBINED_CELLS != 39:
         raise SystemExit(
             f"H40 combined HUD has "
-            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 69"
+            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 39"
         )
     if read_frameno.hud_layout_dimensions(
         read_frameno.HUD_H32_COMBINED_LAYOUT
-    ) != (32, 3):
-        raise SystemExit("H32 combined HUD must occupy 32x3 cells")
+    ) != (32, 2):
+        raise SystemExit("H32 combined HUD must occupy 32x2 cells")
     if read_frameno.hud_layout_dimensions(
         read_frameno.HUD_H40_COMBINED_LAYOUT
-    ) != (40, 2):
-        raise SystemExit("H40 combined HUD must occupy 40x2 cells")
+    ) != (39, 1):
+        raise SystemExit("H40 combined HUD must occupy 39x1 cells")
     combined_values = {
-        "F": 0x0A99, "P": 0x0C, "S": 0x00,
-        "D": 0x00, "R": 0x00, "L": 0x38,
-        "C": 0x00, "W": 0x63, "M": 0x01, "A": 0x42,
-        "U": 0x023D, "N": 0x87, "J": 0x0E,
-        "Q": 0xFFFD, "V": 0xF2, "O": 0x3E, "E": 0x88,
-        "G": 0x8456, "K": 0x12, "H": 0x34C0, "X": 0x0203,
-        "Y": 0xD40, "Z": 0x440, "T": 0x4, "I": 0xE9,
-        "Y3": 0x120, "Y4": 0x080,
+        "frame": 0x0A99,
+        "palette_segment": 0xC,
+        "sector_slip": 0x0,
+        "control_desync": 0x0,
+        "audio_resync": 0x0,
+        "audio_lead_256b": 0x38,
+        "cd_wait_count": 0x3,
+        "sub_wait_scanlines": 0x63,
+        "adpcm_decode_units": 0x42,
+        "vblank_spill_transfer_ticks": 0xA23D,
+        "cold_runs": 0x87,
+        "prgbuf_jitter_peak_kib": 0x0E,
+        "flip_vcounter": 0xF2,
+        "first_share_exit_vcounter": 0x3E,
+        "pass2_delay_q4": 0x88,
+        "pump_gap_apply_backpressure": 0x8456,
+        "msf_gap_recoveries": 0x2,
+        "reader_ahead_slot": 0xC3,
+        "transfer_vblanks": 0x4,
+        "transfer_end_vcounter": 0xE9,
     }
     check_case(
         256, combined_values, (0, 3),
@@ -168,17 +150,14 @@ def main():
     if read_frameno.hud_layout_field_position(
         read_frameno.HUD_H32_COMBINED_LAYOUT, 32
     ) != (0, 1):
-        raise SystemExit("H32 combined HUD must wrap Q after logical cell 31")
+        raise SystemExit("H32 combined HUD must wrap after logical cell 31")
     if read_frameno.hud_layout_field_position(
-        read_frameno.HUD_H40_COMBINED_LAYOUT, 40
-    ) != (0, 1):
-        raise SystemExit("H40 combined HUD must wrap G after logical cell 39")
+        read_frameno.HUD_H40_COMBINED_LAYOUT, 38
+    ) != (38, 0):
+        raise SystemExit("H40 combined HUD must fit on one 39-cell row")
 
     h40 = np.asarray(make_hud(
-        320, {"F": 0x0000, "P": 0x00, "S": 0x00, "D": 0x00,
-              "R": 0x00, "L": 0x00, "C": 0x00, "W": 0x00,
-              "M": 0x00, "A": 0x00, "U": 0x0000, "N": 0x00,
-              "J": 0x00},
+        320, dict(combined_values, frame=0, palette_segment=0),
         origin=(0, 3), black_backing=True,
         layout=read_frameno.HUD_H40_LAYOUT))
     if np.all(h40[3:11, read_frameno.HUD_H40_CELLS * 8:] == 0):
@@ -186,16 +165,16 @@ def main():
 
     # The longstanding single-purpose API must not depend on later HUD fields.
     only_f = make_hud(
-        48, {"F": 0xCAFE}, origin=(3, 6), complete=False,
+        48, dict(combined_values, frame=0xCAFE), origin=(3, 6), complete=False,
         black_backing=True)
     frame, confidence = read_frameno.read_frameno(only_f)
     if frame != 0xCAFE or confidence < 0.90:
         raise SystemExit(
             f"standalone F API: got {frame:04X}/{confidence:.3f}, expected CAFE")
 
-    print("HUD OCR proof: OK (values only, common H32/H40 legacy 30 cells, "
-          "combined H32 32+32+5 and H40 40+29 wrapped cells, "
-          "unused legacy H40 width movie-visible, standalone F compatible)")
+    print("HUD OCR proof: OK (39 values-only cells, H32 32+7 wrapped and "
+          "H40 single-row, unused H40 width movie-visible, standalone frame "
+          "compatible)")
 
 
 if __name__ == "__main__":

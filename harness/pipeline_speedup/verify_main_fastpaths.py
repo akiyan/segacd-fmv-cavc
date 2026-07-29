@@ -16,6 +16,7 @@ scalar word loop exactly.
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 import random
 import struct
@@ -33,9 +34,6 @@ PATTERN_SUPPLY_OFFSET = 196
 NAME_ENTRY_MASK = 0x67FF
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
-DEFAULT_DECISIONS = Path(
-    "videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/decisions.pkl"
-)
 VERSION = 22
 
 
@@ -409,7 +407,18 @@ def main() -> None:
     parser.add_argument(
         "--body", type=Path, default=Path("out/movieplay/BODY.DAT")
     )
-    parser.add_argument("--decisions", type=Path, default=DEFAULT_DECISIONS)
+    default_decisions = (
+        Path(os.environ["CBRSIM_OUT"]) / "decisions.pkl"
+        if os.environ.get("CBRSIM_OUT")
+        else None
+    )
+    parser.add_argument(
+        "--decisions",
+        type=Path,
+        default=default_decisions,
+        required=default_decisions is None,
+        help="simulation decisions.pkl (defaults to $CBRSIM_OUT/decisions.pkl)",
+    )
     args = parser.parse_args()
 
     stream = read_stream(args.header, args.body)

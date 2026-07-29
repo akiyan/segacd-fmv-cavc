@@ -1,8 +1,10 @@
 # Encoder/Player build version for YouTube titles: format YYYYMMDD.eN.pM
 #
-# - e = encoder version. Bump when the encode pipeline (sim.py params/code OR
-#   pack_stream.py params/code) changes in a way that alters the output.
-# - p = player version. Bump when the on-disc player (boot/movieplay_*.s) changes.
+# - e = encoder version. Bump when shared sim.py / pack_stream.py behavior or
+#   defaults change in a way that alters output. Do not bump for source-specific
+#   profile settings; their settings identity tracks those changes.
+# - p = player version. Bump when the shared on-disc player
+#   (boot/movieplay_*.s) changes in a way that alters output.
 # - Bump one or both as appropriate; never decrease either.
 # - When bumping, if today's date differs from `date` below, set `date` to today.
 # - This is the YouTube-title build version only. The HEADER.DAT format-version
@@ -11,6 +13,22 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p129: Make residual-boundary VBlank splitting and all-DMA pattern transfer
+#         unconditional. Remove both build switches and the split-off and
+#         one/two-pattern CPU-transfer player paths; retain the mandatory
+#         first-word CPU repair after every pattern DMA.
+#   p128: Add a build-time VBLANK_RUN_SPLIT switch. The diagnostic off mode
+#         keeps every run whole; an individually oversized run may enter
+#         active display instead of retaining a hidden safety split.
+#   p127: Compact the DEBUG HUD to 39 hexadecimal digits, pack VBlank spill
+#         with transfer ticks, pack reader lead with slot position, remove
+#         retired diagnostics, and expose descriptive OCR/gate field names.
+#   e157: Enable one-frame timed Raw VRAM prefetch for the Lunar SSS OP
+#         H32/24 profile at its 225 baseline cold cap.
+#   e156: Replace the analysis DMA-tile status meter with exact Main-to-VDP
+#         words: patterns, long-run first-word repairs, mode/grid/cadence-aware
+#         name-table and DEBUG HUD writes, and palette-switch CRAM. Preserve
+#         the tile count as a TSV compatibility field and add the R2V timeline.
 #   p126: Use a conservative 3,200 DMA-word-equivalent H40 VBlank budget.
 #         Charge every CPU-written VDP word four units, including short direct
 #         runs, DMA first-word repair, and CRAM. Split DMA runs at residual
@@ -1084,6 +1102,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260728
-e=155
-p=126
+date=20260729
+e=157
+p=129

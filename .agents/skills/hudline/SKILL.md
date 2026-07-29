@@ -1,235 +1,130 @@
 ---
 name: hudline
-description: Render, inspect, and publicly publish one large whole-movie PNG from a DEBUG playback HUD TSV and its matching gate JSON, then require the matching codec timeline and publicly publish their combined mixline. Use after every full emulator or hardware recording, when the user invokes /hudline, or when the S/D/R/M/J gate and diagnostic C/A/Q/G/B/K/H/X/Y/O/Z/Y3/Y4/T/I fields need frame-by-frame visual comparison.
+description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-12 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
 ---
 
 # Playback HUD Timeline
 
-Create one deterministic full-recording diagnostic image after the complete HUD
-OCR pass. Keep the image frame-aligned with `/timeline`, then immediately use
-`/mixline` to combine both without resampling.
+Create one deterministic, frame-aligned diagnostic image from a complete DEBUG
+HUD OCR pass. Use descriptive field names throughout.
 
 ## Workflow
 
-1. Require the HUD TSV and gate JSON generated from the same lossless recording.
-   The HUD TSV body must be the persistent
-   `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; a run-specific
-   `videos/STEM_emu_hud.tsv` symlink to it is accepted as the input path.
-   The renderer checks the first loop, contiguous frame numbers, expected frame
-   count, profile SHA, gate maxima, and recording size/mtime when available.
-   Render failed gates too; when playback did not complete one loop, render
-   the contiguous observed prefix only if the matching gate explicitly records
-   that incomplete-loop failure. Keep the expected full-movie frame axis,
-   shade the unobserved suffix, and state observed/expected frame counts in the
-   heading so the matching full codec timeline can still be combined without
-   resampling. The image is evidence and must not hide the missing suffix.
-2. Run:
+1. Require the persistent HUD TSV and adjacent gate JSON generated from the
+   same lossless recording:
 
-```sh
-tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
-  videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
-  --config profiles/PROFILE.toml \
-  --label "short run label" \
-  --output videos/STEM_hudline.png
-```
+   ```text
+   logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv
+   logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud_gate.json
+   ```
 
-   When a matching managed GPGX LOGVDP run is available, first generate its
-   frame TSV with `harness/gpgx_logvdp/extract_frame_tsv.py`, then add
-   `--gpgx-vdp-tsv logs/RUN_gpgx_vdp.tsv`. The renderer requires the adjacent
-   extraction receipt, its matching HUD hash, the identical frame axis, and
-   exact per-frame equality between physical LOGVDP pattern writes and the HUD
-   logical pattern-word total.
+   The gate must use schema 12. Render failed gates too. An incomplete loop may
+   be rendered only when the gate explicitly records that failure; keep the
+   complete expected frame axis and shade the missing suffix.
 
-3. Inspect the PNG with `view_image`. Confirm that every frame is present, the
-   gate summary matches the JSON, gate-limit lines are visible, palette
-   boundaries and their `Pxx` labels align, and all HUD rows are legible.
-4. Generate the exact warning/over-limit frame table:
+2. Render:
 
-```sh
-tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
-  videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
-  --output videos/STEM_emu_hud_warnings.md
-```
+   ```sh
+   tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
+     logs/RUN_hud.tsv \
+     --gate-json logs/RUN_hud_gate.json \
+     --config profiles/PROFILE.toml \
+     --label "short run label"
+   ```
 
-   Frame 0 is untimed boot staging. Exclude it from every metric, gate,
-   severity decision, scale maximum, OCR aggregate, and VBLANK statistic; leave
-   its complete horizontal extent blank in every HUD row. Keep it only for
-   first-loop sequence completeness and x-axis alignment.
+   The renderer prints the direct tmpfs PNG and a persistent content-keyed
+   layout receipt under `logs/`.
 
-   Always report the minimum, mean, median, and maximum of both `C` and `A`
-   across the timed first loop. Validate those statistics against schema-4 or
-   newer gate JSON, include them in the Markdown summary and image heading, and
-   preserve them in the layout receipt.
-   When `G` is available, report and preserve its minimum, mean, median, and
-   maximum after separating `B`; also report the B APPLY-back-pressure frame
-   count. When `H/X` are available, validate and report the exact maximum
-   physical PrgBuf occupancy and maximum packed reader lead against the gate
-   JSON. When `Y/O/Z/Y3/Y4/T/I` are available, validate and report the exact
-   maxima for the first four runtime VBlank word shares, first/final
-   pattern-exit V-counters, and opened transfer-budget count. `T>N` at fixed cadence
-   raises alert `WARNING` while retaining gate `PASS`; the individual shares
-   and phases remain diagnostic.
+3. When a matching managed GPGX LOGVDP run is available, first run
+   `harness/gpgx_logvdp/extract_frame_tsv.py`, then pass its TSV with
+   `--gpgx-vdp-tsv`. The extraction receipt proves input hashes and HUD frame
+   alignment. Physical transfer totals are independent diagnostics; the
+   retired per-VBlank logical share fields are no longer present in the HUD.
 
-   For exact integer-VBlank rates, treat every timed derived `VBLANK` value
-   different from the normal cadence as a warning: 15 fps expects 4 and 30 fps expects 2.
-   Report VBLANK only as `warning rate / warning count / evaluated total`; do
-   not add individual VBLANK-warning frames to the event table. This warning
-   does not turn an otherwise passing upload gate into a failure; keep gate
-   `PASS` and report alert `WARNING`. Do not apply this generic rule to 24 fps: its
-   expected 2/3 cadence needs a separate profile-specific rule when a 24 fps
-   work is tuned.
+4. Inspect the PNG with `view_image`. Confirm:
 
-   Show the resulting Markdown table in the response. It must include
-   hexadecimal `F`, every gate-overage value/limit, derived `VBLANK`, and
-   every HUD value available in the TSV
-   (`P/S/D/R/L/C/W/M/A/U/N/J/Q/G/B/K/H/X/Y/Z/Y3/Y4/T/I/V/O/E`).
-   For per-frame `M`, include every over-limit frame and label it `WARNING`.
-   `C` is diagnostic and must never create an over-limit event or alter the
-   gate status. For cumulative `S/D/R`
-   and sticky-peak `J`, include only transitions to a new over-limit value
-   rather than repeating unchanged state on every later frame. A gate value
-   equal to its limit is not an overage.
-5. Publish the exact PNG to a public Gist:
+   - expected and observed frame counts;
+   - gate maxima and limits;
+   - descriptive row labels;
+   - palette boundaries;
+   - frame 0 is blank in every metric row;
+   - the terminal hold is absent from cadence statistics;
+   - edge cadence observations remain visible but are absent from the ALERT
+     count: first/last four content frames at 30 fps and two at 15 fps.
 
-```sh
-tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  videos/STEM_hudline.png \
-  --description "SEGA-CD FMV playback HUD timeline: short run label"
-```
+5. Generate the exact warning/over-limit report:
 
-6. Show the image inline in the conversation and provide the Gist page plus raw
-   PNG URL. Do this after every completed recording, whether the gate passes or
-   fails. Public Gist publication is authorized only when the user requested
-   this workflow.
-7. Require the matching `/timeline` PNG and layout receipt from the exact sim
-   decision log used to build the recording. If they are absent, generate and
-   publicly publish that timeline first. Immediately invoke `/mixline`, inspect
-   the aligned combined PNG, show it inline, and publish it to a public Gist.
-   Preserve the timeline, hudline, and mixline layout/Gist receipts. This is
-   mandatory for every hudline, including `FAIL` and incomplete-loop evidence;
-   do not finish the workflow with only the hudline.
+   ```sh
+   tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
+     logs/RUN_hud.tsv \
+     --gate-json logs/RUN_hud_gate.json \
+     --output STEM_emu_hud_warnings.md
+   ```
+
+   Cumulative `sector_slip`, `control_desync`, and `audio_resync` fields and
+   sticky `prgbuf_jitter_peak_kib` produce events only when their value
+   changes. `vblank_spill` produces a warning for every over-limit frame.
+   `cd_wait_count` is diagnostic and never creates an over-limit event.
+
+6. Require the matching `/timeline` PNG and receipt from the exact sim
+   decisions. Generate it when absent, then invoke `/mixline`. Do not resize
+   either graph.
+
+7. Publish images only when the user requested this publication workflow or
+   an enclosing upload workflow authorizes it. Use
+   `.agents/skills/timeline/scripts/publish_gist.py`, preserve its receipts,
+   and show the local image in the conversation.
 
 ## Image contract
 
-- Use the complete first movie loop. For an explicitly failed incomplete-loop
-  gate, draw the complete observed prefix on the expected full-movie frame
-  axis, visibly shade and label the unobserved suffix, and state the
-  expected/observed counts in the heading. Frame 0 keeps its horizontal
-  position for alignment, but all metric rows are blank there and it affects
-  no gate, aggregate, or scale.
-- Keep `/timeline`'s horizontal contract: left edge 220 px, the same automatic
-  pixels-per-frame rule, and `x = 220 + frame * pixels_per_frame`.
-- Put `VBLANK` first. Derive it from the difference between consecutive
-  `capture_first` values: because HUD `F` is published with the displayed
-  image, this is the number of scanouts for which that content frame was
-  actually visible. Draw the expected cadence
-  (`vsync_n_for_fps(content_fps)`, so 15 fps is 4) as a green guide line. Use
-  neutral gray for healthy samples and yellow for nonzero deviations.
-  Leave frame 0 and the final frame unknown and exclude both from the
-  statistics: frame 0 is untimed boot staging and the final span is the
-  recorder's terminal hold, not playback cadence. For 24 fps, retain the
-  measured row but defer its normal-line and warning rule until its 2/3 cadence
-  is specified.
-- Include the values-only HUD fields `S/D/R/L/C/W/M/A/U/N/J`, plus
-  `Q/V/O/E`, `G/K`, `H/X`, and `Y/O/Z/Y3/Y4/T/I` whenever present. Decode packed `G` bit 15 into
-  a separate `B` row. Split `X` into its high-byte complete-frame lead and
-  low-byte current-slot sector rows. `F` is the x-axis. Do not allocate a
-  separate `P` row: palette is
-  represented by the `Pxx` switch labels and vertical boundaries on the shared
-  horizontal axis.
-- Put the five upload-gate rows first and show their exact limits:
-  `S/D/R/M/J`. Show the cadence's normal jitter interval separately from the
-  absolute J gate limit. Keep `S/D/R` at 23 px (half the normal row height)
-  with no unit subheading, but use the same heading font size as every other
-  HUD metric. Put `C` first among the diagnostic rows and do not draw a gate
-  line for it.
-- When a matching GPGX transfer TSV is supplied, put its diagnostic block
-  immediately after `S/D/R/M/J`: pattern DMA blank/active words, CPU
-  direct-plus-repair blank/active-edge words, name-table DMA blank/active
-  words, and pattern DMA command count. Use one common scale for the four
-  pattern word rows. Keep CPU V-counter boundary words in the extraction TSV
-  and add them to the displayed active row with an explicit `*` label; do not
-  silently classify them as blank. These are diagnostic rows and do not alter
-  the upload gate.
-- Follow with the remaining diagnostic, player-state, Sub, Main, and phase
-  rows. Render `Q` as two derived rows when present: nonnegative minimum
-  balance and positive underflow debt. Render `G` in 30.72 us ticks, `B` as a
-  Boolean APPLY-block row, `K` as a cumulative MSF-gap row, `H` as exact
-  32-byte-pattern occupancy with the physical back-pressure guide, and `X` as
-  separate complete-frame and current-slot-sector rows. Render
-  `Y/Z/Y3/Y4` as exact logical pattern words (16 words per 32-byte pattern), `T` as
-  the count of fresh VBlank budgets opened, and `I` as the pattern-exit V-counter. Preserve HUD units
-  instead of normalizing each recording to its
-  observed peak. Every HUD vertical axis shows only its maximum label; omit
-  all midpoint and zero labels.
-- Preserve the established per-metric colors for normal playback values:
-  C yellow, M orange, J, Q, G, H, and W purple, L and X blue, A pink, U cyan, N orange, and
-  the corresponding established colors for V/O/E. Only override that metric
-  color when the individual sample is `WARNING` or `FAIL`; use yellow for a
-  warning and red for a failure. `C` always keeps its diagnostic color because
-  it has no gate severity. Do not recolor an entire row because another frame
-  or another metric changed the overall gate status.
-  Keep the guide scale colorful: gate limits are orange, J's normal jitter
-  interval is yellow, and the VBLANK normal cadence is green.
-- Show horizontal frame labels as hexadecimal `f0xHEX`. Show every HUD
-  vertical-axis maximum and gate/normal limit as `0xHEX`. Full 8-bit rows use
-  the compact row height. Keep the unit subheading at 13 px.
-- `/mixline` consumes this image and its layout receipt directly. Any hudline
-  row-height, scale, or colour change must therefore appear automatically in
-  the immediately generated mixline without a second hard-coded layout.
-- Write a `<output>.json` layout receipt containing the input hashes, frame
-  mapping, expected and observed frame counts, row geometry, fixed scales,
-  gate limits, `C/A` minimum, mean, median, and maximum, optional G statistics
-  and B frame count, optional H/X and Y/O/Z/Y3/Y4/T/I maxima, and recording identity. `/mixline`
-  should consume this receipt rather than rediscovering geometry from pixels.
+- Frame axis: `x = 220 + frame * pixels_per_frame`.
+- First row: derived displayed VBlanks per content frame. Frame 0 and the
+  terminal frame are unknown. Fixed 15 fps expects four VBlanks and fixed
+  30 fps expects two. Delivery-paced cadence has no fixed guide. At fixed
+  cadence, observations in the first/last four content frames at 30 fps and
+  two at 15 fps stay plotted as diagnostics but do not raise ALERT.
+- Gate rows, in descriptive order:
+  `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
+  `prgbuf_jitter_peak_kib`.
+- Diagnostic rows when present:
+  `pump_gap_ticks`, `msf_gap_recoveries`, `apply_backpressure`,
+  `reader_ahead_frames`, `reader_slot_sector`, `transfer_vblanks`,
+  `transfer_end_vcounter`, `cd_wait_count`, `audio_lead_256b`,
+  `sub_wait_scanlines`, `adpcm_decode_units`, `transfer_ticks`, `cold_runs`,
+  `flip_vcounter`, `first_share_exit_vcounter`, and `pass2_delay_q4`.
+- The palette segment is a switch label and vertical boundary, not a separate
+  value row.
+- Frame 0 keeps its horizontal cell for alignment but contributes to no bar,
+  maximum, statistic, event, or scale.
+- Preserve native units and hexadecimal axis labels.
+- Gate limits are orange, the normal jitter interval is yellow, and the
+  normal cadence guide is green.
+- The receipt records row geometry, hashes, expected/observed frames, gate
+  limits, descriptive diagnostic maxima, statistics, and recording identity.
 
-## Interpretation safeguards
+## Gate interpretation
 
-- `S`, `D`, and `R` are cumulative counters; their transition is the event.
-- Frame 0 is not a playback measurement. Its HUD values must never be plotted,
-  reported as events, or included in maxima, minima, rates, or scales.
-- `VBLANK` is derived after recording from consecutive displayed `F`
-  transitions; it is not another player HUD field. A 15 fps frame at 4 is
-  normal, while every other value is a warning. This rule is deliberately not
-  generalized to 24 fps yet.
-- `J` is a cumulative PrgBuf excess high-water mark, not current occupancy.
-- `Q` is the signed minimum logical PrgBuf balance reached during one frame in
-  exact 32-byte patterns. Raw values `8000` through `FFFF` are negative; render
-  their magnitude as underflow debt instead of treating them as a high positive
-  occupancy. `Q` is diagnostic and never changes the upload gate.
-- `G` is the longest interval outside a Sub CDC service opportunity; its
-  stopwatch origin is restarted after sector transfer and recovery work. `B`
-  proves APPLY back-pressure rejected a control-sector pump. `K` is the
-  MSF-gap subset of cumulative `S`, so `(S-K) & 0xFF` is CDC_TRN retry
-  exhaustion.
-- `H` is the exact per-frame physical PrgBuf peak in 32-byte patterns, unlike
-  sticky whole-run `J`. `X` packs the CD reader's complete-frame lead in its
-  high byte and current-slot sector position in its low byte. Read them
-  together to distinguish useful prefetch from a payload back-pressure event.
-  These fields are diagnostic and never change the upload gate.
-- `Y/Z/Y3/Y4` are exact logical pattern-word shares in the first four runtime
-  VBlank budgets; weighted CPU/DMA capacity cost is separate. `O/I` are the
-  current frame's first/final pattern-exit V-counters, and `T` is the number
-  of budgets opened. Use `O=00..DF` to identify a first share that ran into
-  active display despite the model, and use `I` for the final tail. `T>N` at
-  fixed cadence is a warning; the word shares and phases are diagnostic.
-- When a gate fails, never report only the maximum. Include the over-limit
-  table from `report_overages.py` so the exact workload and phase values at
-  each gate event are preserved. Keep VBLANK warnings aggregate-only.
-- `C` is diagnostic only: it has no gate line and never changes gate or alert.
-  Nonzero `M` is not automatically a failure; compare it with the
-  cadence-specific gate line.
-- `V` displayed on frame F describes the flip that published frame F-1.
-  `O` and `E` belong to frame F.
-- OCR confidence and sample repetition are extraction evidence, not player HUD
-  fields. Keep their minima/totals in the heading rather than inventing rows.
-- Call an emulator capture an emulator recording, not a physical-hardware
-  recording.
+Schema 12 gate fields are:
+
+```text
+sector_slip control_desync audio_resync vblank_spill
+prgbuf_jitter_peak_kib
+```
+
+`vblank_spill` is warning-only. The other four fields fail when they exceed
+their limits. Fixed-cadence `transfer_vblanks` above the cadence interval and
+derived visible-duration misses outside the cadence edge exception are also
+warnings. The edge exception affects only the derived display-duration alert;
+it does not waive gate fields or `transfer_vblanks`. `cd_wait_count`,
+`adpcm_decode_units`, `pump_gap_ticks`, APPLY back-pressure, reader lead, and
+transfer phases are diagnostic.
+
+Always preserve minimum, mean, median, maximum, and sample count for
+`cd_wait_count` and `adpcm_decode_units`; do the same for `pump_gap_ticks` when
+present. Report APPLY back-pressure frame count and reader/transfer maxima.
 
 ## Resource
 
-`scripts/render_hudline.py` is the canonical renderer and
-`scripts/report_overages.py` is the canonical over-limit event reporter.
-Update and test these scripts instead of writing one-off plots or tables.
+`scripts/render_hudline.py` is the canonical renderer.
+`scripts/report_overages.py` is the canonical event reporter. Update and test
+them rather than creating one-off plots.

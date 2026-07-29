@@ -17,11 +17,12 @@ Mechanism being modelled (boot/movieplay_ip.s):
 
 Per frame n+1 the Main-side completion is approximated from the DEBUG HUD:
 
-    E = flip_n + K0 + K1*n_upd + W*LINE + U*TICK
+    completion = flip_n + K0 + K1*n_upd
+                 + sub_wait_scanlines*LINE + transfer_ticks*TICK
 
-where W (sub_wait_lines) and U (main_pattern_ticks, which already includes
+where `sub_wait_scanlines` and `transfer_ticks` (which already includes
 Pass2's internal wait_vb_start spins) come from the recording's HUD OCR
-series, and K0/K1 absorb parse + bitmap + blit + HUD prep.  The model then
+series, while K0/K1 absorb parse + bitmap + blit + HUD prep. The model then
 applies the arm/guard rules on the real VBlank grid and reports every frame
 whose flip lands 3+ fields after the previous one.  K0, K1, and the blank
 phase offset are calibrated by sweeping until the observed break set is
@@ -30,7 +31,7 @@ reproduced (gates G2/G3 of the investigation plan).
 Usage:
   tools/python.sh harness/cold_cap_model/model.py \
       --frames frames_195.tsv \
-      --hud videos/SonicJamOp_H40_cold195_emu_hud.tsv \
+      --hud logs/SonicJamOp_H40_cold195_emu_hud.tsv \
       [--k0-us N] [--k1-ns N] [--sweep]
 """
 
@@ -66,8 +67,8 @@ def load_joined(frames_tsv: Path, hud_tsv: Path):
             p = packs[f]
             rows.append(dict(
                 frame=f,
-                w_lines=int(r["sub_wait_lines"]),
-                u_ticks=int(r["main_pattern_ticks"]),
+                w_lines=int(r["sub_wait_scanlines"]),
+                u_ticks=int(r["transfer_ticks"]),
                 samples=int(r["sample_count"]),
                 n_upd=int(p["n_upd"]),
                 pal=int(p["pal_switch"]),

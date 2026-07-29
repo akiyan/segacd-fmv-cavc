@@ -28,47 +28,46 @@ class AnalyzeTest(unittest.TestCase):
         self.assertEqual([[2, 3], [5]], [[row.frame for row in item] for item in ranges])
 
         hud = {
-            1: ANALYZE.HudRow(1, 0, 0, 20, 0),
-            2: ANALYZE.HudRow(2, 0, 0, 3, 0),
-            3: ANALYZE.HudRow(3, 1, 0, -1, 1),
-            4: ANALYZE.HudRow(4, 1, 1, 40, 0),
-            5: ANALYZE.HudRow(5, 3, 1, 10, 0),
+            1: ANALYZE.HudRow(1, 0, 0),
+            2: ANALYZE.HudRow(2, 0, 0),
+            3: ANALYZE.HudRow(3, 1, 0),
+            4: ANALYZE.HudRow(4, 1, 1),
+            5: ANALYZE.HudRow(5, 3, 1),
         }
-        self.assertEqual([3, 5], ANALYZE.transition_frames(hud, "slip"))
-        self.assertEqual([4], ANALYZE.transition_frames(hud, "resync"))
         self.assertEqual(
-            [[1, 2, 3], [5]],
-            [
-                [row.frame for row in item]
-                for item in ANALYZE.contiguous_live_ranges(hud, 20)
-            ],
+            [3, 5],
+            ANALYZE.transition_frames(hud, "sector_slip"),
+        )
+        self.assertEqual(
+            [4],
+            ANALYZE.transition_frames(hud, "audio_resync"),
         )
 
     def test_poll_gap_backpressure_and_scanout_diagnostics(self) -> None:
         hud = {
             10: ANALYZE.HudRow(
-                10, 0, 0, None, None,
+                10, 0, 0,
                 capture_first=100,
-                poll_gap_ticks=275,
-                apply_guard_blocked=1,
-                msf_gap_count=0,
-                trn_retry_count=0,
+                pump_gap_ticks=275,
+                apply_backpressure=1,
+                msf_gap_recoveries=0,
+                transport_retry_recoveries=0,
             ),
             11: ANALYZE.HudRow(
-                11, 1, 0, None, None,
+                11, 1, 0,
                 capture_first=103,
-                poll_gap_ticks=280,
-                apply_guard_blocked=0,
-                msf_gap_count=1,
-                trn_retry_count=0,
+                pump_gap_ticks=280,
+                apply_backpressure=0,
+                msf_gap_recoveries=1,
+                transport_retry_recoveries=0,
             ),
             12: ANALYZE.HudRow(
-                12, 1, 0, None, None,
+                12, 1, 0,
                 capture_first=105,
-                poll_gap_ticks=276,
-                apply_guard_blocked=0,
-                msf_gap_count=1,
-                trn_retry_count=0,
+                pump_gap_ticks=276,
+                apply_backpressure=0,
+                msf_gap_recoveries=1,
+                transport_retry_recoveries=0,
             ),
         }
         self.assertEqual([10], ANALYZE.apply_block_frames(hud))
@@ -84,8 +83,8 @@ class AnalyzeTest(unittest.TestCase):
             ANALYZE.TimelineRow(2, 100),
         ]
         hud = {
-            1: ANALYZE.HudRow(1, 0, 0, 4, 0),
-            2: ANALYZE.HudRow(2, 1, 0, -2, 2),
+            1: ANALYZE.HudRow(1, 0, 0),
+            2: ANALYZE.HudRow(2, 1, 0),
         }
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -97,7 +96,7 @@ class AnalyzeTest(unittest.TestCase):
             events_text = events_path.read_text(encoding="utf-8")
         self.assertIn("\t", ranges_text.splitlines()[0])
         self.assertIn("\t", events_text.splitlines()[0])
-        self.assertIn("\t-2\t2", events_text)
+        self.assertIn("sector_slip", events_text)
         self.assertIn("prior_apply_block_frame", events_text.splitlines()[0])
 
 

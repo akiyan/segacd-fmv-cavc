@@ -38,15 +38,23 @@ Prg/Word source boundaries. The last value is measured by mapping existing
 Word sources back to Prg while preserving slot order and DicBuf boundaries.
 
 ```sh
+BAD_APPLE_SIM="$(tools/python.sh tools/encode_config.py \
+  profiles/bad-apple.toml --print-sim-output)"
+SONIC_SIM="$(tools/python.sh tools/encode_config.py \
+  profiles/sonic-jam-op.toml --print-sim-output)"
+SONIC_SHORT_SIM="$(tools/python.sh tools/encode_config.py \
+  harness/wordbuf_ring/profiles/issue64-sonic-short.toml --print-sim-output)"
+BAD_APPLE_SHORT_SIM="$(tools/python.sh tools/encode_config.py \
+  harness/wordbuf_ring/profiles/issue64-bad-apple-short.toml --print-sim-output)"
 tools/python.sh harness/wordbuf_ring/measure_baseline.py \
   --case bad-apple-full \
-    videos/BadApple_H40_320x224_adpcm22_cold210/tmp/decisions.pkl \
+    "$BAD_APPLE_SIM/decisions.pkl" \
   --case sonic-full \
-    videos/SonicJamOp_H40_288x200_adpcm22_cold210/tmp/decisions.pkl \
+    "$SONIC_SIM/decisions.pkl" \
   --case sonic-short \
-    videos/SonicJamOp_H40_288x200_adpcm22_issue64_short/tmp/decisions.pkl \
+    "$SONIC_SHORT_SIM/decisions.pkl" \
   --case bad-apple-short \
-    videos/BadApple_H40_320x224_adpcm22_issue64_short/tmp/decisions.pkl \
+    "$BAD_APPLE_SHORT_SIM/decisions.pkl" \
   --output harness/wordbuf_ring/baseline.tsv
 ```
 
@@ -71,9 +79,11 @@ Prg sector does not fit. Both WordBufs have independent occupancy and deadline
 checks.
 
 ```sh
+BAD_APPLE_SHORT_SIM="$(tools/python.sh tools/encode_config.py \
+  harness/wordbuf_ring/profiles/issue64-bad-apple-short.toml --print-sim-output)"
 tools/python.sh harness/wordbuf_ring/model_ring.py \
   --decisions \
-    videos/BadApple_H40_320x224_adpcm22_issue64_short/tmp/decisions.pkl \
+    "$BAD_APPLE_SHORT_SIM/decisions.pkl" \
   --output /tmp/issue64-ring-model.tsv
 ```
 

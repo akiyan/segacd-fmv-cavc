@@ -10,8 +10,9 @@ CD slot schedule (control/payload sectors, rate lead).
 Supports the current TTRC v22 stream, including PSUP v3 variable Word-RAM
 preload capacities.  The fixed per-frame audio size from HEADER.DAT locates
 the cold-run suffix: `n_runs`, then the run descriptors. The descriptors are
-cross-validated against the update entries. The low byte of `n_runs` can also be checked
-against the DEBUG HUD `N` column of a recording of the same stream.
+cross-validated against the update entries. The low byte of `n_runs` can also
+be checked against the DEBUG HUD `cold_runs` column of a recording of the same
+stream.
 
 Usage:
   tools/python.sh harness/cold_cap_model/extract_frames.py \
@@ -309,28 +310,33 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
 
 
 def cross_check_hud(rows: list[FrameRow], hud_tsv: Path) -> None:
-    """Verify parsed n_runs low bytes against a HUD OCR series (column N)."""
+    """Verify parsed run-count low bytes against a HUD OCR series."""
     by_frame = {}
     with hud_tsv.open() as fh:
         for rec in csv.DictReader(fh, delimiter="\t"):
             if rec["loop"] != "0":
                 continue
-            by_frame[int(rec["frame"])] = int(rec["cold_runs_low8"])
+            by_frame[int(rec["frame"])] = int(rec["cold_runs"])
     mismatches = []
     checked = 0
     for row in rows:
-        hud_n = by_frame.get(row.frame)
-        if hud_n is None:
+        hud_cold_runs = by_frame.get(row.frame)
+        if hud_cold_runs is None:
             continue
         checked += 1
-        if row.n_runs & 0xFF != hud_n:
-            mismatches.append((row.frame, row.n_runs, hud_n))
+        if row.n_runs & 0xFF != hud_cold_runs:
+            mismatches.append((row.frame, row.n_runs, hud_cold_runs))
     if mismatches:
-        for frame, n_runs, hud_n in mismatches[:10]:
+        for frame, n_runs, hud_cold_runs in mismatches[:10]:
             print(f"  MISMATCH frame {frame}: parsed n_runs={n_runs} "
-                  f"HUD N={hud_n}", file=sys.stderr)
-        die(f"{len(mismatches)}/{checked} HUD N mismatches against {hud_tsv}")
-    print(f"HUD cross-check OK: {checked} frames match column N ({hud_tsv})")
+                  f"HUD cold_runs={hud_cold_runs}", file=sys.stderr)
+        die(
+            f"{len(mismatches)}/{checked} HUD cold_runs mismatches "
+            f"against {hud_tsv}"
+        )
+    print(
+        f"HUD cross-check OK: {checked} frames match cold_runs ({hud_tsv})"
+    )
 
 
 def main() -> None:
@@ -341,7 +347,7 @@ def main() -> None:
                     help="output TSV path")
     ap.add_argument("--hud-tsv", type=Path,
                     help="optional HUD OCR TSV of the same stream; "
-                         "validates parsed n_runs against column N")
+                         "validates parsed n_runs against cold_runs")
     args = ap.parse_args()
     if args.tsv.suffix.lower() != ".tsv":
         ap.error("--tsv output must use the .tsv extension")

@@ -16,7 +16,7 @@ master_filter = "setsar=1,guided=radius=1:eps=0.002:planes=15"
 raw_filter = "setsar=1"
 
 [output]
-directory = "videos/SonicJamOp_H40_288x200_adpcm22_issue64_short/tmp"
+directory = "tmpfs/SonicJamOp_H40_288x200_adpcm22_issue64_short/sim"
 reuse = false
 emit_decisions = true
 

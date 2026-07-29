@@ -13,7 +13,7 @@ fixed-cadence control consumer.
 The harness replays that producer lead through the exact BODY order:
 `control`, then `payload`, then `pad`. It advances APPLY by complete 2 KiB
 control sectors and advances the consumer by each control block's exact
-`total_len`. A predicted `B` requires both:
+`total_len`. A predicted `apply_backpressure` event requires both:
 
 - queued APPLY data is at or above the player's 30 KiB pump guard; and
 - the next physical BODY sector is control.
@@ -28,8 +28,10 @@ schedule's current rate debt. `--schedule-only` instead uses the conservative
 Replay H40 Bad Apple against a diagnostic HUD:
 
 ```sh
+SIM_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/bad-apple.toml --print-sim-output)"
 tools/python.sh harness/apply_backpressure/analyze.py \
-  videos/BadApple_H40_320x224_adpcm22/tmp/decisions.pkl \
+  "$SIM_OUT/decisions.pkl" \
   --hud-tsv logs/HUD_hud.tsv \
   --output-tsv logs/HUD_apply_backpressure.tsv
 ```
@@ -38,7 +40,7 @@ Run the schedule-only proof:
 
 ```sh
 tools/python.sh harness/apply_backpressure/analyze.py \
-  videos/BadApple_H40_320x224_adpcm22/tmp/decisions.pkl \
+  "$SIM_OUT/decisions.pkl" \
   --schedule-only \
   --output-tsv logs/BadApple_schedule_apply_backpressure.tsv
 ```

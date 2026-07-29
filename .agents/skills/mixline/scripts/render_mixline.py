@@ -16,6 +16,7 @@ SCRIPT = Path(__file__).resolve()
 REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
+import analysis_logs  # noqa: E402
 import analysis_style  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 import hud_gate  # noqa: E402
@@ -198,12 +199,20 @@ def main() -> None:
     timeline_layout_path = (
         args.timeline_layout.resolve()
         if args.timeline_layout
-        else Path(str(args.timeline.absolute()) + ".json")
+        else analysis_logs.metadata_path(
+            timeline_path,
+            kind="timeline-layout",
+            sha256=digest(timeline_path),
+        )
     )
     hudline_layout_path = (
         args.hudline_layout.resolve()
         if args.hudline_layout
-        else Path(str(args.hudline.absolute()) + ".json")
+        else analysis_logs.metadata_path(
+            hudline_path,
+            kind="hudline-layout",
+            sha256=digest(hudline_path),
+        )
     )
     timeline = load_receipt(timeline_layout_path, "timeline")
     hudline = load_receipt(hudline_layout_path, "hudline")
@@ -357,20 +366,24 @@ def main() -> None:
     limits = hudline["gate_limits"]
     gate_text = "  ".join(
         f"{key} {int(maxima[key])}/{int(limits[key])}"
-        for key in ("S", "D", "R", "M", "J")
+        for key in limits
     )
-    diagnostic_c = int(
-        hudline.get("diagnostic_maxima", {}).get("C", 0)
+    cd_wait_max = int(
+        hudline.get("diagnostic_maxima", {}).get("cd_wait_count", 0)
     )
-    diagnostic_g = hudline.get("diagnostic_maxima", {}).get("G")
-    diagnostic_g_text = (
-        f"G diagnostic max {int(diagnostic_g)} ticks | "
-        if diagnostic_g is not None else ""
+    pump_gap_max = hudline.get(
+        "diagnostic_maxima",
+        {},
+    ).get("pump_gap_ticks")
+    pump_gap_text = (
+        f"pump gap diagnostic max {int(pump_gap_max)} ticks | "
+        if pump_gap_max is not None else ""
     )
-    apply_guard_frames = hudline.get("apply_guard_blocked_frames")
-    apply_guard_text = (
-        f"B APPLY block {int(apply_guard_frames)} frames | "
-        if apply_guard_frames is not None else ""
+    apply_backpressure_frames = hudline.get("apply_backpressure_frames")
+    apply_backpressure_text = (
+        "APPLY back-pressure "
+        f"{int(apply_backpressure_frames)} frames | "
+        if apply_backpressure_frames is not None else ""
     )
     vblank_text = ""
     if hudline.get("display_vblank_warning_supported"):
@@ -379,15 +392,18 @@ def main() -> None:
             f"{float(hudline['display_vblank_warning_rate_percent']):.2f}%/"
             f"{int(hudline['display_vblank_warning_count'])}/"
             f"{int(hudline['display_vblank_evaluated_total'])}"
+            f" active; edge-exempt "
+            f"{int(hudline.get('display_vblank_exempted_warning_count', 0))}"
         )
     draw.text(
         (24, 127),
         (
             f"Playback /hudline | gate maxima / limits  {gate_text} | "
-            f"C diagnostic max {diagnostic_c} | "
-            f"{diagnostic_g_text}"
-            f"{apply_guard_text}"
-            f"J normal {int(hudline['jitter_normal_kib'])} KiB | "
+            f"cd_wait_count diagnostic max {cd_wait_max} | "
+            f"{pump_gap_text}"
+            f"{apply_backpressure_text}"
+            "PrgBuf jitter normal "
+            f"{int(hudline['jitter_normal_kib'])} KiB | "
             f"OCR {float(hudline.get('ocr_confidence_min', 0.0)):.3f}"
             f"{vblank_text}"
         ),
@@ -467,29 +483,20 @@ def main() -> None:
             "source_segments": source_segments,
         })
 
-    output = (
+    requested_output = (
         args.output
-        or REPO / "videos" / f"{timeline_path.stem}_mixline.png"
-    ).absolute()
-    output.parent.mkdir(parents=True, exist_ok=True)
+        or Path(f"{timeline_path.stem}_mixline.png")
+    )
     lease = None
-    actual_output = output
+    actual_output = requested_output
     try:
-        videos = (REPO / "videos").absolute()
-        try:
-            output.relative_to(videos)
-        except ValueError:
-            pass
-        else:
-            actual_output, lease = tmpfs_workspace.allocate_file(
-                output,
-                kind="mixline-png",
-                key=f"{timeline_path.stem}-{hudline_path.stem}",
-                required_bytes=max(width * height * 3, 128 * 1024 ** 2),
-            )
+        actual_output, lease = tmpfs_workspace.allocate_file(
+            requested_output,
+            kind="mixline-png",
+            key=f"{timeline_path.stem}-{hudline_path.stem}",
+            required_bytes=max(width * height * 3, 128 * 1024 ** 2),
+        )
         combined.save(actual_output, optimize=True)
-        if lease is not None:
-            tmpfs_workspace.publish_alias(output, actual_output)
     finally:
         if lease is not None:
             lease.release()
@@ -497,8 +504,8 @@ def main() -> None:
     receipt = {
         "schema_version": 3,
         "kind": "mixline",
-        "image": str(output),
-        "image_sha256": digest(output.resolve()),
+        "image": str(actual_output),
+        "image_sha256": digest(actual_output),
         "timeline_image": str(timeline_path),
         "timeline_image_sha256": digest(timeline_path),
         "timeline_layout": str(timeline_layout_path),
@@ -534,12 +541,16 @@ def main() -> None:
             *panel_receipts,
         ],
     }
-    receipt_path = Path(str(output) + ".json")
+    receipt_path = analysis_logs.metadata_path(
+        requested_output,
+        kind="mixline-layout",
+        sha256=receipt["image_sha256"],
+    )
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(output)
+    print(actual_output)
     print(receipt_path)
 
 

@@ -15,7 +15,7 @@ master_filter = "setsar=1,crop=640:376:0:52,scale=1280:752:flags=lanczos,hqdn3d=
 raw_filter = "setsar=1,crop=640:376:0:52,scale=320:172:flags=lanczos,pad=320:224:0:26:color=black,setsar=1"
 
 [output]
-directory = "videos/ps2_sakura_op_H40_320x224_adpcm22/tmp"
+directory = "tmpfs/ps2_sakura_op_H40_320x224_adpcm22/sim"
 reuse = false
 emit_decisions = true
 

@@ -13,7 +13,7 @@ height = 224
 fit = "pad"
 
 [output]
-directory = "videos/lunar_sss_op_H40_320x224_adpcm22/tmp"
+directory = "tmpfs/lunar_sss_op_H40_320x224_adpcm22/sim"
 reuse = true
 emit_decisions = true
 

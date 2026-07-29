@@ -117,8 +117,8 @@ tools/python.sh harness/gpgx_logvdp/extract_frame_tsv.py \
 The output separates:
 
 - pattern DMA words transferred in blanking and active display;
-- CPU pattern words written in blanking, active display, and the two ambiguous
-  LOGVDP V-counter boundary representations;
+- one-word CPU pattern repairs written after DMA in blanking, active display,
+  and the two ambiguous LOGVDP V-counter boundary representations;
 - name-table DMA words transferred in blanking and active display; and
 - pattern DMA command and update counts.
 
@@ -126,15 +126,15 @@ The extractor identifies the ordinary pattern-DMA and fixed 1792-word
 name-table-DMA call sites from the trace instead of depending on fixed program
 counter values. DMA-generated VRAM writes carry those call-site PCs and are
 excluded from the CPU totals. In the fixed H40 player, the remaining per-frame
-VRAM writes are the one- or two-tile direct path and one-word DMA repairs.
+VRAM writes are the one-word DMA repairs.
 If the safety recording continues into another movie loop, extraction stops
 after the complete first loop named by the HUD TSV; the later trace remains in
 the compressed sidecar but does not extend the frame axis.
 
 The extractor validates every timed frame with at most four transfer budgets:
-pattern DMA words plus CPU-written pattern words must exactly equal the
-logical pattern words in the HUD TSV. It also writes a JSON receipt beside the
-TSV with source hashes, inferred call sites, phase rules, maxima, and the
+pattern DMA words plus the DMA first-word repair count must exactly equal the
+logical pattern workload in the HUD TSV. It also writes a JSON receipt beside
+the TSV with source hashes, inferred call sites, phase rules, maxima, and the
 number of validated frames. Frame 0 remains untimed and is not part of this
 equivalence check.
 

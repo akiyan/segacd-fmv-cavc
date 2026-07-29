@@ -1,34 +1,26 @@
 #!/usr/bin/env python3
-"""実機/エミュ録画のデバッグHUD（左上端、H32最大3行/H40最大2行）から各値を読む。
+"""Read descriptive fields from native DEBUG playback HUD recordings.
 
-HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値だけを描く:
-    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
-内部キー順は F/P/S/D/R/L/C/W/M/A/U/N/J。F は16進4桁、L は
-音声リードの上位byte（256B単位）、P/S/D/R/C/W/M/A/N はlow byteの
-16進2桁、U は16進4桁。U はMain pattern転送時間（Mega-CD stopwatchの
-30.72 us tick）、N はcold-run数の下位byte、J はfps由来の通常PrgBuf上限を超えた
-streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
-標準H32/H40 DEBUGは Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
-最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
-さらにG/K/H/Xを追加し、同じ54桁の論理列をH32は32 cell、H40は40 cellで折り返す。
-Gはframe内でSub CDC pump外にいた最大時間を30.72 us stopwatch tick単位で示し、
-KはMSF連番gapから再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureが
-control sector pumpを拒否したframeを示すB markerである。Hはframe内の物理PrgBuf
-最大占有量を32-byte pattern単位で示す。Xは上位byteに完了済みframe slotの先行数、
-下位byteに現在slot内のsector位置を格納する。
-再生開始前のplayer-only frame -1はF=FFFFで表す。これはOCR頭出し用の
-センチネルであり、sim frameでもHUD TSV rowでもない。
-各8x8セルの上段バーコードを直接4-bitとして読み、下段の小型hex字形とのNCCで
-信頼度を確認する。ネイティブ録画の原点(0,0)は即時判定し、位置がずれた画像だけ
-先頭4桁で原点を探索する。
+The standard layout has 39 digits. H32 wraps after 32 digits; H40 fits on one
+row. Small cumulative counters use one digit. The four-digit pattern-transfer
+word packs ``vblank_spill`` in its high nibble and ``transfer_ticks`` in its
+low 12 bits. The pump-gap word packs ``apply_backpressure`` in bit 15 and
+``pump_gap_ticks`` in its low 12 bits. The reader byte stores
+``reader_ahead_frames`` and ``reader_slot_sector`` as one nibble each.
 
-このモジュールの各HUD layoutは boot/movieplay_ip.s のprepare_dbgと一致させること
-（HUDレイアウトを変えたら両方直す）。
+Player-only frame -1 is displayed as ``frame=FFFF`` before playback. It is an OCR
+anchor, not a sim frame or HUD TSV row. Each 8x8 cell's top-row barcode is
+decoded directly as four bits; normalized cross-correlation against the small
+hex glyph below it supplies confidence. Native origin (0,0) is checked first,
+and only displaced captures need a four-digit frame-field scan.
 
-使い方:
+Keep every layout here synchronized with ``prepare_dbg`` in
+``boot/movieplay_ip.s``.
+
+Usage:
     from read_frameno import read_frameno, read_hud
-    n, conf = read_frameno(pil_img)              # 先頭4桁のフレーム番号のみ
-    hud = read_hud(pil_img)                       # {'F':(v,conf), 'P':..., 'L':...}
+    n, conf = read_frameno(pil_img)              # leading frame field only
+    hud = read_hud(pil_img)   # {'frame':(v,conf), 'palette_segment':..., ...}
 """
 import numpy as np
 
@@ -43,56 +35,47 @@ _T = {
     for value, rows in enumerate(gen_debugfont.ORDER)
 }
 
-# --- HUDレイアウト(boot/movieplay_ip.s の prepare_dbg と一致させる) ---
-CELL = 8                 # 1 HUDセル = 8px
+# --- HUD layout (must match prepare_dbg in boot/movieplay_ip.s) ---
+CELL = 8                 # one HUD cell = 8 px
 HUD_ROW = 0              # inactive Plane A movie table's top row
-HUD_FIELD_DIGITS = (     # 値のみ。field間の空けはない
-    ("F", 4),
-    ("P", 2),
-    ("S", 2),
-    ("D", 2),
-    ("R", 2),
-    ("L", 2),
-    ("C", 2),
-    ("W", 2),
-    ("M", 2),
-    ("A", 2),
-    ("U", 4),
-    ("N", 2),
-    ("J", 2),
+HUD_FIELD_DIGITS = (     # physical value cells; no separators
+    ("frame", 4),
+    ("palette_segment", 1),
+    ("sector_slip", 1),
+    ("control_desync", 1),
+    ("audio_resync", 1),
+    ("audio_lead_256b", 2),
+    ("cd_wait_count", 1),
+    ("sub_wait_scanlines", 2),
+    ("adpcm_decode_units", 2),
+    ("vblank_spill_transfer_ticks", 4),
+    ("cold_runs", 2),
+    ("prgbuf_jitter_peak_kib", 2),
+    ("flip_vcounter", 2),
+    ("first_share_exit_vcounter", 2),
+    ("pass2_delay_q4", 2),
+    ("pump_gap_apply_backpressure", 4),
+    ("msf_gap_recoveries", 1),
+    ("reader_ahead_slot", 2),
+    ("transfer_vblanks", 1),
+    ("transfer_end_vcounter", 2),
 )
-HUD_H40_FIELD_DIGITS = HUD_FIELD_DIGITS
-# H40 DEBUG builds with HUD_FLIP_FIELDS append one exact signed PrgBuf
-# diagnostic, then three flip-phase fields:
-# Q = per-frame minimum logical PrgBuf balance in 32-byte patterns. It is a
-#     four-digit signed 16-bit value (0000 empty, FFFF one-pattern underflow).
-# V = V-counter at the previous accepted flip, O = V-counter immediately after
-# this frame's first pattern-transfer share, and E = this frame's Pass2 entry
-# delay since the previous flip in 4-tick units (clamped FF).
-HUD_H40_FLIP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
-    ("Q", 4),
-    ("V", 2),
-    ("O", 2),
-    ("E", 2),
-)
-HUD_H40_POLL_GAP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
-    ("G", 4),
-    ("K", 2),
-    ("O", 2),
-    ("E", 2),
-)
-HUD_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
-    ("G", 4),
-    ("K", 2),
-    ("H", 4),
-    ("X", 4),
-    ("Y", 3),
-    ("Z", 3),
-    ("T", 1),
-    ("I", 2),
-    ("Y3", 3),
-    ("Y4", 3),
-)
+HUD_COMBINED_FIELD_DIGITS = HUD_FIELD_DIGITS
+
+_PACKED_FIELDS = {
+    "vblank_spill_transfer_ticks": (
+        ("vblank_spill", lambda value: (value >> 12) & 0xF),
+        ("transfer_ticks", lambda value: value & 0x0FFF),
+    ),
+    "pump_gap_apply_backpressure": (
+        ("pump_gap_ticks", lambda value: value & 0x0FFF),
+        ("apply_backpressure", lambda value: int(bool(value & 0x8000))),
+    ),
+    "reader_ahead_slot": (
+        ("reader_ahead_frames", lambda value: (value >> 4) & 0xF),
+        ("reader_slot_sector", lambda value: value & 0xF),
+    ),
+}
 
 
 def _make_layout(field_digits):
@@ -104,33 +87,36 @@ def _make_layout(field_digits):
     return tuple(fields), col
 
 
-HUD_LAYOUT, HUD_CELLS = _make_layout(HUD_FIELD_DIGITS)
-HUD_FIELDS = tuple(name for name, _col, _digits in HUD_LAYOUT)
-HUD_H40_LAYOUT, HUD_H40_CELLS = _make_layout(HUD_H40_FIELD_DIGITS)
-HUD_H40_FIELDS = tuple(name for name, _col, _digits in HUD_H40_LAYOUT)
-HUD_H40_FLIP_LAYOUT, HUD_H40_FLIP_CELLS = _make_layout(HUD_H40_FLIP_FIELD_DIGITS)
-HUD_H40_FLIP_FIELDS = tuple(name for name, _col, _digits in HUD_H40_FLIP_LAYOUT)
-HUD_H40_POLL_GAP_LAYOUT, HUD_H40_POLL_GAP_CELLS = _make_layout(
-    HUD_H40_POLL_GAP_FIELD_DIGITS
-)
-HUD_H40_POLL_GAP_FIELDS = tuple(
-    name for name, _col, _digits in HUD_H40_POLL_GAP_LAYOUT
-)
 HUD_H32_COMBINED_LAYOUT, HUD_H32_COMBINED_CELLS = _make_layout(
     HUD_COMBINED_FIELD_DIGITS
-)
-HUD_H32_COMBINED_FIELDS = tuple(
-    name for name, _col, _digits in HUD_H32_COMBINED_LAYOUT
 )
 HUD_H40_COMBINED_LAYOUT, HUD_H40_COMBINED_CELLS = _make_layout(
     HUD_COMBINED_FIELD_DIGITS
 )
-HUD_H40_COMBINED_FIELDS = tuple(
-    name for name, _col, _digits in HUD_H40_COMBINED_LAYOUT
-)
+HUD_LAYOUT = HUD_H32_COMBINED_LAYOUT
+HUD_CELLS = HUD_H32_COMBINED_CELLS
+HUD_H40_LAYOUT = HUD_H40_COMBINED_LAYOUT
+HUD_H40_CELLS = HUD_H40_COMBINED_CELLS
 HUD_H32_COMBINED_ROW_CELLS = 32
 HUD_H40_COMBINED_ROW_CELLS = 40
 H40_NATIVE_WIDTH = 320
+
+
+def hud_fields_for_layout(layout):
+    """Return unpacked descriptive fields in their physical display order."""
+    fields = []
+    for name, _col, _digits in layout:
+        fields.extend(
+            unpacked_name for unpacked_name, _decode
+            in _PACKED_FIELDS.get(name, ((name, None),))
+        )
+    return tuple(fields)
+
+
+HUD_FIELDS = hud_fields_for_layout(HUD_LAYOUT)
+HUD_H40_FIELDS = hud_fields_for_layout(HUD_H40_LAYOUT)
+HUD_H32_COMBINED_FIELDS = HUD_FIELDS
+HUD_H40_COMBINED_FIELDS = HUD_H40_FIELDS
 
 
 def hud_layout_field_position(layout, logical_col):
@@ -158,12 +144,8 @@ def hud_layout_dimensions(layout):
 
 
 def hud_common_layout_for_width(width):
-    """Return the legacy common H32/H40 layout from captured frame width.
-
-    H32 and H40 deliberately use the same 30-cell layout. Separate layout
-    objects remain for callers that retain native-mode metadata.
-    """
-    return HUD_H40_LAYOUT if width >= H40_NATIVE_WIDTH else HUD_LAYOUT
+    """Return the current standard layout from captured frame width."""
+    return hud_layout_for_width(width)
 
 
 def hud_layout_for_width(width):
@@ -264,7 +246,7 @@ def _find_origin(gray, required_width):
 
 
 def read_frameno(img):
-    """PIL Image または grayscale ndarray -> (frame_no, confidence)。F(先頭値)のみ。"""
+    """PIL Image または grayscale ndarray -> (frame_no, confidence)。"""
     gray = _gray(img)
     x0, y, fconf = _find_origin(gray, 4 * CELL)
     val, minsc = _read_hex(gray, x0, y)
@@ -274,8 +256,7 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Current native H32/H40 frames default to their 69-cell combined layouts.
-    Pass an explicit legacy layout when reading an older recording.
+    Current native H32/H40 frames default to their 39-cell standard layouts.
     """
     gray = _gray(img)
     if layout is None:
@@ -287,12 +268,21 @@ def read_hud(img, layout=None):
             f"HUD image is too short for {height_cells} rows: "
             f"{gray.shape[0]} pixels"
         )
-    out = {}
+    physical = {}
     for name, logical_col, digits in layout:
         val, minsc = _read_layout_hex(
             gray, x0, y, layout, logical_col, digits
         )
-        out[name] = (val, round(min(fconf, minsc), 3))
+        physical[name] = (val, round(min(fconf, minsc), 3))
+    out = {}
+    for name, _logical_col, _digits in layout:
+        value, confidence = physical[name]
+        packed = _PACKED_FIELDS.get(name)
+        if packed is None:
+            out[name] = (value, confidence)
+            continue
+        for unpacked_name, decode in packed:
+            out[unpacked_name] = (decode(value), confidence)
     return out
 
 
@@ -303,9 +293,8 @@ if __name__ == "__main__":
         image = Image.open(p)
         hud = read_hud(image)
         layout = hud_layout_for_width(image.width)
-        fields = tuple(name for name, _col, _digits in layout)
-        widths = {name: digits for name, _col, digits in layout}
+        fields = hud_fields_for_layout(layout)
         parts = " ".join(
-            "%s=%0*X(%.2f)" % (k, widths[k], hud[k][0], hud[k][1])
+            "%s=%X(%.2f)" % (k, hud[k][0], hud[k][1])
             for k in fields)
         print("%s -> %s" % (p, parts))

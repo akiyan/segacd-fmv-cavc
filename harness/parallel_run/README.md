@@ -11,13 +11,13 @@ enough work to overlap visibly on this host. The distinct H32/H40 stems also
 exercise independent build and video paths without making content itself
 another qualification variable.
 
-`tools/parallel_run.py` holds each profile's `videos/<stem>` lock for the whole
+`tools/parallel_run.py` holds each profile's artifact-stem lock for the whole
 local pipeline. The sim transfers its live tmpfs lease to the parent before
-exiting, so another allocation cannot evict the decision data between sim and
-pack. CPU-heavy stages use shared CPU tokens, GPU stages use the GPU token, and
-each `run_headless.sh` invocation uses an EMU token. Xvfb chooses a free display
-with `-displayfd`; an explicitly requested display fails if another server owns
-it.
+exiting, and the recording lease remains held through HUD extraction, so
+another allocation cannot evict live inputs. CPU-heavy stages use shared CPU
+tokens, GPU stages use the GPU token, and each `run_headless.sh` invocation uses
+an EMU token. Xvfb chooses a free display with `-displayfd`; an explicitly
+requested display fails if another server owns it.
 
 Interactive `$run` uses this orchestrator even for one profile. That rule is
 what preserves the pipeline-wide lock and lease when unrelated Codex sessions
@@ -83,8 +83,9 @@ and `MOVIE.DAT` for each profile) had identical SHA-256 values.
 The normal two-job pipeline completed through both HUD gates in 39.2 seconds
 with the default two EMU tokens. H40 and H32 each recorded 2,880 raw packets,
 produced a 2,278-frame bounded capture with 1,677,312 stereo PCM sample frames,
-and passed `S/D/R=0`, `M=1`, `J=0`. Xvfb selected separate displays `:2` and
-`:3`.
+and passed `sector_slip/control_desync/audio_resync=0`,
+`vblank_spill=1`, `prgbuf_jitter_peak_kib=0`. Xvfb selected separate displays
+`:2` and `:3`.
 
 Two unrelated one-profile orchestrator processes were also started without a
 shared job list. H40 passed through HUD in 46.7 seconds and H32 passed in 44.7

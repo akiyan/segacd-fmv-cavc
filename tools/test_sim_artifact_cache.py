@@ -72,14 +72,14 @@ class SimArtifactCacheTests(unittest.TestCase):
             first_env = {
                 **common,
                 "CBRSIM_SRC": "/one/movie.mp4",
-                "CBRSIM_OUT": "videos/one/tmp",
+                "CBRSIM_OUT": "tmpfs/one/sim",
                 "CBRSIM_REUSE": "0",
                 "CBRSIM_CONFIG": "/one/profile.toml",
             }
             second_env = {
                 **common,
                 "CBRSIM_SRC": "/two/renamed.mp4",
-                "CBRSIM_OUT": "videos/two/tmp",
+                "CBRSIM_OUT": "tmpfs/two/sim",
                 "CBRSIM_REUSE": "1",
                 "CBRSIM_CONFIG": "/two/renamed.toml",
             }

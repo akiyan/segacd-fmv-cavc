@@ -23,8 +23,10 @@ SCRIPT = Path(__file__).resolve()
 REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
+import analysis_logs  # noqa: E402
 import analysis_style as style  # noqa: E402
 import layout_preview as layout  # noqa: E402
+import r2v_model  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 
 
@@ -44,11 +46,12 @@ RUN_HEIGHT = 32
 R2V_HEIGHT = 32
 DIC_HEIGHT = 32
 BAND_HEIGHT = 32
-R2V_WORDS_PER_PATTERN = 16
-R2V_CPU_WORD_COST = 1
-R2V_DMA_REPAIR_WORDS = 1
-P125_H40_NAME_TABLE_WORDS = 64 * 28
-P125_CRAM_WORDS = 64
+R2V_WORDS_PER_PATTERN = r2v_model.PATTERN_WORDS
+R2V_PATTERN_WORD_COST = 1
+R2V_DMA_REPAIR_WORDS = r2v_model.DMA_REPAIR_WORDS
+P125_H40_NAME_TABLE_WORDS = (
+    r2v_model.H40_STAGE_PITCH * r2v_model.H40_STAGE_ROWS)
+P125_CRAM_WORDS = r2v_model.CRAM_WORDS
 P125_RUN_SPLIT_WORDS = 3400
 
 REQ_ORDER = tuple(style.REQ_TIMELINE_CATS)
@@ -63,13 +66,15 @@ REQUIRED_COLUMNS = {
     "cold_cap_tiles", "legend_raw", "legend_same", "legend_dic",
     "legend_prg", "legend_wr0", "legend_wr1", "legend_near",
     "legend_flbk", "legend_miss", "status_cold",
-    "status_prg", "status_wr0", "status_wr1", "status_dma", "status_run",
+    "status_prg", "status_wr0", "status_wr1", "status_r2v", "status_run",
+    "r2v_pattern_words", "r2v_repair_words", "r2v_name_table_words",
+    "r2v_cram_words", "r2v_short_runs",
     "body_raw_payload_bytes", "body_prg_payload_bytes",
     "body_payload_bytes", "body_control_bytes", "body_pad_bytes",
     "body_physical_bytes", "body_useful_bytes",
     "quality_budget_remaining_bytes",
 }
-OPTIONAL_COLUMNS = set()
+OPTIONAL_COLUMNS = {"status_dma"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -140,52 +145,67 @@ def r2v_scale_max(values: np.ndarray) -> int:
     return max(int(timed.max(initial=0)), 1)
 
 
+def req_cold_cap_y(
+    row_top: int,
+    row_height: int,
+    cells: float,
+    cold_cap_tiles: float,
+) -> int:
+    """Map the configured cold-tile cap onto the REQ row's cell scale."""
+    scale = max(float(cells), 1.0)
+    cap = min(max(float(cold_cap_tiles), 0.0), scale)
+    return row_top + row_height - 1 - int(
+        round((row_height - 1) * cap / scale)
+    )
+
+
 def calculate_r2v_words(
     pass2_words: np.ndarray,
     run_count: np.ndarray,
     short_run_count: np.ndarray,
     palette_switch: np.ndarray,
+    name_table_word_count: int | np.ndarray = P125_H40_NAME_TABLE_WORDS,
 ) -> dict[str, np.ndarray]:
-    """Return all p125 H40 VDP-memory payload words by component.
-
-    The packed workload marks one- and two-pattern runs as short.  p125 writes
-    those runs directly on the CPU, so their data words stay in ``pass2_words``
-    at 1x and add no DMA repair.  Every other ordinary run issues one DMA and
-    repairs its first destination word with one CPU write.  The fixed H40
-    64x28 name-table DMA includes the DEBUG HUD.  CRAM contributes 64 CPU words
-    only on palette-switch frames.
-    """
-
+    """Return VDP-memory words from an external packed-stream workload."""
     words = np.asarray(pass2_words, np.int64)
     runs = np.asarray(run_count, np.int64)
     short = np.asarray(short_run_count, np.int64)
-    palette = np.asarray(palette_switch, np.int64)
-    if (
-        words.shape != runs.shape
-        or words.shape != short.shape
-        or words.shape != palette.shape
-    ):
+    if np.any(words % R2V_WORDS_PER_PATTERN):
+        raise ValueError("R2V pattern words must be whole 16-word patterns")
+    if words.shape != runs.shape or words.shape != short.shape:
         raise ValueError("R2V workload columns must have matching shapes")
-    if (
-        np.any(words < 0)
-        or np.any(runs < 0)
-        or np.any(short < 0)
-        or np.any(palette < 0)
-    ):
-        raise ValueError("R2V workload values must be non-negative")
-    if np.any(short > runs):
+    if np.any(short < 0) or np.any(short > runs):
         raise ValueError("R2V short-run count exceeds total run count")
-    repairs = (runs - short) * R2V_DMA_REPAIR_WORDS
-    pattern = words * R2V_CPU_WORD_COST
-    name_table = np.full(words.shape, P125_H40_NAME_TABLE_WORDS, np.int64)
-    cram = (palette != 0).astype(np.int64) * P125_CRAM_WORDS
-    return {
-        "words": pattern + repairs + name_table + cram,
-        "pattern_words": pattern,
-        "repair_words": repairs,
-        "name_table_words": name_table,
-        "cram_words": cram,
+    return r2v_model.calculate_words(
+        words // R2V_WORDS_PER_PATTERN,
+        runs,
+        palette_switch,
+        name_table_word_count,
+    )
+
+
+def r2v_from_timeline(data: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
+    """Load the R2V values already used by the analysis status bar."""
+    result = {
+        "words": np.rint(data["status_r2v"]).astype(np.int64),
+        "pattern_words": np.rint(data["r2v_pattern_words"]).astype(np.int64),
+        "repair_words": np.rint(data["r2v_repair_words"]).astype(np.int64),
+        "name_table_words": np.rint(
+            data["r2v_name_table_words"]).astype(np.int64),
+        "cram_words": np.rint(data["r2v_cram_words"]).astype(np.int64),
+        "short_runs": np.rint(data["r2v_short_runs"]).astype(np.int64),
     }
+    calculated = (
+        result["pattern_words"] + result["repair_words"]
+        + result["name_table_words"] + result["cram_words"]
+    )
+    if not np.array_equal(calculated, result["words"]):
+        mismatch = int(np.flatnonzero(calculated != result["words"])[0])
+        raise SystemExit(
+            f"timeline R2V component mismatch at frame {mismatch}: "
+            f"{int(calculated[mismatch])} != "
+            f"{int(result['words'][mismatch])}")
+    return result
 
 
 def load_r2v_workload(
@@ -218,10 +238,8 @@ def load_r2v_workload(
         key: np.asarray([int(row[key]) for row in rows], np.int64)
         for key in required - {"frame"}
     }
-    expected_words = (
-        np.rint(np.asarray(data["status_dma"], np.float64)).astype(np.int64)
-        * R2V_WORDS_PER_PATTERN
-    )
+    expected_words = np.rint(
+        np.asarray(data["r2v_pattern_words"], np.float64)).astype(np.int64)
     if not np.array_equal(values["pass2_words"][1:], expected_words[1:]):
         mismatch = int(np.flatnonzero(
             values["pass2_words"][1:] != expected_words[1:])[0]) + 1
@@ -248,10 +266,20 @@ def load_r2v_workload(
             f"{P125_RUN_SPLIT_WORDS}")
     components = calculate_r2v_words(
         values["pass2_words"], values["n_runs"], values["short_runs"],
-        values["pal_switch"])
+        values["pal_switch"],
+        np.rint(data["r2v_name_table_words"]).astype(np.int64),
+    )
     # Frame 0 is boot construction and is excluded from every timed row.
     for component in components.values():
         component[0] = 0
+    expected_total = np.rint(data["status_r2v"]).astype(np.int64)
+    if not np.array_equal(components["words"], expected_total):
+        mismatch = int(np.flatnonzero(
+            components["words"] != expected_total)[0])
+        raise SystemExit(
+            f"R2V workload/timeline total mismatch at frame {mismatch}: "
+            f"{int(components['words'][mismatch])} != "
+            f"{int(expected_total[mismatch])} words")
     return {
         **values,
         **components,
@@ -527,7 +555,7 @@ def summarize(
     frames = len(selection)
     miss = take("legend_miss")
     flbk = take("legend_flbk")
-    cold = take("status_dma")
+    cold = take("status_cold")
     runs = take("status_run")
     prg_load = take("legend_prg")
     physical = take("body_physical_bytes").sum()
@@ -854,6 +882,25 @@ def draw_timeline(
             )
 
     draw_scale(req_top, req_h, cells)
+    cold_cap_tiles = float(data["cold_cap_tiles"][0])
+    cold_cap_y = req_cold_cap_y(
+        req_top,
+        req_h,
+        cells,
+        cold_cap_tiles,
+    )
+    draw.line(
+        (left, cold_cap_y, left + width - 1, cold_cap_y),
+        fill=style.COL_LIMIT,
+        width=2,
+    )
+    draw.text(
+        (left - 10, cold_cap_y),
+        f"{fmt_int(cold_cap_tiles)} cap",
+        fill=style.COL_LIMIT,
+        font=scale_font,
+        anchor="rm",
+    )
     draw_scale(supply_top, supply_h, total_capacity)
     draw_scale(run_top, run_h, run_capacity, show_midpoint=False)
     if r2v is not None:
@@ -924,8 +971,7 @@ def main() -> None:
     tsv = args.tsv.resolve()
     config_path = args.config.resolve() if args.config else None
     sim_out = args.sim_out.resolve() if args.sim_out else None
-    output = (args.output or (
-        REPO / "videos" / (tsv.stem + "_timeline.png"))).absolute()
+    requested_output = args.output or Path(tsv.stem + "_timeline.png")
     rows, data = load_tsv(tsv)
     n = len(rows)
     ppf = args.pixels_per_frame or max(1, min(4, math.ceil(4200 / n)))
@@ -937,10 +983,10 @@ def main() -> None:
         args.r2v_workload_tsv.resolve()
         if args.r2v_workload_tsv else None
     )
-    r2v = (
-        load_r2v_workload(r2v_path, frames=n, data=data)
-        if r2v_path is not None else None
-    )
+    r2v = r2v_from_timeline(data)
+    if r2v_path is not None:
+        # The packed-stream extraction is an independent verification source.
+        r2v = load_r2v_workload(r2v_path, frames=n, data=data)
     buffer = load_npz(sim_out / "buffer_remaining.npz") if sim_out else {}
     measured_cold_cap = int(round(float(data["cold_cap_tiles"][0])))
     evaluation_end = args.evaluation_end_frame
@@ -977,11 +1023,13 @@ def main() -> None:
     )
     if r2v is not None:
         r2v_max_words = r2v_scale_max(r2v["words"])
+        name_table_max = int(
+            np.asarray(r2v["name_table_words"], np.int64)[1:].max(initial=0))
         draw.text(
             (24, 126),
             (
-                f"R2V = pattern x{R2V_CPU_WORD_COST} + DMA repair + "
-                f"NT {P125_H40_NAME_TABLE_WORDS} + CRAM {P125_CRAM_WORDS}"
+                f"R2V = pattern DMA x{R2V_PATTERN_WORD_COST} + repair + "
+                f"NT up to {name_table_max} + CRAM {P125_CRAM_WORDS}"
                 f"@switch; timed max={fmt_int(r2v_max_words)} words"
             ),
             fill=style.COL_DMA,
@@ -1003,29 +1051,20 @@ def main() -> None:
         "Frame 0 is boot construction. Segment lines are labelled PL. Shaded tail remains visible but is excluded from EVAL totals.",
         fill=DIM, font=font(18),
     )
-    output.parent.mkdir(parents=True, exist_ok=True)
     sim_lease = (
-        tmpfs_workspace.lease_managed_alias(sim_out)
+        tmpfs_workspace.lease_managed_path(sim_out)
         if sim_out is not None else None)
     png_lease = None
-    actual_output = output
+    actual_output = requested_output
     try:
-        videos = (REPO / "videos").absolute()
-        try:
-            output.relative_to(videos)
-        except ValueError:
-            pass
-        else:
-            actual_output, png_lease = tmpfs_workspace.allocate_file(
-                output,
-                kind="timeline-png",
-                key=f"{tsv.stem}-{hashlib.sha256(tsv.read_bytes()).hexdigest()[:10]}",
-                required_bytes=max(width * height * 4, 128 * 1024 ** 2),
-            )
+        actual_output, png_lease = tmpfs_workspace.allocate_file(
+            requested_output,
+            kind="timeline-png",
+            key=f"{tsv.stem}-{hashlib.sha256(tsv.read_bytes()).hexdigest()[:10]}",
+            required_bytes=max(width * height * 4, 128 * 1024 ** 2),
+        )
         image.convert("RGB").save(actual_output, optimize=True)
-        if png_lease is not None:
-            tmpfs_workspace.publish_alias(output, actual_output)
-        print(output)
+        print(actual_output)
     finally:
         if png_lease is not None:
             png_lease.release()
@@ -1064,7 +1103,7 @@ def main() -> None:
             ),
             "height": R2V_HEIGHT,
             "unit": (
-                "VDP-memory words: pattern CPU-x1 + DMA repair + NT + CRAM"
+                "VDP-memory words: pattern DMA + repair + NT + CRAM"
             ),
         })
     receipt_rows.extend([
@@ -1095,11 +1134,11 @@ def main() -> None:
         },
     ])
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "timeline",
         "label": title,
-        "image": str(output),
-        "image_sha256": hashlib.sha256(output.resolve().read_bytes()).hexdigest(),
+        "image": str(actual_output),
+        "image_sha256": hashlib.sha256(actual_output.read_bytes()).hexdigest(),
         "tsv": str(tsv),
         "tsv_sha256": hashlib.sha256(tsv.read_bytes()).hexdigest(),
         "config": str(config_path) if config_path else None,
@@ -1120,7 +1159,7 @@ def main() -> None:
         "cold_cap_tiles": measured_cold_cap,
         "run_max": run_scale_max(data["status_run"]),
         "r2v_model": (
-            "p125-h40-debug-vdp-memory-payload"
+            "mode-grid-aware-debug-vdp-memory-payload"
             if r2v is not None else None
         ),
         "r2v_workload_tsv": str(r2v_path) if r2v_path else None,
@@ -1128,7 +1167,9 @@ def main() -> None:
             hashlib.sha256(r2v_path.read_bytes()).hexdigest()
             if r2v_path else None
         ),
-        "r2v_cpu_word_cost": R2V_CPU_WORD_COST if r2v is not None else None,
+        "r2v_pattern_word_cost": (
+            R2V_PATTERN_WORD_COST if r2v is not None else None
+        ),
         "r2v_dma_repair_words_per_run": (
             R2V_DMA_REPAIR_WORDS if r2v is not None else None
         ),
@@ -1151,7 +1192,11 @@ def main() -> None:
             if r2v is not None else None
         ),
         "r2v_name_table_words_per_frame": (
-            P125_H40_NAME_TABLE_WORDS if r2v is not None else None
+            (
+                int(np.asarray(
+                    r2v["name_table_words"], np.int64)[1:].max(initial=0))
+                if r2v is not None else None
+            )
         ),
         "r2v_name_table_words_total": (
             int(r2v["name_table_words"][1:].sum())
@@ -1171,7 +1216,11 @@ def main() -> None:
         "prg_cap_summary": prg_cap_summary(measured_cold_cap),
         "rows": receipt_rows,
     }
-    receipt_path = Path(str(output) + ".json")
+    receipt_path = analysis_logs.metadata_path(
+        requested_output,
+        kind="timeline-layout",
+        sha256=receipt["image_sha256"],
+    )
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

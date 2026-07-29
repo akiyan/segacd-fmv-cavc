@@ -19,8 +19,9 @@ Every render also writes a machine-readable, one-row-per-frame TSV under
 `timeline` kind. It is generated from the same `frame_data()` values used by
 the overlay, before PNG rendering begins, so numeric comparisons do not require
 OCR. A frame-range render still writes the complete TSV.
-`videos/<stem>_analysis.tsv` is a compatibility symlink to the newest matching
-log; `ANALYSIS_TSV` changes that symlink path, not the persistent log location.
+No latest-run symlink is created. `ANALYSIS_TSV` writes directly to an explicit
+path; canonical project runs leave it unset and use the unique `logs/` path
+printed by the renderer.
 
 Keep this file in sync whenever the layout changes (the `/analysis` skill
 automates: update layout -> update this file -> notify).
@@ -31,23 +32,26 @@ The TSV starts with one header row and then contains every encoded frame in
 ascending order. Integer display fields are written exactly as the overlay
 uses them. In particular, frame 0 keeps its `legend_raw` and `legend_same`
 classification, while the untimed `status_cold`, `status_pre`,
-`status_band_kib_s`, `status_dma`, and `status_run` fields are zero. The
+`status_band_kib_s`, `status_r2v`, `status_dma`, and `status_run` fields are zero. The
 corresponding encoder values remain available in the `stat_*` columns.
 
 | Columns | Definition |
 |---|---|
-| `schema_version` | TSV schema version, currently `6`. |
+| `schema_version` | TSV schema version, currently `7`. |
 | `frame`, `frame_hex`, `time_seconds`, `palette_segment` | Decimal frame, HUD-style hexadecimal frame, exact playback time, and CRAM palette-segment index. |
 | `cells`, `active_tiles`, `budget_tiles`, `cold_cap_tiles`, `prefetch_cap_tiles` | Raster and limits repeated on every row for self-contained filtering. `cold_cap_tiles` is the fixed effective profile/base cap over every physical cold source. Physical delivery failure stops sim and does not create a local per-frame cap. |
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Per-frame category counts. `legend_wr` is the displayed Wr0+Wr1 total; the two source banks are also kept separately. |
-| `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_dma`, `status_run` | Numeric values printed in the bottom status bar, including the frame-0 untimed display rule. |
+| `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_r2v`, `status_run` | Numeric values printed in the bottom status bar, including the frame-0 untimed display rule. |
+| `status_dma` | Compatibility copy of the timed pattern-tile count. It is not displayed as a status meter. |
+| `r2v_pattern_words`, `r2v_repair_words`, `r2v_name_table_words`, `r2v_cram_words`, `r2v_short_runs` | Exact components behind `status_r2v`, plus the diagnostic count of one/two-pattern runs. Every pattern run uses DMA. |
 | `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Exact physical timed-BODY delivery-slot accounting behind the Band display. Slot 0 is zero because frame 0 comes from the untimed BODY arm. |
 | `quality_budget_remaining_bytes` | Non-borrowed encoder-only whole-movie quality allowance remaining after the frame. A terminal-drain loan displays as zero until future suffix allowance repays it. This is diagnostic state, not a physical meter. |
 | `stat_frame` through the remaining `stat_*` columns | Every column from `stats.npz`, preserved with a `stat_` prefix and in its original order. These raw columns may grow when the simulator gains a new statistic. |
 
-The compatibility alias follows `ANALYSIS_OUT`: changing
-`videos/example_analysis.mp4` produces a timestamped `logs/*.tsv` and updates
-`videos/example_analysis.tsv` unless `ANALYSIS_TSV` selects another alias.
+`ANALYSIS_OUT` is only the requested name of a disposable artifact. The
+renderer always writes the MP4 directly to tmpfs and prints its actual path.
+The TSV uses the independently printed persistent `logs/` path unless
+`ANALYSIS_TSV` explicitly names a test/diagnostic file.
 
 ## Layout map
 
@@ -88,7 +92,7 @@ per-metric flow graph or separate palette-totals slot.
 - **PL/Time/Frame** (top-right, small): `PL:cur/total Time:MM:SS.ss Frame:XXXX`.
   `PL` = current palette-segment index / highest index (zero-padded to the
   total's digit count, min 2). `Time`, `Frame` = playback position; `Frame` is
-  **4-digit hex** (`%04X`), matching the on-hardware debug HUD's F number.
+  **4-digit hex** (`%04X`), matching the on-hardware DEBUG HUD `frame` value.
 - **Source** (top of right column): big label + a small spec line with the
   *source video* `resolution / fps / audio codec+rate+channels`
   (from `ffprobe`; bitrate intentionally omitted).
@@ -242,7 +246,7 @@ sort by severity, then aging pressure, then the same base score.
 
 ## Status bar (bottom-left)
 
-Left to right: **Req**, **Cold**, **Band**, **DMA**, **Run**, **Prg**,
+Left to right: **Req**, **Cold**, **Band**, **R2V**, **Run**, **Prg**,
 **Wrd**, and **Pre** meters (each bar is as wide as its own label). Wrd
 combines the displayed values of the physically separate Wr0 and Wr1 banks.
 Below the meters is the palette strip; to the right are four stacked timelines.
@@ -354,21 +358,21 @@ These meters deliberately do not show the offline whole-movie quality budget.
 That diagnostic can remain high when physical supplies are low, and it cannot
 provide a pattern byte to the player.
 
-### DMA meter
-`DMA:NNN` or `DMA:NNNN` = the number of **32-byte pattern tiles** transferred
-to VRAM by the timed frame. The numeric field uses the digits required by the
-current raster. Frame 0's boot construction is outside this calculation and is
-shown as zero. Its full-scale starts from the
-mode/fps theoretical VDP byte ceiling, subtracts the fixed full name-table DMA
-(`2 * cells` bytes), divides the remainder by 32 bytes/tile, and clamps it to
-the raster's tile count. Green fill; if the transfer exceeds that ceiling it
-turns orange with a red overflow tail.
+### R2V meter
+`R2V:NNNN` = the total number of **VDP-memory words** written by Main for the
+timed frame. It counts 16 words for every transferred pattern, one repaired
+first word for each DMA-backed run, the mode/grid/cadence-specific name-table
+and DEBUG HUD words, and 64 CRAM words on a palette-segment switch. One- and
+two-pattern runs are CPU-direct and need no repair word. Fixed-N H40 uses its
+complete 64x28 staged name table, which already contains the HUD; other paths
+use the encoded tile grid plus the HUD words. Frame 0 is untimed and displays
+zero. Full-scale is the exact largest R2V total observed among timed frames.
 
 ### Pattern transfer run meter
 `Run:NNNN` = the number of ascending consecutive cold VRAM-slot runs used for
 the pattern tiles, exactly matching the packer's cold-run descriptors, the
-Main CPU run-table record count, and H40 DEBUG HUD `N` (before its low-byte
-display truncation). Reuse entries do not break a run; a slot discontinuity
+Main CPU run-table record count, and the DEBUG HUD `cold_runs` value (before
+its low-byte display truncation). Reuse entries do not break a run; a slot discontinuity
 does, including a wrap from the end of the slot pool to slot zero.
 Frame 0 is outside the timed run calculation and is shown as `Run:0000`, even
 though its internal boot-transfer trace remains available for packer checks.
@@ -378,13 +382,12 @@ runs. The encoder reports the exact resulting Run trace and does not perform
 a movie-wide slot-number optimization.
 
 This is deliberately **not the number of VDP DMA commands**. In the player,
-a one- or two-tile run is copied directly by the CPU, while a longer
-run uses DMA and may be split into more than one DMA command at a VBlank budget
-boundary. Both still remain one `Run` record. The bar therefore measures the
-fragmentation seen by the player independent of the current transfer fast
-path.
+every run uses DMA and may be split into more than one DMA command at a VBlank
+budget boundary. It still remains one `Run` record. The bar therefore measures
+the source/slot fragmentation seen by the player, not the number of runtime
+DMA chunks.
 
-The bar's per-frame full-scale is the current `DMA` tile count: the theoretical
+The bar's per-frame full-scale is the current `Cold` tile count: the theoretical
 worst case is every transferred tile isolated into its own one-tile run. A tiny
 bar therefore means long, efficient runs; a full amber bar means the maximally
 fragmented case. The numeric field is fixed at four digits, derived from full
@@ -452,8 +455,8 @@ local date/time、profile名、10文字のprofile checksum、encoder version、p
 `timeline` kindが入ります。TSVはPNG rendering開始前に、overlayと同じ
 `frame_data()`値から生成するため、数値比較にOCRは不要です。
 Frame rangeを指定したrenderでも完全なTSVを書きます。
-`videos/<stem>_analysis.tsv`は最新の一致logへのcompatibility symlinkです。
-`ANALYSIS_TSV`はこのsymlink pathを変えますが、persistent logの場所は変えません。
+Latest-run symlinkは作りません。`ANALYSIS_TSV`を指定するとその実体pathへ直接書き、
+通常のproject runでは未指定のままrendererが表示するuniqueな`logs/` pathを使います。
 
 Layout変更時は、この文書も同時に更新します。`/analysis` skillはlayout更新、本文更新、
 通知を一連で行います。
@@ -462,23 +465,27 @@ Layout変更時は、この文書も同時に更新します。`/analysis` skill
 
 TSVはheader rowの後に、全encode frameを昇順で格納します。Integer display fieldは
 overlayと同じ値です。Frame 0は`legend_raw`と`legend_same`を保持し、timed処理ではない
-`status_cold`、`status_pre`、`status_band_kib_s`、`status_dma`、`status_run`は0です。
+`status_cold`、`status_pre`、`status_band_kib_s`、`status_r2v`、`status_dma`、
+`status_run`は0です。
 対応するencoder値は`stat_*` columnに残ります。
 
 | Columns | 定義 |
 |---|---|
-| `schema_version` | TSV schema version。現在は`6` |
+| `schema_version` | TSV schema version。現在は`7` |
 | `frame`, `frame_hex`, `time_seconds`, `palette_segment` | Decimal frame、HUD形式hex frame、正確なplayback time、CRAM palette-segment index |
 | `cells`, `active_tiles`, `budget_tiles`, `cold_cap_tiles`, `prefetch_cap_tiles` | Self-contained filter用に各rowへ繰り返すrasterとlimit。`cold_cap_tiles`は全物理cold sourceへ適用するeffective cap。物理配信失敗はsimを停止し、local per-frame capは作らない |
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Frameごとのcategory count。表示`legend_wr`はWr0+Wr1で、source bank別の値も保持 |
-| `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_dma`, `status_run` | Frame-0のuntimed ruleを含むbottom status barの数値 |
+| `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_r2v`, `status_run` | Frame-0のuntimed ruleを含むbottom status barの数値 |
+| `status_dma` | Timed pattern tile countの互換copy。Status meterには表示しない |
+| `r2v_pattern_words`, `r2v_repair_words`, `r2v_name_table_words`, `r2v_cram_words`, `r2v_short_runs` | `status_r2v`の正確な内訳と、診断用の1・2 pattern run数。全pattern runはDMAを使う |
 | `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Band表示の元になる正確なphysical timed-BODY delivery-slot会計。Frame 0はuntimed BODY arm由来なのでslot 0は0 |
 | `quality_budget_remaining_bytes` | Frame後に残る、借入ではないencoder-only全編画質allowance。Terminal-drain loan中はzeroを表示し、将来suffix allowanceの返済後に増える。Diagnostic stateであり物理meterではない |
 | `stat_frame`以降の`stat_*` | `stats.npz`の全columnを元の順序で保存。Simulatorへstatisticが増えると追加される |
 
-Compatibility aliasは`ANALYSIS_OUT`に従います。例えば
-`videos/example_analysis.mp4`へ変更するとtimestamp付き`logs/*.tsv`を生成し、
-`ANALYSIS_TSV`で別aliasを選ばない限り`videos/example_analysis.tsv`を更新します。
+`ANALYSIS_OUT`は使い捨てartifactの要求名だけです。MP4は常にtmpfs実体へ直接
+書かれ、その実体pathをrendererが表示します。TSVは独立した永続`logs/` pathへ
+書かれます。Test/diagnostic用に`ANALYSIS_TSV`を指定した場合だけ、指定した実体fileを
+使います。
 
 ## Layout map
 
@@ -517,7 +524,7 @@ Compatibility aliasは`ANALYSIS_OUT`に従います。例えば
 - **PL/Time/Frame**（右上）:
   `PL:cur/total Time:MM:SS.ss Frame:XXXX`。
   `PL`はcurrent palette-segment index / highest indexです。`Frame`はhardware
-  DEBUG HUDのFと一致する4-digit hexです。
+  DEBUG HUDの`frame`と一致する4-digit hexです。
 - **Source**（右column上）: 大labelと、`ffprobe`から得るsource videoの
   `resolution / fps / audio codec+rate+channels`。Bitrateは表示しません。
 
@@ -637,7 +644,7 @@ updateやupgrade priorityへ影響しません。
 
 ## Status bar（左下）
 
-左から**Req**、**Cold**、**Band**、**DMA**、**Run**、**Prg**、**Wrd**、**Pre**です。
+左から**Req**、**Cold**、**Band**、**R2V**、**Run**、**Prg**、**Wrd**、**Pre**です。
 Wrdは物理的に別のWr0とWr1を合算表示します。下にpalette strip、右に4本のstacked
 timelineがあります。Tankまたは物理Buf meterはありません。
 
@@ -720,24 +727,26 @@ Preload traceはactual loaded totalを使うため、未使用fixed capacityをc
 表示しません。Offline quality budgetはpattern byteをplayerへ供給できないため、
 これらのmeterへ表示しません。
 
-### DMA meter
+### R2V meter
 
-`DMA:NNN`または`DMA:NNNN`はtimed frameでVRAMへtransferする**32-byte pattern tile数**です。
-Digit数はrasterに合わせます。Frame 0は0です。Full-scaleはmode/fpsの理論VDP byte ceiling
-からfull name-table DMAを引き、32 byte/tileで割ってraster tile数へclampします。
-通常green、ceiling超過時はorangeとred overflow tailです。
+`R2V:NNNN`はtimed frameでMainが書く**VDP-memory word総数**です。各transfer patternを
+16 word、DMA-backed runごとのfirst-word repairを1 word、mode/grid/cadence別のname table
+とDEBUG HUD、palette-segment switch時のCRAM 64 wordを合算します。1・2 pattern runは
+CPU directなのでrepair wordはありません。Fixed-N H40はHUDを含む64x28 staged name
+tableを使い、他のpathはencoded tile gridとHUD wordを使います。Frame 0はtiming外なので
+0です。Full-scaleはtimed frameで実測した最大R2V totalです。
 
 ### Pattern transfer run meter
 
 `Run:NNNN`はcold VRAM slotのascending consecutive run数です。Packerのdescriptor、
-Main CPU RUN_TABLE record、H40 DEBUG HUD `N`と一致します。Reuse entryはrunを分けず、
+Main CPU RUN_TABLE record、DEBUG HUDの`cold_runs`と一致します。Reuse entryはrunを分けず、
 slot discontinuity、pool endからslot zeroへのwrap、Prg/Wr/Dic source境界が分割します。
 Frame 0はtimed計算外なので`Run:0000`です。Encoderはexact Run traceを報告し、
 全編slot-number最適化は行いません。
 
-これはVDP DMA command数ではありません。1・2 tile runはCPU direct copy、長いrunはDMAを
-使い、VBlank budget境界で複数DMAに分かれる場合があります。それでもRun recordは1つです。
-Bar full-scaleはcurrent DMA tile countで、全tileが1-tile runになる場合がworstです。
+これはVDP DMA command数ではありません。全runがDMAを使い、VBlank budget境界で
+複数DMAに分かれる場合があります。それでもRun recordは1つです。
+Bar full-scaleはcurrent Cold tile countで、全tileが1-tile runになる場合がworstです。
 
 ### Palette strip
 

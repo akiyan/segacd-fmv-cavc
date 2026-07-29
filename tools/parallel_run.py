@@ -77,7 +77,7 @@ def validate_distinct_stems(profiles: list[EncodeProfile]) -> None:
     for profile in profiles:
         if profile.sim_stem in stems:
             raise ParallelRunError(
-                "profiles share one videos stem and cannot run together: "
+                "profiles share one artifact stem and cannot run together: "
                 f"{stems[profile.sim_stem]} / {profile.path} -> "
                 f"{profile.sim_stem}")
         stems[profile.sim_stem] = profile.path
@@ -145,7 +145,7 @@ def stage_commands(
             "--seconds", str(_record_seconds(profile, record_seconds)),
             "--tag", f"{stem}_emu",
             "--record-size", _native_record_size(profile),
-            "--out", str(ROOT / "videos" / f"{stem}_emu_preview.mp4"),
+            "--out", f"{stem}_emu_preview.mp4",
         ]))
     if through_index >= STAGES.index("hud"):
         commands.append(("hud", []))
@@ -165,18 +165,15 @@ def _expected_frames(profile: EncodeProfile) -> int:
     return len(frames)
 
 
-def _hud_command(profile: EncodeProfile) -> list[str]:
-    stem = profile.sim_stem
-    video = ROOT / "videos" / f"{stem}_emu_lossless.mkv"
-    hud_tsv = ROOT / "videos" / f"{stem}_emu_hud.tsv"
-    gate = ROOT / "videos" / f"{stem}_emu_hud_gate.json"
+def _hud_command(
+    profile: EncodeProfile,
+    recording: Path,
+) -> list[str]:
     return [
         str(ROOT / "tools" / "python.sh"),
         str(ROOT / "harness" / "startup_resync" / "analyze.py"),
-        str(video),
+        str(recording),
         str(profile.path),
-        "--tsv", str(hud_tsv),
-        "--gate-json", str(gate),
         "--expected-frames", str(_expected_frames(profile)),
     ]
 
@@ -225,7 +222,7 @@ def _run_sim_with_handoff(
     while process.poll() is None:
         if ready.is_file() and not acknowledged:
             output_dir = _profile_output_dir(profile)
-            lease = tmpfs_workspace.lease_managed_alias(output_dir)
+            lease = tmpfs_workspace.lease_managed_path(output_dir)
             if lease is None:
                 process.terminate()
                 process.wait()
@@ -237,7 +234,7 @@ def _run_sim_with_handoff(
     status = process.wait()
     if ready.is_file() and not acknowledged and status == 0:
         output_dir = _profile_output_dir(profile)
-        lease = tmpfs_workspace.lease_managed_alias(output_dir)
+        lease = tmpfs_workspace.lease_managed_path(output_dir)
         if lease is None:
             raise ParallelRunError(
                 f"sim tmpfs handoff did not resolve {output_dir}")
@@ -257,6 +254,8 @@ def _run_job(
     failed_stage = ""
     message = ""
     sim_lease = None
+    record_lease = None
+    record_dir = None
     try:
         stem_lease = resource_tokens.acquire_stem(profile.sim_stem)
     except resource_tokens.ResourceBusyError as exc:
@@ -281,7 +280,11 @@ def _run_job(
             ):
                 failed_stage = stage
                 command = (
-                    _hud_command(profile)
+                    _hud_command(
+                        profile,
+                        record_dir
+                        / f"{profile.sim_stem}_emu_lossless.mkv",
+                    )
                     if stage == "hud" else fixed_command
                 )
                 _say(f"[{profile.artifact_stem}] {stage} start")
@@ -295,6 +298,26 @@ def _run_job(
                         handoff=options.run_dir / (
                             f"{index:02d}-{profile.artifact_stem}-handoff"),
                     )
+                elif stage == "record":
+                    seconds = _record_seconds(
+                        profile, options.record_seconds)
+                    record_lease = tmpfs_workspace.activate_directory(
+                        kind="record",
+                        key=(
+                            f"{profile.artifact_stem}-"
+                            f"{profile.sha256[:10]}-"
+                            f"{profile.sim_stem}-{seconds}s"
+                        ),
+                        required_bytes=(
+                            4 + 2 * math.ceil(seconds / 60)
+                        ) * 1024 ** 3,
+                    )
+                    record_dir = record_lease.entry / "data"
+                    record_env = dict(env)
+                    record_env["SEGACD_RECORD_TMPFS_HELD"] = "1"
+                    record_env["OUTDIR"] = str(record_dir)
+                    status = _run_logged(
+                        command, env=record_env, log=log)
                 else:
                     status = _run_logged(command, env=env, log=log)
                 stage_elapsed = time.monotonic() - stage_started
@@ -314,6 +337,8 @@ def _run_job(
     except Exception as exc:  # keep other profiles running and report the cause
         message = f"{type(exc).__name__}: {exc}"
     finally:
+        if record_lease is not None:
+            record_lease.release()
         if sim_lease is not None:
             sim_lease.release()
         stem_lease.release()

@@ -1,6 +1,6 @@
 ---
 name: compilation
-description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, anchor boot-aware CRAM chapters to the verified F=FFFF to F=0000 HUD transition, add project metadata, verify the result, and upload without recording or trimming. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
+description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, anchor boot-aware CRAM chapters to the verified frame=FFFF to frame=0000 HUD transition, add project metadata, verify the result, and upload without recording or trimming. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
 ---
 
 # compilation — 録画済み再生映像をYouTubeへ
@@ -30,7 +30,8 @@ description: Prepare and upload an existing, verified record lossless playback c
 
 - `record` が作成したネイティブ解像度のロスレスMKV
 - 同じMKVを直接OCRして作られた、gateが`PASS`でalertが`NONE`または
-  `WARNING`の`S/D/R/M/J` HUD result JSON（`C/A`はdiagnostic）
+  `WARNING`のdescriptive schema-12 HUD result JSON
+  （`cd_wait_count`と`adpcm_decode_units`はdiagnostic）
 - 同gateの`ocr_start_anchor`。`method=frame_minus_one`、
   `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須
 - 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
@@ -40,8 +41,9 @@ description: Prepare and upload an existing, verified record lossless playback c
 アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
 `recording`、`recording_size`、`recording_mtime_ns`が入力MKVと一致しない、全映画
 フレームを含まない、またはgateが`FAIL`なら変換・アップロード前に停止して
-`record`へ戻る。Gateが`PASS`でも、そのJSONの`S/D/R/M/J` gate maximum、diagnostic C
-maximum、`C/A`のminimum/mean/median/maximumを提示した後のユーザーの明示承認が
+`record`へ戻る。Gateが`PASS`でも、そのJSONの5つのdescriptive gate maximum、
+diagnostic `cd_wait_count` maximum、`cd_wait_count`と`adpcm_decode_units`の
+minimum/mean/median/maximumを提示した後のユーザーの明示承認が
 無ければ停止する。HUD時刻を頭出しやチャプターには使わない。
 
 ## YouTube用square-pixel raster
@@ -76,15 +78,17 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
    ```sh
    tools/python.sh tools/tmpfs_workspace.py run-file \
-     --output videos/STEM_emu.mp4 --kind compilation-mp4 --required-gb 8 -- \
-     ffmpeg -i videos/INPUT_lossless.mkv \
+     --output STEM_emu.mp4 --kind compilation-mp4 --required-gb 8 \
+     --input "$LOSSLESS" -- \
+     ffmpeg -i "$LOSSLESS" \
        -vf "scale=2048:1568:flags=neighbor,setsar=1" \
        -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
        -c:a aac -b:a 192k -movflags +faststart '{output}'
    ```
 
    `INPUT_lossless.mkv`と`STEM`は実値へ置き換える。`{output}` はtmpfs wrapperが
-   実体パスへ置き換え、成功後に `videos/STEM_emu.mp4` symlinkを公開する。nearest拡大そのものは
+   実体パスへ置き換え、最後にそのdirect pathを表示する。以降の検証とuploadは
+   表示されたpathを使う。repository内にmedia pathは作らない。nearest拡大そのものは
    新しい色を作らず、H32では8x7の完全な整数拡大になる。ただしYouTubeは必ず
    再エンコードするため、最終配信までロスレスとは呼ばない。CRF 10の高品質な
    入力を渡し、YouTube側の高解像度配信を使う。`-ss`、`-t`、fps filter、`-r`は
@@ -93,13 +97,13 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
 3. **起動画面込みのCRAMチャプターを作る**
 
-   matching HUD gate JSONの`F=FFFF`直後にある最初のvalidな`F=0000`時刻を使う。
+   matching HUD gate JSONの`frame=FFFF`直後にある最初のvalidな`frame=0000`時刻を使う。
    `youtube_chapters.py`がsentinel anchorを検証してoffsetを読みます。この時刻は
    チャプターだけをずらす値であり、映像は切らない。
 
    ```sh
    tools/python.sh tools/youtube_chapters.py SIM_OUT CONTENT_FPS \
-     --hud-gate-json videos/STEM_emu_hud_gate.json \
+     --hud-gate-json logs/RUN_hud_gate.json \
      --intro-label "Mega-CD startup"
    ```
 
@@ -115,7 +119,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    - 映画開始後の絵が縦長・横長になっていない
 
    `tools/extract_verification_frames.sh`で完成MP4から起動・本編・末尾を名前付き抽出する。
-   出力先には`videos/<stem>/compilation_check`をbaseとして渡し、毎回新しく作られる
+   出力先には`$(dirname "$OUTPUT")/compilation_check`をbaseとして渡し、毎回新しく作られる
    source固有directoryの`manifest.tsv`とmontageだけを確認する。共有directoryの
    `*.png`をmontageせず、以前の録画・変換から残ったloose stillを混ぜない。
 
@@ -134,9 +138,9 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
    ```sh
    PY="$HOME/.config/youtube/venv/bin/python"
-   tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_emu_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
+   tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["PLAYBACK_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
    "$PY" "$HOME/.claude/skills/youtube/youtube.py" upload \
-     videos/STEM_emu.mp4 \
+     /dev/shm/segacd-fmv-ttrc/artifacts/COMPILATION_ENTRY/STEM_emu.mp4 \
      --title "$TITLE" --desc "$DESCRIPTION" \
      --privacy unlisted --category 20
    ```

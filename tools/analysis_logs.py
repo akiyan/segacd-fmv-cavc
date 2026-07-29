@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Persistent, uniquely named codec/HUD TSV paths and compatibility aliases."""
+"""Persistent codec/HUD logs and metadata paths."""
 
 from __future__ import annotations
 
@@ -7,9 +7,6 @@ from datetime import datetime
 import os
 from pathlib import Path
 import re
-
-from atomic_paths import replace_symlink
-
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 AV_VERSION_PATH = Path(__file__).resolve().parent / "av_version.txt"
@@ -77,13 +74,16 @@ def unique_tsv_path(
     return candidate
 
 
-def publish_alias(alias: Path, log_path: Path) -> None:
-    """Point the traditional analysis TSV path at its persistent log."""
+def metadata_path(
+    subject: Path,
+    *,
+    kind: str,
+    sha256: str,
+) -> Path:
+    """Return a stable persistent JSON path keyed by its source bytes."""
 
-    alias = alias.absolute()
-    log_path = log_path.resolve()
-    if alias == log_path:
-        return
-    if alias.exists() and alias.is_dir() and not alias.is_symlink():
-        raise IsADirectoryError(f"analysis TSV alias is a directory: {alias}")
-    replace_symlink(alias, log_path)
+    root = log_root()
+    root.mkdir(parents=True, exist_ok=True)
+    stem = _slug(Path(subject).stem)
+    metadata_kind = _slug(kind)
+    return root / f"{stem}_{sha256[:10]}_{metadata_kind}.json"

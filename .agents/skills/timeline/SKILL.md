@@ -11,9 +11,10 @@ and include the settings that explain the result.
 
 ## Workflow
 
-1. Locate the adjustment-specific analysis TSV. If it does not exist, run
-   `tools/render_analysis.py` for that simulation output; it writes the TSV
-   before rendering frames.
+1. Locate the adjustment-specific analysis TSV. If it does not exist and only
+   the timeline is needed, run
+   `tools/render_analysis.py profiles/PROFILE.toml --tsv-only`. Run the full
+   analysis renderer only when its MP4 is also required.
 2. Pass the matching profile and simulation output directory. Do not combine a
    TSV from one run with metadata from another.
 3. When an intentional tail-drain rule would distort evaluation, pass its first
@@ -25,24 +26,26 @@ and include the settings that explain the result.
 tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
   logs/YYYYMMDD-HHMMSS-ffffff_PROFILE_SHA10_eNN_pNN_timeline.tsv \
   --config profiles/PROFILE.toml \
-  --sim-out videos/STEM/ADJUSTMENT \
+  --sim-out /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data \
   --r2v-workload-tsv logs/PROFILE_eNN_pNN_r2v_workload.tsv \
   --label "short adjustment label" \
-  --evaluation-end-frame FRAME \
-  --output videos/STEM_ADJUSTMENT_timeline.png
+  --evaluation-end-frame FRAME
 ```
 
-5. Inspect the PNG with `view_image`. Check that the full time axis, tail
+   The renderer prints the direct tmpfs PNG path and the persistent layout
+   receipt under `logs/`.
+5. Inspect the printed PNG path with `view_image`. Check that the full time axis, tail
    marker, category colours, four row scales, and labels are legible. Confirm
    that the fixed effective cold cap and fps-derived normal/jitter/delivery
    PrgBuf values match the sim metadata.
 6. Publish the PNG as a public GitHub Gist. The helper creates a Git-backed
    public Gist so the binary PNG is preserved exactly, writes a
-   `<image>.gist.json` receipt, and returns both the Gist page and raw PNG URL:
+   content-keyed Gist receipt under `logs/`, and returns both the Gist page and
+   raw PNG URL:
 
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  videos/STEM_ADJUSTMENT_timeline.png \
+  /dev/shm/segacd-fmv-ttrc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
   --description "SEGA-CD FMV codec timeline: adjustment label"
 ```
 
@@ -59,9 +62,9 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 ```sh
 PY="$HOME/.config/youtube/venv/bin/python"
 "$PY" .agents/skills/timeline/scripts/sync_youtube_description.py \
-  videos/STEM_ADJUSTMENT_analysis.mp4 \
-  --timeline-receipt videos/STEM_ADJUSTMENT_timeline.png.gist.json \
-  --description-file videos/STEM_ADJUSTMENT_analysis_description.txt
+  /dev/shm/segacd-fmv-ttrc/artifacts/ANALYSIS_ENTRY/STEM_analysis.mp4 \
+  --timeline-receipt logs/STEM_SHA10_timeline-gist.json \
+  --description-file "$ANALYSIS_DESCRIPTION"
 ```
 
 For a video that has not been uploaded yet, pass `--local-only`, then use the
@@ -93,18 +96,16 @@ Keep these parts in every image:
   height used by `/mixline`.
   Keep Supply at 60 px and RUN, DIC and Band at 32 px so these secondary rows
   do not dominate the image.
-- When `--r2v-workload-tsv` is supplied, insert a 32 px `R2V` row immediately
-  below `RUN`. The workload TSV must come from
-  `harness/cold_cap_model/extract_frames.py` for the matching packed stream.
-  Count every pattern-transfer word once, including CPU-direct words at 1x,
-  add one first-word repair for every DMA-backed run, the complete 64x28 H40
-  name-table DMA (which already contains the DEBUG HUD), and 64 CRAM words on
-  palette-switch frames. Frame 0 remains untimed. Set the row maximum to the
-  largest calculated total among timed frames so the full vertical range
-  represents the observed workload. VDP setup-register writes and the reg2
-  flip are control operations rather than VDP-memory payload, so they are not
-  R2V words. This row is an analysis-only derived workload trace; it must not
-  steer encoder or player work.
+- Always insert a 32 px `R2V` row immediately below `RUN`, using the exact
+  component columns in the analysis TSV. Count every pattern-transfer word
+  once, add one first-word repair for every DMA-backed run, add the
+  mode/grid/cadence-specific name-table and DEBUG HUD words, and add 64 CRAM
+  words on palette-switch frames. Frame 0 remains untimed. Set the row maximum
+  to the largest calculated total among timed frames. VDP setup-register writes
+  and the reg2 flip are control operations rather than VDP-memory payload.
+  `--r2v-workload-tsv` accepts a matching packed-stream extraction from
+  `harness/cold_cap_model/extract_frames.py` as an independent cross-check.
+  This trace must not steer encoder or player work.
 - Show explicit vertical-axis ticks and horizontal guides at zero, half-scale,
   and full-scale on Req and Supply. Show only zero and full-scale on the
   compact RUN, R2V, DIC and Band rows. Put the unit below the Req and Supply
@@ -113,6 +114,10 @@ Keep these parts in every image:
   Req uses cells and Supply uses patterns. R2V uses calculated VDP-memory
   transfer words.
   Band's axis remains a percentage of each frame's physical slot.
+- Draw the configured `cold_cap_tiles` as a yellow horizontal guide across
+  the REQ row, mapped to the same cell scale, and add its exact value as a
+  vertical-axis tick. This is the per-frame cold-update ceiling, not a
+  physical buffer level.
 - The header legend lists every analysis legend category
   (`analysis_style.LEGEND_ORDER`) with its whole-movie EVAL-scope displayed
   tile total, mirroring the analysis overlay's category legend as one
@@ -128,9 +133,9 @@ Use at least two pixels per frame when practical. Req, Supply, and Band retain
 their fixed comparison scales. RUN intentionally uses the current TSV's timed
 maximum so its fragmentation remains legible.
 
-Write a `<output>.json` layout receipt with the input hashes, frame mapping,
-row geometry, and evaluation boundary. `/mixline` must consume this receipt
-instead of inferring alignment from image dimensions.
+Write a content-keyed layout receipt under `logs/` with the input hashes, frame
+mapping, row geometry, and evaluation boundary. `/mixline` must consume this
+receipt instead of inferring alignment from image dimensions.
 
 ## Interpretation safeguards
 

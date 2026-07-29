@@ -12,6 +12,38 @@ import hud_gate
 
 
 class HudGateTests(unittest.TestCase):
+    def test_cadence_alert_edge_windows_follow_content_fps(self):
+        for fps, expected in (
+            (30, 4),
+            (29.97, 4),
+            (15, 2),
+            (14.985, 2),
+            (24, 0),
+        ):
+            with self.subTest(fps=fps):
+                self.assertEqual(
+                    hud_gate.cadence_alert_edge_frames(fps),
+                    expected,
+                )
+
+    def test_cadence_alert_edge_frames_use_the_expected_movie_length(self):
+        self.assertTrue(
+            hud_gate.cadence_alert_frame_is_exempt(3, 100, 30))
+        self.assertFalse(
+            hud_gate.cadence_alert_frame_is_exempt(4, 100, 30))
+        self.assertFalse(
+            hud_gate.cadence_alert_frame_is_exempt(95, 100, 30))
+        self.assertTrue(
+            hud_gate.cadence_alert_frame_is_exempt(96, 100, 30))
+        self.assertTrue(
+            hud_gate.cadence_alert_frame_is_exempt(1, 100, 15))
+        self.assertFalse(
+            hud_gate.cadence_alert_frame_is_exempt(2, 100, 15))
+        self.assertFalse(
+            hud_gate.cadence_alert_frame_is_exempt(97, 100, 15))
+        self.assertTrue(
+            hud_gate.cadence_alert_frame_is_exempt(98, 100, 15))
+
     def test_classification_keeps_warning_upload_capable(self):
         for failures, warnings, alert, gate in (
             ([], [], "NONE", "PASS"),

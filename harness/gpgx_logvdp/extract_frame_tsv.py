@@ -267,7 +267,7 @@ def load_hud(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8", newline="") as source:
         reader = csv.DictReader(source, delimiter="\t")
         fields = set(reader.fieldnames or ())
-        required = {"loop", "frame", "pattern_vblank1_words"}
+        required = {"loop", "frame"}
         missing = required - fields
         if missing:
             raise ValueError(f"HUD TSV lacks columns: {sorted(missing)}")
@@ -278,50 +278,12 @@ def load_hud(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def hud_pattern_words(row: dict[str, str]) -> int:
-    return sum(
-        int(row.get(column, "") or 0)
-        for column in (
-            "pattern_vblank1_words",
-            "pattern_vblank2_words",
-            "pattern_vblank3_words",
-            "pattern_vblank4_words",
-        )
-    )
-
-
-def validate_rows(
+def validate_frame_axis(
     rows: list[dict[str, int]],
     hud_rows: list[dict[str, str]],
-) -> tuple[int, int]:
+) -> None:
     if len(rows) != len(hud_rows):
         raise ValueError("DMA rows and HUD rows have different frame counts")
-    validated = 0
-    skipped = 0
-    for frame in range(1, len(rows)):
-        transfers = int(hud_rows[frame].get("pattern_transfer_vblanks", "0") or 0)
-        if transfers > 4:
-            skipped += 1
-            continue
-        row = rows[frame]
-        physical_pattern_words = sum(
-            row[key] for key in (
-                "pattern_dma_blank_words",
-                "pattern_dma_active_words",
-                "pattern_cpu_blank_words",
-                "pattern_cpu_active_words",
-                "pattern_cpu_boundary_words",
-            )
-        )
-        logical_pattern_words = hud_pattern_words(hud_rows[frame])
-        if physical_pattern_words != logical_pattern_words:
-            raise ValueError(
-                f"frame {frame}: LOGVDP pattern words "
-                f"{physical_pattern_words} != HUD logical words "
-                f"{logical_pattern_words}"
-            )
-        validated += 1
-    return validated, skipped
 
 
 def write_tsv(path: Path, rows: list[dict[str, int]]) -> None:
@@ -367,13 +329,13 @@ def main() -> None:
             blank_rate,
         )
         extract_cpu_rows(log_lines(full_log), rows, pattern_pc, nt_pc)
-        validated, skipped = validate_rows(rows, hud_rows)
+        validate_frame_axis(rows, hud_rows)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
 
     write_tsv(output, rows)
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "gpgx-logvdp-frame-transfer",
         "compact_log": str(compact_log),
         "compact_log_sha256": digest(compact_log),
@@ -390,8 +352,7 @@ def main() -> None:
         "cpu_blank_vcounter_range": [224, 260],
         "cpu_active_vcounter_range": [0, 222],
         "cpu_boundary_vcounters": [223, 261],
-        "validated_timed_frames": validated,
-        "validation_skipped_transfer_budgets_over_four": skipped,
+        "hud_frame_axis_verified": True,
         "maxima": maximums(rows),
     }
     receipt_path = Path(str(output) + ".json")

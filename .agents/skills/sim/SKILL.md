@@ -157,8 +157,9 @@ Before every `/sim`, perform these steps in this exact order:
    `sar` unless they changed from the preceding comparison. Include unchanged
    settings only when they materially affect how the current result should be
    interpreted. This explanation is the user's preflight record of the run.
-2. Validate the profile with `tools/encode_config.py` and identify its exact
-   `[output].directory`.
+2. Validate the profile with `tools/encode_config.py`. Treat
+   `[output].directory` as the human-readable requested identity; the tool
+   prints the deterministic direct tmpfs path used for bytes.
 3. Confirm the profile's output stem and let the built-in stem/resource locks
    coordinate it with other jobs.
 4. Do not manually clean the simulation output directory. Let `sim.py` inspect
@@ -211,7 +212,7 @@ After completion:
   or below CD 1x (150 KiB/s). `codec_work_bps` is a separate
   quality-allocation diagnostic.
 - Starvation is allowed, but report it.
-- Output appears under `videos/<stem>/tmp/`:
+- Output appears at the direct tmpfs sim path printed by `sim.py`:
   - `stats.npz`
   - both the packer input `audio_22k05_s16_mono.wav` and the
     analysis/straight-video playback model
@@ -241,21 +242,25 @@ function on real data.
 
 ```sh
 CBRSIM_SRCLABEL="Source (<source name>, <platform/year>)" \
-ANALYSIS_OUT=videos/<stem>_analysis.mp4 \
+ANALYSIS_OUT=<stem>_analysis.mp4 \
 tools/python.sh --gpu tools/render_analysis.py profiles/<source>-<mode>.toml
 ```
+
+When only the persistent timeline TSV is needed, run
+`tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml
+--tsv-only`; this skips all analysis-frame rendering and MP4 muxing.
 
 Every invocation first writes the complete per-frame numeric sidecar to a
 unique persistent file below `logs/`. Its filename includes local date/time,
 the profile name, the first 10 profile-SHA characters, encoder version, player
 version, and the `timeline` kind:
 `<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv`.
-`videos/<stem>_analysis.tsv` (or `ANALYSIS_TSV` when explicitly set) is only a
-compatibility symlink to that permanent log. Use the `logs/` file for maxima,
+No latest-run symlink is created. `ANALYSIS_TSV`, when explicitly set, is a
+real output file rather than an alias. Use the printed `logs/` file for maxima,
 totals, and frame-to-frame comparisons instead of OCR. The full render then
 generates all PNG frames in parallel (`nproc-2`) and calls FFmpeg, usually with
-`h264_nvenc`, `-r 60`, and audio. Disposable PNG/MP4 bytes live in the managed
-tmpfs workspace even though their public symlinks remain below `videos/`.
+`h264_nvenc`, `-r 60`, and audio. Disposable PNG/MP4 bytes live directly in the
+managed tmpfs workspace; use the printed real path.
 
 Frame-range check only:
 
@@ -288,7 +293,7 @@ Important rendering notes:
   - Dic/Prg/Wr use a thin colour-and-black dashed border; both Wr banks
     use the Wr1 cyan display colour
   - scrolling audio waveform with +/-2 seconds and now centered
-  - status uses Req / Cold / Band / DMA / Run / Prg / Wrd / Pre
+  - status uses Req / Cold / Band / R2V / Run / Prg / Wrd / Pre
   - Pre is the number of future patterns actually written to VRAM in the frame;
     a prefetched pattern used later is displayed as Same
   - Band is physical-slot useful BODY data split left-to-right into Raw
@@ -296,7 +301,8 @@ Important rendering notes:
     that slot's actual CD read time (0 to 150 KiB/s)
   - four-row timeline: Req, Prg/Wrd remaining, physical cold runs, and Band;
     Raw is the bottom Band segment, followed by Prg and control
-  - DMA is compared against theoretical `(60/fps)` VBlank budget
+  - R2V is the timed total of pattern, DMA-repair, name-table/HUD, and
+    palette VDP-memory words, scaled to the exact observed timed maximum
   - heading metadata plus small top-right Time / Frame, baseline-aligned
   - palette used-color blocks have no outline
 - The main Sega CD output is centered exactly like hardware. Do not scale low
@@ -319,7 +325,7 @@ Standalone `/sim` uploads are unaffected.
 ```sh
 PY=~/.config/youtube/venv/bin/python
 [ -x "$PY" ] || { echo "bootstrap the separate YouTube environment from README.md" >&2; exit 1; }
-"$PY" ~/.claude/skills/youtube/youtube.py upload videos/<stem>_analysis.mp4 \
+"$PY" ~/.claude/skills/youtube/youtube.py upload "$ANALYSIS_MP4" \
   --title "SEGA-CD FMV of <work> - <specs> YYYYMMDD.eNN.pNN" \
   --desc "<specs, four-rule choices, starvation rate>" \
   --tags "SEGA-CD,SegaCD,FMV,homebrew,codec" \
@@ -331,12 +337,14 @@ Titles follow AGENTS.md "YouTube Upload Style": `SEGA-CD FMV of <work> -
 resolution/grid) and `<ver>` is the build version `YYYYMMDD.eN.pM` read from
 `tools/av_version.txt`. Descriptive, never a sequence version such as
 `vNNN`. Write the exact UTF-8 description to
-`videos/<stem>_analysis_description.txt`, target 4,800 characters or fewer,
-and hard-fail before upload when its Python character count exceeds YouTube's
-5,000-character limit:
+`$(dirname "$ANALYSIS_MP4")/<stem>_analysis_description.txt`, target 4,800
+characters or fewer, and hard-fail before upload when its Python character
+count exceeds YouTube's 5,000-character limit:
 
 ```sh
-tools/python.sh -c 'from pathlib import Path; p=Path("videos/<stem>_analysis_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
+ANALYSIS_DESCRIPTION="$(dirname "$ANALYSIS_MP4")/<stem>_analysis_description.txt"
+export ANALYSIS_DESCRIPTION
+tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
 ```
 
 Shorten optional explanatory prose first; preserve the mandatory CRAM
@@ -351,12 +359,12 @@ language sections. Never use the binary magic as a codec or format name.
 
 - Sim and render acquire shared CPU/GPU tokens only around their heavy parallel
   stages. `CBRSIM_WORKERS` controls both worker width and CPU-token demand.
-  Different stems may overlap; a duplicate `videos/<stem>` fails immediately.
+  Different stems may overlap; a duplicate media `<stem>` fails immediately.
 - For a multi-profile local run, use `tools/parallel_run.py`. Do not hand-start
   commands that bypass its pipeline-wide stem lock or tmpfs lease handoff.
 - Never kill another session's process. Kill only jobs you started.
-- Keep every profile in its own `videos/<stem>/tmp` working directory. Do not
-  use a shared `tmp/sim` for player decision output.
+- Keep every profile on its deterministic managed tmpfs sim path. Do not use a
+  shared `tmp/sim` for player decision output.
 - The analysis layout is consolidated into:
   - `tools/layout_preview.py`: canonical layout
   - `tools/render_analysis.py`: render real data using that layout

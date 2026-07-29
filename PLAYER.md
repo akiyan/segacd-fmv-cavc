@@ -236,8 +236,8 @@ sequenceDiagram
     S->>W: Exchange completed frame-0 bank
     S-->>M: STAT_READY
     Note over S,CD: Timed suffix remains stopped
-    M->>V: Show black frame -1 (DEBUG F=FFFF)
-    M->>V: Build and flip frame 0 (F=0000)
+    M->>V: Show black frame -1 (DEBUG frame=FFFF)
+    M->>V: Build and flip frame 0 (frame=0000)
     M->>S: Clear the original CMD_STREAM
     S->>CD: Launch continuous timed suffix
     CD-->>S: First frame-1 control sector
@@ -291,38 +291,38 @@ These counters record explicit budget openings.
 For specialized fixed-N H40 playback, one transfer deadline can serve both
 the final cold-run tail and the display flip. The Main CPU uses a conservative
 3,200 DMA-word-equivalent budget for each H40 VBlank. A DMA word costs one
-unit. Every CPU-written VDP data word costs four units: a one- or two-tile
-direct run therefore costs four times its logical word count, and a Word-RAM
-DMA also pays four units for its required first-word repair. Main grants a
-budget only after waiting for a new VBlank or while the V counter is still on
-its first blank line (`E0`). Entering an already-running blank later never
-creates a full budget; Main waits for the next head.
+unit. Every pattern run uses DMA. A Word-RAM DMA also pays four units for its
+required CPU first-word repair. Main grants a budget only after waiting for a
+new VBlank or while the V counter is still on its first blank line (`E0`).
+Entering an already-running blank later never creates a full budget; Main
+waits for the next head.
 
 Budgets 1 through N-1 are available to patterns. Before pattern work enters
 budget N, Main withholds the complete display reserve: the 1,792-word
-64-by-28 name-table DMA, a 128-unit timing guard, the 69-unit DEBUG HUD
+64-by-28 name-table DMA, a 128-unit timing guard, the 39-unit DEBUG HUD
 staging allowance when present, and an optional CRAM replacement. CRAM is
 written by the CPU, so its 64 words reserve 256 units. The normal reserves are
-1,920 units in release and 1,989 in DEBUG; a palette switch raises them to
-2,176 and 2,245. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
-1,211 pattern units in VBlank 2, or 955 on a palette switch.
+1,920 units in release and 1,959 in DEBUG; a palette switch raises them to
+2,176 and 2,215. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
+1,241 pattern units in VBlank 2, or 985 on a palette switch.
 
 A DMA run crossing a residual boundary is split exactly there and continued
-at the next fresh VBlank head. A one- or two-tile CPU run remains whole and
-moves to the next budget when it does not fit. After the pattern tail, Main
-restores the withheld reserve and admits the shared name-table/CRAM/flip path
-only if the current phase is still inside that same VBlank. VBlank status is
-checked before and after the V counter, and terminal lines `FC..FF` are
-rejected. If any condition fails, Main waits for a fresh VBlank.
+at the next fresh VBlank head, regardless of run length. After the pattern
+tail, Main restores the withheld reserve and admits the shared
+name-table/CRAM/flip path only if the current phase is still inside that same
+VBlank. VBlank status is checked before and after the V counter, and terminal
+lines `FC..FF` are rejected. If any condition fails, Main waits for a fresh
+VBlank.
 
 For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the next fresh VBlank.
 After the final pattern word, it patches only the transfer-final fields and
 the resolved palette segment into the Main-RAM name-table stage. The existing
 single 1,792-word name-table DMA therefore carries both picture and HUD; there
-is no separate 69-cell VDP-port republish after that DMA. Exact logical pattern
+is no separate 39-cell VDP-port republish after that DMA. Exact logical pattern
 word counters cover runtime VBlank budgets 1 through 4; they remain separate
-from the weighted capacity charge. `T` exposes a fifth or later budget. The staging allowance
+from the weighted capacity charge. `transfer_vblanks` exposes a fifth or later
+budget. The staging allowance
 keeps the shared admission check conservative even though those HUD words are
 already part of the name-table DMA.
 
@@ -340,7 +340,7 @@ tools/python.sh tools/check_player_ring.py \
   --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
   --extension-constants tmp/PROFILE/build/sp_extension.inc
 make movieplay CONFIG=profiles/PROFILE.toml \
-  DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
+  DEBUG=1 MAIN_CODEGEN=1 PLAYER_SPECIALIZE=1
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-size -A \
   tmp/PROFILE/build/movieplay_ip.o \
@@ -580,8 +580,8 @@ sequenceDiagram
     S->>W: completed frame-0 bankを交換
     S-->>M: STAT_READY
     Note over S,CD: timed suffixは停止したまま
-    M->>V: black frame -1を表示（DEBUG F=FFFF）
-    M->>V: frame 0を構築・flip（F=0000）
+    M->>V: black frame -1を表示（DEBUG frame=FFFF）
+    M->>V: frame 0を構築・flip（frame=0000）
     M->>S: 元のCMD_STREAMをclear
     S->>CD: continuous timed suffixを起動
     CD-->>S: 最初のframe-1 control sector
@@ -634,33 +634,33 @@ warningになります。軽いN4 frameは1〜2 budgetだけを開き、残るca
 
 Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
 display flipで共有できます。Main CPUはH40の各VBlankに、安全側の3,200
-DMA-word相当budgetを使います。DMA wordは1 unit、CPUがVDP dataへ書くwordは
-1つ4 unitです。このため1〜2 tileのCPU direct runはlogical word数の4倍、
-Word-RAM DMAは必須の先頭word補修に4 unitを追加します。新しいVBlankを待った直後、
-またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
-すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを待ちます。
+DMA-word相当budgetを使います。DMA wordは1 unitで、全pattern runがDMAを使います。
+Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新しいVBlankを待った
+直後、またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
+すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
+待ちます。
 
 Budget 1からN-1まではpatternに使えます。Pattern workがbudget Nへ入る前に、
 Mainはdisplay work全体を先に取り置きします。内訳は64-by-28 name-table DMAの
-1,792 word、128-unit timing guard、存在する場合の69-unit DEBUG HUD staging
+1,792 word、128-unit timing guard、存在する場合の39-unit DEBUG HUD staging
 allowance、任意のCRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを
-予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,989 unit、palette switch時は
-2,176と2,245です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
-VBlank 2にpattern用1,211 unit、palette switch時は955 unitを持ちます。
+予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,959 unit、palette switch時は
+2,176と2,215です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
+VBlank 2にpattern用1,241 unit、palette switch時は985 unitを持ちます。
 
-DMA runが残budget境界を越える場合はそこで正確に分割し、次のfresh VBlank headから
-続きを行います。1〜2 tileのCPU runはwholeのまま、収まらなければ次のbudgetへ送ります。
-Pattern tail後に取り置いたreserveを戻し、同じVBlank内にまだいる場合だけ
-name-table/CRAM/flip shared pathを許可します。VBlank statusはV counterの前後で確認し、
-terminalの`FC..FF` lineは拒否します。どれかを満たさなければfresh VBlankを待ちます。
+DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
+fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
+同じVBlank内にまだいる場合だけname-table/CRAM/flip shared pathを許可します。
+VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineは拒否します。
+どれかを満たさなければfresh VBlankを待ちます。
 
 multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
 transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
 patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
-DMA後に別の69-cell VDP-port republishは行いません。Runtime VBlank budget
+DMA後に別の39-cell VDP-port republishは行いません。Runtime VBlank budget
 1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、
-`T`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
+`transfer_vblanks`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
 含まれますが、staging allowanceはshared admission checkを保守的に維持します。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
@@ -677,7 +677,7 @@ tools/python.sh tools/check_player_ring.py \
   --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
   --extension-constants tmp/PROFILE/build/sp_extension.inc
 make movieplay CONFIG=profiles/PROFILE.toml \
-  DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
+  DEBUG=1 MAIN_CODEGEN=1 PLAYER_SPECIALIZE=1
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-size -A \
   tmp/PROFILE/build/movieplay_ip.o \

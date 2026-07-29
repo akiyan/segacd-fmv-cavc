@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import os
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -34,7 +35,7 @@ height = 224
 fit = "pad"
 
 [output]
-directory = "videos/test/tmp"
+directory = "tmpfs/test/sim"
 emit_decisions = true
 
 [palette]
@@ -68,6 +69,33 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             consume_config_arg(argv, required=True)
         self.assertEqual(argv, ["render_analysis.py", "10", "20"])
 
+    def test_profile_output_is_a_direct_managed_tmpfs_path(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        profile = load_profile(root / "profiles" / "bad-apple.toml")
+        with patch.dict(os.environ, {}, clear=False):
+            output = profile.output_dir
+        self.assertTrue(str(output).startswith(
+            "/dev/shm/segacd-fmv-ttrc/artifacts/sim-"))
+        self.assertEqual(output.name, "data")
+        self.assertFalse(output.is_symlink())
+
+    def test_cli_prints_direct_sim_output(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                str(root / "tools" / "python.sh"),
+                str(root / "tools" / "encode_config.py"),
+                str(root / "profiles" / "bad-apple.toml"),
+                "--print-sim-output",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertTrue(result.stdout.strip().startswith(
+            "/dev/shm/segacd-fmv-ttrc/artifacts/sim-"))
+
     def test_missing_required_profile_is_rejected(self) -> None:
         with self.assertRaisesRegex(SystemExit, "profile is required.*positional"):
             consume_config_arg(["sim.py"], required=True)
@@ -90,7 +118,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(
             {path.name for path in (root / "profiles").glob("*.toml")},
             {
-                "bad-apple-cold200.toml",
                 "bad-apple.toml",
                 "lunar-sss-op-h32.toml",
                 "lunar-sss-op-h40.toml",
@@ -122,10 +149,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
         self.assertTrue(
             env["CBRSIM_OUT"].endswith(
-                "videos/BadApple_H40_320x224_adpcm22_cold210/tmp"))
+                "tmpfs/BadApple_H40_320x224_adpcm22_cold200/sim"))
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
         self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)
@@ -153,7 +180,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             profile.section("analysis")["source_canvas"], [320, 224])
         self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(env["CBRSIM_OUT"].endswith(
-            "videos/SonicJamOp_H40_288x200_adpcm22_cold210/tmp"))
+            "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold210/sim"))
 
     def test_analysis_source_canvas_requires_two_positive_integers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

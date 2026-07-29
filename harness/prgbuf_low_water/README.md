@@ -1,35 +1,24 @@
 # PrgBuf low-water / playback-slip correlation
 
-This harness separates two similarly shaped but different measurements:
+This harness correlates the packer's modeled end-of-frame PrgBuf occupancy
+(`status_prg`) with retained playback diagnostics from the descriptive HUD
+TSV. It does not claim that the model is a live ring measurement.
 
-- Timeline `status_prg` is the packer's modeled end-of-frame PrgBuf occupancy.
-- H40 DEBUG HUD `Q` is the player's live signed minimum logical balance reached
-  during that frame, in exact 32-byte patterns.
-- H40 HUD `G` measures the longest interval outside a Sub
-  CDC pump opportunity; `B` proves APPLY control-queue back-pressure rejected
-  a pump, and `K` identifies the MSF-gap subset of `S`.
+The playback side uses:
 
-The timeline can look like zero on its fixed whole-movie scale while still
-holding a small positive amount. Only `Q=0000` proves that the live logical
-balance reached exactly empty. Raw `Q=FFFF` means -1 pattern, not a nearly full
-ring.
+- `sector_slip` and `audio_resync` cumulative transitions;
+- `pump_gap_ticks`, the longest interval outside a Sub CDC pump opportunity;
+- `apply_backpressure`, which records an APPLY queue rejection;
+- `msf_gap_recoveries`, the MSF-gap subset of `sector_slip`;
+- `capture_first`, which reveals extra display scanouts.
 
-## Why signed live balance matters
-
-The physical player uses circular head and tail pointers. If consumption gets
-ahead of delivery by one pattern, unsigned modulo subtraction aliases that
-logical -1 balance to `RING_PATTERNS - 1`, which looks almost full. Pump
-back-pressure may then reject later payload sectors and turn one short
-Sub-CPU service delay into a later `S` / reseek event. The `Q` tracker records
-the signed balance independently so this possibility can be confirmed or
-rejected without changing playback scheduling or image-quality settings.
-
-`Q` is diagnostic only. It does not change the `S/D/R/M/J` upload gate.
+The tool derives transport retry recoveries from
+`sector_slip - msf_gap_recoveries` modulo the one-digit counter. All retained
+fields are diagnostic and do not change playback behavior.
 
 ## Usage
 
-Analyze the timed part of H40 Bad Apple while excluding the terminal drain.
-For a recording containing `G/K`, include the expected 30 fps cadence:
+Analyze the timed part of H40 Bad Apple while excluding the terminal drain:
 
 ```sh
 tools/python.sh harness/prgbuf_low_water/analyze.py \
@@ -41,15 +30,12 @@ tools/python.sh harness/prgbuf_low_water/analyze.py \
   --events-tsv tmp/bad-apple/prgbuf_slip_events.tsv
 ```
 
-The range table reports each modeled low-water interval and the next cumulative
-`S` / `R` transition. The event table preserves the model and live `Q` values
-at every transition. The console summary separately reports every contiguous
-live-`Q` low-water interval and the distance from its end to the next `S`
-transition. When G/B/K columns are present, it also reports G statistics,
-every B frame, the B-to-next-S distance, the MSF/TRN cause totals, and extra
-capture scanouts accumulated in each low-water range. The event TSV preserves
-those cause fields at every `S`/`R` transition. Both file outputs are UTF-8
-TSV.
+The range table reports each modeled low-water interval and the next
+`sector_slip` / `audio_resync` transition. The event table preserves the model
+state and retained diagnostics at every transition. When the optional pump
+and capture columns are present, the report also includes pump-gap statistics,
+APPLY back-pressure frames, recovery causes, and extra capture scanouts. Both
+outputs are UTF-8 TSV.
 
 Run the focused tests with:
 

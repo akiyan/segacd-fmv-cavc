@@ -26,10 +26,12 @@ and checked independently.
 Run the independent whole-stream proof against an already packed profile:
 
 ```sh
+SIM_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/bad-apple.toml --print-sim-output)"
 tools/python.sh harness/pattern_supply/verify.py \
   --header out/bad-apple/HEADER.DAT \
   --body out/bad-apple/BODY.DAT \
-  --decisions videos/BadApple_H40_320x224_adpcm22_cold210/tmp/decisions.pkl
+  --decisions "$SIM_OUT/decisions.pkl"
 ```
 
 The verifier parses every HEADER and BODY sector, reproduces rate-slot

@@ -32,8 +32,8 @@ DEFAULT_SECTORS_PER_SCANOUT_DENOMINATOR = 800
 class HudRow:
     frame: int
     capture_first: int
-    slip: int
-    apply_guard_blocked: int
+    sector_slip: int
+    apply_backpressure: int
 
 
 @dataclass(frozen=True)
@@ -67,14 +67,14 @@ def read_hud(path: Path) -> dict[int, HudRow]:
     for raw in _read_tsv(path):
         frame = int(raw["frame"])
         capture = raw.get("capture_first", "").strip()
-        blocked = raw.get("apply_guard_blocked", "").strip()
+        blocked = raw.get("apply_backpressure", "").strip()
         if not capture:
             continue
         result[frame] = HudRow(
             frame=frame,
             capture_first=int(capture),
-            slip=int(raw["slip"]),
-            apply_guard_blocked=int(blocked) if blocked else 0,
+            sector_slip=int(raw["sector_slip"]),
+            apply_backpressure=int(blocked) if blocked else 0,
         )
     if not result:
         raise ValueError(f"HUD has no usable rows: {path}")
@@ -364,12 +364,12 @@ def build_replay(
                 next_sector_kind=next_kind,
                 predicted_apply_blocked=predicted_blocked,
                 observed_apply_blocked=(
-                    hud_row.apply_guard_blocked
+                    hud_row.apply_backpressure
                     if hud_row is not None
                     else None
                 ),
                 observed_slip=(
-                    hud_row.slip if hud_row is not None else None
+                    hud_row.sector_slip if hud_row is not None else None
                 ),
             )
         )

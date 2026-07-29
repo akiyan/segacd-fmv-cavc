@@ -2,7 +2,7 @@
 """Verify strict DEBUG-frame cadence in a native playback recording.
 
 The verifier decodes every recorded video frame in order, OCRs only the
-player's ``Fxxxx`` field, finds a plausible F0000 cadence anchor, then proves
+player's ``frame`` field, finds a plausible frame-0000 cadence anchor, then proves
 that every movie frame first appears exactly ``N`` capture frames after the
 previous one.  It intentionally ignores the recording tail after the requested
 final movie frame first appears.
@@ -154,7 +154,7 @@ def decode_observations(
     confidence: float,
     crop_x: int,
 ) -> tuple[list[Observation], int]:
-    """Decode native capture frames sequentially and OCR only ``Fxxxx``."""
+    """Decode native capture frames sequentially and OCR only ``frame``."""
     if (video.width, video.height) not in NATIVE_GEOMETRIES:
         allowed = ", ".join(f"{w}x{h}" for w, h in sorted(NATIVE_GEOMETRIES))
         raise CadenceError(
@@ -253,7 +253,7 @@ def find_anchor(
     vblanks: int,
     anchor_frames: int = 4,
 ) -> int:
-    """Return the observation index of a plausible exact F0000 cadence run."""
+    """Return the observation index of a plausible exact frame-0000 cadence run."""
     if vblanks < 1:
         raise ValueError("vblanks must be positive")
     if anchor_frames < 1:
@@ -265,7 +265,7 @@ def find_anchor(
         ):
             return index
     raise CadenceError(
-        f"could not find F0000 followed by {anchor_frames - 1} frames at "
+        f"could not find frame=0000 followed by {anchor_frames - 1} frames at "
         f"exactly {vblanks} VBlanks; check the DEBUG build, crop and confidence"
     )
 
@@ -349,7 +349,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--anchor-frames", type=int, default=4,
-        help="exact initial frames required to accept F0000 (default: 4)",
+        help="exact initial frames required to accept frame=0000 (default: 4)",
     )
     args = parser.parse_args(argv)
     if not args.recording.is_file():
@@ -380,7 +380,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if final_frame >= header.frame_count:
             raise CadenceError(
                 f"--through-frame F{final_frame:04X} is outside HEADER.DAT's "
-                f"F0000..F{header.frame_count - 1:04X}"
+                f"frame=0000..{header.frame_count - 1:04X}"
             )
         video = probe_video(args.recording)
         observations, decoded = decode_observations(
@@ -397,7 +397,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     delta_counts = Counter(report.deltas)
     delta_text = ", ".join(
         f"{delta}x{count}" for delta, count in sorted(delta_counts.items())
-    ) or "none (F0000 only)"
+    ) or "none (frame=0000 only)"
     scope = "full" if final_frame == header.frame_count - 1 else "partial"
     print(
         f"input: {args.recording} ({video.width}x{video.height}, "
@@ -408,7 +408,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"N={header.vsync_n}; required={vblanks}"
     )
     print(
-        f"PASS ({scope}): F0000..F{final_frame:04X}; "
+        f"PASS ({scope}): frame=0000..{final_frame:04X}; "
         f"first capture={report.anchor_capture}, "
         f"last capture={report.first_captures[-1]}"
     )

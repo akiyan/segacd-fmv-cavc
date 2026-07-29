@@ -18,7 +18,7 @@ def group(frame: int, capture: int) -> analyze.FrameGroup:
         time_last=capture / 60,
         sample_count=1,
         confidence=1.0,
-        values={"F": frame},
+        values={"frame": frame},
     )
 
 
@@ -37,7 +37,8 @@ class MovieAnchorTest(unittest.TestCase):
         self.assertEqual(anchor, 5)
         self.assertTrue(used_sentinel)
         self.assertEqual(selected[0].capture_first, 5)
-        self.assertEqual([row.values["F"] for row in selected[:4]], [0, 1, 2, 3])
+        self.assertEqual(
+            [row.values["frame"] for row in selected[:4]], [0, 1, 2, 3])
 
     def test_legacy_recording_without_sentinel_still_anchors(self) -> None:
         raw = [group(0, 0), group(1, 1), group(2, 2), group(3, 3)]
@@ -48,7 +49,8 @@ class MovieAnchorTest(unittest.TestCase):
 
         self.assertEqual(anchor, 0)
         self.assertFalse(used_sentinel)
-        self.assertEqual([row.values["F"] for row in selected], [0, 1, 2, 3])
+        self.assertEqual(
+            [row.values["frame"] for row in selected], [0, 1, 2, 3])
 
 
 if __name__ == "__main__":

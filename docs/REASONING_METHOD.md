@@ -73,8 +73,9 @@ floor).
 
 Timing-dependent bugs vary run to run. One clean run is **not** proof. Look for
 **margin**: a steady frame rate with no dips means headroom; a pass that barely
-holds will break on a different run. A cap that gives `S=0` *with visible margin*
-is trustworthy; one that gives `S=0` right at the edge is not.
+holds will break on a different run. A cap that gives `sector_slip=0` *with
+visible margin* is trustworthy; one that gives `sector_slip=0` right at the
+edge is not.
 
 ## 7. Bisect in time and space
 
@@ -222,7 +223,8 @@ Word-RAM DMA の先頭ワードバグを一発で特定した（3.2欠陥/コマ
 
 タイミング依存のバグはラン毎に変わる。1回きれいでも**証明ではない**。**余裕**を探す：
 dip の無い定常フレームレートは余裕を意味し、ぎりぎり通るものは別のランで壊れる。
-*明確な余裕を伴う* `S=0` は信頼でき、閾値ぎりぎりの `S=0` は信頼できない。
+*明確な余裕を伴う* `sector_slip=0` は信頼でき、閾値ぎりぎりの
+`sector_slip=0` は信頼できない。
 
 ## 7. 時間と空間で二分する
 

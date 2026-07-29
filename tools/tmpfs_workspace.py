@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Manage disposable codec artifacts in a project-scoped tmpfs workspace.
 
-The public paths stay under ``videos/`` as symlinks, while their bytes live
-under ``/dev/shm``.  Eviction is limited to this project's managed entries and
-never removes a live lease owned by another encoder/render process.
+Callers read and write the managed ``/dev/shm`` paths directly. Eviction is
+limited to this project's entries and never removes a live lease owned by
+another encoder/render process.
 """
 
 from __future__ import annotations
@@ -24,10 +24,7 @@ import subprocess
 import time
 import uuid
 
-from atomic_paths import replace_symlink
 
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-ttrc")
 DEFAULT_MIN_FREE_BYTES = 4 * 1024 ** 3
 
@@ -183,30 +180,8 @@ def _active_reservation_bytes(root: Path) -> int:
     )
 
 
-def _remove_alias_for_entry(entry: Path) -> None:
-    metadata = entry / ".managed.json" if entry.is_dir() else None
-    if metadata is None or not metadata.is_file():
-        return
-    try:
-        alias = Path(json.loads(metadata.read_text(encoding="utf-8"))["alias"])
-    except (OSError, KeyError, json.JSONDecodeError):
-        return
-    if not alias.is_symlink():
-        return
-    try:
-        target = alias.resolve(strict=False)
-    except OSError:
-        return
-    try:
-        target.relative_to(entry.resolve())
-    except ValueError:
-        return
-    alias.unlink(missing_ok=True)
-
-
 def _remove_entry(entry: Path) -> None:
     if entry.is_dir():
-        _remove_alias_for_entry(entry)
         shutil.rmtree(entry)
     else:
         entry.unlink(missing_ok=True)
@@ -389,36 +364,19 @@ def acquire_lease(
             entry, root=root, required_bytes=required_bytes)
 
 
-def _validate_video_alias(alias: Path) -> None:
-    if os.environ.get("SEGACD_TMPFS_ALLOW_ANY_ALIAS", "0") in {
-            "1", "true", "yes", "on"}:
-        return
-    if not is_video_alias(alias):
-        raise TmpfsWorkspaceError(
-            f"managed artifact alias must stay below videos/: {alias}")
+def managed_directory_path(
+    *,
+    kind: str,
+    key: str,
+    root: Path | None = None,
+) -> Path:
+    """Return the deterministic direct path for one managed directory."""
 
-
-def is_video_alias(path: Path) -> bool:
-    videos = (PROJECT_ROOT / "videos").resolve()
-    try:
-        Path(path).absolute().relative_to(videos)
-    except ValueError:
-        return False
-    return True
-
-
-def _replace_alias(alias: Path, target: Path, *, directory: bool) -> None:
-    _validate_video_alias(alias)
-    alias.parent.mkdir(parents=True, exist_ok=True)
-    if alias.exists() and alias.is_dir() and not alias.is_symlink():
-        # One-time migration from an old real videos/ directory. Managed
-        # aliases are symlinks after this point and use atomic replacement.
-        shutil.rmtree(alias)
-    replace_symlink(alias, target, directory=directory)
+    root = ensure_root(root)
+    return root / "artifacts" / _entry_key(kind, key) / "data"
 
 
 def activate_directory(
-    alias: Path,
     *,
     kind: str,
     key: str,
@@ -448,7 +406,6 @@ def activate_directory(
                     and metadata.get("kind") == kind
                     and metadata.get("key") == key
                     and (entry / "data").is_dir()):
-                _replace_alias(alias, entry / "data", directory=True)
                 lease = _acquire_lease_locked(
                     entry, root=root, required_bytes=required_bytes)
                 lease.reused = True
@@ -460,9 +417,8 @@ def activate_directory(
         data = entry / "data"
         data.mkdir()
         (entry / ".managed.json").write_text(json.dumps({
-            "alias": str(alias.absolute()), "kind": kind, "key": key,
+            "kind": kind, "key": key,
         }, sort_keys=True) + "\n", encoding="utf-8")
-        _replace_alias(alias, data, directory=True)
         return _acquire_lease_locked(
             entry, root=root, required_bytes=required_bytes)
 
@@ -493,17 +449,18 @@ def mark_directory_complete(
 
 
 def allocate_file(
-    alias: Path,
+    requested_path: Path,
     *,
     kind: str,
     key: str | None = None,
     required_bytes: int = 0,
     root: Path | None = None,
 ) -> tuple[Path, Lease]:
-    """Allocate a tmpfs target for one disposable videos/ file."""
+    """Allocate and return a direct tmpfs target for one disposable file."""
 
     root = ensure_root(root)
-    identity = key or str(alias.absolute())
+    requested_path = Path(requested_path)
+    identity = key or str(requested_path.absolute())
     with _workspace_lock(root):
         entry = root / "artifacts" / _entry_key(kind, identity)
         active = _active_entries(root)
@@ -513,35 +470,26 @@ def allocate_file(
             _remove_entry(entry)
         _evict_old_entries_locked(required_bytes, root=root)
         entry.mkdir(parents=True)
-        actual = entry / alias.name
+        actual = entry / requested_path.name
         (entry / ".managed.json").write_text(json.dumps({
-            "alias": str(alias.absolute()), "kind": kind, "key": identity,
+            "kind": kind, "key": identity,
         }, sort_keys=True) + "\n", encoding="utf-8")
         return actual, _acquire_lease_locked(
             entry, root=root, required_bytes=required_bytes)
 
 
-def publish_alias(alias: Path, actual: Path) -> None:
-    if not actual.is_file():
-        raise TmpfsWorkspaceError(f"tmpfs artifact was not produced: {actual}")
-    root = ensure_root()
-    with _workspace_lock(root):
-        _replace_alias(alias, actual, directory=False)
-
-
-def lease_managed_alias(
-    alias: Path,
+def lease_managed_path(
+    path: Path,
     *,
     required_bytes: int = 0,
     root: Path | None = None,
 ) -> Lease | None:
-    """Lease an existing managed artifact and reserve space for derived data."""
+    """Lease an existing direct managed path and reserve derived space."""
 
     root = ensure_root(root)
     with _workspace_lock(root):
-        alias = Path(alias)
         try:
-            target = alias.resolve(strict=True)
+            target = Path(path).resolve(strict=True)
         except FileNotFoundError:
             return None
         artifacts = (root / "artifacts").resolve()
@@ -561,38 +509,100 @@ def lease_managed_alias(
 
 
 def run_file_command(
-    alias: Path,
+    requested_path: Path,
     *,
     kind: str,
     required_bytes: int,
     command: list[str],
-) -> None:
-    """Run a producer against a leased target, then publish its videos/ alias."""
+    input_paths: list[Path] | tuple[Path, ...] = (),
+) -> Path:
+    """Run a producer against a leased direct tmpfs target and return it."""
 
     if not command:
         raise TmpfsWorkspaceError("tmpfs file producer command is empty")
     if all("{output}" not in part for part in command):
         raise TmpfsWorkspaceError(
             "tmpfs file producer command must contain {output}")
-    actual, lease = allocate_file(
-        alias, kind=kind, required_bytes=required_bytes)
-    expanded = [part.replace("{output}", str(actual)) for part in command]
+    input_leases = []
+    output_lease = None
     try:
+        for input_path in input_paths:
+            input_lease = lease_managed_path(input_path)
+            if input_lease is not None:
+                input_leases.append(input_lease)
+        actual, output_lease = allocate_file(
+            requested_path, kind=kind, required_bytes=required_bytes)
+        expanded = [part.replace("{output}", str(actual)) for part in command]
         subprocess.run(expanded, check=True)
-        publish_alias(alias, actual)
+        if not actual.is_file():
+            raise TmpfsWorkspaceError(
+                f"tmpfs artifact was not produced: {actual}")
+        return actual
     finally:
-        lease.release()
+        if output_lease is not None:
+            output_lease.release()
+        for input_lease in reversed(input_leases):
+            input_lease.release()
+
+
+def run_directory_command(
+    *,
+    kind: str,
+    key: str,
+    required_bytes: int,
+    command: list[str],
+    input_paths: list[Path] | tuple[Path, ...] = (),
+) -> Path:
+    """Run a producer with one leased disposable tmpfs directory."""
+
+    if not command:
+        raise TmpfsWorkspaceError("tmpfs directory producer command is empty")
+    if all("{output}" not in part for part in command):
+        raise TmpfsWorkspaceError(
+            "tmpfs directory producer command must contain {output}")
+    input_leases = []
+    output_lease = None
+    try:
+        for input_path in input_paths:
+            input_lease = lease_managed_path(input_path)
+            if input_lease is not None:
+                input_leases.append(input_lease)
+        output_lease = activate_directory(
+            kind=kind,
+            key=key,
+            required_bytes=required_bytes,
+        )
+        actual = output_lease.entry / "data"
+        expanded = [part.replace("{output}", str(actual)) for part in command]
+        subprocess.run(expanded, check=True)
+        return actual
+    finally:
+        if output_lease is not None:
+            output_lease.release()
+        for input_lease in reversed(input_leases):
+            input_lease.release()
 
 
 def _parse_cli() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action", required=True)
     run_file = subparsers.add_parser(
-        "run-file", help="run a producer and publish one videos/ file")
+        "run-file", help="run a producer against one direct tmpfs file")
     run_file.add_argument("--output", required=True, type=Path)
     run_file.add_argument("--kind", required=True)
     run_file.add_argument("--required-gb", type=float, default=1.0)
+    run_file.add_argument("--input", action="append", type=Path, default=[])
     run_file.add_argument("command", nargs=argparse.REMAINDER)
+    run_directory = subparsers.add_parser(
+        "run-directory",
+        help="run a producer inside one leased disposable tmpfs directory",
+    )
+    run_directory.add_argument("--kind", required=True)
+    run_directory.add_argument("--key", required=True)
+    run_directory.add_argument("--required-gb", type=float, default=1.0)
+    run_directory.add_argument(
+        "--input", action="append", type=Path, default=[])
+    run_directory.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
 
 
@@ -600,13 +610,24 @@ def _main() -> None:
     args = _parse_cli()
     if args.action == "run-file":
         command = args.command[1:] if args.command[:1] == ["--"] else args.command
-        run_file_command(
+        actual = run_file_command(
             args.output,
             kind=args.kind,
             required_bytes=max(0, int(args.required_gb * 1024 ** 3)),
             command=command,
+            input_paths=args.input,
         )
-        print(args.output, flush=True)
+        print(actual, flush=True)
+    elif args.action == "run-directory":
+        command = args.command[1:] if args.command[:1] == ["--"] else args.command
+        actual = run_directory_command(
+            kind=args.kind,
+            key=args.key,
+            required_bytes=max(0, int(args.required_gb * 1024 ** 3)),
+            command=command,
+            input_paths=args.input,
+        )
+        print(actual, flush=True)
 
 
 if __name__ == "__main__":

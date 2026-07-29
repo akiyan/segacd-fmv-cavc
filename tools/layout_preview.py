@@ -155,6 +155,11 @@ def dma_value_digits(cells):
     return len(str(max(0, int(cells))))
 
 
+def r2v_value_digits(max_words):
+    """Digits needed by the observed timed VDP-memory word maximum."""
+    return len(str(max(1, int(max_words))))
+
+
 def timed_metric_value(frame, value):
     """Hide untimed frame-0 boot work from timing/load meters."""
     return int(value) if int(frame) > 0 else 0
@@ -169,8 +174,8 @@ H40_FULL_TILES = (MODES["H40"]["sw"] // 8) * (MODES["H40"]["sh"] // 8)
 DMA_RUN_DIGITS = len(str(dma_run_worst_case(H40_FULL_TILES)))  # 1120 -> 4桁
 
 
-def dma_label_template(cells):
-    return "DMA:" + "0" * dma_value_digits(cells)
+def r2v_label_template(max_words):
+    return "R2V:" + "0" * r2v_value_digits(max_words)
 
 
 def run_label_template():
@@ -263,6 +268,8 @@ def dummy_data():
     prefetch = 18
     displayed_cold = sum(counts[name] for name in ("Raw",) + DISPLAY_SOURCE_ORDER)
     dma_tiles = displayed_cold + prefetch
+    r2v_words = dma_tiles * 16 + (23 - 11) + C
+    r2v_max = 7040
     return dict(C=C, counts=counts, series=series, fps=fps, win=win,
                 palettes=palettes, cat_totals=cat_totals,
                 body_raw_payload_bytes=body_raw_payload_bytes,
@@ -288,6 +295,7 @@ def dummy_data():
                 prefetch_cap=32,
                 cold_cap=av_config.cold_cap_for_fps(fps),
                 dma_tiles=dma_tiles, dma_runs=23,
+                r2v_words=r2v_words, r2v_max=r2v_max,
                 tl=tl, supply_series=supply_series, tln=tln,
                 time_s=42.0, frame=1260, total_frames=2712)
 
@@ -321,15 +329,15 @@ def draw_field(d, x, y, label, value, width, font, col, maxval=None, maxwidth=No
     return x
 
 
-def meter_widths(cells):
+def meter_widths(r2v_max):
     """Each bar follows its label width.
 
-    Returns Band, Prg, Wrd, DMA, and Run widths.
+    Returns Band, Prg, Wrd, R2V, and Run widths.
     """
     return (_w(f_leg, "Band:000") + 3,
             _w(f_leg, "Prg:00000") + 3,
             _w(f_leg, "Wrd:0000") + 3,
-            _w(f_leg, dma_label_template(cells)) + 3,
+            _w(f_leg, r2v_label_template(r2v_max)) + 3,
             _w(f_leg, run_label_template()) + 3)
 
 
@@ -423,7 +431,7 @@ def draw_graph(w, h, data):
 
 
 def draw_status(w, h, data):
-    """status帯: Req / Cold / Band / DMA / Run / Prg / Wrd / Pre + timeline。
+    """status帯: Req / Cold / Band / R2V / Run / Prg / Wrd / Pre + timeline。
     数値は同じ文字色のゼロ埋めで桁固定。Tank/BufメーターとMissCarryは廃止。"""
     im = Image.new("RGB", (w, h), (16, 16, 16))
     d = ImageDraw.Draw(im)
@@ -431,10 +439,10 @@ def draw_status(w, h, data):
     C = data["C"]
     GAP = 16
     REQ_W = _w(f_leg, "Req:000  Miss:000") + 3
-    dmax = dma_tile_capacity(data["mode"], data["fps"], C)
-    dval = data["dma_tiles"]
+    r2v_max = max(1, int(data["r2v_max"]))
+    r2v_val = int(data["r2v_words"])
     # メーター幅の統一を廃止=各バーは自分のラベル幅
-    BAND_W, PRG_W, WRD_W, DMA_W, RUN_W = meter_widths(C)
+    BAND_W, PRG_W, WRD_W, R2V_W, RUN_W = meter_widths(r2v_max)
     COLD_W = _w(f_leg, "Cold:000") + 3
     PRE_W = _w(f_leg, "Pre:000") + 3
     ly = by + BH + 3
@@ -477,23 +485,28 @@ def draw_status(w, h, data):
     )
     draw_field(d, x, ly, "Band:", data["band_kbps"], 3, f_leg, COL_TXT)
     x += BAND_W + GAP
-    # 4) DMA = 今フレームの32Bパターンタイル数。フル=モード/fpsの理論DMAから全NT分を引いた枚数。
-    fillw = int(DMA_W * min(dval, dmax) / max(dmax, 1)); over = dval > dmax
+    # 4) R2V = pattern + DMA repair + name-table/HUD + palette words.
+    fillw = int(R2V_W * min(r2v_val, r2v_max) / r2v_max)
+    over = r2v_val > r2v_max
     d.rectangle(
         [x, by, x + fillw, by + BH],
         fill=style.COL_OVER if over else COL_DMA,
     )
     if over:
         d.rectangle(
-            [x + fillw, by, x + DMA_W, by + BH],
+            [x + fillw, by, x + R2V_W, by + BH],
             fill=style.COL_OVER_REMAINDER,
         )
-    d.rectangle([x, by, x + DMA_W, by + BH], outline=COL_FRAME_IN)
-    draw_field(d, x, ly, "DMA:", dval, dma_value_digits(C), f_leg, COL_TXT)
-    x += DMA_W + GAP
+    d.rectangle([x, by, x + R2V_W, by + BH], outline=COL_FRAME_IN)
+    draw_field(
+        d, x, ly, "R2V:", r2v_val, r2v_value_digits(r2v_max),
+        f_leg, COL_TXT,
+    )
+    x += R2V_W + GAP
 
     # 5) Run = playerのcold-run record数。CPU/DMA転送方式にかかわらず1tile/runが理論最悪。
-    run_val = int(data["dma_runs"]); run_max = dma_run_worst_case(dval)
+    run_val = int(data["dma_runs"])
+    run_max = dma_run_worst_case(data["dma_tiles"])
     run_fill = (max(1, int(RUN_W * min(run_val, run_max) / run_max))
                 if run_val > 0 and run_max > 0 else 0)
     d.rectangle([x, by, x + run_fill, by + BH],

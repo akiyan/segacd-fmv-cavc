@@ -10,16 +10,20 @@ readable layout receipts, not visual guesses.
 
 ## Workflow
 
-1. Require both PNGs and their adjacent `<image>.json` receipts. Regenerate an
-   older timeline if its receipt is missing.
+1. Require both direct tmpfs PNG paths and their content-keyed layout receipts
+   under `logs/`. Regenerate an older timeline if its receipt is missing.
 2. Run:
 
 ```sh
 tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
-  videos/STEM_timeline.png \
-  videos/STEM_hudline.png \
-  --output videos/STEM_mixline.png
+  /dev/shm/segacd-fmv-ttrc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
+  /dev/shm/segacd-fmv-ttrc/artifacts/HUDLINE_ENTRY/STEM_hudline.png \
+  --timeline-layout logs/STEM_TIMELINE_SHA10_timeline-layout.json \
+  --hudline-layout logs/STEM_HUDLINE_SHA10_hudline-layout.json
 ```
+
+   The renderer prints the direct tmpfs mixline path and the persistent
+   mixline layout receipt under `logs/`.
 
 3. The renderer must reject mismatched frame count, fps, pixels per frame,
    plot-left coordinate, plot width, or source image hash. An explicitly
@@ -34,7 +38,7 @@ tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
 
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  videos/STEM_mixline.png \
+  /dev/shm/segacd-fmv-ttrc/artifacts/MIXLINE_ENTRY/STEM_mixline.png \
   --description "SEGA-CD FMV mixed codec/HUD timeline: run label"
 ```
 
@@ -43,9 +47,11 @@ Report the Gist page, raw PNG URL, and clickable local image path.
 ## Output contract
 
 - Consolidate both source titles and run specifications into one header at the
-  top. Show `S/D/R/M/J` as gate maxima/limits and show C separately as a
-  diagnostic maximum. When present, also show G's diagnostic maximum and the
-  B APPLY-back-pressure frame count. The full G/B/K rows remain in the
+  top. Show descriptive gate maxima/limits for `sector_slip`,
+  `control_desync`, `audio_resync`, `vblank_spill`, and
+  `prgbuf_jitter_peak_kib`. Show `cd_wait_count` separately as a diagnostic
+  maximum. When present, also show the `pump_gap_ticks` maximum and APPLY
+  back-pressure frame count. The complete descriptive rows remain in the
   pixel-preserved hudline body. Do not retain two full, repetitive headers.
 - Directly below the hud summary line, repeat the timeline's whole-movie
   category-totals legend (swatch, category name, EVAL-scope displayed tile
@@ -69,8 +75,8 @@ Report the Gist page, raw PNG URL, and clickable local image path.
   `x = 220 + frame * pixels_per_frame`.
 - Preserve the hexadecimal `f0xHEX` horizontal frame labels from both source
   graphs and use the same notation for the consolidated EVAL range.
-- Write `<output>.json` with both source hashes, source receipts, shared frame
-  geometry, and the y range of each panel.
+- Write a content-keyed JSON under `logs/` with both source hashes, source
+  receipts, shared frame geometry, and the y range of each panel.
 - Treat the mixed image as diagnostic evidence. Preserve green `PASS`, yellow
   `WARNING`, and red `FAIL`; never hide or relabel a warning or failure.
 

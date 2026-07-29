@@ -44,7 +44,7 @@ class MixlineRenderingTests(unittest.TestCase):
         keys = [
             "display_vblanks",
             *mixline.LOGVDPLINE_KEYS,
-            "prgbuf_min_patterns_signed",
+            "pump_gap_ticks",
         ]
         log_range, hud_ranges = mixline.split_hudline_ranges(
             receipt(keys),
@@ -55,7 +55,7 @@ class MixlineRenderingTests(unittest.TestCase):
 
     def test_plain_hudline_remains_one_source_range(self):
         log_range, hud_ranges = mixline.split_hudline_ranges(
-            receipt(["display_vblanks", "slip"]),
+            receipt(["display_vblanks", "sector_slip"]),
             image_height=30,
         )
         self.assertIsNone(log_range)

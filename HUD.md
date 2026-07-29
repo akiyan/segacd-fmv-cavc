@@ -1,1255 +1,371 @@
-EN / [JP](#jp)
-
 # On-hardware DEBUG HUD
 
-This document is the complete reference for the values-only playback HUD drawn
-by `boot/movieplay_ip.s` in `DEBUG=1` builds. It covers the runtime movie HUD,
-not the minimal four-digit boot preload counter and not the offline analysis
-overlay documented in [`ANALYSIS.md`](ANALYSIS.md). The boot counter reuses the
-same 16 hexadecimal glyphs; their VRAM is fixed at `0xD000` (tiles 1664..1679)
-in the unused `0xD000`-`0xDFFF` gap between the two name tables, identical in
-DEBUG and release builds. The resident pool therefore has 1535 slots and both
-build types share the same pool shape.
-
-The HUD answers three different questions at once:
-
-1. Which movie frame and palette segment are actually visible?
-2. Is the Sub CPU keeping the CD stream and audio ready?
-3. Is the Main CPU finishing pattern transfer before the display deadline?
-
-It is deliberately diagnostic. A nonzero value is not automatically a codec
-failure, and several fields show only the low byte of a larger counter.
+The DEBUG player writes a values-only hexadecimal HUD into Plane A. It is
+designed for native-resolution recording and deterministic OCR. The HUD has no
+labels on the console; every decoded value is exposed to tools with a
+descriptive field name.
 
 ## Enabling the HUD
 
-Build the profile with DEBUG enabled:
+Build a DEBUG disc:
 
 ```sh
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Specialized H32 and H40 DEBUG builds use the same 69-cell combined layout.
-H32 wraps it after 32 cells into three rows and H40 after 40 cells into two
-rows. Release builds omit it.
-
-`tools/record_movie.sh` uses a DEBUG disc by default. Release builds omit the
-HUD and use a slip-triggered CRAM0 red indicator. DEBUG builds keep the HUD
-colours stable and expose slips through `S`.
+Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 39
+hexadecimal digits. H32 wraps after 32 cells and uses seven cells on a second
+row. H40 fits all 39 cells on one row.
 
 ## Physical layout
 
-The hardware draws hexadecimal values only. There are no labels, spaces, or
-separators in the actual image. Spaces below show the field boundaries:
-
-```text
-row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
-H32 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQ
-H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX YYY ZZZ T II 3
-H32 row 2:   33 444
-H40 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
-H40 row 1:   GGGG KK HHHH XXXX YYY ZZZ T II 333 444
-```
-
-The fixed interpretation order is:
-
-```text
-F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X / Y / Z / T / I / Y3 / Y4
-```
-
-H32 and H40 use the same logical field stream. Every digit occupies one 8x8
-cell. The four-digit signed PrgBuf minimum `Q`, the three flip-phase fields,
-and `G/K/H/X/Y/Z/T/I/Y3/Y4` follow the 30-cell common prefix. `Y3/Y4`
-are the logical pattern-word counts for VBlank budgets 3 and 4. H32 fills its
-remaining two row-0 cells with the first half of `Q`, fills row 1, then uses
-five cells of row 2. H40 fits `Q/V/O/E` on row 0 and continues the other 29
-cells on row 1.
-
-| Field | HUD row | Cell columns | Native pixel range | Digits |
-|---|---:|---:|---:|---:|
-| `F` | 0 | 0-3 | x=0-31 | 4 |
-| `P` | 0 | 4-5 | x=32-47 | 2 |
-| `S` | 0 | 6-7 | x=48-63 | 2 |
-| `D` | 0 | 8-9 | x=64-79 | 2 |
-| `R` | 0 | 10-11 | x=80-95 | 2 |
-| `L` | 0 | 12-13 | x=96-111 | 2 |
-| `C` | 0 | 14-15 | x=112-127 | 2 |
-| `W` | 0 | 16-17 | x=128-143 | 2 |
-| `M` | 0 | 18-19 | x=144-159 | 2 |
-| `A` | 0 | 20-21 | x=160-175 | 2 |
-| `U` | 0 | 22-25 | x=176-207 | 4 |
-| `N` | 0 | 26-27 | x=208-223 | 2 |
-| `J` | 0 | 28-29 | x=224-239 | 2 |
-| `Q` (H32, high/low halves) | 0 / 1 | 30-31 / 0-1 | x=240-255 / x=0-15 | 2+2 |
-| `V` (H32) | 1 | 2-3 | x=16-31 | 2 |
-| `O` (H32) | 1 | 4-5 | x=32-47 | 2 |
-| `E` (H32) | 1 | 6-7 | x=48-63 | 2 |
-| `G` (H32) | 1 | 8-11 | x=64-95 | 4 |
-| `K` (H32) | 1 | 12-13 | x=96-111 | 2 |
-| `H` (H32) | 1 | 14-17 | x=112-143 | 4 |
-| `X` (H32) | 1 | 18-21 | x=144-175 | 4 |
-| `Y` (H32) | 1 | 22-24 | x=176-199 | 3 |
-| `Z` (H32) | 1 | 25-27 | x=200-223 | 3 |
-| `T` (H32) | 1 | 28 | x=224-231 | 1 |
-| `I` (H32) | 1 | 29-30 | x=232-247 | 2 |
-| `Y3` (H32, split) | 1 / 2 | 31 / 0-1 | x=248-255 / x=0-15 | 1+2 |
-| `Y4` (H32) | 2 | 2-4 | x=16-39 | 3 |
-| `Q` (H40) | 0 | 30-33 | x=240-271 | 4 |
-| `V` (H40) | 0 | 34-35 | x=272-287 | 2 |
-| `O` (H40) | 0 | 36-37 | x=288-303 | 2 |
-| `E` (H40) | 0 | 38-39 | x=304-319 | 2 |
-| `G` (H40) | 1 | 0-3 | x=0-31 | 4 |
-| `K` (H40) | 1 | 4-5 | x=32-47 | 2 |
-| `H` (H40) | 1 | 6-9 | x=48-79 | 4 |
-| `X` (H40) | 1 | 10-13 | x=80-111 | 4 |
-| `Y` (H40) | 1 | 14-16 | x=112-135 | 3 |
-| `Z` (H40) | 1 | 17-19 | x=136-159 | 3 |
-| `T` (H40) | 1 | 20 | x=160-167 | 1 |
-| `I` (H40) | 1 | 21-22 | x=168-183 | 2 |
-| `Y3` (H40) | 1 | 23-25 | x=184-207 | 3 |
-| `Y4` (H40) | 1 | 26-28 | x=208-231 | 3 |
-
-The common part covers 30 cells or 240 pixels. The complete HUD covers 32
-cells on H32 rows 0 and 1 plus five on row 2, or 40 cells on H40 row 0 plus
-29 on row 1.
-It can cover active picture content; it is not repositioned around
-letterboxing.
-
-For any recording that can proceed to compilation or upload, the complete first
-movie loop produces a binary `gate` (`PASS` or `FAIL`) and a separate
-three-state `alert` (`NONE`, `WARNING`, or `FAIL`). Alerts `NONE` and `WARNING`
-are upload-capable and map to gate `PASS`; alert `FAIL` maps to gate `FAIL`.
-The deprecated `status` and `pass` fields remain in gate JSON for compatibility.
-`S/D/R` must remain zero. `M` and `J` thresholds follow the profile's player
-cadence. Fixed-N allows the `N-1` intervening pattern-work fields: fixed N2
-raises a cadence warning when `M>01`, while fixed N4 raises one when `M>03`.
-Delivery-paced content may use all display fields in one content frame; 24 fps
-raises the same warning when `M>03`. The largest passing `J` is
-normal-ceiling-to-physical-end minus one
-KiB: `2D` at 15fps, `1E` at 24fps, and `19` at 30fps. Values above the normal
-jitter interval (`28`, `19`, or `14` respectively) show that
-sector-granular occupancy crossed the shared 416 KiB delivery observation
-boundary and entered the final physical guard left outside the schedule.
-Report the value, but a `J` within the cadence-specific passing limit does not
-by itself require another confirmation or fail the recording. `C` has no gate
-threshold and never changes the gate result; it remains a diagnostic measure
-of Sub-side CD work. Report all `S/D/R/M/J` gate maxima when gate is `PASS` and
-report the diagnostic C maximum. When the enclosing task already authorizes
-publication, continue without requesting another approval merely because the
-gate ran.
-
-For fixed-N playback, the analyzer also measures the visible duration of each
-timed, nonterminal movie frame from consecutive `F` transition capture
-positions. A duration other than N VBlanks raises alert `WARNING` while
-retaining gate `PASS`; it records the complete histogram and every affected
-frame in the gate JSON. Frame 0 and the terminal frame are excluded because
-their timed display extents are not both observable. Delivery-paced playback
-records the histogram without applying an exact-duration warning.
-
-For every gate result, the analyzer and `/hudline` report the minimum, mean,
-median, and maximum of both `C` and `A` across the timed first loop and preserve
-them in the gate JSON and hudline receipt. When `G` is present, they also
-report its minimum, mean, median, and maximum after separating the packed `B`
-marker. `H` reports the exact physical peak and `X` reports the reader lead.
-`Y/Z/Y3/Y4/T/I` report the Main pattern-budget accounting and its exit phase.
-For fixed-N playback, `T>N` raises alert `WARNING` while retaining gate
-`PASS`. `T` counts opened fresh VBlank budgets; `O/I` remain the physical
-phase check when the weighted model is still optimistic. The transfer fields
-are otherwise diagnostic only; they do not create an alert. `G`, `B`, `K`,
-`H`, and `X` never alter the gate or alert.
-
-The black player-only frame -1 uses `F=FFFF` before frame 0. It is an OCR
-sentinel, not a stream frame, and is never written as a HUD TSV row. Frame 0
-is an untimed boot construction, not a playback measurement. Keep it
-only for first-loop sequence completeness and frame-axis alignment. Exclude
-all of its HUD values from gate maxima, warning/failure events, timeline bars,
-dynamic scale maxima, OCR aggregates, and derived VBlank cadence statistics.
-The frame-0 extent of every `/hudline` metric row is blank. The final frame's
-derived VBlank is also unknown because the next movie-frame transition is not
-available.
-
-## At-a-glance field reference
-
-| Field | Owner | Scope | Meaning | Healthy interpretation |
-|---|---|---|---|---|
-| `F` | Main | current state | Visible movie frame number; `FFFF` is player-only frame -1 | `FFFF`, then `0000`, then movie cadence |
-| `P` | Main | current state | Zero-based CRAM palette-segment number | Changes only at expected palette boundaries |
-| `S` | Sub | cumulative | CD sector-slip/re-seek recovery count | `00` throughout a clean run |
-| `D` | Sub | cumulative | Control-stream frame-sequence mismatch count | `00` throughout a clean run |
-| `R` | Sub | cumulative | RF5C164 write-pointer re-sync count | `00` is ideal |
-| `L` | Sub | current state | Audio write lead, in units of 256 decoded bytes | Stable and comfortably inside the configured lead range |
-| `C` | Sub | per frame | Blocking CD sector pumps before control execution | `00` means control was already ready |
-| `W` | Main | per frame | Main wait for Sub handoff, in approximate scanlines | Small and stable |
-| `M` | Main | per timed frame | VBlank starts waited by the Main pattern path; frame 0 is excluded because it is an untimed boot construction | `00..N-1`; a larger value proves a cadence spill and raises a warning |
-| `A` | Sub | per frame | ADPCM decode phase time | Stable band for the same profile |
-| `U` | Main | per frame | Main pattern-transfer elapsed time | Below the frame's available transfer window |
-| `N` | Main | per frame | Source-aware cold-run descriptor count | Content-dependent; correlate with `U` |
-| `J` | Sub | cumulative peak | Maximum streamed PrgBuf occupancy above the fps-derived normal ceiling | `00` means the jitter headroom was never used |
-| `Q` | Sub | per frame | Minimum signed logical PrgBuf balance, in exact 32-byte patterns | Positive is supplied data; `0000` is truly empty; `FFFF` is one-pattern underflow |
-| `G` | Sub | per frame | Longest interval outside a CDC pump opportunity, in 30.72 us ticks | A stable band means no exceptional Sub-side pump neglect |
-| `B` | Sub | per frame | APPLY control-queue back-pressure rejected a pump (derived from `G` bit 15) | `00`; `01` proves the control queue blocked continuous delivery |
-| `K` | Sub | cumulative | MSF sequence-gap recovery count | Compare with `S`; `S-K` is the CDC_TRN retry-exhaustion count |
-| `H` | Sub | per frame | Maximum physical PrgBuf occupancy, in exact 32-byte patterns | Below `3440` stays below the 418 KiB payload back-pressure boundary |
-| `X` | Sub | per frame | CD reader position ahead of the next frame expansion; high byte is complete frame slots, low byte is sector position in the current slot | Read with `H`; large lead is safe only while every destination retains space |
-| `Y` | Main | per frame | Exact logical pattern words issued in runtime VBlank budget 1 | Divide by 16 for whole 32-byte patterns; read with the later shares and `T` |
-| `O` | Main | per frame | V-counter immediately after the first pattern-transfer share | `E0..FF` remains in VBlank; `00..DF` proves that the first share ran into active display |
-| `Z` | Main | per frame | Exact logical pattern words issued in runtime VBlank budget 2 | Read with the weighted budget rules; this is not capacity cost |
-| `Y3` | Main | per frame | Exact logical pattern words issued in runtime VBlank budget 3 | Zero on healthy N2; available to N4 |
-| `Y4` | Main | per frame | Exact logical pattern words issued in runtime VBlank budget 4 | Zero on healthy N2; available to N4 |
-| `T` | Main | per frame | Number of fresh runtime VBlank budgets opened | At most fixed cadence N; `T>N` raises a warning |
-| `I` | Main | per frame | V-counter when pattern transfer ended, before the remaining deadline work | Read with all word shares and same-frame `O`; it measures phase, not gate status |
-| `V` | Main | previous frame | V-counter at the last accepted display flip | `E0` = flip at the VBlank start; higher blank lines mean the flip ran late inside its blank |
-| `E` | Main | per frame | Pass2 entry delay since the previous flip, in 4-tick units | Below one field (`88` = 544 ticks) with margin; approaching the field-1 blank end means the transfer is about to miss its VBlank |
-
-`S`, `D`, and `R` are cumulative counters. They should be read as transitions:
-once incremented, they remain nonzero until playback restarts, and the displayed
-low byte wraps from `FF` to `00`. `J` is also cumulative but retains the
-largest observed excess rather than counting events. `C`, `W`, `M`, `A`, `U`,
-`N`, `Q`, `G`, `B`, `H`, `X`, `Y`, `O`, `Z`, `Y3`, `Y4`, `T`, and `I`
-describe one frame.
-`K` is cumulative. `F`, `P`, and `L` describe current player state.
-`V` is sampled at `do_flip` *after* the flip register write, so the
-row that carries it was built one frame later: frame `F`'s row shows the
-flip that published frame `F - 1`. Shift by one frame when correlating them
-with per-frame workload. `O` and `E` are sampled during frame `F`'s own build
-and need no shift.
-
-## Field details
-
-### `F`: displayed frame
-
-`F` is the full 16-bit movie frame number. Before frame 0, the player clears
-the visible movie table to black and publishes the reserved `FFFF` value for
-frame -1. Frame -1 exists only in the player/HUD: sim, routing, controls, and
-the HUD TSV still begin at frame 0 (`0000`).
-
-For streamed frames, the Main CPU formats the number into the inactive table
-and selects that table with the same Plane A flip that publishes the picture,
-so the value and image identify the same frame.
-
-The current stream format holds fewer than 65536 frames, so `F` does not wrap
-inside one valid playback loop and `FFFF` remains unambiguous. Loop playback
-shows frame -1 again after the end hold, then returns to `0000`.
-
-### `P`: active palette segment
-
-`P` is the low byte of the zero-based palette-segment number currently used by
-CRAM. Segment 0 displays as `00`. The stream's palette reference is stored as
-segment plus one, but the Main CPU subtracts one before updating this HUD state.
-
-`P` reports the active state, not merely a switch command. It therefore remains
-constant between CRAM changes. The current table capacity is 64 segments, so a
-valid stream never needs the field's byte wrap.
-
-### `S`: CD sector slips and re-seek recovery
-
-`S` is the low byte of the cumulative `slip_count`. The Sub CPU increments it
-when continuous CD delivery loses or skips a sector and the recovery path must
-re-establish the read position. A new increment marks a real streaming
-incident and is a likely visual or timing glitch boundary.
-
-`S=00` is required for a clean qualified run. Because only the low byte is
-shown, compare adjacent frames rather than treating a later `00` as proof that
-no earlier slips occurred.
-
-### `D`: control-stream desynchronization
-
-Every control block carries a frame sequence. `D` increments when that sequence
-does not match the frame the Sub CPU expected. The player rejects the mismatched
-control and holds the previous image instead of walking corrupt data.
-
-`D` is therefore more severe than ordinary encoder Miss: it means the runtime
-stream position is wrong. A clean run keeps `D=00`.
-
-### `R`: audio pointer re-syncs
-
-The RF5C164 writer normally remains ahead of playback. `R` increments when the
-measured lead leaves the configured `[SYNC_MIN, SYNC_MAX]` range and the writer
-jumps to `play + SYNC_LEAD`. The jump restores safety but can be audible.
-
-`R=00` is ideal. Diagnose an increment together with the preceding `L` trend;
-the transition matters more than the persistent nonzero value afterwards.
-
-### `L`: audio lead
-
-`L` is the high byte of the current ring distance from the RF5C164 play pointer
-to the write pointer. One displayed unit is 256 decoded sample bytes:
-
-```text
-lead_bytes is approximately L * 256 through L * 256 + 255
-```
-
-With the current constants, normal re-sync placement uses `SYNC_LEAD=0x3000`,
-which appears near `L=30`. `SYNC_MAX=0x6800`, which appears near `L=68`.
-Approaching `00` means the reserve is draining; approaching or exceeding the
-upper boundary means the writer has run too far ahead. Convert bytes to time
-using the profile's effective playback sample rate.
-
-### `C`: blocking CD work on the Sub critical path
-
-`C` is the low byte of two per-frame counts added together:
-
-- pumps needed to finish this frame's control sectors;
-- pumps needed while a preceding BODY payload or padding slot was still draining.
-
-Each pump drains one physical sector. `C=00` means the needed control was
-already armed when `process_frame` reached it. A small nonzero value is not a
-sector slip; it means delivery work landed directly on the current frame's
-critical path. `C` is excluded from the gate and has no threshold. Persistent
-C, especially with rising `W`, is stronger diagnostic evidence than an
-isolated peak, but the actual playback result determines whether it matters.
-
-### `W`: Main wait for the Sub CPU
-
-At `CMD_SWAP`, the Main CPU samples the V counter, waits for the Sub CPU's
-`STAT_READY` or `STAT_END`, then samples it again. `W` is the masked eight-bit
-difference, expressed as approximate scanlines.
-
-This includes whatever prevents the Sub from completing the handoff, such as
-control delivery, expansion, ADPCM work, or a late command response. It is not
-a cycle-accurate timer and wraps at 256. Use it for relative comparisons and
-spikes within the same mode, not as an absolute duration measurement.
-
-### `M`: Main pattern-path VBlank waits
-
-`M` counts VBlank starts consumed by the Main-side pattern transfer path for
-the current frame. Display cadence waiting is deliberately excluded. This
-makes `M` a deadline diagnostic rather than a restatement of 15/24/30 fps
-pacing.
-
-On fixed-N H40, the final cold tail may use the same deadline VBlank as the
-name-table DMA and flip when the guarded residual budget is sufficient. That
-shared target wait is display cadence, so it is excluded from `M`; only the
-earlier intervening pattern-work VBlank starts remain. A fallback that needs
-a fresh flip VBlank likewise remains display work rather than pattern work.
-
-For fixed-N playback, the normal region is `M=00..N-1`; reaching `N` proves
-that pattern work spilled beyond the fixed display deadline. Thus fixed N2
-allows `M<=01`, and fixed N4 allows `M<=03`. Exceeding this region raises a
-cadence warning but does not fail the upload gate. Delivery-paced content uses
-the automatic limit `ceil(60000/1001/fps)`. Correlate `M` with `U` and `N` to
-distinguish total transfer volume from run fragmentation.
-
-### `A`: Sub ADPCM decode time
-
-The Sub CPU measures the checkpointed IMA decode phase with the Mega-CD
-stopwatch. The player shifts the raw value right by two before displaying its
-low byte:
-
-```text
-one A unit = 4 * 30.72 us = approximately 0.12288 ms
-```
-
-For example, `A=40` means about 7.86 ms. At low frame rates, the longer ADPCM
-decoder periodically services the CDC, so `A` can also
-include that intentionally interleaved pump work. It does not measure the
-subsequent RF5C164 wave-RAM write phase.
-
-### `U`: Main pattern-transfer time
-
-`U` displays four hexadecimal digits from the Main CPU's Mega-CD stopwatch.
-One tick is 30.72 us. Measurement begins at the first cold run and ends after
-the final DMA repair or short-run CPU write. It includes waits between pieces
-when a long run must cross a VBlank word-budget boundary.
-
-The hardware counter is 12-bit, and the player masks the difference to
-`0x0FFF`. It therefore wraps after 4096 ticks, about 125.83 ms. A frame with no
-cold runs reports `0000`.
-
-### `N`: packed cold-run count
-
-`N` is the low byte of the source-aware cold-run descriptor count constructed
-for the frame. A run groups consecutive VRAM slots from the same physical
-pattern source. Prg, the parity-selected WordBuf, and DicBuf boundaries split
-runs even when the destination slots are consecutive.
-
-`N` is not the cold-tile count and is not the number of physical VDP DMA
-commands. One- and two-tile runs use CPU writes. Longer runs use DMA and can be
-split again at VBlank boundaries. `N` measures fragmentation before those
-hardware transfer choices.
-
-The whole-movie `/hudline` `N COLD RUNS` row uses the maximum timed `N` value
-present in that HUD TSV as its vertical scale. Untimed frame 0 is excluded from
-the maximum.
-
-### `J`: streamed PrgBuf jitter-reserve high-water mark
-
-`J` is the maximum simultaneous streamed PrgBuf occupancy above the
-fps-derived normal ceiling observed since BODY streaming began. That ceiling
-is 376 KiB at 15fps, 391 KiB at 24fps, and 396 KiB at 30fps. It is rounded
-upward to KiB and displayed in hexadecimal. `J=00` proves that occupancy never
-crossed the ceiling; `J=01` means a nonzero excess of at most 1 KiB, and
-`J=0A` means a maximum excess of at most 10 KiB.
-
-The Sub CPU samples occupancy immediately after each BODY payload sector is
-appended. Only an append can raise the high-water mark, so polling and pattern
-consumption need no extra sampling. The separate frame-0 block temporarily
-stored at `F0PAT_TMP` does not pass through this path and is deliberately
-excluded. The field measures simultaneous occupancy, not whether a circular
-read or write pointer happened to enter the physical address range above that
-stream's normal boundary.
-
-### `Q`: signed per-frame PrgBuf minimum
-
-`Q` tracks a separate signed logical balance: each BODY payload sector adds 64
-patterns, and each Prg source run subtracts its exact pattern count. The player
-publishes the minimum balance reached during the frame as a four-digit signed
-16-bit hexadecimal value. `0001` means one 32-byte pattern remained, `0000`
-means the logical supply became exactly empty, and `FFFF` means it consumed one
-pattern before that pattern had arrived.
-
-This counter exists because circular pointer arithmetic cannot identify an
-underflow after it happens. If the pop head passes the append tail, the modulo
-distance looks almost full and can trigger payload back-pressure. `Q` retains
-the signed fact for the whole frame even if a later sector repays the debt.
-It is diagnostic only and does not change the upload gate.
-
-### `H` / `X`: physical PrgBuf pressure and CD reader lead
-
-`H` is the largest physical PrgBuf occupancy reached during one frame. The Sub
-CPU initializes it from the exact circular-ring distance and updates it after
-every 2 KiB payload append. One displayed unit is one 32-byte pattern, so
-`H=3440` is 418 KiB: the point at which the next payload poll is refused.
-Unlike sticky whole-run `J`, `H` returns to the current occupancy at each frame
-boundary and shows when pressure was present. The `/hudline` H row draws the
-418 KiB back-pressure guide.
-
-`X` records how far the physical CD reader has advanced relative to the next
-frame expansion. Its high byte is the number of complete frame slots between
-the reader and that consumer position; its low byte is the sector index inside
-the current slot. The value retains the furthest lexicographic position reached
-during the frame. `/hudline` splits it into `XH READER AHEAD` and
-`XL READER SLOT` rows. Read `X` with `H`: reader lead is useful prefetch while
-the destination buffers have space, but lead concurrent with `H=3440` proves
-that physical PrgBuf back-pressure can stop a continuously arriving payload
-sector. Both fields are observational and have no upload-gate threshold.
-
-### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer budgets
-
-`Y`, `Z`, `Y3`, and `Y4` are the exact logical pattern-word counts issued in
-the first four fresh runtime VBlank budgets. Sixteen words make one 32-byte
-pattern. They deliberately do not expose the weighted capacity cost: a DMA
-word costs one budget unit, each CPU-written VDP word costs four, and every
-Word-RAM DMA command also pays for its CPU first-word repair. A DMA run may
-therefore be cut at a budget boundary, so a value can contain a partial
-pattern. A one- or two-tile CPU run remains whole. An unused cadence window
-remains zero. When `T<=04`, `Y+Z+Y3+Y4` still equals the frame's complete
-logical pattern-word count.
-
-`T` counts the fresh VBlank budgets opened by the pattern path. `T=01` means
-that the player did not explicitly refill the first budget, but `O` remains
-the physical proof of whether the modeled cost really stayed inside VBlank.
-`T=02` means that the player explicitly waited for and opened a second fresh
-budget. For fixed-N playback, `T>N` proves that explicit budget allocation
-exceeded the cadence window and raises alert `WARNING`, not gate `FAIL`.
-`T>=05` is still reported exactly, while the HUD intentionally preserves only
-the first four budget shares.
-
-`O` is the raw V-counter high byte sampled immediately after the first
-pattern-transfer share. A value in `E0..FF` remains inside VBlank; `00..DF`
-proves that payload plus run/CPU overhead continued into active display.
-
-`I` is the raw V-counter high byte sampled when the complete pattern path finishes,
-before HUD publication, name-table DMA, CRAM replacement, and display flip.
-Read it with the same-frame word shares and `O`. Together they separate an
-overloaded first share, a late tail, and work after the tail. The word shares,
-`O`, and `I` are observational; only the fixed-N `T>N` condition raises a
-warning.
-
-### `G` / `B` / `K`: Sub pump and control back-pressure
-
-`G` is the longest interval in one frame between Sub-CPU CDC service
-opportunities. Its low 12 bits use the Mega-CD stopwatch unit of 30.72 us.
-The timer restarts after a sector transfer or re-seek recovery, so `G` measures
-time spent outside the pump path rather than the recovery work itself.
-
-`B` is decoded from `G` bit 15 as a separate Boolean row. It is set when
-APPLY-ring occupancy reaches the `APPLY_SIZE - 4 KiB` guard (30 KiB with the
-current 34 KiB ring) and the Sub CPU therefore refuses the next control-sector
-pump. The player temporarily stores this marker in the unused high bit of the
-per-frame control-wait counter, then combines it with `G` only while formatting
-the HUD; it does not disturb the `G` maximum or the displayed low-byte `C`.
-
-`K` is the cumulative count of `S` incidents caused specifically by an MSF
-sector-sequence gap. `S` remains the total recovery count, so `S-K` identifies
-CDC_TRN retry-exhaustion recoveries modulo 256. All three fields are diagnostic
-and have no upload-gate threshold.
-
-### `V` / `O` / `E`: flip, first-share exit, and Pass2 entry phases
-
-`V` is the raw V-counter high byte read immediately after the accepted
-display flip's register write. `E0` (line 224) is a flip taken exactly at
-the VBlank start — the dominant healthy value; higher blank lines mean the
-flip ran late inside its blank, and the guarded terminal lines (`FC..FF`)
-are never accepted. It describes the flip that published the *previous*
-frame (see above). `O` is this frame's first pattern-share exit V-counter,
-described with `Y/Z/Y3/Y4/T/I` above.
-
-`E` is sampled at the Pass2 entry (`bf_dma`), before its VBlank wait: the
-stopwatch distance from the previous flip in 4-tick units. It measures the
-complete pre-transfer Main phase — CMD_SWAP wait (`W`), control parse, the
-bitmap/list shadow walk, and the name-table blit — against the hard
-deadline: Pass2 must enter before field 1's
-VBlank (one field = 543 ticks = `E` about `88`) or the transfer consumes
-the flip's own VBlank and the frame slips to three fields. `U` alone
-cannot show this because its stopwatch starts only inside the transfer
-VBlank.
-
-## Reading combinations
-
-| Observation | Likely interpretation |
+Each cell is an 8x8 hexadecimal glyph. The glyph's top scanline also contains
+four two-pixel bars that encode the nibble directly. OCR reads the bars and
+checks the visible glyph as an independent confidence signal.
+
+The table lists logical cell offsets before H32 wrapping. H32 maps
+`row = offset // 32` and `column = offset % 32`. H40 uses row 0 and the listed
+offset as its column.
+
+| Stored value | Logical cells | Digits | Decoded field or packing |
+|---|---:|---:|---|
+| `frame` | 0-3 | 4 | Displayed movie frame |
+| `palette_segment` | 4 | 1 | Active palette segment |
+| `sector_slip` | 5 | 1 | Cumulative sector-delivery recovery count |
+| `control_desync` | 6 | 1 | Cumulative control-stream recovery count |
+| `audio_resync` | 7 | 1 | Cumulative audio-pointer recovery count |
+| `audio_lead_256b` | 8-9 | 2 | Audio lead in 256-byte units |
+| `cd_wait_count` | 10 | 1 | Blocking CD service operations this frame |
+| `sub_wait_scanlines` | 11-12 | 2 | Main wait for Sub, in approximate scanlines |
+| `adpcm_decode_units` | 13-14 | 2 | Sub ADPCM work in 0.12288 ms units |
+| packed transfer word | 15-18 | 4 | High nibble `vblank_spill`; low 12 bits `transfer_ticks` |
+| `cold_runs` | 19-20 | 2 | Low byte of packed cold-run count |
+| `prgbuf_jitter_peak_kib` | 21-22 | 2 | Sticky ceil-KiB excess above the normal PrgBuf ceiling |
+| `flip_vcounter` | 23-24 | 2 | V-counter of the preceding displayed flip |
+| `first_share_exit_vcounter` | 25-26 | 2 | First transfer-share exit V-counter |
+| `pass2_delay_q4` | 27-28 | 2 | Pass2 delay in groups of four stopwatch ticks |
+| packed pump word | 29-32 | 4 | Bit 15 `apply_backpressure`; low 12 bits `pump_gap_ticks` |
+| `msf_gap_recoveries` | 33 | 1 | Cumulative MSF-gap recoveries |
+| packed reader byte | 34-35 | 2 | High nibble `reader_ahead_frames`; low nibble `reader_slot_sector` |
+| `transfer_vblanks` | 36 | 1 | Fresh transfer budgets opened this frame |
+| `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
+
+The player-only pre-roll sentinel uses `frame=FFFF`. It is an OCR anchor, not a
+stream frame, and is never written to the HUD TSV. Movie frame 0 remains in the
+TSV for sequence alignment but is untimed boot staging.
+
+## Field reference
+
+| Field | Owner | Scope | Meaning |
+|---|---|---|---|
+| `frame` | Main | per frame | Displayed movie frame number |
+| `palette_segment` | Main | per frame | Active CRAM segment |
+| `sector_slip` | Sub | cumulative nibble | Sector-delivery recoveries; interpret transitions, including wrap |
+| `control_desync` | Sub | cumulative nibble | Control parser recoveries |
+| `audio_resync` | Sub | cumulative nibble | Audio read-pointer corrections |
+| `audio_lead_256b` | Sub | per frame | Queued audio lead in 256-byte units |
+| `cd_wait_count` | Sub | per frame | Blocking CD work on the current-frame path; diagnostic only |
+| `sub_wait_scanlines` | Main | per frame | Approximate wait for the Sub handoff |
+| `vblank_spill` | Main | per frame | Additional VBlank budgets consumed by pattern work |
+| `adpcm_decode_units` | Sub | per frame | ADPCM decode work in 0.12288 ms units |
+| `transfer_ticks` | Main | per frame | Main pattern-transfer time in 30.72 us ticks, modulo 12 bits |
+| `cold_runs` | Main | per frame | Low byte of the packed cold-run count |
+| `prgbuf_jitter_peak_kib` | Sub | sticky nibble pair | Highest ceil-KiB use of runtime jitter headroom |
+| `flip_vcounter` | Main | per frame | V-counter of the flip that published the preceding frame |
+| `first_share_exit_vcounter` | Main | per frame | Exit phase of the first transfer share |
+| `pass2_delay_q4` | Main | per frame | Pass2 delay in four-tick units |
+| `pump_gap_ticks` | Sub | per frame | Longest interval outside a CDC service opportunity |
+| `apply_backpressure` | Sub | per frame | APPLY guard rejected a control-sector pump |
+| `msf_gap_recoveries` | Sub | cumulative nibble | Sector-position gap recoveries |
+| `reader_ahead_frames` | Sub | per frame | Complete future frame slots already read |
+| `reader_slot_sector` | Sub | per frame | Sector position inside the current reader slot |
+| `transfer_vblanks` | Main | per frame | Number of fresh transfer budgets opened |
+| `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+
+`sector_slip`, `control_desync`, `audio_resync`, and
+`msf_gap_recoveries` are four-bit cumulative counters. A transition is the
+event; a repeated nonzero value is state. Their wrap from 15 to 0 is valid.
+The transport-retry remainder is
+`(sector_slip - msf_gap_recoveries) & 0xF`.
+
+`prgbuf_jitter_peak_kib` is a sticky high-water value, not current occupancy.
+`cd_wait_count`, `pump_gap_ticks`, and `apply_backpressure` diagnose why time
+was spent; a larger wait can also mean the Sub path reached the next sector
+earlier.
+
+## Upload gate
+
+`harness/startup_resync/analyze.py` writes descriptive gate schema 12. The
+binary `gate` is `PASS` or `FAIL`; `alert` is `NONE`, `WARNING`, or `FAIL`.
+`NONE` and `WARNING` remain upload-capable.
+
+The five gate fields are:
+
+| Field | Limit |
 |---|---|
-| `S`, `D`, and `R` remain `00` | No detected CD loss, control desync, or audio pointer jump |
-| `S` increments, then `D` remains `00` | Sector recovery occurred without losing control alignment |
-| `D` increments | A control block was rejected and the previous image was held |
-| `L` trends toward a boundary, then `R` increments | Audio reserve left its safe range and the write pointer jumped |
-| `C` and `W` rise together | CD/control work is delaying the Sub-to-Main handoff |
-| `A` rises with `W`, while `C` stays low | ADPCM decode or its internal low-rate CDC service is the stronger Sub-side cost |
-| `N` rises with `U` | Run fragmentation is increasing Main fixed transfer overhead |
-| `U` rises while `N` stays modest | Larger pattern volume or VBlank splitting dominates rather than descriptor count |
-| `T<=04` and `Y+Z+Y3+Y4` matches the frame's pattern words | All runtime budget charges are accounted for |
-| `T>N` | Explicit fresh-budget allocation exceeded the fixed cadence window and raises a warning |
-| `O=00..DF` | The first pattern share itself ran beyond VBlank; its raw-word budget ignored too much run/CPU overhead |
-| `O=E0..FF`, `T<=N`, and `I` is early | Pattern shares ended in their cadence windows; investigate HUD/name-table/palette/flip work |
-| `T<=N` and `I` is near the terminal blank | The final pattern share left little margin for the remaining deadline work |
-| `M` exceeds `N-1` | Main pattern work crossed the fixed cadence deadline and raises a warning |
-| `P` changes with stable `S/D` | Normal scheduled CRAM segment switch |
-| `J` changes from `00` | Streaming occupancy used part of the physical jitter reserve |
-| `J` rises again later | Timed playback exceeded the previous startup/runtime high-water mark |
-| `Q=0000` | Logical PrgBuf supply became exactly empty during that frame |
-| `Q=8000..FFFF` | Signed PrgBuf balance went negative; decode as `Q-0x10000` patterns |
-| `H=3440` while `X` is ahead | The physical PrgBuf reached payload back-pressure while the CD reader was prefetched ahead |
-| `H` falls but `J` stays high | Current pressure recovered; `J` is retaining the earlier whole-run peak |
-| `G` remains in its normal band at an `S` transition | The incident was not caused by an exceptional interval outside the CDC pump |
-| `B=01`, followed by a rise in `K`/`S` | APPLY control back-pressure blocked delivery before an MSF-gap recovery |
-| `K` rises by the same amount as `S` | The observed recoveries are MSF sequence gaps, not CDC_TRN retry exhaustion |
+| `sector_slip` | 0 |
+| `control_desync` | 0 |
+| `audio_resync` | 0 |
+| `vblank_spill` | Fixed cadence: one less than the VBlank interval; delivery-paced cadence: the available fields per content frame |
+| `prgbuf_jitter_peak_kib` | Physical ring size minus the cadence-derived normal PrgBuf ceiling minus 1 KiB |
 
-These are correlations, not standalone proofs. Use native lossless capture and
-the packed stream when investigating a regression.
+An excess in `vblank_spill` is a warning. An excess in the other four fields
+is a failure. At fixed cadence, a `transfer_vblanks` value larger than the
+cadence interval is also a warning. The analyzer derives each timed frame's
+visible duration from consecutive `capture_first` values; a duration different
+from the fixed cadence is a warning outside the cadence edge exception. The
+first and last four content frames at 30 fps and two at 15 fps remain in the
+measurements but do not raise this derived ALERT. This exception does not apply
+to gate fields or `transfer_vblanks`.
 
-## How the HUD is rendered
+Frame 0 and the terminal hold are excluded from gate maxima, statistics,
+events, dynamic scales, and cadence measurements. `cd_wait_count` and
+`adpcm_decode_units` always retain minimum, mean, median, maximum, and sample
+count over timed first-loop frames. `pump_gap_ticks` receives the same
+statistics when present. The gate also stores the APPLY back-pressure frame
+count and maxima for reader lead and transfer phase.
 
-The HUD does not use the Window plane. For each frame the Main CPU:
+## OCR and TSV
 
-1. builds the complete next movie name table in the inactive Plane A table;
-2. formats the HUD into one 138-byte Main-RAM staging block in both modes;
-3. overwrites 32 cells each on H32 rows 0 and 1 plus five on row 2, or 40 cells
-   on H40 row 0 plus 29 on row 1;
-4. selects that completed table with the same register-2 flip as the movie.
-
-The inactive tables are at VRAM `0xC000` and `0xE000`. Other player paths
-publish the HUD with 34 longword writes plus one word write and no separate
-HUD DMA. The specialized fixed-N H40 path already copies its complete
-64-by-28 name-table stage with one DMA. It formats stable HUD fields between
-the first and second pattern VBlanks, patches `P/M/U/Y/Z/Y3/Y4/T/I` after the pattern
-tail, and merges the complete HUD into that Main-RAM stage. The one existing
-name-table DMA then carries picture and HUD together, so no post-DMA VDP-port
-republish remains on the final cadence VBlank deadline. Unoccupied cells retain
-their movie entries, which avoids exposing an unrelated Plane B frame.
-
-The final flip has a terminal-VBlank guard: V-counter lines `FC` through `FF`
-are rejected so the table is not selected at the end-of-blank race.
-
-## Hex font and CRAM stability
-
-The HUD font contains exactly 16 patterns, one for each hexadecimal digit.
-Each 8x8 glyph has:
-
-- a top-row four-bit barcode, with two pixels per bit, most-significant bit
-  first;
-- a compact 6x7 human-readable hexadecimal glyph below it.
-
-The 16 font patterns are uploaded once at startup to VRAM `0xD000` (tiles
-1664..1679); the name-table cells reference those fixed tile indices directly
-(11-bit indices reach the whole 2048-tile space). The player expands source
-colour 0 to P0/index1 and source colour 1 to P0/index15 when uploading the
-font. The encoder and packer canonicalize these
-as the globally darkest and brightest usable colours across every palette
-segment. Consequently CRAM switches do not recolour or blink the HUD, and no
-font scan, recolour, DMA, or extra VBlank wait is needed per frame.
-
-## OCR and recording analysis
-
-Read a native screenshot with:
-
-```sh
-tools/python.sh tools/read_frameno.py frame.png
-```
-
-The result includes every field and a confidence value, for example:
-
-```text
-frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
-```
-
-`read_frameno.py` decodes the barcode and checks the lower glyph with normalized
-correlation. Legacy common and one-row H40 layouts remain explicit. Current
-recordings use `HUD_H32_COMBINED_LAYOUT` or `HUD_H40_COMBINED_LAYOUT`; the
-reader maps every logical digit through the mode-specific 32- or 40-cell wrap,
-including the H32 `Q` split. Supplying either profile makes the recording
-analyzer select the matching layout automatically; `--combined-fields` is only
-needed when no profile is supplied.
-
-For a complete recording, `harness/startup_resync/analyze.py` groups repeated
-60 Hz capture frames by `F`, retains per-field confidence, and reports counter
-transitions. It prefers a valid `F0000` run immediately after `F=FFFF`, which
-makes first-loop head selection exact; recordings made before the sentinel
-retain the plausible-sequence fallback. The `FFFF` group itself is discarded.
-The analyzer reports the selected method and stores its capture indices in the
-gate JSON `ocr_start_anchor` object together with the corresponding capture
-times. Publication recordings remain untrimmed. Their CRAM chapter offset uses
-the exact `F=FFFF` to `F=0000` transition stored in this object, avoiding a
-second visual head search.
-
-Write the complete per-frame series as the canonical project TSV:
+Run the complete recording analyzer with the exact profile:
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
-  --tsv videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
+  "$LOSSLESS" profiles/PROFILE.toml \
   --expected-frames FRAME_COUNT
 ```
 
-The log is UTF-8 with a header row, tab separators, LF line endings, and a
-`.tsv` extension. With the required profile argument, its permanent file is
-written as
-`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the `--tsv` path becomes
-a run-specific compatibility symlink to that log. Project-owned HUD logs are
-never comma-delimited.
+The analyzer finds the `frame=FFFF` to `frame=0000` transition when present,
+reads one complete first loop, and writes:
 
-For current H32/H40 combined HUDs, the TSV preserves `Q` as
-`prgbuf_min_patterns_raw16`, decodes its signed value into
-`prgbuf_min_patterns_signed`, and writes the positive debt magnitude as
-`prgbuf_underflow_patterns`. The combined pump diagnostic also writes
-`sub_poll_gap_ticks`, `sub_poll_gap_ms`, `apply_guard_blocked`,
-`slip_msf_gap_count`, and `slip_trn_retry_count`. The physical-buffer
-diagnostic writes `prgbuf_physical_peak_patterns`, `reader_ahead_raw16`,
-`reader_ahead_frames`, and `reader_slot_sector`. `/hudline` and `/mixline`
-always include those rows plus G/B and H/X summaries when the columns are
-present. The pattern-split diagnostic writes `pattern_vblank1_words`,
-`pattern_vblank2_words`, `pattern_transfer_vblanks`, and
-`pattern_exit_vcounter`; the same renderers preserve those rows and maxima.
-
-An exact managed GPGX LOGVDP recording can add physical VDP-transfer rows to
-`/hudline` without changing the on-screen HUD. First,
-`harness/gpgx_logvdp/extract_frame_tsv.py` aligns the trace to this HUD TSV and
-checks each timed frame's physical pattern-word total against the logical HUD
-total. Supplying that TSV to the renderer places these rows immediately after
-`S/D/R/M/J`: pattern DMA blank/active (`PD`/`PA`), CPU direct-write and DMA
-repair blank/active-edge (`CB`/`CA`), name-table DMA blank/active (`NB`/`NA`),
-and pattern DMA command count (`DR`). `CA` includes the two ambiguous LOGVDP
-V-counter edge representations and marks that inclusion with `*`. These are
-post-recording diagnostic rows only; they do not alter playback or the upload
-gate.
-
-The reproducible glyph/layout proof is:
-
-```sh
-tools/python.sh harness/hud_ocr/verify.py
+```text
+logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv
+logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud_gate.json
 ```
+
+The TSV uses descriptive columns. Its decoded HUD columns are:
+
+```text
+frame palette_segment sector_slip control_desync audio_resync
+audio_lead_256b cd_wait_count sub_wait_scanlines vblank_spill
+adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
+flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
+apply_backpressure msf_gap_recoveries reader_ahead_frames
+reader_slot_sector transfer_vblanks transfer_end_vcounter
+```
+
+It also stores capture timing, OCR confidence, sample counts, derived
+milliseconds, audio-resync transition context, and
+`transport_retry_recoveries`.
+
+`/hudline` renders the descriptive values and their gate lines.
+`/timeline` renders encoder decisions, including exact Main-to-VDP words and a
+cold-cap guide in the REQ row. `/mixline` validates their shared frame axis and
+combines both images without resizing either graph.
+
+The optional GPGX LOGVDP extractor aligns physical VDP writes to the HUD frame
+axis. The retired per-VBlank logical word-share HUD fields are not available
+for a HUD-side total; the extraction receipt therefore proves input hashes and
+frame alignment, while the codec timeline independently checks its exact R2V
+components.
 
 ## Maintenance contract
 
-Any field, width, or ordering change must update these together:
+When field order, width, or packing changes, update these together:
 
-- `boot/movieplay_ip.s` `prepare_dbg` and `publish_dbg`;
-- `tools/read_frameno.py` layout and field decoding;
-- `harness/hud_ocr/verify.py` layout/OCR proof;
-- this document and the short README summary;
-- field-specific verification such as `harness/pipeline_speedup/verify_run_hud.py`.
+- `boot/movieplay_ip.s`
+- `tools/read_frameno.py`
+- `harness/startup_resync/analyze.py`
+- `.agents/skills/hudline/scripts/render_hudline.py`
+- `.agents/skills/hudline/scripts/report_overages.py`
+- `.agents/skills/mixline/scripts/render_mixline.py`
+- `tools/r2v_model.py`
+- this document and the related tests
 
-Keep the HUD values-only unless a new layout is deliberately qualified. Adding
-labels consumes movie cells and Main-side publication work; it is not a free
-presentation change.
+Keep OCR output, TSV and JSON keys, receipts, documentation, and renderer row
+keys descriptive. One-letter display aliases are not part of the public
+diagnostic interface.
 
 ---
 
-<a id="jp"></a>
+# 実機 DEBUG HUD
 
-# 実機DEBUG HUD
+DEBUG player は値だけの 16 進 HUD を Plane A へ書きます。Native-resolution
+recording から deterministic に OCR するための HUD です。実機画面には label を
+出さず、tool が decode した値はすべて説明的な field name で公開します。
 
-この文書は、`DEBUG=1` buildで`boot/movieplay_ip.s`が描くvalues-only playback HUDの
-完全なreferenceです。Runtime movie HUDを対象とし、最小4-digit boot preload counterや、
-[`ANALYSIS.md`](ANALYSIS.md)のoffline analysis overlayは対象外です。Boot counterも
-同じ16個のhex glyphを使います。Glyph VRAMは2つのname table間の未使用gap
-`0xD000..0xDFFF`にある`0xD000`（tile 1664..1679）で、DEBUG/release共通です。
-Resident poolは1535 slotで、両buildが同じpool shapeを使います。
+## HUD の有効化
 
-HUDは同時に3つの問いへ答えます。
-
-1. どのmovie frameとpalette segmentが実際に見えているか
-2. Sub CPUがCD streamとaudioをreadyに保てているか
-3. Main CPUがdisplay deadline前にpattern transferを完了しているか
-
-これはdiagnostic表示です。Nonzero valueが必ずcodec failureを意味するわけではなく、
-一部fieldは大きなcounterのlow byteだけを表示します。
-
-## HUDの有効化
-
-ProfileをDEBUG付きでbuildします。
+DEBUG disc を build します。
 
 ```sh
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Specialized H32/H40 DEBUGは同じ69-cell combined layoutを使います。
-H32は32 cellごとの3行、H40は40 cellごとの2行に折り返します。Release buildは
-HUDを省きます。
-
-`tools/record_movie.sh`は既定でDEBUG discを使います。Release buildはHUDを省き、
-slip-triggered CRAM0 red indicatorを使います。DEBUG buildはHUD colourを固定し、
-slipを`S`で表示します。
-
-## 物理layout
-
-Hardware上はhex valueだけを描き、label、space、separatorはありません。下記spaceは
-field boundaryを示します。
-
-```text
-row 0 common: FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ
-H32 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQ
-H32 row 1:   QQ VV OO EE GGGG KK HHHH XXXX YYY ZZZ T II 3
-H32 row 2:   33 444
-H40 row 0:   FFFF PP SS DD RR LL CC WW MM AA UUUU NN JJ QQQQ VV OO EE
-H40 row 1:   GGGG KK HHHH XXXX YYY ZZZ T II 333 444
-```
-
-固定解釈順は次のとおりです。
-
-```text
-F / P / S / D / R / L / C / W / M / A / U / N / J / Q / V / O / E / G / K / H / X / Y / Z / T / I / Y3 / Y4
-```
-
-H32とH40は同じlogical field streamを使います。1 digitは1つの8x8 cellです。
-30-cell common prefixの後に、4桁のsigned PrgBuf minimum `Q`、3つのflip-phase
-field、`G/K/H/X/Y/Z/T/I/Y3/Y4`が続きます。`Y3/Y4`はruntime VBlank budget
-3・4で発行したlogical pattern word数です。H32はrow 0の残り2 cellへ`Q`の前半を書き、row 1を埋めて
-row 2の5 cellまで続けます。H40はrow 0へ`Q/V/O/E`、残る29 cellをrow 1へ
-続けます。
-
-| Field | HUD row | Cell columns | Native pixel range | Digits |
-|---|---:|---:|---:|---:|
-| `F` | 0 | 0-3 | x=0-31 | 4 |
-| `P` | 0 | 4-5 | x=32-47 | 2 |
-| `S` | 0 | 6-7 | x=48-63 | 2 |
-| `D` | 0 | 8-9 | x=64-79 | 2 |
-| `R` | 0 | 10-11 | x=80-95 | 2 |
-| `L` | 0 | 12-13 | x=96-111 | 2 |
-| `C` | 0 | 14-15 | x=112-127 | 2 |
-| `W` | 0 | 16-17 | x=128-143 | 2 |
-| `M` | 0 | 18-19 | x=144-159 | 2 |
-| `A` | 0 | 20-21 | x=160-175 | 2 |
-| `U` | 0 | 22-25 | x=176-207 | 4 |
-| `N` | 0 | 26-27 | x=208-223 | 2 |
-| `J` | 0 | 28-29 | x=224-239 | 2 |
-| `Q`（H32、前半/後半） | 0 / 1 | 30-31 / 0-1 | x=240-255 / x=0-15 | 2+2 |
-| `V`（H32） | 1 | 2-3 | x=16-31 | 2 |
-| `O`（H32） | 1 | 4-5 | x=32-47 | 2 |
-| `E`（H32） | 1 | 6-7 | x=48-63 | 2 |
-| `G`（H32） | 1 | 8-11 | x=64-95 | 4 |
-| `K`（H32） | 1 | 12-13 | x=96-111 | 2 |
-| `H`（H32） | 1 | 14-17 | x=112-143 | 4 |
-| `X`（H32） | 1 | 18-21 | x=144-175 | 4 |
-| `Y`（H32） | 1 | 22-24 | x=176-199 | 3 |
-| `Z`（H32） | 1 | 25-27 | x=200-223 | 3 |
-| `T`（H32） | 1 | 28 | x=224-231 | 1 |
-| `I`（H32） | 1 | 29-30 | x=232-247 | 2 |
-| `Y3`（H32、行跨ぎ） | 1 / 2 | 31 / 0-1 | x=248-255 / x=0-15 | 1+2 |
-| `Y4`（H32） | 2 | 2-4 | x=16-39 | 3 |
-| `Q`（H40） | 0 | 30-33 | x=240-271 | 4 |
-| `V`（H40） | 0 | 34-35 | x=272-287 | 2 |
-| `O`（H40） | 0 | 36-37 | x=288-303 | 2 |
-| `E`（H40） | 0 | 38-39 | x=304-319 | 2 |
-| `G`（H40） | 1 | 0-3 | x=0-31 | 4 |
-| `K`（H40） | 1 | 4-5 | x=32-47 | 2 |
-| `H`（H40） | 1 | 6-9 | x=48-79 | 4 |
-| `X`（H40） | 1 | 10-13 | x=80-111 | 4 |
-| `Y`（H40） | 1 | 14-16 | x=112-135 | 3 |
-| `Z`（H40） | 1 | 17-19 | x=136-159 | 3 |
-| `T`（H40） | 1 | 20 | x=160-167 | 1 |
-| `I`（H40） | 1 | 21-22 | x=168-183 | 2 |
-| `Y3`（H40） | 1 | 23-25 | x=184-207 | 3 |
-| `Y4`（H40） | 1 | 26-28 | x=208-231 | 3 |
-
-共通部は30 cell、240 pixelです。Complete HUDはH32ではrow 0・1の各32 cellと
-row 2の5 cell、H40ではrow 0の40 cellとrow 1の29 cellを使います。Active
-pictureを覆う場合があり、letterboxに合わせて移動しません。
-
-Compilationまたはuploadへ進めるrecordingでは、最初のmovie loop全体から2値の
-`gate`（`PASS`または`FAIL`）と、別の3段階`alert`（`NONE`、`WARNING`、`FAIL`）を
-生成します。Alert `NONE`と`WARNING`はupload可能でgate `PASS`へ、alert `FAIL`は
-gate `FAIL`へ対応します。Deprecatedな`status`と`pass` fieldは互換性のためgate
-JSONに残します。`S/D/R`は0を維持する必要があります。`M`と`J` thresholdは
-profileのplayer cadenceに従います。
-
-Fixed-Nは介在する`N-1`個のpattern-work fieldを使えます。Fixed N2は`M>01`、
-fixed N4は`M>03`でcadence warningです。Delivery-paced 24 fpsも`M>03`で
-同じwarningです。
-Passing `J`の最大値はnormal ceilingから
-physical endまでの差より1 KiB小さい値で、15 fpsは`2D`、24 fpsは`1E`、30 fpsは
-`19`です。Normal jitter interval（それぞれ`28`、`19`、`14`）を超える値は、
-共通の416 KiB delivery observation boundaryを越え、schedule外に残した最後の
-physical guardへ入ったことを示します。値は報告しますが、cadence固有
-passing limit内の`J`だけで再確認やfailにはしません。`C`にはgate thresholdがなく、
-gate結果を変えません。Sub側CD workのdiagnosticとして保持します。
-
-Gate `PASS`では全`S/D/R/M/J` gate maximumとdiagnostic C maximumを報告します。
-Taskがpublicationを許可済みなら、gate実行だけを理由に追加approvalは求めません。
-
-Fixed-N playbackでは、analyzerは連続する`F` transitionのcapture位置から、timedかつ
-nonterminalな各movie frameの実表示時間も測ります。N VBlank以外ならgate `PASS`を
-維持したままalert `WARNING`とし、完全なhistogramと該当frameをgate JSONへ記録します。
-Frame 0とterminal frameはtimed表示区間の両端を観測できないため除外します。
-Delivery-paced playbackはhistogramを記録しますが、exact duration warningは適用しません。
-
-すべてのgate結果で、analyzerと`/hudline`はtimed first loopにおける`C`と`A`それぞれの
-minimum、mean、median、maximumを報告し、gate JSONとhudline receiptにも保存します。
-`G`がある場合はpacked `B` markerを分離したGのminimum、mean、median、maximumも
-報告します。`H`はexact physical peak、`X`はreader leadを報告します。
-`Y/Z/Y3/Y4/T/I`はMain pattern-budget accountingとexit phaseを報告します。
-Fixed-Nでは`T>N`をgate `PASS`のままalert `WARNING`にします。Transfer fieldは
-それ以外のalertを作りません。`T`はfresh VBlank budgetを開いた数で、weighted
-modelがまだ楽観的な場合のphysical phaseは`O/I`で確認します。`G/B/K/H/X`は
-gateもalertも変えません。
-
-Player-onlyの黒いframe -1はframe 0の前に `F=FFFF` を使います。これはOCR
-sentinelでstream frameではなく、HUD TSV rowにも書きません。Frame 0はuntimed boot
-constructionで、playback measurementではありません。
-First-loop sequenceとframe-axis alignmentのためだけに保持し、全HUD値をgate maximum、
-warning/failure event、timeline bar、dynamic scale maximum、OCR aggregate、derived
-VBlank cadenceから除外します。`/hudline`の全metric rowでframe-0範囲をblankにします。
-Final frameは次のmovie-frame transitionがないため、derived VBlankはunknownです。
-
-## Field早見表
-
-| Field | Owner | Scope | 意味 | Healthyな解釈 |
-|---|---|---|---|---|
-| `F` | Main | current state | Visible movie frame number。`FFFF`はplayer-only frame -1 | `FFFF`、`0000`、movie cadenceの順 |
-| `P` | Main | current state | zero-based CRAM palette-segment number | 予定palette boundaryだけで変化 |
-| `S` | Sub | cumulative | CD sector-slip / re-seek recovery count | clean run全体で`00` |
-| `D` | Sub | cumulative | control-stream frame-sequence mismatch count | clean run全体で`00` |
-| `R` | Sub | cumulative | RF5C164 write-pointer re-sync count | `00`が理想 |
-| `L` | Sub | current state | audio write lead。256 decoded byte単位 | configured lead range内で安定 |
-| `C` | Sub | per frame | control実行前のblocking CD sector pump | `00`ならcontrol ready済み |
-| `W` | Main | per frame | Sub handoff待ち。概算scanline単位 | 小さく安定 |
-| `M` | Main | per timed frame | Main pattern pathが待ったVBlank start数。Frame 0は除外 | `00..N-1`。超過はcadence spillでwarning |
-| `A` | Sub | per frame | ADPCM decode phase time | 同profileで安定したband |
-| `U` | Main | per frame | Main pattern-transfer elapsed time | frameのtransfer window未満 |
-| `N` | Main | per frame | source-aware cold-run descriptor count | content依存。`U`と相関を見る |
-| `J` | Sub | cumulative peak | fps-derived normal ceilingを超えたstreamed PrgBuf occupancy最大値 | `00`ならjitter headroom未使用 |
-| `Q` | Sub | per frame | exact 32-byte pattern単位のsigned logical PrgBuf minimum | positiveは供給済み、`0000`は真のempty、`FFFF`は1 pattern underflow |
-| `G` | Sub | per frame | CDC pump opportunity外にいた最長interval。30.72 us tick単位 | 安定bandなら例外的なSub-side pump放置はない |
-| `B` | Sub | per frame | APPLY control queueのback-pressureがpumpを拒否（`G` bit 15から分離） | `00`。`01`はcontrol queueがcontinuous deliveryをblockした証明 |
-| `K` | Sub | cumulative | MSF sequence-gap recovery count | `S`と比較し、`S-K`をCDC_TRN retry-exhaustion countとして読む |
-| `H` | Sub | per frame | exact 32-byte pattern単位のphysical PrgBuf maximum | `3440`未満なら418 KiB payload back-pressure boundary未満 |
-| `X` | Sub | per frame | 次frame展開に対するCD reader位置。high byteは完了frame slot数、low byteはcurrent slot内sector位置 | `H`と一緒に読み、全destinationに空きがある場合だけ大きなleadが安全 |
-| `Y` | Main | per frame | runtime VBlank budget 1で発行したexact logical pattern word数 | 16で割るとcompleteな32-byte pattern数。後続shareと`T`と一緒に読む |
-| `O` | Main | per frame | 1つ目のpattern-transfer share直後のV-counter | `E0..FF`ならVBlank内、`00..DF`なら1つ目のshareがactive displayへはみ出した証拠 |
-| `Z` | Main | per frame | runtime VBlank budget 2で発行したexact logical pattern word数 | weighted budget ruleと一緒に読む。capacity costそのものではない |
-| `Y3` | Main | per frame | runtime VBlank budget 3で発行したexact logical pattern word数 | healthy N2ではzero、N4で利用可能 |
-| `Y4` | Main | per frame | runtime VBlank budget 4で発行したexact logical pattern word数 | healthy N2ではzero、N4で利用可能 |
-| `T` | Main | per frame | fresh runtime VBlank budgetを開いた数 | fixed cadence N以下。`T>N`はwarning |
-| `I` | Main | per frame | pattern transfer終了時、残りdeadline work前のV-counter | 全word shareと同frameの`O`を一緒に読むphase値。Gate statusではない |
-| `V` | Main | previous frame | accepted display flip時のV-counter | `E0`ならVBlank start。大きいblank lineはlate flip |
-| `E` | Main | per frame | previous flipからPass2 entryまで。4-tick単位 | 1 field未満で余裕を持つ。`88`は544 tick |
-
-`S`、`D`、`R`はcumulative counterで、一度増えるとrestartまでnonzeroです。表示low byteは
-`FF`から`00`へwrapします。`J`もcumulativeですがevent数ではなく最大excessを保持します。
-`C/W/M/A/U/N/Q/G/B/H/X/Y/O/Z/Y3/Y4/T/I`は1 frame、`K`はcumulative、
-`F/P/L`はcurrent stateです。
-
-`V`は`do_flip`でregister write後にsampleするため、その値を持つrowは1 frame後に
-作られます。Frame `F`のrowはframe `F - 1`をpublishしたflipを示すため、per-frame
-workloadと比較するとき1 frame shiftします。`O/E`はframe `F`自身のbuild中にsampleし、
-shift不要です。
-
-## Field詳細
-
-### `F`: displayed frame
-
-`F`はfull 16-bit movie frame numberです。Frame 0より前にplayerがvisible movie
-tableを黒でclearし、予約値`FFFF`をframe -1としてpublishします。frame -1は
-player/HUDだけに存在し、sim、routing、control、HUD TSVはframe 0（`0000`）から
-始まります。
-
-stream frameではMain CPUがinactive tableへ値をformatし、pictureをpublishする
-Plane A flipと同じflipでtableを選ぶため、値とimageは同じframeを示します。
-
-Valid streamは65536 frame未満なので1 loop内でwrapせず、end hold後のloop開始時に
-`FFFF`は曖昧になりません。Loop playbackはframe -1を再び表示してから`0000`へ
-戻ります。
-
-### `P`: active palette segment
-
-`P`はCRAMが現在使うzero-based palette-segment numberのlow byteです。Segment 0は
-`00`です。Streamはsegment+1を保存し、Main CPUがHUD state更新前に1を引きます。
-
-Switch commandではなくactive stateを示すため、CRAM change間は一定です。Table capacityは
-64 segmentなのでvalid streamでbyte wrapは不要です。
-
-### `S`: CD sector slipとre-seek recovery
-
-`S`はcumulative `slip_count`のlow byteです。Continuous CD deliveryがsectorをlostまたは
-skipし、recovery pathがread positionを再確立するとSub CPUがincrementします。
-新incrementは実streaming incidentで、visual/timing glitch boundaryになり得ます。
-
-Clean qualified runでは`S=00`が必須です。Low byteだけなので、後の`00`だけでincidentが
-なかったとは判断せず、隣接frameのtransitionを比較します。
-
-### `D`: control-stream desynchronization
-
-各control blockはframe sequenceを持ちます。Sub CPUのexpected frameと一致しないと
-`D`が増え、playerはcorrupt dataを歩かずmismatched controlを拒否して直前imageを
-保持します。通常encoder Missより重大で、clean runは`D=00`です。
-
-### `R`: audio pointer re-sync
-
-RF5C164 writerは通常playbackより先行します。Measured leadが`[SYNC_MIN, SYNC_MAX]`を
-外れると`R`が増え、writerは`play + SYNC_LEAD`へjumpします。安全は回復しますが、
-audibleな場合があります。
-
-`R=00`が理想です。Increment直前の`L` trendと合わせて診断し、持続nonzero valueより
-transitionを重視します。
-
-### `L`: audio lead
-
-`L`はRF5C164 play pointerからwrite pointerまでのring distanceのhigh byteです。
-1 unitは256 decoded sample byteです。
-
-```text
-lead_bytesは約 L * 256 から L * 256 + 255
-```
-
-`SYNC_LEAD=0x3000`は`L=30`付近、`SYNC_MAX=0x6800`は`L=68`付近です。`00`へ近づくと
-reserve減少、upper boundaryへ近づくか超えるとwriter先行過多です。Byteからtimeへの
-変換にはprofileのeffective playback sample rateを使います。
-
-### `C`: Sub critical path上のblocking CD work
-
-`C`は次のper-frame countを合算したlow byteです。
-
-- このframeのcontrol sectorを完了するためのpump
-- 直前BODY payloadまたはpadding slotをdrain中に必要なpump
-
-1 pumpは1 physical sectorをdrainします。`C=00`なら`process_frame`到達時にcontrolが
-armed済みです。Small nonzeroはsector slipではなく、delivery workがcurrent frameの
-critical pathへ入ったことを示します。`C`はgateから除外され、thresholdを持ちません。
-Rising `W`を伴うpersistent Cはisolated peakより強いdiagnosticですが、問題かどうかは
-実際の再生結果で判断します。
-
-### `W`: MainのSub CPU待ち
-
-Main CPUは`CMD_SWAP`時のV counterをsampleし、Sub CPUの`STAT_READY`または`STAT_END`を
-待って再sampleします。`W`はmasked 8-bit differenceを概算scanlineで表します。
-
-Control delivery、expansion、ADPCM work、late command responseなどhandoffを妨げるものを
-含みます。Cycle-accurate timerではなく256でwrapするため、同mode内のrelative comparisonと
-spikeに使います。
-
-### `M`: Main pattern-path VBlank wait
-
-`M`はcurrent frameのMain-side pattern transfer pathが消費したVBlank start数です。
-Display cadence待ちは除外するため、deadline diagnosticになります。
-
-Fixed-N H40では、guard付きの残りbudgetが十分なら、最後のcold tailがname-table
-DMAとflipと同じdeadline VBlankを使えます。このshared target waitはdisplay
-cadenceなので`M`から除外し、それより前のintervening pattern-work VBlank start
-だけを残します。Fresh flip VBlankが必要なfallbackもpattern workではなくdisplay
-workのままです。
-
-Fixed-Nの正常範囲は`M=00..N-1`で、`N`到達はpattern workがfixed display deadlineを
-越えた証明です。Fixed N2は`M<=01`、fixed N4は`M<=03`です。この範囲超過はcadence
-warningですがupload gateはfailしません。Delivery-paced contentは
-`ceil(60000/1001/fps)`をlimitにします。`U/N`と相関させ、transfer volumeとrun
-fragmentationを分けます。
-
-### `A`: Sub ADPCM decode time
-
-Sub CPUはMega-CD stopwatchでcheckpoint付きIMA decode phaseを測ります。Playerはraw
-valueを2 bit右shiftし、そのlow byteを表示します。
-
-```text
-1 A unit = 4 * 30.72 us = 約0.12288 ms
-```
-
-例えば`A=40`は約7.86 msです。Low frame rateのdecoderはCDCをperiodic serviceするため、
-`A`へinterleaved pump workも入る場合があります。その後のRF5C164 wave-RAM write phaseは
-含みません。
-
-### `U`: Main pattern-transfer time
-
-`U`はMain CPUのMega-CD stopwatchを4 hex digitで表示します。1 tickは30.72 usです。
-最初のcold runから最後のDMA repairまたはshort-run CPU writeまでを測り、long runが
-VBlank word-budget boundaryをまたぐときのpiece間waitも含みます。
-
-Hardware counterは12-bitでdifferenceを`0x0FFF`へmaskするため、4096 tick、約125.83 msで
-wrapします。Cold runがないframeは`0000`です。
-
-### `N`: packed cold-run count
-
-`N`はframe用source-aware cold-run descriptor countのlow byteです。同じphysical pattern
-sourceのconsecutive VRAM slotを1 runにします。Prg、parity-selected WordBuf、DicBufの
-境界はdestination slotが連続していてもrunを分けます。
-
-Cold-tile countでもphysical VDP DMA command数でもありません。1・2 tile runはCPU write、
-long runはDMAを使い、VBlank boundaryでさらに分割される場合があります。`N`はhardware
-transfer choice前のfragmentationを測ります。
-
-Whole-movie `/hudline` の `N COLD RUNS` rowは、そのHUD TSVにあるtimed `N`の最大値を
-vertical scaleに使います。Untimed frame 0は最大値から除外します。
-
-### `J`: streamed PrgBuf jitter-reserve high-water mark
-
-`J`はBODY streaming開始後に観測した、fps-derived normal ceilingを超えるstreamed
-PrgBuf simultaneous occupancyの最大値です。Normal ceilingは15 fpsで376 KiB、
-24 fpsで391 KiB、30 fpsで396 KiBです。KiBへ切り上げhex表示します。
-`J=00`はceiling未超過、`J=01`は0より大きく1 KiB以下、`J=0A`は10 KiB以下の
-最大excessです。
-
-Sub CPUは各BODY payload sector append直後にoccupancyをsampleします。Appendだけが
-high-water markを上げるため、pollやpattern consumptionでの追加sampleは不要です。
-Frame-0 blockはこのpathを通らないため除外します。Fieldはsimultaneous occupancyを
-測り、circular pointerがnormal boundaryより上のphysical addressへ入ったかどうかとは
-別です。
-
-### `Q`: signed per-frame PrgBuf minimum
-
-`Q`は別のsigned logical balanceを追跡します。BODY payload sectorごとに64 patternを
-加え、Prg source runごとにexact pattern countを引きます。そのframeで到達した最小値を
-signed 16-bitの4桁hexでpublishします。`0001`は32 byte patternが1つ残った状態、
-`0000`はlogical supplyが正確にempty、`FFFF`は到着前のpatternを1つ消費した状態です。
-
-Circular pointer arithmeticはunderflow発生後にそれを識別できません。Pop headがappend
-tailを追い越すとmodulo distanceはほぼfullに見え、payload back-pressureを起こせます。
-`Q`は後続sectorがdebtを返済しても、そのframe全体でsigned factを保持します。
-Diagnostic専用でupload gateは変えません。
-
-### `H` / `X`: physical PrgBuf pressureとCD reader lead
-
-`H`は1 frame中に到達したphysical PrgBuf occupancyの最大値です。Sub CPUはexactな
-circular-ring distanceで初期化し、2 KiB payload appendごとに更新します。表示単位は
-32-byte patternなので、`H=3440`は418 KiBで、次のpayload pollを拒否する境界です。
-Whole-run sticky peakの`J`と異なり、`H`は各frame境界でcurrent occupancyへ戻るため、
-pressureが存在したframeを示します。`/hudline`のH rowには418 KiB back-pressure
-guideを描きます。
-
-`X`は次のframe展開に対しphysical CD readerがどこまで進んだかを記録します。High byteは
-readerとconsumer位置の間で完了したframe slot数、low byteはcurrent slot内sector index
-です。1 frame中に到達した最も先の辞書順位置を保持します。`/hudline`では
-`XH READER AHEAD`と`XL READER SLOT`へ分離します。`X`は`H`と一緒に読みます。
-Destination bufferに空きがあるreader leadは有用なprefetchですが、`H=3440`と同時なら、
-continuously arriving payload sectorをphysical PrgBuf back-pressureが止め得る状態です。
-両fieldとも観測専用でupload-gate thresholdはありません。
-
-### `Y` / `O` / `Z` / `Y3` / `Y4` / `T` / `I`: Main pattern-transfer budget
-
-`Y`、`Z`、`Y3`、`Y4`はpattern pathが最初の4つのfresh runtime VBlank budgetで
-発行したexact logical pattern word数です。16 wordで1つの32-byte patternです。
-Weighted capacity costそのものは表示しません。DMA wordは1 budget unit、CPUがVDPへ
-書く各wordは4 unitで、各Word-RAM DMA commandにはCPUによる先頭word補修も加わります。
-したがってDMA runはbudget boundaryで分割され、値がpartial patternを含む場合があります。
-1〜2 tileのCPU runはwholeのままです。使わなかったcadence windowはzeroです。
-`T<=04`なら`Y+Z+Y3+Y4`はframe全体のlogical pattern word数と一致します。
-
-`T`はpattern pathが開いたfresh VBlank budget数です。`T=01`は最初のbudgetを明示的に
-refillしなかったことを示しますが、model化したcostが物理的にもVBlank内へ収まったかは
-`O`で確認します。`T=02`はfreshな2つ目のbudgetを明示的に待って開いたことを示します。
-Fixed-Nでは`T>N`がexplicit budget allocationのcadence window超過の証拠で、gate
-`FAIL`ではなくalert `WARNING`になります。`T>=05`もcountは正確に報告し、HUDは
-最初の4 budget shareだけを保持します。
-
-`O`は1つ目のpattern-transfer share直後にsampleしたraw V-counter high byteです。
-`E0..FF`ならVBlank内、`00..DF`ならpayloadにrun/CPU overheadを加えた実作業がactive
-displayへ続いた証拠です。
-
-`I`はpattern path全体の終了時、HUD publication、name-table DMA、CRAM replacement、
-display flipより前にsampleしたraw V-counter high byteです。同frameの全word shareと
-`O`を一緒に読み、過負荷な1つ目のshare、lateなtail、tail後のworkを分けます。
-Word share、`O`、`I`は観測専用で、fixed-Nの`T>N`だけがwarningになります。
-
-### `G` / `B` / `K`: Sub pumpとcontrol back-pressure
-
-`G`は1 frame内のSub CPU CDC service opportunity間で最長のintervalです。Low 12 bitを
-Mega-CD stopwatchの30.72 us unitとして使います。Sector transferまたはre-seek recovery
-後にtimer originを更新するため、recovery workそのものではなくpump path外の時間を
-測ります。
-
-`B`は`G` bit 15から独立したBoolean rowとしてdecodeします。APPLY-ring occupancyが
-`APPLY_SIZE - 4 KiB` guard（現在の34 KiB ringでは30 KiB）へ達し、Sub CPUが次の
-control-sector pumpを拒否したframeで立ちます。Playerはper-frame control-wait counterの
-未使用high bitへ一時保存し、HUD format時だけ`G`へ合成します。このためG maximumや
-表示low-byte `C`を妨げません。
-
-`K`は`S` incidentのうちMSF sector-sequence gapが原因のcumulative countです。`S`は
-全recovery countのままなので、`S-K`がCDC_TRN retry-exhaustion recoveryを示します。
-差はmodulo 256で読みます。3 fieldともdiagnostic専用でupload-gate thresholdはありません。
-
-### `V` / `O` / `E`: flip、first-share exit、Pass2 entry phase
-
-`V`はaccepted display flipのregister write直後に読むraw V-counter high byteです。
-`E0`（line 224）はVBlank startちょうどのflipで、dominant healthy valueです。大きい
-blank lineはlate flipで、terminal line `FC..FF`はacceptしません。
-
-`V`はprevious frameをpublishしたflipを示します。`O`はこのframeの1つ目の
-pattern-share exit V-counterで、上の`Y/O/Z/Y3/Y4/T/I`と一緒に読みます。
-
-`E`はPass2 entry（`bf_dma`）でVBlank wait前にsampleする、previous flipからの
-stopwatch distanceです。4-tick unitで、CMD_SWAP wait（`W`）、control parse、
-bitmap/list shadow walk、name-table blitを含むcomplete pre-transfer Main phaseを
-測ります。Pass2はfield 1のVBlank前に入る必要があります。1 fieldは543 tick、
-`E`約`88`です。`U`はtransfer VBlank内で始まるため、このdeadlineを単独では示せません。
-
-## 組合せの読み方
-
-| Observation | 解釈候補 |
+Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 39 桁の
+16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 7 cell を使います。
+H40 は 39 cell 全体を 1 行へ収めます。
+
+## 物理 layout
+
+各 cell は 8x8 の 16 進 glyph です。Glyph の最上 scanline には nibble を直接
+表す 2 pixel 幅の bar も 4 本あります。OCR は bar を読み、表示 glyph を独立した
+confidence check に使います。
+
+表の cell は H32 で折り返す前の logical offset です。H32 は
+`row = offset // 32`、`column = offset % 32`、H40 は row 0 の listed offset を
+使います。
+
+| Stored value | Logical cells | Digits | Decoded field または packing |
+|---|---:|---:|---|
+| `frame` | 0-3 | 4 | 表示中の movie frame |
+| `palette_segment` | 4 | 1 | Active palette segment |
+| `sector_slip` | 5 | 1 | Cumulative sector-delivery recovery count |
+| `control_desync` | 6 | 1 | Cumulative control-stream recovery count |
+| `audio_resync` | 7 | 1 | Cumulative audio-pointer recovery count |
+| `audio_lead_256b` | 8-9 | 2 | 256-byte 単位の audio lead |
+| `cd_wait_count` | 10 | 1 | この frame の blocking CD service 回数 |
+| `sub_wait_scanlines` | 11-12 | 2 | Approximate scanline 単位の Main の Sub 待ち |
+| `adpcm_decode_units` | 13-14 | 2 | 0.12288 ms 単位の Sub ADPCM work |
+| packed transfer word | 15-18 | 4 | High nibble が `vblank_spill`、low 12 bit が `transfer_ticks` |
+| `cold_runs` | 19-20 | 2 | Packed cold-run count の low byte |
+| `prgbuf_jitter_peak_kib` | 21-22 | 2 | Normal PrgBuf ceiling 超過分の sticky ceil-KiB |
+| `flip_vcounter` | 23-24 | 2 | 直前の displayed flip の V-counter |
+| `first_share_exit_vcounter` | 25-26 | 2 | First transfer-share の exit V-counter |
+| `pass2_delay_q4` | 27-28 | 2 | 4 stopwatch tick 単位の Pass2 delay |
+| packed pump word | 29-32 | 4 | Bit 15 が `apply_backpressure`、low 12 bit が `pump_gap_ticks` |
+| `msf_gap_recoveries` | 33 | 1 | Cumulative MSF-gap recovery count |
+| packed reader byte | 34-35 | 2 | High nibble が `reader_ahead_frames`、low nibble が `reader_slot_sector` |
+| `transfer_vblanks` | 36 | 1 | この frame で開いた fresh transfer budget 数 |
+| `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
+
+Player-only pre-roll sentinel は `frame=FFFF` です。OCR anchor であり stream frame
+ではなく、HUD TSV にも書きません。Movie frame 0 は sequence alignment のため
+TSV に残しますが、untimed boot staging です。
+
+## Field reference
+
+| Field | Owner | Scope | 意味 |
+|---|---|---|---|
+| `frame` | Main | per frame | Displayed movie frame number |
+| `palette_segment` | Main | per frame | Active CRAM segment |
+| `sector_slip` | Sub | cumulative nibble | Sector-delivery recovery。Transition と wrap を読む |
+| `control_desync` | Sub | cumulative nibble | Control parser recovery |
+| `audio_resync` | Sub | cumulative nibble | Audio read-pointer correction |
+| `audio_lead_256b` | Sub | per frame | 256-byte 単位の queued audio lead |
+| `cd_wait_count` | Sub | per frame | Current-frame path 上の blocking CD work。Diagnostic 専用 |
+| `sub_wait_scanlines` | Main | per frame | Sub handoff の approximate wait |
+| `vblank_spill` | Main | per frame | Pattern work が消費した追加 VBlank budget |
+| `adpcm_decode_units` | Sub | per frame | 0.12288 ms 単位の ADPCM decode work |
+| `transfer_ticks` | Main | per frame | 30.72 us tick 単位の Main pattern-transfer time。12 bit wrap |
+| `cold_runs` | Main | per frame | Packed cold-run count の low byte |
+| `prgbuf_jitter_peak_kib` | Sub | sticky nibble pair | Runtime jitter headroom の最大 ceil-KiB 使用量 |
+| `flip_vcounter` | Main | per frame | 直前の frame を publish した flip の V-counter |
+| `first_share_exit_vcounter` | Main | per frame | First transfer share の exit phase |
+| `pass2_delay_q4` | Main | per frame | 4 tick 単位の Pass2 delay |
+| `pump_gap_ticks` | Sub | per frame | CDC service opportunity 外の最長 interval |
+| `apply_backpressure` | Sub | per frame | APPLY guard が control-sector pump を拒否 |
+| `msf_gap_recoveries` | Sub | cumulative nibble | Sector-position gap recovery |
+| `reader_ahead_frames` | Sub | per frame | Read 済みの complete future frame slot 数 |
+| `reader_slot_sector` | Sub | per frame | Current reader slot 内の sector position |
+| `transfer_vblanks` | Main | per frame | 開いた fresh transfer budget 数 |
+| `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+
+`sector_slip`、`control_desync`、`audio_resync`、
+`msf_gap_recoveries` は 4-bit cumulative counter です。Transition が event で、
+同じ nonzero value の繰り返しは state です。15 から 0 への wrap は正常です。
+Transport-retry remainder は
+`(sector_slip - msf_gap_recoveries) & 0xF` です。
+
+`prgbuf_jitter_peak_kib` は sticky high-water であり current occupancy では
+ありません。`cd_wait_count`、`pump_gap_ticks`、`apply_backpressure` は時間を
+使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
+結果でもあり得ます。
+
+## Upload gate
+
+`harness/startup_resync/analyze.py` は descriptive gate schema 12 を書きます。
+Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` です。
+`NONE` と `WARNING` は upload 可能です。
+
+5 個の gate field は次のとおりです。
+
+| Field | Limit |
 |---|---|
-| `S/D/R`が`00` | CD loss、control desync、audio pointer jumpを検出していない |
-| `S`増加後も`D=00` | control alignmentを失わずsector recovery |
-| `D`増加 | control blockを拒否し直前imageをhold |
-| `L`がboundaryへ向かい`R`増加 | audio reserveがsafe range外へ出てwrite pointer jump |
-| `C`と`W`が同時上昇 | CD/control workがSub-to-Main handoffを遅延 |
-| `A`と`W`が上昇し`C`は低い | ADPCM decodeまたはinternal CDC serviceがSub側主要cost |
-| `N`と`U`が同時上昇 | Run fragmentationがMain fixed overheadを増加 |
-| `U`上昇、`N`は小さい | Descriptor数よりpattern volumeまたはVBlank splitが支配 |
-| `T<=04`かつ`Y+Z+Y3+Y4`がframeのpattern word数と一致 | Runtime budget chargeをすべて集計できている |
-| `T>N` | Explicit fresh-budget allocationがfixed cadence windowを超過しwarning |
-| `O=00..DF` | 1つ目のpattern share自体がVBlankを越え、raw-word budgetがrun/CPU overheadを過小評価 |
-| `O=E0..FF`、`T<=N`、`I`はearly | Pattern shareはcadence window内で終了。HUD/name-table/palette/flip workを調べる |
-| `T<=N`で`I`がterminal blank近く | 最後のpattern share後に残るdeadline marginが小さい |
-| `M>N-1` | Main pattern workがfixed cadence deadlineを越えwarning |
-| `P`変化、`S/D`安定 | 正常なscheduled CRAM segment switch |
-| `J`が`00`から変化 | Physical jitter reserveを使用 |
-| `J`がさらに上昇 | Timed playbackがそれまでのhigh-water markを更新 |
-| `Q=0000` | そのframeでlogical PrgBuf supplyが正確にempty |
-| `Q=8000..FFFF` | Signed PrgBuf balanceがnegative。`Q-0x10000` patternとして読む |
-| `H=3440`で`X`が先行 | CD readerがprefetch先行中にphysical PrgBufがpayload back-pressureへ到達 |
-| `H`が低下しても`J`が高い | Current pressureは回復し、`J`がearlier whole-run peakを保持 |
-| `S` transitionでも`G`がnormal band内 | CDC pump外の例外的な長時間停止はincident原因ではない |
-| `B=01`の後に`K/S`が増加 | APPLY control back-pressureがdeliveryをblockした後にMSF-gap recovery |
-| `K`と`S`が同量増加 | Recovery原因はMSF sequence gapで、CDC_TRN retry exhaustionではない |
+| `sector_slip` | 0 |
+| `control_desync` | 0 |
+| `audio_resync` | 0 |
+| `vblank_spill` | Fixed cadence では VBlank interval より 1 少ない値。Delivery-paced cadence では 1 content frame に使える field 数 |
+| `prgbuf_jitter_peak_kib` | Physical ring size から cadence-derived normal PrgBuf ceiling と 1 KiB を引いた値 |
 
-単独のproofではなくcorrelationです。Regression調査ではnative lossless captureとpacked
-streamを使います。
+`vblank_spill` 超過は warning、ほか 4 field の超過は failure です。Fixed cadence
+では `transfer_vblanks` が cadence interval を超えた場合も warning です。
+Analyzer は連続する `capture_first` から各 timed frame の表示時間を求め、
+fixed cadence と異なる表示時間を cadence edge exception の外側で warning に
+します。30 fps では先頭と末尾の各 4 content frame、15 fps では各 2 content
+frame を measurement には残しますが、この derived ALERT の対象外にします。
+この例外は gate field と `transfer_vblanks` には適用しません。
 
-## HUD rendering
+Frame 0 と terminal hold は gate maximum、statistics、event、dynamic scale、
+cadence measurement から除外します。`cd_wait_count` と `adpcm_decode_units` は
+timed first loop の minimum、mean、median、maximum、sample count を常に保存します。
+`pump_gap_ticks` も存在する場合は同じ statistics を保存します。Gate は APPLY
+back-pressure frame count と reader lead / transfer phase の maximum も保存します。
 
-HUDはWindow planeを使いません。各frameでMain CPUは次を行います。
+## OCR と TSV
 
-1. inactive Plane A tableへcomplete next movie name tableを構築
-2. 両modeとも138-byte Main-RAM staging blockへHUDをformat
-3. H32ではrow 0・1の各32 cellとrow 2の5 cell、H40ではrow 0の40 cellと
-   row 1の29 cellを上書き
-4. Movieと同じregister-2 flipでcompleted tableを選択
-
-Inactive tableはVRAM `0xC000`と`0xE000`です。他のplayer pathでは34 longword
-writeと1 word writeを使い、HUD専用DMAは使いません。
-Specialized fixed-N H40 pathは、64-by-28 name-table stage全体を既存の1 DMAで
-copyします。最初と2つ目のpattern VBlankの間でstableなHUD fieldをformatし、
-pattern tail後に`P/M/U/Y/Z/Y3/Y4/T/I`をpatchして、complete HUDをMain-RAM
-stageへmergeします。既存のname-table DMAがpictureとHUDを一緒に運ぶため、最後の
-cadence VBlank flip deadline上にpost-DMA VDP-port republishは残りません。
-未使用cellはmovie entryを保持し、無関係なPlane B frameを露出しません。
-
-Final flipはterminal-VBlank guardを持ち、V-counter `FC..FF`を拒否してend-of-blank raceで
-tableを選びません。
-
-## Hex fontとCRAM安定性
-
-HUD fontはhex digitごとに16 patternだけを持ちます。各8x8 glyphは次を含みます。
-
-- top rowに4-bit barcode。1 bitを2 pixel、MSB first
-- その下にcompactな6x7 human-readable hex glyph
-
-16 patternはstartup時にVRAM `0xD000`（tile 1664..1679）へ1回uploadします。
-Name-table cellはfixed tile indexを直接参照します。Font upload時にsource colour 0を
-P0/index1、source colour 1をP0/index15へ展開します。Encoderとpackerは全palette segmentで
-これらをglobal darkest/brightest usable colourへcanonicalizeします。このためCRAM
-switchでHUDがrecolour/blinkせず、frameごとのfont scan、recolour、DMA、extra VBlank waitは
-不要です。
-
-## OCRとrecording解析
-
-Native screenshotを読みます。
-
-```sh
-tools/python.sh tools/read_frameno.py frame.png
-```
-
-結果は全fieldとconfidenceを含みます。
-
-```text
-frame.png -> F=012A(0.99) P=03(0.99) S=00(0.99) ...
-```
-
-`read_frameno.py`はbarcodeをdecodeし、lower glyphをnormalized correlationでcheckします。
-旧common layoutと1行H40 layoutは明示指定で残します。Current recordingは
-`HUD_H32_COMBINED_LAYOUT`または`HUD_H40_COMBINED_LAYOUT`を使い、readerが各logical
-digitを32/40-cellの折り返しへ割り当てます。H32で分割される`Q`も同じfieldとして
-読みます。どちらのprofileでもrecording analyzerがmatching layoutを自動選択し、
-profileなしの場合だけ`--combined-fields`が必要です。
-
-Complete recordingでは`harness/startup_resync/analyze.py`が`F`ごとにrepeated 60 Hz
-capture frameをgroup化し、field別confidenceとcounter transitionを報告します。
-`F=FFFF`直後のvalidな`F0000` runを優先するため、first-loopの頭出しを正確にできます。
-sentinel導入前のrecordingにはplausible sequence fallbackを残し、`FFFF` group自体は
-捨てます。Analyzerは選んだmethodを報告し、capture indexをgate JSONの
-`ocr_start_anchor` objectへ対応するcapture timeと共に保存します。Publication
-recordingはtrimしません。CRAM chapter offsetにはこのobjectの正確な
-`F=FFFF`から`F=0000`へのtransitionを使うため、別の目視頭出しは不要です。
-
-Canonical project TSVを書きます。
+正確な profile を渡して complete recording analyzer を実行します。
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
-  --tsv videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
+  "$LOSSLESS" profiles/PROFILE.toml \
   --expected-frames FRAME_COUNT
 ```
 
-LogはUTF-8、header row、tab separator、LF line ending、`.tsv` extensionです。
-Required profile引数がある場合、実体は
-`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`へ永続保存し、`--tsv` pathは
-そのlogへのrun-specific compatibility symlinkになります。Project-owned HUD logは
-comma-delimitedにしません。
+Analyzer は存在すれば `frame=FFFF` から `frame=0000` への transition を見つけ、
+complete first loop を読み、次を出力します。
 
-Current H32/H40 combined HUDでは、TSVは`Q`を`prgbuf_min_patterns_raw16`として保持し、
-signed valueを`prgbuf_min_patterns_signed`へdecodeし、positiveなdebt magnitudeを
-`prgbuf_underflow_patterns`へ書きます。Pump diagnosticでは代わりに
-`sub_poll_gap_ticks`、`sub_poll_gap_ms`、`apply_guard_blocked`、
-`slip_msf_gap_count`、`slip_trn_retry_count`を書きます。Physical-buffer diagnosticは
-`prgbuf_physical_peak_patterns`、`reader_ahead_raw16`、
-`reader_ahead_frames`、`reader_slot_sector`を書きます。Columnがあれば
-`/hudline`と`/mixline`は常にそれらのrowとG/BおよびH/X summaryを含めます。
-Pattern-split diagnosticは`pattern_vblank1_words`、
-`pattern_vblank2_words`、`pattern_transfer_vblanks`、
-`pattern_exit_vcounter`を書き、同じrendererがそのrowとmaximumを保持します。
-
-Exactなmanaged GPGX LOGVDP recordingがあれば、画面上のHUDを変更せずにphysical
-VDP-transfer rowを`/hudline`へ追加できます。まず
-`harness/gpgx_logvdp/extract_frame_tsv.py`がtraceをこのHUD TSVへalignし、timed frame
-ごとにphysical pattern-word totalとlogical HUD totalの一致を検証します。そのTSVを
-rendererへ渡すと、`S/D/R/M/J`の直後にpattern DMA blank/active（`PD`/`PA`）、
-CPU direct-writeおよびDMA repair blank/active-edge（`CB`/`CA`）、name-table DMA
-blank/active（`NB`/`NA`）、pattern DMA command count（`DR`）を配置します。`CA`は
-LOGVDPの曖昧な2つのV-counter edge表現を含み、`*`でそのことを明示します。これらは
-recording後のdiagnostic rowだけで、playbackやupload gateを変更しません。
-
-Glyph/layoutのreproducible proofは次です。
-
-```sh
-tools/python.sh harness/hud_ocr/verify.py
+```text
+logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv
+logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud_gate.json
 ```
+
+TSV は descriptive column を使います。Decoded HUD column は次のとおりです。
+
+```text
+frame palette_segment sector_slip control_desync audio_resync
+audio_lead_256b cd_wait_count sub_wait_scanlines vblank_spill
+adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
+flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
+apply_backpressure msf_gap_recoveries reader_ahead_frames
+reader_slot_sector transfer_vblanks transfer_end_vcounter
+```
+
+さらに capture timing、OCR confidence、sample count、derived milliseconds、
+audio-resync transition context、`transport_retry_recoveries` を保存します。
+
+`/hudline` は descriptive value と gate line を描画します。`/timeline` は exact
+Main-to-VDP word と REQ row の cold-cap guide を含む encoder decision を描画します。
+`/mixline` は shared frame axis を検証し、どちらの graph も resize せず合成します。
+
+Optional GPGX LOGVDP extractor は physical VDP write を HUD frame axis へ align
+します。廃止した per-VBlank logical word-share HUD field から HUD-side total は
+得られません。そのため extraction receipt は input hash と frame alignment を
+証明し、codec timeline が独立して exact R2V component を検証します。
 
 ## Maintenance contract
 
-Field、width、order変更時は次を同時更新します。
+Field order、width、packing を変える場合は次を同時に更新します。
 
-- `boot/movieplay_ip.s`の`prepare_dbg`と`publish_dbg`
-- `tools/read_frameno.py`のlayoutとfield decode
-- `harness/hud_ocr/verify.py`のlayout/OCR proof
-- この文書とREADMEのshort summary
-- `harness/pipeline_speedup/verify_run_hud.py`などのfield固有verification
+- `boot/movieplay_ip.s`
+- `tools/read_frameno.py`
+- `harness/startup_resync/analyze.py`
+- `.agents/skills/hudline/scripts/render_hudline.py`
+- `.agents/skills/hudline/scripts/report_overages.py`
+- `.agents/skills/mixline/scripts/render_mixline.py`
+- `tools/r2v_model.py`
+- この文書と関連 test
 
-意図的にnew layoutをqualificationしない限り、HUDはvalues-onlyを維持します。Label追加は
-movie cellとMain-side publication workを消費し、freeなpresentation changeではありません。
+OCR output、TSV / JSON key、receipt、documentation、renderer row key は descriptive
+name に統一します。1 文字の display alias は public diagnostic interface では
+ありません。

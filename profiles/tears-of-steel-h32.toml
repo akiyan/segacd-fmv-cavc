@@ -13,7 +13,7 @@ height = 224
 fit = "pad"
 
 [output]
-directory = "videos/TOS_H32_256x224_adpcm22/tmp"
+directory = "tmpfs/TOS_H32_256x224_adpcm22/sim"
 reuse = false
 emit_decisions = true
 

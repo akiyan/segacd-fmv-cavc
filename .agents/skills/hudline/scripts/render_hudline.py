@@ -21,6 +21,7 @@ REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 import analysis_style as style  # noqa: E402
+import analysis_logs  # noqa: E402
 import av_config  # noqa: E402
 import hud_gate  # noqa: E402
 import layout_preview as layout  # noqa: E402
@@ -57,22 +58,22 @@ class RowSpec:
 
 
 GATE_COLUMN = {
-    "S": "slip",
-    "D": "desync",
-    "R": "resync",
-    "M": "main_vblank_wait",
-    "J": "prgbuf_jitter_peak_kib",
+    "sector_slip": "sector_slip",
+    "control_desync": "control_desync",
+    "audio_resync": "audio_resync",
+    "vblank_spill": "vblank_spill",
+    "prgbuf_jitter_peak_kib": "prgbuf_jitter_peak_kib",
 }
 
 MAXIMUM_COLUMN = {
     **GATE_COLUMN,
-    "C": "cd_wait",
+    "cd_wait_count": "cd_wait_count",
 }
 
 HEX_COLUMNS = {
     "flip_vcounter",
-    "pattern_vblank1_exit_vcounter",
-    "pattern_exit_vcounter",
+    "first_share_exit_vcounter",
+    "transfer_end_vcounter",
 }
 
 GPGX_VDP_COLUMNS = (
@@ -152,39 +153,6 @@ def load_gpgx_vdp_tsv(
     if str(receipt.get("hud_tsv_sha256")) != digest(hud_path):
         raise SystemExit("GPGX VDP TSV was extracted against another HUD TSV")
 
-    logical = np.zeros(len(rows), dtype=np.int64)
-    for key in (
-        "pattern_vblank1_words",
-        "pattern_vblank2_words",
-        "pattern_vblank3_words",
-        "pattern_vblank4_words",
-    ):
-        if key in hud_data:
-            logical += hud_data[key].astype(np.int64)
-    physical = sum(
-        arrays[key].astype(np.int64)
-        for key in (
-            "pattern_dma_blank_words",
-            "pattern_dma_active_words",
-            "pattern_cpu_blank_words",
-            "pattern_cpu_active_words",
-            "pattern_cpu_boundary_words",
-        )
-    )
-    transfer_budgets = hud_data.get(
-        "pattern_transfer_vblanks",
-        np.zeros(len(rows), dtype=np.float64),
-    )
-    checked = np.flatnonzero(
-        (frames > 0) & (transfer_budgets <= 4)
-    )
-    mismatched = checked[physical[checked] != logical[checked]]
-    if mismatched.size:
-        frame = int(mismatched[0])
-        raise SystemExit(
-            f"GPGX VDP frame {frame} physical pattern words "
-            f"{physical[frame]} != HUD logical words {logical[frame]}"
-        )
     return arrays, receipt, receipt_path
 
 
@@ -205,7 +173,7 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray], l
             "loop",
             "frame",
             *MAXIMUM_COLUMN.values(),
-            "sub_adpcm_decode_units",
+            "adpcm_decode_units",
         } - set(fields)
         if missing:
             raise SystemExit(f"HUD TSV lacks columns: {sorted(missing)}")
@@ -218,7 +186,10 @@ def load_tsv(path: Path) -> tuple[list[dict[str, str]], dict[str, np.ndarray], l
         raise SystemExit("first-loop HUD frames must be contiguous and start at zero")
     arrays: dict[str, np.ndarray] = {"frame": frames}
     for key in fields:
-        if key in {"loop", "frame", "frame_hex", "lead_hex", "r_transition"}:
+        if key in {
+            "loop", "frame", "frame_hex", "audio_lead_hex",
+            "audio_resync_transition",
+        }:
             continue
         texts = [row[key].strip() for row in rows]
         if not any(texts):
@@ -244,16 +215,16 @@ def load_gate(path: Path) -> dict:
     ):
         if key not in gate:
             raise SystemExit(f"gate JSON lacks {key}")
-    if "C" not in gate["maxima"]:
-        raise SystemExit("gate JSON lacks diagnostic C maximum")
-    if int(gate.get("schema_version", 0)) >= 5:
-        if "C" in gate["limits"]:
-            raise SystemExit("schema-5+ gate must not define a C limit")
-        if list(gate.get("gate_fields", ())) != list(GATE_COLUMN):
-            raise SystemExit("schema-5+ gate_fields do not match the HUD gate")
-    if int(gate.get("schema_version", 0)) >= 10:
-        if list(gate.get("warning_fields", ())) != ["M"]:
-            raise SystemExit("schema-10+ warning_fields must contain only M")
+    if int(gate.get("schema_version", 0)) != 12:
+        raise SystemExit("hudline requires descriptive HUD gate schema 12")
+    if "cd_wait_count" not in gate["maxima"]:
+        raise SystemExit("gate JSON lacks cd_wait_count maximum")
+    if "cd_wait_count" in gate["limits"]:
+        raise SystemExit("gate must not define a cd_wait_count limit")
+    if list(gate.get("gate_fields", ())) != list(GATE_COLUMN):
+        raise SystemExit("gate_fields do not match the descriptive HUD gate")
+    if list(gate.get("warning_fields", ())) != ["vblank_spill"]:
+        raise SystemExit("warning_fields must contain only vblank_spill")
     return gate
 
 
@@ -280,16 +251,22 @@ def field_statistics(
     }
 
 
-def c_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
-    return field_statistics(data, "cd_wait")
+def cd_wait_statistics(
+    data: dict[str, np.ndarray],
+) -> dict[str, int | float]:
+    return field_statistics(data, "cd_wait_count")
 
 
-def a_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
-    return field_statistics(data, "sub_adpcm_decode_units")
+def adpcm_decode_statistics(
+    data: dict[str, np.ndarray],
+) -> dict[str, int | float]:
+    return field_statistics(data, "adpcm_decode_units")
 
 
-def g_statistics(data: dict[str, np.ndarray]) -> dict[str, int | float]:
-    return field_statistics(data, "sub_poll_gap_ticks")
+def pump_gap_statistics(
+    data: dict[str, np.ndarray],
+) -> dict[str, int | float]:
+    return field_statistics(data, "pump_gap_ticks")
 
 
 def validate(
@@ -326,14 +303,20 @@ def validate(
     if int(gate.get("evaluation_first_frame", 1)) != 1:
         raise SystemExit("HUD gate must exclude untimed frame 0")
     for field, statistics_key, expected in (
-        ("C", "c_statistics", c_statistics(data)),
-        ("A", "a_statistics", a_statistics(data)),
+        (
+            "cd_wait_count",
+            "cd_wait_statistics",
+            cd_wait_statistics(data),
+        ),
+        (
+            "adpcm_decode_units",
+            "adpcm_decode_statistics",
+            adpcm_decode_statistics(data),
+        ),
     ):
         recorded = gate.get(statistics_key)
         if recorded is None:
-            if int(gate.get("schema_version", 0)) >= 4:
-                raise SystemExit(f"gate JSON lacks {statistics_key}")
-            continue
+            raise SystemExit(f"gate JSON lacks {statistics_key}")
         for key in ("minimum", "maximum", "sample_count"):
             if int(recorded[key]) != int(expected[key]):
                 raise SystemExit(
@@ -350,91 +333,55 @@ def validate(
                     f"gate {field} {key} {recorded[key]} != "
                     f"TSV value {expected[key]}"
                 )
-    q_values = data.get("prgbuf_min_patterns_signed")
-    gate_has_q = "Q" in gate.get("diagnostic_fields", ())
-    if q_values is not None:
-        q_minimum = int(q_values[1:].min())
-        q_underflow_peak = max(0, -q_minimum)
-        for key, expected in (
-            ("prgbuf_minimum_patterns", q_minimum),
-            ("prgbuf_underflow_peak_patterns", q_underflow_peak),
-        ):
-            if key not in gate:
-                raise SystemExit(f"gate JSON lacks {key}")
-            if int(gate[key]) != expected:
-                raise SystemExit(
-                    f"gate {key} {gate[key]} != TSV value {expected}")
-        if not gate_has_q:
-            raise SystemExit("gate diagnostic_fields omit available Q")
-    elif gate_has_q:
-        raise SystemExit("gate declares Q but HUD TSV has no Q column")
-    g_values = data.get("sub_poll_gap_ticks")
-    gate_has_g = "G" in gate.get("diagnostic_fields", ())
+    g_values = data.get("pump_gap_ticks")
     if g_values is not None:
-        expected = g_statistics(data)
-        recorded = gate.get("sub_poll_gap_statistics")
+        expected = pump_gap_statistics(data)
+        recorded = gate.get("pump_gap_statistics")
         if recorded is None:
-            raise SystemExit("gate JSON lacks sub_poll_gap_statistics")
+            raise SystemExit("gate JSON lacks pump_gap_statistics")
         for key in ("minimum", "maximum", "sample_count"):
             if int(recorded[key]) != int(expected[key]):
                 raise SystemExit(
-                    f"gate G {key} {recorded[key]} != TSV value {expected[key]}")
+                    "gate pump_gap_ticks "
+                    f"{key} {recorded[key]} != TSV value {expected[key]}")
         for key in ("mean", "median"):
             if not math.isclose(
                 float(recorded[key]), float(expected[key]), abs_tol=1e-12
             ):
                 raise SystemExit(
-                    f"gate G {key} {recorded[key]} != TSV value {expected[key]}")
-        if not gate_has_g:
-            raise SystemExit("gate diagnostic_fields omit available G")
-    elif gate_has_g:
-        raise SystemExit("gate declares G but HUD TSV has no G column")
-    b_values = data.get("apply_guard_blocked")
-    gate_has_b = "B" in gate.get("diagnostic_fields", ())
+                    "gate pump_gap_ticks "
+                    f"{key} {recorded[key]} != TSV value {expected[key]}")
+    b_values = data.get("apply_backpressure")
     if b_values is not None:
         expected_count = int(np.count_nonzero(b_values[1:]))
-        recorded_count = gate.get("apply_guard_blocked_frames")
+        recorded_count = gate.get("apply_backpressure_frames")
         if recorded_count is None:
-            raise SystemExit("gate JSON lacks apply_guard_blocked_frames")
+            raise SystemExit("gate JSON lacks apply_backpressure_frames")
         if int(recorded_count) != expected_count:
             raise SystemExit(
-                "gate B frame count "
+                "gate apply_backpressure frame count "
                 f"{recorded_count} != TSV value {expected_count}"
             )
-        if not gate_has_b:
-            raise SystemExit("gate diagnostic_fields omit available B")
-    elif gate_has_b:
-        raise SystemExit("gate declares B but HUD TSV has no B column")
-    for field, column, gate_key in (
-        ("H", "prgbuf_physical_peak_patterns",
-         "prgbuf_physical_peak_patterns"),
-        ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
-        ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
-        ("O", "pattern_vblank1_exit_vcounter",
-         "pattern_vblank1_exit_vcounter_max"),
-        ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
-        ("Y3", "pattern_vblank3_words", "pattern_vblank3_max_words"),
-        ("Y4", "pattern_vblank4_words", "pattern_vblank4_max_words"),
-        ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
-        ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
+    for column, gate_key in (
+        ("reader_ahead_frames", "reader_ahead_max_frames"),
+        ("reader_slot_sector", "reader_slot_sector_max"),
+        ("transfer_vblanks", "transfer_vblanks_max"),
+        ("transfer_end_vcounter", "transfer_end_vcounter_max"),
+        (
+            "first_share_exit_vcounter",
+            "first_share_exit_vcounter_max",
+        ),
     ):
         values = data.get(column)
-        declared = field in gate.get("diagnostic_fields", ())
         if values is not None:
             expected = int(values[1:].max(initial=0))
             if gate_key not in gate:
                 raise SystemExit(f"gate JSON lacks {gate_key}")
             if int(gate[gate_key]) != expected:
                 raise SystemExit(
-                    f"gate {field} maximum {gate[gate_key]} != "
+                    f"gate {column} maximum {gate[gate_key]} != "
                     f"TSV value {expected}"
                 )
-            if not declared:
-                raise SystemExit(
-                    f"gate diagnostic_fields omit available {field}")
-        elif declared:
-            raise SystemExit(
-                f"gate declares {field} but HUD TSV has no {column} column")
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -455,7 +402,7 @@ def derive_display_vblanks(
 ) -> tuple[np.ndarray, int | None]:
     """Return displayed VBlanks per content frame from capture-frame starts.
 
-    F is published atomically with the displayed movie frame.  The distance
+    ``frame`` is published atomically with the displayed movie frame.  The distance
     between consecutive first sightings therefore measures how many captured
     VBlanks the earlier content frame remained visible.  The final movie frame
     has no next F transition and is deliberately left unknown so the terminal
@@ -486,6 +433,30 @@ def derive_display_vblanks(
     return displayed, normal
 
 
+def display_vblank_alert_masks(
+    data: dict[str, np.ndarray],
+    displayed: np.ndarray,
+    expected_frames: int,
+    content_fps: float,
+    normal_vblanks: int | None,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Return alert-eligible and edge-exempt measured-frame masks."""
+
+    eligible = np.zeros(len(displayed), dtype=bool)
+    exempt = np.zeros(len(displayed), dtype=bool)
+    if normal_vblanks is None:
+        return eligible, exempt, 0
+    frames = data["frame"].astype(np.int64)
+    measured = np.isfinite(displayed)
+    edge_frames = hud_gate.cadence_alert_edge_frames(content_fps)
+    eligible = measured.copy()
+    if edge_frames:
+        eligible &= frames >= edge_frames
+        eligible &= frames < max(0, expected_frames - edge_frames)
+    exempt = measured & ~eligible
+    return eligible, exempt, edge_frames
+
+
 def row_specs(
     data: dict[str, np.ndarray],
     gate: dict,
@@ -502,7 +473,7 @@ def row_specs(
 
     lead_max = max(
         0x68,
-        int(math.ceil(timed_max("lead_256b"))))
+        int(math.ceil(timed_max("audio_lead_256b"))))
     display_vblanks = data["display_vblanks"]
     finite_vblanks = display_vblanks[np.isfinite(display_vblanks)]
     capacity_floor = (
@@ -526,27 +497,30 @@ def row_specs(
             ),
         ),
         RowSpec(
-            "slip", "S  SLIP", "cumulative", max(1, limits["S"]),
-            PASS_GUIDE, "S", height=23, show_unit=False,
+            "sector_slip", "SECTOR SLIP", "cumulative",
+            max(1, limits["sector_slip"]),
+            PASS_GUIDE, "sector_slip", height=23, show_unit=False,
         ),
         RowSpec(
-            "desync", "D  DESYNC", "cumulative", max(1, limits["D"]),
-            PASS_GUIDE, "D", height=23, show_unit=False,
+            "control_desync", "CONTROL DESYNC", "cumulative",
+            max(1, limits["control_desync"]),
+            PASS_GUIDE, "control_desync", height=23, show_unit=False,
         ),
         RowSpec(
-            "resync", "R  RESYNC", "cumulative", max(1, limits["R"]),
-            PASS_GUIDE, "R", height=23, show_unit=False,
+            "audio_resync", "AUDIO RESYNC", "cumulative",
+            max(1, limits["audio_resync"]),
+            PASS_GUIDE, "audio_resync", height=23, show_unit=False,
         ),
-        RowSpec("main_vblank_wait", "M  MAIN WAIT", "VBlanks/frame",
-                max(1, limits["M"], timed_max("main_vblank_wait")),
-                (238, 135, 73), "M"),
-        RowSpec("prgbuf_jitter_peak_kib", "J  PRG JITTER", "sticky peak KiB",
+        RowSpec("vblank_spill", "VBLANK SPILL", "VBlanks/frame",
+                max(1, limits["vblank_spill"], timed_max("vblank_spill")),
+                (238, 135, 73), "vblank_spill"),
+        RowSpec("prgbuf_jitter_peak_kib", "PRGBUF JITTER", "sticky peak KiB",
                 max(
                     1,
-                    limits["J"],
+                    limits["prgbuf_jitter_peak_kib"],
                     timed_max("prgbuf_jitter_peak_kib"),
                     float(gate.get("jitter_headroom_kib", 0))),
-                style.COL_PRG, "J"),
+                style.COL_PRG, "prgbuf_jitter_peak_kib"),
     ]
     if "pattern_dma_blank_words" in data:
         pattern_phase_max = max(
@@ -564,112 +538,82 @@ def row_specs(
         rows.extend([
             RowSpec(
                 "pattern_dma_blank_words",
-                "PD DMA BLANK",
+                "PATTERN DMA IN BLANK",
                 "pattern words/frame",
                 pattern_phase_max,
                 (94, 174, 224),
             ),
             RowSpec(
                 "pattern_dma_active_words",
-                "PA DMA ACTIVE",
+                "PATTERN DMA IN ACTIVE",
                 "pattern words/frame",
                 pattern_phase_max,
                 WARN,
             ),
             RowSpec(
                 "pattern_cpu_blank_words",
-                "CB CPU BLANK",
+                "PATTERN CPU IN BLANK",
                 "direct + repair words/frame",
                 pattern_phase_max,
                 (102, 193, 169),
             ),
             RowSpec(
                 "pattern_cpu_active_edge_words",
-                "CA CPU ACTIVE*",
+                "PATTERN CPU IN ACTIVE*",
                 "active + V-edge words/frame",
                 pattern_phase_max,
                 (238, 135, 73),
             ),
             RowSpec(
                 "name_table_dma_blank_words",
-                "NB NT DMA BLANK",
+                "NAME TABLE DMA IN BLANK",
                 "name-table words/frame",
                 max(1, timed_max("name_table_dma_blank_words")),
                 (132, 160, 220),
             ),
             RowSpec(
                 "name_table_dma_active_words",
-                "NA NT DMA ACTIVE",
+                "NAME TABLE DMA IN ACTIVE",
                 "name-table words/frame",
                 max(1, timed_max("name_table_dma_active_words")),
                 FAIL,
             ),
             RowSpec(
                 "pattern_dma_commands",
-                "DR PATTERN DMA",
+                "PATTERN DMA COMMANDS",
                 "commands/frame",
                 max(1, timed_max("pattern_dma_commands")),
                 style.COL_RUN,
             ),
         ])
-    if "prgbuf_min_patterns_signed" in data:
-        rows.append(
-            RowSpec(
-                "prgbuf_min_patterns_signed",
-                "Q  PRG MIN",
-                "signed 32-byte patterns/frame",
-                av_config.RING_SIZE_KB * 1024 / 32,
-                style.COL_PRG,
-            )
-        )
-    if "prgbuf_physical_peak_patterns" in data:
-        rows.append(
-            RowSpec(
-                "prgbuf_physical_peak_patterns",
-                "H  PRG PHYSICAL",
-                "peak 32-byte patterns/frame",
-                av_config.RING_SIZE_KB * 1024 / 32,
-                style.COL_PRG,
-            )
-        )
-    if "prgbuf_underflow_patterns" in data:
-        rows.append(
-            RowSpec(
-                "prgbuf_underflow_patterns",
-                "Q- PRG UNDERFLOW",
-                "32-byte pattern debt/frame",
-                max(1, timed_max("prgbuf_underflow_patterns")),
-                FAIL,
-            )
-        )
-    if "sub_poll_gap_ticks" in data:
+    if "pump_gap_ticks" in data:
         frame_ticks = math.ceil(
             1000.0 / float(gate["content_fps"]) / 0.03072
         )
         rows.append(
             RowSpec(
-                "sub_poll_gap_ticks",
-                "G  SUB PUMP GAP",
+                "pump_gap_ticks",
+                "SUB PUMP GAP",
                 "30.72 us ticks",
-                max(frame_ticks, timed_max("sub_poll_gap_ticks")),
+                max(frame_ticks, timed_max("pump_gap_ticks")),
                 (176, 112, 224),
             )
         )
-    if "slip_msf_gap_count" in data:
+    if "msf_gap_recoveries" in data:
         rows.append(
             RowSpec(
-                "slip_msf_gap_count",
-                "K  MSF GAP",
+                "msf_gap_recoveries",
+                "MSF GAP",
                 "cumulative recoveries",
-                max(1, timed_max("slip_msf_gap_count")),
+                max(1, timed_max("msf_gap_recoveries")),
                 (208, 142, 94),
             )
         )
-    if "apply_guard_blocked" in data:
+    if "apply_backpressure" in data:
         rows.append(
             RowSpec(
-                "apply_guard_blocked",
-                "B  APPLY BLOCK",
+                "apply_backpressure",
+                "APPLY BACKPRESSURE",
                 "control back-pressure/frame",
                 1,
                 WARN,
@@ -680,7 +624,7 @@ def row_specs(
         rows.append(
             RowSpec(
                 "reader_ahead_frames",
-                "XH READER AHEAD",
+                "READER AHEAD",
                 "complete frame slots",
                 max(1, timed_max("reader_ahead_frames")),
                 (103, 181, 220),
@@ -690,67 +634,27 @@ def row_specs(
         rows.append(
             RowSpec(
                 "reader_slot_sector",
-                "XL READER SLOT",
+                "READER SLOT",
                 "sector index in slot",
                 max(1, timed_max("reader_slot_sector")),
                 (94, 158, 205),
             )
         )
-    if "pattern_vblank1_words" in data:
+    if "transfer_vblanks" in data:
         rows.append(
             RowSpec(
-                "pattern_vblank1_words",
-                "Y  PATTERN VB1",
-                "words/frame (16 = 1 pattern)",
-                max(1, timed_max("pattern_vblank1_words")),
-                (114, 192, 233),
-            )
-        )
-    if "pattern_vblank2_words" in data:
-        rows.append(
-            RowSpec(
-                "pattern_vblank2_words",
-                "Z  PATTERN VB2",
-                "words/frame (16 = 1 pattern)",
-                max(1, timed_max("pattern_vblank2_words")),
-                (78, 159, 217),
-            )
-        )
-    if "pattern_vblank3_words" in data:
-        rows.append(
-            RowSpec(
-                "pattern_vblank3_words",
-                "Y3 PATTERN VB3",
-                "words/frame (16 = 1 pattern)",
-                max(1, timed_max("pattern_vblank3_words")),
-                (63, 133, 198),
-            )
-        )
-    if "pattern_vblank4_words" in data:
-        rows.append(
-            RowSpec(
-                "pattern_vblank4_words",
-                "Y4 PATTERN VB4",
-                "words/frame (16 = 1 pattern)",
-                max(1, timed_max("pattern_vblank4_words")),
-                (48, 111, 176),
-            )
-        )
-    if "pattern_transfer_vblanks" in data:
-        rows.append(
-            RowSpec(
-                "pattern_transfer_vblanks",
-                "T  VBLANK BUDGETS",
+                "transfer_vblanks",
+                "TRANSFER VBLANKS",
                 "fresh pattern budgets opened/frame",
-                max(2, timed_max("pattern_transfer_vblanks")),
+                max(2, timed_max("transfer_vblanks")),
                 (238, 157, 82),
             )
         )
-    if "pattern_exit_vcounter" in data:
+    if "transfer_end_vcounter" in data:
         rows.append(
             RowSpec(
-                "pattern_exit_vcounter",
-                "I  PATTERN EXIT",
+                "transfer_end_vcounter",
+                "TRANSFER END",
                 "VDP V-counter",
                 0xFF,
                 (198, 137, 226),
@@ -758,31 +662,31 @@ def row_specs(
             )
         )
     rows.extend([
-        RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
-                max(1, timed_max("cd_wait")), WARN),
-        RowSpec("lead_256b", "L  AUDIO LEAD", "256-byte units", lead_max,
+        RowSpec("cd_wait_count", "CD WAIT", "sectors/frame",
+                max(1, timed_max("cd_wait_count")), WARN),
+        RowSpec("audio_lead_256b", "AUDIO LEAD", "256-byte units", lead_max,
                 (82, 153, 232)),
-        RowSpec("sub_wait_lines", "W  SUB HANDOFF", "approx. scanlines", 255,
+        RowSpec("sub_wait_scanlines", "SUB HANDOFF", "approx. scanlines", 255,
                 (176, 112, 224), eight_bit_scale=True),
-        RowSpec("sub_adpcm_decode_units", "A  ADPCM", "0.12288 ms units", 255,
+        RowSpec("adpcm_decode_units", "ADPCM", "0.12288 ms units", 255,
                 (218, 112, 171), eight_bit_scale=True),
-        RowSpec("main_pattern_ms", "U  PATTERN", "ms, 12-bit wrap", 125.83,
+        RowSpec("transfer_ms", "PATTERN TRANSFER", "ms, 12-bit wrap", 125.83,
                 (81, 202, 211)),
         RowSpec(
-            "cold_runs_low8",
-            "N  COLD RUNS",
-            "runs, low byte",
-            max(1, timed_max("cold_runs_low8")),
+            "cold_runs",
+            "COLD RUNS",
+            "runs",
+            max(1, timed_max("cold_runs")),
             style.COL_RUN,
             show_zero=False,
         ),
     ])
     optional = (
-        ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",
+        ("flip_vcounter", "FLIP VCOUNTER", "VDP line, prior frame",
          (124, 193, 113)),
-        ("pattern_vblank1_exit_vcounter", "O  FIRST EXIT", "VDP line",
+        ("first_share_exit_vcounter", "FIRST SHARE EXIT", "VDP line",
          (112, 178, 216)),
-        ("pass2_entry_q4", "E  PASS2 ENTRY", "4 ticks",
+        ("pass2_delay_q4", "PASS2 DELAY", "4 ticks",
          (223, 182, 91)),
     )
     for key, label, unit, color in optional:
@@ -924,7 +828,7 @@ def draw_rows(
                 font=font(13),
                 anchor="rb",
             )
-            if spec.gate_key == "J":
+            if spec.gate_key == "prgbuf_jitter_peak_kib":
                 normal = float(gate.get("jitter_headroom_kib", 0))
                 normal_y = y1 - int(round(
                     (row_height - 1) * min(normal, spec.maximum)
@@ -941,24 +845,6 @@ def draw_rows(
                     font=font(13),
                     anchor="rb",
                 )
-
-        if spec.key == "prgbuf_physical_peak_patterns":
-            backpressure = float(av_config.BACKPRESSURE_KB * 1024 / 32)
-            guide_y = y1 - int(round(
-                (row_height - 1) * min(backpressure, spec.maximum)
-                / max(spec.maximum, 1e-9)))
-            draw.line(
-                (left, guide_y, right, guide_y),
-                fill=NORMAL_LIMIT,
-                width=1,
-            )
-            draw.text(
-                (right - 4, guide_y - 2),
-                f"back-pressure {fmt_hex(backpressure)}",
-                fill=NORMAL_LIMIT,
-                font=font(13),
-                anchor="rb",
-            )
 
         if spec.normal_value is not None:
             normal = float(spec.normal_value)
@@ -1000,14 +886,17 @@ def draw_rows(
                 font=font(15),
             )
 
-    palette = data.get("palette", np.zeros(observed_frames)).astype(np.int64)
+    palette = data.get(
+        "palette_segment",
+        np.zeros(observed_frames),
+    ).astype(np.int64)
     switches = np.flatnonzero(np.r_[False, palette[1:] != palette[:-1]])
     for frame_index in switches:
         x = left + int(frame_index) * ppf
         draw.line((x, top, x, bottom), fill=(130, 132, 145), width=2)
         draw.text(
             (x + 3, top + 3),
-            f"P{palette[frame_index]:02d}",
+            f"palette_segment={palette[frame_index]:02d}",
             fill=TEXT,
             font=font(14),
         )
@@ -1036,19 +925,61 @@ def main() -> None:
     )
     data["display_vblanks"] = display_vblanks
     finite_display_vblanks = display_vblanks[np.isfinite(display_vblanks)]
+    (
+        display_vblank_alert_mask,
+        display_vblank_exempt_mask,
+        display_vblank_edge_frames,
+    ) = display_vblank_alert_masks(
+        data,
+        display_vblanks,
+        int(gate["expected_frames"]),
+        float(gate["content_fps"]),
+        display_vblank_expected,
+    )
     display_vblank_warning_count = (
         int(np.count_nonzero(
-            finite_display_vblanks != display_vblank_expected
+            display_vblank_alert_mask
+            & (display_vblanks != display_vblank_expected)
         ))
         if display_vblank_expected is not None
         else None
     )
-    display_vblank_total = int(len(finite_display_vblanks))
-    display_vblank_warning_rate = (
-        100.0 * display_vblank_warning_count / display_vblank_total
-        if display_vblank_warning_count is not None and display_vblank_total
+    display_vblank_exempted_warning_count = (
+        int(np.count_nonzero(
+            display_vblank_exempt_mask
+            & (display_vblanks != display_vblank_expected)
+        ))
+        if display_vblank_expected is not None
         else None
     )
+    display_vblank_total = int(np.count_nonzero(display_vblank_alert_mask))
+    display_vblank_measured_total = int(len(finite_display_vblanks))
+    display_vblank_warning_rate = (
+        (
+            100.0 * display_vblank_warning_count / display_vblank_total
+            if display_vblank_total else 0.0
+        )
+        if display_vblank_warning_count is not None
+        else None
+    )
+    if "display_vblank_edge_exempt_frames" in gate:
+        for key, actual in (
+            ("display_vblank_alert_evaluated_frames", display_vblank_total),
+            ("display_vblank_edge_exempt_frames", display_vblank_edge_frames),
+            (
+                "display_vblank_exempted_violation_count",
+                display_vblank_exempted_warning_count,
+            ),
+            ("display_vblank_violation_count", display_vblank_warning_count),
+        ):
+            if (
+                key in gate
+                and actual is not None
+                and int(gate[key]) != int(actual)
+            ):
+                raise SystemExit(
+                    f"gate {key} {gate[key]} != HUD TSV value {actual}"
+                )
 
     observed_frames = len(rows)
     axis_frames = int(gate["expected_frames"])
@@ -1064,10 +995,10 @@ def main() -> None:
     plot_width = axis_frames * ppf
     width = left + plot_width + 45
     height = timeline_top + sum(spec.height for spec in specs) + 82
-    output = (
+    requested_output = (
         args.output
-        or REPO / "videos" / f"{tsv_path.stem}_hudline.png"
-    ).absolute()
+        or Path(f"{tsv_path.stem}_hudline.png")
+    )
 
     image = Image.new("RGBA", (width, height), BG + (255,))
     draw = ImageDraw.Draw(image)
@@ -1085,90 +1016,76 @@ def main() -> None:
     limits = gate["limits"]
     max_text = "  ".join(
         f"{key} {int(maxima[key])}/{int(limits[key])}"
-        for key in ("S", "D", "R", "M", "J")
+        for key in gate["gate_fields"]
     )
     confidence = data.get("confidence", np.ones(observed_frames))[1:]
     sample_count = data.get("sample_count", np.ones(observed_frames))[1:]
-    c_stats = c_statistics(data)
-    a_stats = a_statistics(data)
-    g_stats = (
-        g_statistics(data) if "sub_poll_gap_ticks" in data else None
+    cd_wait_stats = cd_wait_statistics(data)
+    adpcm_decode_stats = adpcm_decode_statistics(data)
+    pump_gap_stats = (
+        pump_gap_statistics(data) if "pump_gap_ticks" in data else None
     )
-    apply_guard_frames = (
-        int(np.count_nonzero(data["apply_guard_blocked"][1:]))
-        if "apply_guard_blocked" in data else None
+    apply_backpressure_frames = (
+        int(np.count_nonzero(data["apply_backpressure"][1:]))
+        if "apply_backpressure" in data else None
     )
-    q_values = data.get("prgbuf_min_patterns_signed")
-    q_minimum = (
-        int(q_values[1:].min())
-        if q_values is not None and len(q_values) > 1 else None
+    reader_ahead_max_frames = (
+        int(data["reader_ahead_frames"][1:].max(initial=0))
+        if "reader_ahead_frames" in data else None
     )
-    q_underflow_peak = max(0, -q_minimum) if q_minimum is not None else None
-    h_values = data.get("prgbuf_physical_peak_patterns")
-    h_maximum = (
-        int(h_values[1:].max())
-        if h_values is not None and len(h_values) > 1 else None
+    reader_slot_sector_max = (
+        int(data["reader_slot_sector"][1:].max(initial=0))
+        if "reader_slot_sector" in data else None
     )
-    x_values = data.get("reader_ahead_raw16")
-    x_maximum = (
-        int(x_values[1:].max())
-        if x_values is not None and len(x_values) > 1 else None
+    transfer_vblanks_max = (
+        int(data["transfer_vblanks"][1:].max(initial=0))
+        if "transfer_vblanks" in data else None
     )
-    split_maxima = {
-        key: (
-            int(data[column][1:].max())
-            if column in data and len(data[column]) > 1 else None
-        )
-        for key, column in (
-            ("Y", "pattern_vblank1_words"),
-            ("O", "pattern_vblank1_exit_vcounter"),
-            ("Z", "pattern_vblank2_words"),
-            ("Y3", "pattern_vblank3_words"),
-            ("Y4", "pattern_vblank4_words"),
-            ("T", "pattern_transfer_vblanks"),
-            ("I", "pattern_exit_vcounter"),
-        )
-    }
+    transfer_end_vcounter_max = (
+        int(data["transfer_end_vcounter"][1:].max(initial=0))
+        if "transfer_end_vcounter" in data else None
+    )
+    first_share_exit_vcounter_max = (
+        int(data["first_share_exit_vcounter"][1:].max(initial=0))
+        if "first_share_exit_vcounter" in data else None
+    )
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
+        f"edge-exempt {display_vblank_exempted_warning_count} "
+        f"(first/last {display_vblank_edge_frames}), "
         if display_vblank_expected is not None
         else "VBlank warning rule deferred, "
     )
-    g_stats_text = (
-        f"G min/mean/median/max "
-        f"{int(g_stats['minimum'])}/{float(g_stats['mean']):.3f}/"
-        f"{float(g_stats['median']):g}/{int(g_stats['maximum'])}; "
-        if g_stats is not None else ""
+    pump_gap_stats_text = (
+        "pump gap min/mean/median/max "
+        f"{int(pump_gap_stats['minimum'])}/"
+        f"{float(pump_gap_stats['mean']):.3f}/"
+        f"{float(pump_gap_stats['median']):g}/"
+        f"{int(pump_gap_stats['maximum'])}; "
+        if pump_gap_stats is not None else ""
     )
-    apply_guard_text = (
-        f"B APPLY block {apply_guard_frames} frames; "
-        if apply_guard_frames is not None else ""
-    )
-    physical_buffer_text = (
-        f"H max {h_maximum} patterns; "
-        if h_maximum is not None else ""
+    apply_backpressure_text = (
+        f"APPLY back-pressure {apply_backpressure_frames} frames; "
+        if apply_backpressure_frames is not None else ""
     )
     reader_ahead_text = (
-        f"X max {x_maximum >> 8} frames + sector {x_maximum & 0xFF}; "
-        if x_maximum is not None else ""
+        f"reader lead max {reader_ahead_max_frames} frames + "
+        f"sector {reader_slot_sector_max}; "
+        if (
+            reader_ahead_max_frames is not None
+            and reader_slot_sector_max is not None
+        ) else ""
     )
-    later_split_text = (
-        f"; VB3/VB4 {split_maxima['Y3']}/{split_maxima['Y4']} words"
-        if split_maxima["Y3"] is not None and split_maxima["Y4"] is not None
-        else ""
-    )
-    transfer_split_text = (
-        "VB1/VB2 words max "
-        f"{split_maxima['Y']}/{split_maxima['Z']} words "
-        f"({split_maxima['Y'] / 16:g}/{split_maxima['Z'] / 16:g} patterns)"
-        f"{later_split_text}; "
-        f"O first-exit max {split_maxima['O']:02X}; "
-        f"T max {split_maxima['T']}; I max {split_maxima['I']:02X}; "
-        if all(
-            split_maxima[key] is not None for key in ("Y", "O", "Z", "T", "I")
-        )
-        else ""
+    transfer_text = (
+        f"transfer VBlanks max {transfer_vblanks_max}; "
+        f"end V-counter max {transfer_end_vcounter_max:02X}; "
+        f"first-share exit max {first_share_exit_vcounter_max:02X}; "
+        if (
+            transfer_vblanks_max is not None
+            and transfer_end_vcounter_max is not None
+            and first_share_exit_vcounter_max is not None
+        ) else ""
     )
     gpgx_vdp_maxima = (
         {
@@ -1189,7 +1106,7 @@ def main() -> None:
     )
     gpgx_vdp_text = (
         "LOGVDP max "
-        f"PD blank/active "
+        "pattern DMA blank/active "
         f"{gpgx_vdp_maxima['pattern_dma_blank_words']}/"
         f"{gpgx_vdp_maxima['pattern_dma_active_words']}; "
         f"CPU blank/active+edge "
@@ -1201,10 +1118,11 @@ def main() -> None:
         if gpgx_vdp_maxima is not None else ""
     )
     phase_note = (
-        "G is the maximum Sub pump-opportunity interval; "
-        "O/I are this frame's first/final pattern exits; "
-        if g_stats is not None
-        else "V is the preceding flip; O/I are this frame's pattern exits; "
+        "pump_gap_ticks is the maximum Sub pump-opportunity interval; "
+        "first_share_exit_vcounter and transfer_end_vcounter belong to this frame; "
+        if pump_gap_stats is not None
+        else "flip_vcounter belongs to the preceding flip; "
+        "transfer exit counters belong to this frame; "
     )
     coverage_text = (
         f"Complete DEBUG HUD timeline | {axis_frames} frames | "
@@ -1229,7 +1147,7 @@ def main() -> None:
         (24, 96),
         (
             f"Gate maxima / limits  {max_text}  |  "
-            f"Diagnostic C max {int(maxima['C'])}"
+            f"Diagnostic cd_wait_count max {int(maxima['cd_wait_count'])}"
         ),
         fill=DIM,
         font=font(19),
@@ -1237,16 +1155,21 @@ def main() -> None:
     draw.text(
         (24, 127),
         (
-            f"J normal interval {int(gate.get('jitter_headroom_kib', 0))} KiB; "
-            f"C min/mean/median/max "
-            f"{int(c_stats['minimum'])}/{float(c_stats['mean']):.3f}/"
-            f"{float(c_stats['median']):g}/{int(c_stats['maximum'])}; "
-            f"A min/mean/median/max "
-            f"{int(a_stats['minimum'])}/{float(a_stats['mean']):.3f}/"
-            f"{float(a_stats['median']):g}/{int(a_stats['maximum'])}; "
-            f"{physical_buffer_text}{reader_ahead_text}{transfer_split_text}"
+            "PrgBuf jitter normal interval "
+            f"{int(gate.get('jitter_headroom_kib', 0))} KiB; "
+            "CD wait min/mean/median/max "
+            f"{int(cd_wait_stats['minimum'])}/"
+            f"{float(cd_wait_stats['mean']):.3f}/"
+            f"{float(cd_wait_stats['median']):g}/"
+            f"{int(cd_wait_stats['maximum'])}; "
+            "ADPCM decode min/mean/median/max "
+            f"{int(adpcm_decode_stats['minimum'])}/"
+            f"{float(adpcm_decode_stats['mean']):.3f}/"
+            f"{float(adpcm_decode_stats['median']):g}/"
+            f"{int(adpcm_decode_stats['maximum'])}; "
+            f"{reader_ahead_text}{transfer_text}"
             f"{gpgx_vdp_text}"
-            f"{g_stats_text}{apply_guard_text}"
+            f"{pump_gap_stats_text}{apply_backpressure_text}"
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
             f"{int(finite_display_vblanks.max())}; "
@@ -1295,34 +1218,28 @@ def main() -> None:
         (left, bottom + 64),
         (
             "Frame 0 is untimed boot staging: every metric, scale and gate excludes it. "
-            "VBLANK is derived from consecutive F capture starts; the terminal hold is also excluded. "
-            f"F is the x-axis. {phase_note}"
-            "E belongs to F. LOGVDP CA includes CPU writes on the two V-counter edge "
-            "representations. Orange lines are gate limits; J also shows the yellow normal jitter interval."
+            "VBLANK is derived from consecutive frame capture starts; edge observations remain visible, "
+            "but the first/last 4 content frames at 30 fps and 2 at 15 fps do not raise its ALERT. "
+            "The terminal hold is also excluded. "
+            f"frame is the x-axis. {phase_note}"
+            "pass2_delay_q4 belongs to frame. LOGVDP active CPU work includes writes "
+            "on the two V-counter edge representations. Orange lines are gate limits; "
+            "PrgBuf jitter also shows the yellow normal interval."
         ),
         fill=DIM,
         font=font(16),
     )
 
-    output.parent.mkdir(parents=True, exist_ok=True)
     lease = None
-    actual_output = output
+    actual_output = requested_output
     try:
-        videos = (REPO / "videos").absolute()
-        try:
-            output.relative_to(videos)
-        except ValueError:
-            pass
-        else:
-            actual_output, lease = tmpfs_workspace.allocate_file(
-                output,
-                kind="hudline-png",
-                key=f"{tsv_path.stem}-{digest(tsv_path)[:10]}",
-                required_bytes=max(width * height * 4, 128 * 1024 ** 2),
-            )
+        actual_output, lease = tmpfs_workspace.allocate_file(
+            requested_output,
+            kind="hudline-png",
+            key=f"{tsv_path.stem}-{digest(tsv_path)[:10]}",
+            required_bytes=max(width * height * 4, 128 * 1024 ** 2),
+        )
         image.convert("RGB").save(actual_output, optimize=True)
-        if lease is not None:
-            tmpfs_workspace.publish_alias(output, actual_output)
     finally:
         if lease is not None:
             lease.release()
@@ -1347,11 +1264,11 @@ def main() -> None:
         receipt_row_top += spec.height
 
     receipt = {
-        "schema_version": 6,
+        "schema_version": 7,
         "kind": "hudline",
         "label": title,
-        "image": str(output),
-        "image_sha256": digest(output.resolve()),
+        "image": str(actual_output),
+        "image_sha256": digest(actual_output),
         "tsv": str(tsv_path),
         "tsv_sha256": digest(tsv_path),
         "gpgx_vdp_tsv": (
@@ -1395,51 +1312,60 @@ def main() -> None:
         "status": state,
         "gate_maxima": {
             key: maxima[key]
-            for key in ("S", "D", "R", "M", "J")
+            for key in gate["gate_fields"]
         },
         "gate_limits": limits,
         "diagnostic_maxima": {
-            "C": maxima["C"],
+            "cd_wait_count": maxima["cd_wait_count"],
             **(
-                {"G": int(g_stats["maximum"])}
-                if g_stats is not None else {}
+                {"pump_gap_ticks": int(pump_gap_stats["maximum"])}
+                if pump_gap_stats is not None else {}
             ),
             **(
-                {"B": int(data["apply_guard_blocked"][1:].max(initial=0))}
-                if "apply_guard_blocked" in data else {}
+                {
+                    "apply_backpressure": int(
+                        data["apply_backpressure"][1:].max(initial=0)
+                    )
+                }
+                if "apply_backpressure" in data else {}
             ),
-            **({"H": h_maximum} if h_maximum is not None else {}),
-            **({"X": x_maximum} if x_maximum is not None else {}),
-            **({
-                key: value for key, value in split_maxima.items()
-                if value is not None
-            }),
+            **(
+                {"reader_ahead_frames": reader_ahead_max_frames}
+                if reader_ahead_max_frames is not None else {}
+            ),
+            **(
+                {"reader_slot_sector": reader_slot_sector_max}
+                if reader_slot_sector_max is not None else {}
+            ),
+            **(
+                {"transfer_vblanks": transfer_vblanks_max}
+                if transfer_vblanks_max is not None else {}
+            ),
+            **(
+                {"transfer_end_vcounter": transfer_end_vcounter_max}
+                if transfer_end_vcounter_max is not None else {}
+            ),
+            **(
+                {
+                    "first_share_exit_vcounter":
+                        first_share_exit_vcounter_max
+                }
+                if first_share_exit_vcounter_max is not None else {}
+            ),
             **(
                 {"LOGVDP": gpgx_vdp_maxima}
                 if gpgx_vdp_maxima is not None else {}
             ),
         },
-        "c_statistics": c_stats,
-        "a_statistics": a_stats,
-        "sub_poll_gap_statistics": g_stats,
-        "apply_guard_blocked_frames": apply_guard_frames,
-        "prgbuf_minimum_patterns": q_minimum,
-        "prgbuf_underflow_peak_patterns": q_underflow_peak,
-        "prgbuf_physical_peak_patterns": h_maximum,
-        "reader_ahead_max_raw16": x_maximum,
-        "reader_ahead_max_frames": (
-            x_maximum >> 8 if x_maximum is not None else None
-        ),
-        "reader_ahead_max_slot_sector": (
-            x_maximum & 0xFF if x_maximum is not None else None
-        ),
-        "pattern_vblank1_max_words": split_maxima["Y"],
-        "pattern_vblank1_exit_vcounter_max": split_maxima["O"],
-        "pattern_vblank2_max_words": split_maxima["Z"],
-        "pattern_vblank3_max_words": split_maxima["Y3"],
-        "pattern_vblank4_max_words": split_maxima["Y4"],
-        "pattern_transfer_vblank_max": split_maxima["T"],
-        "pattern_exit_vcounter_max": split_maxima["I"],
+        "cd_wait_statistics": cd_wait_stats,
+        "adpcm_decode_statistics": adpcm_decode_stats,
+        "pump_gap_statistics": pump_gap_stats,
+        "apply_backpressure_frames": apply_backpressure_frames,
+        "reader_ahead_max_frames": reader_ahead_max_frames,
+        "reader_slot_sector_max": reader_slot_sector_max,
+        "transfer_vblanks_max": transfer_vblanks_max,
+        "transfer_end_vcounter_max": transfer_end_vcounter_max,
+        "first_share_exit_vcounter_max": first_share_exit_vcounter_max,
         "gpgx_vdp_maxima": gpgx_vdp_maxima,
         "gpgx_vdp_extraction": gpgx_vdp_receipt,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
@@ -1447,6 +1373,10 @@ def main() -> None:
         "display_vblank_warning_count": display_vblank_warning_count,
         "display_vblank_warning_rate_percent": display_vblank_warning_rate,
         "display_vblank_evaluated_total": display_vblank_total,
+        "display_vblank_measured_total": display_vblank_measured_total,
+        "display_vblank_edge_exempt_frames": display_vblank_edge_frames,
+        "display_vblank_exempted_warning_count": (
+            display_vblank_exempted_warning_count),
         "display_vblank_warning_supported": (
             display_vblank_expected is not None
         ),
@@ -1459,12 +1389,16 @@ def main() -> None:
         "ocr_sample_count": int(sample_count.sum()),
         "rows": receipt_rows,
     }
-    receipt_path = Path(str(output) + ".json")
+    receipt_path = analysis_logs.metadata_path(
+        requested_output,
+        kind="hudline-layout",
+        sha256=receipt["image_sha256"],
+    )
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(output)
+    print(actual_output)
     print(receipt_path)
 
 

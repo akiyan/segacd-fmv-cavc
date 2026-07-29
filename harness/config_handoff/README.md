@@ -12,8 +12,10 @@ This harness proves the configuration boundary used by the encoder and packer:
 Run it against an existing full decision log:
 
 ```sh
+SIM_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/sonic-jam-op.toml --print-sim-output)"
 tools/python.sh harness/config_handoff/verify.py \
-  videos/SonicJamOp_H40_288x200_adpcm22_cold210/tmp/decisions.pkl \
+  "$SIM_OUT/decisions.pkl" \
   --sp-extension tmp/sonic-jam-op/build/movieplay_sp_ext.bin
 ```
 

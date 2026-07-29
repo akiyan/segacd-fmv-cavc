@@ -128,6 +128,18 @@ class EncodeProfile:
 
     @property
     def output_dir(self) -> Path:
+        """Direct managed path for this profile's disposable sim output."""
+
+        from cbr_paths import sim_work_dir
+
+        env: dict[str, str] = {}
+        apply_profile_env(self, env)
+        return sim_work_dir(env)
+
+    @property
+    def requested_output_dir(self) -> Path:
+        """Profile spelling retained only as a human-readable artifact name."""
+
         return Path(self.data["output"]["directory"])
 
     @property
@@ -146,7 +158,7 @@ class EncodeProfile:
 
     @property
     def sim_stem(self) -> str:
-        """Shared videos/ stem used as the parallel-run isolation key."""
+        """Shared media stem used as the parallel-run isolation key."""
         from cbr_paths import sim_stem
         return sim_stem(
             self.data["source"]["path"],
@@ -402,6 +414,7 @@ def main() -> None:
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--print-env", action="store_true")
     output.add_argument("--print-stem", action="store_true")
+    output.add_argument("--print-sim-output", action="store_true")
     output.add_argument("--print-artifacts", action="store_true")
     args = parser.parse_args()
     try:
@@ -412,9 +425,12 @@ def main() -> None:
         print(json.dumps(apply_profile_env(profile, {}), indent=2, sort_keys=True))
     elif args.print_stem:
         print(profile.artifact_stem)
+    elif args.print_sim_output:
+        print(profile.output_dir)
     elif args.print_artifacts:
         print(json.dumps({
             "stem": profile.artifact_stem,
+            "sim": str(profile.output_dir),
             "directory": str(profile.artifact_dir),
             "pack": str(profile.pack_output),
             "temporary": str(profile.temp_dir),

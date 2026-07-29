@@ -39,7 +39,7 @@ class HudChapterOffsetTests(unittest.TestCase):
                 "frame0_time_first_s": 20.0,
             },
         })
-        with self.assertRaisesRegex(ValueError, "F=FFFF"):
+        with self.assertRaisesRegex(ValueError, "frame=FFFF"):
             youtube_chapters.content_offset_from_hud_gate(gate)
 
     def test_rejects_missing_frame0_time(self) -> None:

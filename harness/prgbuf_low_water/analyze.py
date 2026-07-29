@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Correlate modeled/live PrgBuf low water with playback slip transitions."""
+"""Correlate modeled PrgBuf low water with playback slip transitions."""
 
 from __future__ import annotations
 
@@ -13,7 +13,6 @@ from typing import Iterable
 
 PATTERN_BYTES = 32
 DEFAULT_LOW_PATTERNS = 256
-DEFAULT_RING_PATTERNS = 13568
 
 
 @dataclass(frozen=True)
@@ -25,15 +24,13 @@ class TimelineRow:
 @dataclass(frozen=True)
 class HudRow:
     frame: int
-    slip: int
-    resync: int
-    live_min_patterns: int | None
-    underflow_patterns: int | None
+    sector_slip: int
+    audio_resync: int
     capture_first: int | None = None
-    poll_gap_ticks: int | None = None
-    apply_guard_blocked: int | None = None
-    msf_gap_count: int | None = None
-    trn_retry_count: int | None = None
+    pump_gap_ticks: int | None = None
+    apply_backpressure: int | None = None
+    msf_gap_recoveries: int | None = None
+    transport_retry_recoveries: int | None = None
 
 
 def _read_tsv(path: Path) -> list[dict[str, str]]:
@@ -64,17 +61,20 @@ def read_hud(path: Path, evaluation_end_frame: int | None) -> dict[int, HudRow]:
         frame = int(row["frame"])
         if evaluation_end_frame is not None and frame > evaluation_end_frame:
             continue
+        sector_slip = int(row["sector_slip"])
+        msf_gap_recoveries = _optional_int(row, "msf_gap_recoveries")
         result[frame] = HudRow(
             frame=frame,
-            slip=int(row["slip"]),
-            resync=int(row["resync"]),
-            live_min_patterns=_optional_int(row, "prgbuf_min_patterns_signed"),
-            underflow_patterns=_optional_int(row, "prgbuf_underflow_patterns"),
+            sector_slip=sector_slip,
+            audio_resync=int(row["audio_resync"]),
             capture_first=_optional_int(row, "capture_first"),
-            poll_gap_ticks=_optional_int(row, "sub_poll_gap_ticks"),
-            apply_guard_blocked=_optional_int(row, "apply_guard_blocked"),
-            msf_gap_count=_optional_int(row, "slip_msf_gap_count"),
-            trn_retry_count=_optional_int(row, "slip_trn_retry_count"),
+            pump_gap_ticks=_optional_int(row, "pump_gap_ticks"),
+            apply_backpressure=_optional_int(row, "apply_backpressure"),
+            msf_gap_recoveries=msf_gap_recoveries,
+            transport_retry_recoveries=(
+                (sector_slip - msf_gap_recoveries) & 0xF
+                if msf_gap_recoveries is not None else None
+            ),
         )
     if not result:
         raise ValueError(f"HUD has no evaluated rows: {path}")
@@ -87,30 +87,6 @@ def contiguous_ranges(rows: Iterable[TimelineRow], threshold: int) -> list[list[
     for row in rows:
         if row.model_patterns <= threshold:
             if current and row.frame != current[-1].frame + 1:
-                ranges.append(current)
-                current = []
-            current.append(row)
-        elif current:
-            ranges.append(current)
-            current = []
-    if current:
-        ranges.append(current)
-    return ranges
-
-
-def contiguous_live_ranges(
-    hud: dict[int, HudRow], threshold: int
-) -> list[list[HudRow]]:
-    ranges: list[list[HudRow]] = []
-    current: list[HudRow] = []
-    for frame in sorted(hud):
-        row = hud[frame]
-        if (
-            frame > 0
-            and row.live_min_patterns is not None
-            and row.live_min_patterns <= threshold
-        ):
-            if current and frame != current[-1].frame + 1:
                 ranges.append(current)
                 current = []
             current.append(row)
@@ -146,7 +122,7 @@ def apply_block_frames(hud: dict[int, HudRow]) -> list[int]:
     return [
         frame
         for frame in sorted(hud)
-        if hud[frame].apply_guard_blocked
+        if hud[frame].apply_backpressure
     ]
 
 
@@ -196,13 +172,11 @@ def write_ranges(
         "frame_count",
         "model_min_patterns",
         "model_min_kib",
-        "live_min_patterns",
-        "live_peak_underflow_patterns",
         "extra_scanouts",
-        "first_slip_frame_at_or_after_start",
-        "slip_distance_from_end_frames",
-        "first_resync_frame_at_or_after_start",
-        "resync_distance_from_end_frames",
+        "first_sector_slip_frame_at_or_after_start",
+        "sector_slip_distance_from_end_frames",
+        "first_audio_resync_frame_at_or_after_start",
+        "audio_resync_distance_from_end_frames",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8", newline="") as handle:
@@ -211,17 +185,6 @@ def write_ranges(
         for interval in ranges:
             start = interval[0].frame
             end = interval[-1].frame
-            observed = [hud[frame] for frame in range(start, end + 1) if frame in hud]
-            live_values = [
-                row.live_min_patterns
-                for row in observed
-                if row.live_min_patterns is not None
-            ]
-            underflows = [
-                row.underflow_patterns
-                for row in observed
-                if row.underflow_patterns is not None
-            ]
             next_slip = _first_at_or_after(slips, start)
             next_resync = _first_at_or_after(resyncs, start)
             minimum = min(row.model_patterns for row in interval)
@@ -232,21 +195,21 @@ def write_ranges(
                     "frame_count": len(interval),
                     "model_min_patterns": minimum,
                     "model_min_kib": f"{minimum * PATTERN_BYTES / 1024:.3f}",
-                    "live_min_patterns": _fmt_optional(min(live_values) if live_values else None),
-                    "live_peak_underflow_patterns": _fmt_optional(
-                        max(underflows) if underflows else None
-                    ),
                     "extra_scanouts": _fmt_optional(
                         interval_extra_scanouts(
                             hud, start, end, normal_vblanks
                         )
                     ),
-                    "first_slip_frame_at_or_after_start": _fmt_optional(next_slip),
-                    "slip_distance_from_end_frames": _fmt_optional(
+                    "first_sector_slip_frame_at_or_after_start": _fmt_optional(
+                        next_slip
+                    ),
+                    "sector_slip_distance_from_end_frames": _fmt_optional(
                         next_slip - end if next_slip is not None else None
                     ),
-                    "first_resync_frame_at_or_after_start": _fmt_optional(next_resync),
-                    "resync_distance_from_end_frames": _fmt_optional(
+                    "first_audio_resync_frame_at_or_after_start": _fmt_optional(
+                        next_resync
+                    ),
+                    "audio_resync_distance_from_end_frames": _fmt_optional(
                         next_resync - end if next_resync is not None else None
                     ),
                 }
@@ -269,12 +232,10 @@ def write_events(
         "model_patterns",
         "model_kib",
         "model_at_or_below_low_water",
-        "live_min_patterns",
-        "live_underflow_patterns",
-        "poll_gap_ticks",
-        "apply_guard_blocked",
-        "msf_gap_count",
-        "trn_retry_count",
+        "pump_gap_ticks",
+        "apply_backpressure",
+        "msf_gap_recoveries",
+        "transport_retry_recoveries",
         "prior_apply_block_frame",
         "distance_from_prior_apply_block_frames",
     ]
@@ -283,7 +244,10 @@ def write_events(
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields, delimiter="\t", lineterminator="\n")
         writer.writeheader()
-        for event, frames in (("slip", slips), ("resync", resyncs)):
+        for event, frames in (
+            ("sector_slip", slips),
+            ("audio_resync", resyncs),
+        ):
             for frame in frames:
                 row = hud[frame]
                 model_patterns = model.get(frame)
@@ -304,14 +268,16 @@ def write_events(
                             if model_patterns is not None
                             else ""
                         ),
-                        "live_min_patterns": _fmt_optional(row.live_min_patterns),
-                        "live_underflow_patterns": _fmt_optional(row.underflow_patterns),
-                        "poll_gap_ticks": _fmt_optional(row.poll_gap_ticks),
-                        "apply_guard_blocked": _fmt_optional(
-                            row.apply_guard_blocked
+                        "pump_gap_ticks": _fmt_optional(row.pump_gap_ticks),
+                        "apply_backpressure": _fmt_optional(
+                            row.apply_backpressure
                         ),
-                        "msf_gap_count": _fmt_optional(row.msf_gap_count),
-                        "trn_retry_count": _fmt_optional(row.trn_retry_count),
+                        "msf_gap_recoveries": _fmt_optional(
+                            row.msf_gap_recoveries
+                        ),
+                        "transport_retry_recoveries": _fmt_optional(
+                            row.transport_retry_recoveries
+                        ),
                         "prior_apply_block_frame": _fmt_optional(prior_block),
                         "distance_from_prior_apply_block_frames": _fmt_optional(
                             frame - prior_block
@@ -328,7 +294,6 @@ def describe(
     slips: list[int],
     resyncs: list[int],
     low_patterns: int,
-    ring_patterns: int,
     normal_vblanks: int | None = None,
 ) -> None:
     model_values = [row.model_patterns for row in timeline]
@@ -353,27 +318,31 @@ def describe(
         print(
             f"  f{interval[0].frame}..f{interval[-1].frame}: "
             f"{len(interval)} frames, min={min(row.model_patterns for row in interval)} patterns, "
-            f"next S={next_slip if next_slip is not None else '-'}, "
+            "next sector_slip="
+            f"{next_slip if next_slip is not None else '-'}, "
             "extra scanouts="
             f"{_fmt_optional(extra_scanouts) or '-'}"
         )
-    print(f"counter transitions: S={len(slips)} R={len(resyncs)}")
+    print(
+        "counter transitions: "
+        f"sector_slip={len(slips)} audio_resync={len(resyncs)}"
+    )
 
     poll_gaps = [
-        row.poll_gap_ticks
+        row.pump_gap_ticks
         for row in hud.values()
-        if row.frame > 0 and row.poll_gap_ticks is not None
+        if row.frame > 0 and row.pump_gap_ticks is not None
     ]
     if poll_gaps:
         print(
-            "G outside-pump gap: "
+            "pump_gap_ticks: "
             f"min={min(poll_gaps)} mean={statistics.fmean(poll_gaps):.3f} "
             f"median={statistics.median(poll_gaps):g} max={max(poll_gaps)} ticks"
         )
     blocked = apply_block_frames(hud)
     if blocked:
         print(
-            f"B APPLY back-pressure: {len(blocked)} frame(s), "
+            f"APPLY back-pressure: {len(blocked)} frame(s), "
             f"first=f{blocked[0]}, last=f{blocked[-1]}"
         )
         immediate = []
@@ -382,71 +351,26 @@ def describe(
             if previous is not None and slip - previous == 1:
                 immediate.append((previous, slip))
         print(
-            "B immediately precedes S: "
+            "APPLY back-pressure immediately precedes sector_slip: "
             f"{len(immediate)} transition frame(s)"
         )
         for block, slip in immediate:
-            print(f"  B f{block} -> S f{slip}")
+            print(f"  apply frame {block} -> sector_slip frame {slip}")
     msf_counts = [
-        row.msf_gap_count
+        row.msf_gap_recoveries
         for row in hud.values()
-        if row.msf_gap_count is not None
+        if row.msf_gap_recoveries is not None
     ]
     trn_counts = [
-        row.trn_retry_count
+        row.transport_retry_recoveries
         for row in hud.values()
-        if row.trn_retry_count is not None
+        if row.transport_retry_recoveries is not None
     ]
     if msf_counts:
         print(
-            "S cause counters: "
-            f"MSF gap={max(msf_counts)}, "
-            f"TRN retry exhaustion={max(trn_counts, default=0)}"
-        )
-
-    live = [
-        row.live_min_patterns
-        for row in hud.values()
-        if row.frame > 0 and row.live_min_patterns is not None
-    ]
-    if not live:
-        print("live Q: unavailable in this HUD TSV")
-        return
-    live_min = min(live)
-    debt = max(-live_min, 0)
-    print(f"live Q: minimum={live_min} patterns, peak underflow={debt} patterns")
-    live_ranges = contiguous_live_ranges(hud, low_patterns)
-    print(
-        f"live Q <= {low_patterns} patterns "
-        f"({low_patterns * PATTERN_BYTES / 1024:.3f} KiB): "
-        f"{len(live_ranges)} range(s)"
-    )
-    for interval in live_ranges:
-        next_slip = _first_at_or_after(slips, interval[0].frame)
-        distance = (
-            next_slip - interval[-1].frame if next_slip is not None else None
-        )
-        extra_scanouts = interval_extra_scanouts(
-            hud,
-            interval[0].frame,
-            interval[-1].frame,
-            normal_vblanks,
-        )
-        print(
-            f"  f{interval[0].frame}..f{interval[-1].frame}: "
-            f"{len(interval)} frames, "
-            f"min={min(row.live_min_patterns for row in interval if row.live_min_patterns is not None)} "
-            f"patterns, next S={next_slip if next_slip is not None else '-'}, "
-            f"distance from end={distance if distance is not None else '-'} frames, "
-            "extra scanouts="
-            f"{_fmt_optional(extra_scanouts) or '-'}"
-        )
-    if debt:
-        modulo_alias = live_min % ring_patterns
-        print(
-            "underflow modulo alias: "
-            f"{live_min} logical patterns appears as {modulo_alias} / {ring_patterns} "
-            f"patterns ({modulo_alias * PATTERN_BYTES / 1024:.3f} KiB)"
+            "sector-slip cause counters: "
+            f"MSF gap recoveries={max(msf_counts)}, "
+            f"transport retry recoveries={max(trn_counts, default=0)}"
         )
 
 
@@ -457,7 +381,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ranges-tsv", type=Path, required=True)
     parser.add_argument("--events-tsv", type=Path, required=True)
     parser.add_argument("--low-patterns", type=int, default=DEFAULT_LOW_PATTERNS)
-    parser.add_argument("--ring-patterns", type=int, default=DEFAULT_RING_PATTERNS)
     parser.add_argument("--evaluation-end-frame", type=int)
     parser.add_argument(
         "--normal-vblanks",
@@ -475,8 +398,8 @@ def main() -> None:
     timeline = read_timeline(args.timeline_tsv, args.evaluation_end_frame)
     hud = read_hud(args.hud_tsv, args.evaluation_end_frame)
     ranges = contiguous_ranges(timeline, args.low_patterns)
-    slips = transition_frames(hud, "slip")
-    resyncs = transition_frames(hud, "resync")
+    slips = transition_frames(hud, "sector_slip")
+    resyncs = transition_frames(hud, "audio_resync")
     write_ranges(
         args.ranges_tsv,
         ranges,
@@ -500,7 +423,6 @@ def main() -> None:
         slips,
         resyncs,
         args.low_patterns,
-        args.ring_patterns,
         args.normal_vblanks,
     )
 

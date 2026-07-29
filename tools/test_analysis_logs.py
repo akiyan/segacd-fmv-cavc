@@ -39,31 +39,18 @@ class AnalysisLogTests(unittest.TestCase):
                 ("e132", "p90"),
             )
 
-    def test_alias_points_to_persistent_log(self) -> None:
+    def test_metadata_path_is_persistent_and_content_keyed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            log = root / "logs" / "run.tsv"
-            log.parent.mkdir()
-            log.write_text("frame\n", encoding="utf-8")
-            alias = root / "videos" / "movie_analysis.tsv"
-            analysis_logs.publish_alias(alias, log)
-            self.assertTrue(alias.is_symlink())
-            self.assertEqual(alias.read_text(encoding="utf-8"), "frame\n")
-
-    def test_alias_replacement_is_atomic_and_updates_target(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            first = root / "logs" / "first.tsv"
-            second = root / "logs" / "second.tsv"
-            first.parent.mkdir()
-            first.write_text("first\n", encoding="utf-8")
-            second.write_text("second\n", encoding="utf-8")
-            alias = root / "videos" / "movie_analysis.tsv"
-            analysis_logs.publish_alias(alias, first)
-            analysis_logs.publish_alias(alias, second)
-            self.assertTrue(alias.is_symlink())
-            self.assertEqual(alias.resolve(), second)
-            self.assertEqual(alias.read_text(encoding="utf-8"), "second\n")
+            with patch.dict(os.environ, {"ANALYSIS_LOG_DIR": tmp}):
+                path = analysis_logs.metadata_path(
+                    Path("movie_timeline.png"),
+                    kind="layout",
+                    sha256="abcdef0123456789",
+                )
+            self.assertEqual(
+                path,
+                Path(tmp) / "movie_timeline_abcdef0123_layout.json",
+            )
 
 
 if __name__ == "__main__":

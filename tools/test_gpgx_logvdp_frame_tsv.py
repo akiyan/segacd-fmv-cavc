@@ -110,14 +110,11 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
         self.assertEqual(rows[1]["name_table_dma_active_words"], 0)
 
         hud = [
-            {"pattern_vblank1_words": "48",
-             "pattern_transfer_vblanks": "1"},
-            {"pattern_vblank1_words": "48",
-             "pattern_transfer_vblanks": "1"},
-            {"pattern_vblank1_words": "0",
-             "pattern_transfer_vblanks": "0"},
+            {"frame": "0"},
+            {"frame": "1"},
+            {"frame": "2"},
         ]
-        self.assertEqual(extract.validate_rows(rows, hud), (2, 0))
+        self.assertIsNone(extract.validate_frame_axis(rows, hud))
 
     def test_keeps_ambiguous_scanout_edge_words_separate(self):
         rows = extract.empty_rows(1)

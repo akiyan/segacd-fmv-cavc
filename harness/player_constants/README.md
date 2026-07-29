@@ -26,13 +26,15 @@ For every case it requires:
   VBlank head, withholds the cadence-final name-table/CRAM/flip reserve before
   pattern work, and retains status, terminal-line, and fresh-VBlank fallback
   guards;
-- CPU-written VDP words cost four DMA-word units, including one-/two-tile
-  direct runs and Word-RAM DMA first-word repairs, while boundary-crossing DMA
-  runs keep the bounded chunk fallback;
+- CPU-written VDP words cost four DMA-word units, including Word-RAM DMA
+  first-word repairs; every pattern run uses DMA and every run crossing the
+  residual budget is split at that boundary;
+- removed split-off and short-run CPU-transfer symbols are absent from every
+  linked player, and named live state ends exactly at the BSS section boundary;
 - the fixed cadence is generated as N2 at 30 fps and N4 at 15 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
-- the fixed-N H40 DEBUG reserve includes the complete 69-cell HUD staging
+- the fixed-N H40 DEBUG reserve includes the complete 39-cell HUD staging
   allowance;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;

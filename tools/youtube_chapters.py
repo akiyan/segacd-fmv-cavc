@@ -18,14 +18,14 @@ YouTube's chapter rules are enforced so the list is actually rendered:
 Timestamps use the *content* fps (the segment frame index / fps). Analysis videos
 normally begin at content frame 0. Playback recordings retain the Mega-CD startup
 sequence and use ``--hud-gate-json``. The matching complete HUD gate records the
-first valid ``F=0000`` immediately after the player-only ``F=FFFF`` sentinel, so
+first valid ``frame=0000`` immediately after the player-only ``frame=FFFF`` sentinel, so
 the chapter offset is exact and repeatable. Only chapter markers move; the
 recording remains intact.
 
 Usage:
     python tools/youtube_chapters.py <sim_out_dir> [fps]
     python tools/youtube_chapters.py <sim_out_dir> [fps] \
-        --hud-gate-json videos/STEM_emu_hud_gate.json \
+        --hud-gate-json logs/RUN_hud_gate.json \
         --intro-label "Mega-CD startup"
 Prints the chapter block to stdout; prepend it (with a blank line after) to the
 video description before uploading.
@@ -60,7 +60,7 @@ def parse_fps(value):
 
 
 def content_offset_from_hud_gate(path):
-    """Return exact movie frame-0 time from an F=FFFF-anchored HUD gate."""
+    """Return exact movie frame-0 time from a frame=FFFF-anchored HUD gate."""
     gate_path = Path(path)
     try:
         gate = json.loads(gate_path.read_text(encoding="utf-8"))
@@ -71,7 +71,7 @@ def content_offset_from_hud_gate(path):
         raise ValueError(f"{gate_path}: HUD gate has no OCR start anchor")
     if anchor.get("method") != "frame_minus_one":
         raise ValueError(
-            f"{gate_path}: playback chapters require the F=FFFF start anchor")
+            f"{gate_path}: playback chapters require the frame=FFFF start anchor")
     if int(anchor.get("frame_minus_one_raw16", -1)) != 0xFFFF:
         raise ValueError(f"{gate_path}: invalid frame -1 sentinel value")
     try:
@@ -127,7 +127,7 @@ def main():
         "--hud-gate-json",
         type=Path,
         help=(
-            "matching complete playback HUD gate; uses the F=FFFF to F=0000 "
+            "matching complete playback HUD gate; uses the frame=FFFF to frame=0000 "
             "transition as the chapter offset"
         ),
     )

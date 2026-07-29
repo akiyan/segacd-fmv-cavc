@@ -28,7 +28,7 @@ To check a newly encoded decision log and its physical PALTAB too:
 
 ```sh
 tools/python.sh harness/palette_index15/verify.py \
-  --dec-log videos/your_stem/decisions.pkl \
+  --dec-log "$SIM_OUT/decisions.pkl" \
   --header out/movieplay/HEADER.DAT
 ```
 

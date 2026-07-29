@@ -281,13 +281,22 @@ def count_source_runs(
     dic_indices: Sequence[int] | None = None,
 ) -> int:
     """Count runs split by slot, physical source, or DicBuf index gap."""
+    return len(source_run_lengths(slots, sources, dic_indices))
+
+
+def source_run_lengths(
+    slots: Sequence[int],
+    sources: Sequence[int],
+    dic_indices: Sequence[int] | None = None,
+) -> tuple[int, ...]:
+    """Return source-aware physical run lengths in transfer order."""
     if len(slots) != len(sources):
         raise ValueError("slot and source counts differ")
     if dic_indices is None:
         dic_indices = (-1,) * len(slots)
     if len(dic_indices) != len(slots):
         raise ValueError("slot and DicBuf index counts differ")
-    runs = 0
+    runs: list[int] = []
     previous_slot: int | None = None
     previous_source: int | None = None
     previous_dic = -1
@@ -302,11 +311,13 @@ def count_source_runs(
                 or (source == SOURCE_DIC
                     and (dic_index != previous_dic + 1
                          or dic_index % DIC_RUN_BLOCK == 0))):
-            runs += 1
+            runs.append(1)
+        else:
+            runs[-1] += 1
         previous_slot = slot
         previous_source = source
         previous_dic = dic_index
-    return runs
+    return tuple(runs)
 
 
 @dataclass(frozen=True)

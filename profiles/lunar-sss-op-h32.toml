@@ -13,9 +13,12 @@ height = 224
 fit = "pad"
 
 [output]
-directory = "videos/lunar_sss_op_H32_256x224_adpcm22/tmp"
+directory = "tmpfs/lunar_sss_op_H32_256x224_adpcm22/sim"
 reuse = false
 emit_decisions = true
+
+[encoder]
+raw_prefetch = true
 
 [palette]
 algorithm = "mosaic-gm"

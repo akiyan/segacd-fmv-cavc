@@ -19,7 +19,7 @@ resize_filter = "area"
 master_denoise = false
 
 [output]
-directory = "videos/BadApple_H40_320x224_adpcm22_issue74_75s_cold360/tmp"
+directory = "tmpfs/BadApple_H40_320x224_adpcm22_issue74_75s_cold360/sim"
 reuse = false
 emit_decisions = true
 

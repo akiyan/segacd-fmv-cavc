@@ -53,6 +53,7 @@ import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
 import physical_budget  # noqa: E402
 import raw_prefetch  # noqa: E402
+import r2v_model  # noqa: E402
 import resource_tokens  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
@@ -80,7 +81,7 @@ from video_geometry import (  # noqa: E402
 )
 
 # 対象動画・寸法・fps は env で差し替え可(既定はサンプル動画)。
-# CBRSIM_OUT を指定しない場合は videos/<stem>/tmp に出力する。
+# Profile実行ではcbr_pathsがdeterministicなtmpfs実体pathを返す。
 SRC = os.environ.get("CBRSIM_SRC", "movies/disc1/061.mp4")
 MODE = os.environ.get("CBRSIM_MODE", "H32")
 # Keep the historical 144-line codec height, but choose the matching native
@@ -2868,8 +2869,9 @@ def main():
         if not L3_TILES and dma_tiles != cold_spent:
             raise AssertionError(
                 f"frame {i}: encoder cold={cold_spent} allocator cold={dma_tiles}")
-        # MainのHUD Nと同じsource-aware physical run数。p45では1-2 tile runはCPU直書き、長runは
-        # VBlank境界で複数DMAに割れるため、物理VDP DMA発行回数とは意図的に異なる。
+        # MainのHUD cold_runsと同じsource-aware physical run数。VBlank境界で
+        # 1 recordが複数DMAに割れる場合があるため、物理VDP DMA発行回数とは
+        # 意図的に異なる。
         run_prefetch_count = (
             boot_inline_requests if i == 0 else len(prefetch_cold_slots))
         run_tile_count = len(transfer_order) + run_prefetch_count
@@ -3536,6 +3538,77 @@ def main():
                 row.astype("<u2", copy=False).tobytes())
         dec_category_rows = rewritten_rows
 
+    # Exact Main-to-VDP workload. Physical run boundaries follow the final
+    # WordBuf plan. Keep the one/two-pattern count as a run-shape diagnostic;
+    # every run is transferred by DMA.
+    final_transfer_sources = (
+        ring_plan.sources if ring_enabled else
+        tuple(
+            tuple(int(source) for source in frame_sources)
+            for frame_sources in supply_sources_log
+        )
+    )
+    r2v_short_runs = np.zeros(n, np.int64)
+    for frame, (
+        (_cells, entries, _colds),
+        frame_sources,
+        frame_prefetch,
+        frame_dic_indices,
+        transfer_order,
+    ) in enumerate(zip(
+        ring_per_log,
+        final_transfer_sources,
+        ring_prefetch_log,
+        ring_dic_indices_log,
+        ring_transfer_orders_log,
+        strict=True,
+    )):
+        if frame == 0:
+            continue
+        order = tuple(int(index) for index in transfer_order)
+        slots = [
+            (int(entries[index]) & 0x07FF) - 1
+            for index in order
+        ]
+        sources = [int(frame_sources[index]) for index in order]
+        dic_indices = [int(frame_dic_indices[index]) for index in order]
+        cold_prefetch = sorted(
+            (item for item in frame_prefetch if bool(item[1])),
+            key=lambda item: int(item[0]),
+        )
+        slots.extend(int(item[0]) for item in cold_prefetch)
+        sources.extend(
+            pattern_supply.SOURCE_PRG for _item in cold_prefetch)
+        dic_indices.extend(-1 for _item in cold_prefetch)
+        lengths = pattern_supply.source_run_lengths(
+            slots, sources, dic_indices)
+        if len(lengths) != int(transfer_runs_log[frame]):
+            raise AssertionError(
+                f"frame {frame}: R2V runs={len(lengths)} differ from "
+                f"player runs={int(transfer_runs_log[frame])}")
+        if sum(lengths) != int(transfer_tiles_log[frame]):
+            raise AssertionError(
+                f"frame {frame}: R2V patterns={sum(lengths)} differ from "
+                f"player patterns={int(transfer_tiles_log[frame])}")
+        r2v_short_runs[frame] = sum(
+            length <= r2v_model.SHORT_RUN_MAX_PATTERNS
+            for length in lengths
+        )
+    r2v_palette_switch = np.zeros(n, np.int64)
+    if n > 1:
+        r2v_palette_switch[1:] = (
+            np.asarray(frame_seg[1:]) != np.asarray(frame_seg[:-1]))
+    r2v_nt_words = r2v_model.name_table_words(
+        MODE, TCOLS, TROWS, FPS)
+    r2v_components = r2v_model.calculate_words(
+        np.asarray(transfer_tiles_log, np.int64),
+        np.asarray(transfer_runs_log, np.int64),
+        r2v_palette_switch,
+        r2v_nt_words,
+    )
+    for component in r2v_components.values():
+        component[0] = 0
+
     prg_remaining = np.asarray(
         physical_schedule["ring_occupancy"], np.int64)
     quality_budget_remaining = np.asarray(quality_budget_log, np.int64)
@@ -3778,6 +3851,13 @@ def main():
              raw_prefetch=np.asarray(prefetch_cold_log, np.int64),
              raw_prefetch_cap=np.int64(max(
                  1, RAW_PREFETCH_MAX_REQUESTS_PER_FRAME)),
+             r2v_words=r2v_components["words"],
+             r2v_pattern_words=r2v_components["pattern_words"],
+             r2v_repair_words=r2v_components["repair_words"],
+             r2v_name_table_words=r2v_components["name_table_words"],
+             r2v_cram_words=r2v_components["cram_words"],
+             r2v_short_runs=r2v_short_runs,
+             r2v_palette_switch=r2v_palette_switch,
              cd1x=CD_RATE,
              body_gross_bytes=body_gross_bytes,
              body_fixed_control_bytes=body_fixed_control_bytes,
@@ -4106,7 +4186,7 @@ def main():
                 "forecast_requested": np.asarray(
                     prefetch_forecast.requested_patterns, np.uint16),
             },
-            # simが決めた値をpackで全frame再計算し、descriptor/HUD Nとのズレを即時検出する。
+            # simが決めた値をpackで全frame再計算し、descriptor/HUD cold_runsとのズレを即時検出する。
             "pattern_transfers": {
                 "schema_version": 3,
                 "tiles": np.asarray(transfer_tiles_log, np.uint16),
@@ -4271,15 +4351,6 @@ def _sim_tmpfs_required_bytes():
 def _activate_sim_tmpfs():
     if os.environ.get("CBRSIM_TMPFS_PREPARED") == "1":
         return None
-    videos = (Path(__file__).resolve().parents[1] / "videos").absolute()
-    try:
-        OUT.absolute().relative_to(videos)
-    except ValueError:
-        print(
-            f"tmpfs artifacts: CBRSIM_OUT is outside videos/, keeping {OUT}",
-            flush=True,
-        )
-        return None
     identity = _sim_cache_identity()
     token = sim_artifact_cache.identity_sha256(identity)
     force_reencode = os.environ.get(
@@ -4290,7 +4361,6 @@ def _activate_sim_tmpfs():
         None if force_reencode or not EMIT_DEC else token
     )
     lease = tmpfs_workspace.activate_directory(
-        OUT,
         kind="sim",
         key=_tmpfs_key(),
         required_bytes=_sim_tmpfs_required_bytes(),
@@ -4310,7 +4380,6 @@ def _activate_sim_tmpfs():
             )
             lease.release()
             lease = tmpfs_workspace.activate_directory(
-                OUT,
                 kind="sim",
                 key=_tmpfs_key(),
                 required_bytes=_sim_tmpfs_required_bytes(),
@@ -4321,7 +4390,11 @@ def _activate_sim_tmpfs():
                 f"identity={token[:12]}",
                 flush=True,
             )
-    print(f"tmpfs sim workspace: {OUT} -> {lease.entry / 'data'}", flush=True)
+    if OUT.resolve() != (lease.entry / "data").resolve():
+        lease.release()
+        raise RuntimeError(
+            f"managed sim path mismatch: {OUT} != {lease.entry / 'data'}")
+    print(f"tmpfs sim workspace: {OUT}", flush=True)
     return lease
 
 
@@ -4392,7 +4465,7 @@ def _handoff_sim_tmpfs_lease(lease):
     temporary = handoff / f".ready.{os.getpid()}.tmp"
     temporary.write_text(json.dumps({
         "entry": str(lease.entry),
-        "alias": str(OUT),
+        "path": str(OUT),
     }, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, ready)
     acknowledgement = handoff / "ack"

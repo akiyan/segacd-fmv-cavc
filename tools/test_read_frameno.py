@@ -32,19 +32,19 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.99)
 
     def test_combined_layout_wraps_at_each_native_width(self) -> None:
-        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 69)
-        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 69)
+        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 39)
+        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 39)
         self.assertEqual(
             read_frameno.hud_layout_dimensions(
                 read_frameno.HUD_H32_COMBINED_LAYOUT
             ),
-            (32, 3),
+            (32, 2),
         )
         self.assertEqual(
             read_frameno.hud_layout_dimensions(
                 read_frameno.HUD_H40_COMBINED_LAYOUT
             ),
-            (40, 2),
+            (39, 1),
         )
         self.assertEqual(
             read_frameno.hud_layout_field_position(
@@ -58,24 +58,78 @@ class FrameMinusOneTest(unittest.TestCase):
             ),
             (0, 1),
         )
-        y_col = next(
+        transfer_vblank_col = next(
             col for name, col, _digits
             in read_frameno.HUD_H32_COMBINED_LAYOUT
-            if name == "Y"
+            if name == "transfer_vblanks"
         )
-        self.assertEqual(y_col, 54)
+        self.assertEqual(transfer_vblank_col, 36)
         self.assertEqual(
             read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H32_COMBINED_LAYOUT, y_col
+                read_frameno.HUD_H32_COMBINED_LAYOUT,
+                transfer_vblank_col,
             ),
-            (22, 1),
+            (4, 1),
         )
         self.assertEqual(
             read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H40_COMBINED_LAYOUT, y_col
+                read_frameno.HUD_H40_COMBINED_LAYOUT,
+                transfer_vblank_col,
             ),
-            (14, 1),
+            (36, 0),
         )
+
+    def test_standard_layout_uses_descriptive_unpacked_fields(self) -> None:
+        self.assertIn("vblank_spill", read_frameno.HUD_FIELDS)
+        self.assertIn("transfer_ticks", read_frameno.HUD_FIELDS)
+        self.assertIn("apply_backpressure", read_frameno.HUD_FIELDS)
+        self.assertIn("reader_ahead_frames", read_frameno.HUD_FIELDS)
+        self.assertNotIn(
+            "vblank_spill_transfer_ticks", read_frameno.HUD_FIELDS)
+
+    def test_packed_cells_are_unpacked_losslessly(self) -> None:
+        layout = read_frameno.HUD_H40_COMBINED_LAYOUT
+        width, height = read_frameno.hud_layout_dimensions(layout)
+        image = np.zeros(
+            (height * read_frameno.CELL, width * read_frameno.CELL),
+            np.uint8,
+        )
+        physical_values = {
+            name: 0 for name, _col, _digits in layout
+        }
+        physical_values.update({
+            "frame": 1,
+            "vblank_spill_transfer_ticks": 0xA345,
+            "pump_gap_apply_backpressure": 0x807B,
+            "reader_ahead_slot": 0xC5,
+        })
+        for name, logical_col, digits in layout:
+            value = physical_values[name]
+            for digit in range(digits):
+                shift = (digits - digit - 1) * 4
+                nibble = (value >> shift) & 0xF
+                glyph = np.array(
+                    [
+                        [255 if cell == "#" else 0 for cell in row]
+                        for row in gen_debugfont.ORDER[nibble]
+                    ],
+                    np.uint8,
+                )
+                col, row = read_frameno.hud_layout_field_position(
+                    layout, logical_col + digit)
+                image[
+                    row * read_frameno.CELL:(row + 1) * read_frameno.CELL,
+                    col * read_frameno.CELL:(col + 1) * read_frameno.CELL,
+                ] = glyph
+
+        hud = read_frameno.read_hud(image, layout=layout)
+
+        self.assertEqual(hud["vblank_spill"][0], 0xA)
+        self.assertEqual(hud["transfer_ticks"][0], 0x345)
+        self.assertEqual(hud["pump_gap_ticks"][0], 0x07B)
+        self.assertEqual(hud["apply_backpressure"][0], 1)
+        self.assertEqual(hud["reader_ahead_frames"][0], 0xC)
+        self.assertEqual(hud["reader_slot_sector"][0], 0x5)
 
     def test_native_width_selects_current_combined_layout(self) -> None:
         self.assertIs(
