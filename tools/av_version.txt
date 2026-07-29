@@ -13,6 +13,16 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e159: Size each parity's Word-RAM O_LOADS v2 region from its exact
+#         independently recomputed 22-byte-record peak, then sector-round the
+#         residual into WordBuf capacity. Move all ADPCM lookup tables to
+#         Sub PRG-RAM, reduce the physical PrgBuf to 420 KiB, and limit timed
+#         Word staging to the three checked pending destinations.
+#   p130: Have Sub expand every cold run into an interleaved VDP-ready O_LOADS
+#         v2 record and own both parity WordBuf read cursors. Main consumes the
+#         records in place, removing its run-staging pass and Main-RAM run
+#         table. Repack the 5 KiB resident Sub map around the qualified
+#         0x7400 tail and boot-only extension.
 #   e158: Enable one-frame timed Raw VRAM prefetch by default. Profiles may
 #         explicitly opt out with raw_prefetch=false; remove redundant true
 #         settings from the canonical Bad Apple, Lunar H32, and Machi OP
@@ -1107,5 +1117,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260729
-e=158
-p=129
+e=159
+p=130

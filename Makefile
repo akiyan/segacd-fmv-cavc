@@ -268,9 +268,9 @@ $(MOVIEPACK_OUTPUTS): moviepack
 DEBUG ?= 0
 ISO_HOLD_N ?= 0
 # Diagnostic-only continuous-read qualification for the reclaimed resident-SP
-# tail. The profile guard below permits only streams needing at most the two
-# fixed Word-sector pending buffers, so the third resident buffer can be
-# omitted and the complete 0x7400..0x7FFF interval remains marker-owned.
+# tail. The diagnostic relocates two pending destinations above PrgBuf and
+# rejects streams that could need the normal third destination, leaving the
+# complete 0x7400..0x7FFF interval marker-owned.
 ISO_VERIFY_SP_TAIL ?= 0
 # Issue #27 Main-CPU straight-line bitmap handlers and fixed-geometry NT
 # blitters. H32/H40 full-playback validation is complete; MAIN_CODEGEN=0 keeps
@@ -326,7 +326,7 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONST
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $<
 	@bytes=$$(wc -c < $@); \
-		limit=$(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),5120,8192); \
+		limit=5120; \
 		if [ "$$bytes" -gt "$$limit" ]; then \
 			echo "ERROR: $@ is $$bytes bytes; this build reserves $$limit bytes for SP" >&2; \
 			rm -f $@; \

@@ -8,7 +8,7 @@ therefore perform the same single poll after consuming its runs. H40 can
 contain up to 1120 cells, so the fallback retains its possible short-prefix
 poll followed by the final poll.
 
-This checker reads the real split TTRC v22 stream, compares the fallback DBRA
+This checker reads the real split TTRC v23 stream, compares the fallback DBRA
 countdown with an equivalent grouped model for every frame, and confirms that
 entry order and cold-slot run grouping are unchanged.  It additionally checks
 every synthetic update count up to the format's H40 maximum.
@@ -32,7 +32,7 @@ SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 ADPCM_TABLE_SECTORS = 5
 PATTERN_SUPPLY_OFFSET = 196
-VERSION = 22
+VERSION = 23
 
 
 @dataclass(frozen=True)
@@ -121,9 +121,9 @@ def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
     """Return the validated current boot-preload sector total."""
     if not features & FEATURE_PATTERN_SUPPLY:
         return 0
-    values = struct.unpack_from(">4s9H", header, PATTERN_SUPPLY_OFFSET)
+    values = struct.unpack_from(">4s11H", header, PATTERN_SUPPLY_OFFSET)
     magic, supply_version, reserved = values[:3]
-    if magic != b"PSUP" or supply_version != 3 or reserved:
+    if magic != b"PSUP" or supply_version != 4 or reserved:
         raise AssertionError(f"invalid pattern-supply extension: {values!r}")
     return sum(values[6:9])
 

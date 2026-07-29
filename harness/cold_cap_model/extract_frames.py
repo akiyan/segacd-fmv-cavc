@@ -7,7 +7,7 @@ VBlank cadence: cell updates, physical pattern loads by source
 runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
 CD slot schedule (control/payload sectors, rate lead).
 
-Supports the current TTRC v22 stream, including PSUP v3 variable Word-RAM
+Supports the current TTRC v23 stream, including PSUP v4 variable Word-RAM
 preload capacities.  The fixed per-frame audio size from HEADER.DAT locates
 the cold-run suffix: `n_runs`, then the run descriptors. The descriptors are
 cross-validated against the update entries. The low byte of `n_runs` can also
@@ -47,7 +47,7 @@ SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 WORDS_PER_PATTERN = 16
 SHORT_RUN_MAX_WORDS = 32
-VERSION = 22
+VERSION = 23
 CONTROL_SUFFIX_HEADER_BYTES = 2
 
 SOURCE_NAMES = ("prg", "wr", "dic")
@@ -244,7 +244,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         features, audio_control_bytes)
     rows_out = [row0]
 
-    # v22: palette switches are the player-embedded PALIDX table written by
+    # v23: palette switches are the player-embedded PALIDX table written by
     # pack as palidx.bin beside the split stream (frame.u16, segment.u16
     # entries terminated by a 0xFFFF frame sentinel).
     palidx_switches: dict[int, int] = {}

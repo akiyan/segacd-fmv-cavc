@@ -4,16 +4,24 @@
  * The packer stores these bytes in the unused padding after the 8,800-byte
  * ADPCM table. The resident base copies them from the five-sector HEADER stage
  * to the unused timed-ring tail. These entries run only during boot; frame-0
- * staging may overwrite their bytes after they return. a2 supplies the
- * profile-specific Word-RAM signed-delta destination.
+ * staging may overwrite their bytes after they return.
  */
 
 .equ MEMMODE,                 0x00FF8002
 .equ ROUTING_TMP,             0x0007B000
-.equ ADPCM_INDEX_TABLE,       0x0000C000
-.equ ADPCM_OUTPUT_LUT,        0x0000CB20
-.equ RING_BASE,               0x0000D000
+.ifndef ISO_VERIFY_SP_TAIL
+.equ ADPCM_INDEX_TABLE,       0x00007400
+.else
+.equ ADPCM_INDEX_TABLE,       0x00008600
+.endif
+.equ ADPCM_OUTPUT_LUT,        0x00009600
+.equ ADPCM_DELTA_TABLE,       0x0000C000
+.equ RING_BASE,               0x0000D800
+.ifndef ISO_VERIFY_SP_TAIL
 .equ APPLY_BASE,              0x00077000
+.else
+.equ APPLY_BASE,              0x00077800
+.endif
 .equ ADPCM_INDEX_BYTES,       2848
 .equ ADPCM_DELTA_BYTES,       5696
 .equ ADPCM_OUTPUT_LUT_BYTES,  256
@@ -22,7 +30,18 @@
 .equ ADPCM_INDEX_LONGS,       ADPCM_INDEX_BYTES/4
 .equ ADPCM_DELTA_LONGS,       ADPCM_DELTA_BYTES/4
 .equ ADPCM_OUTPUT_LUT_LONGS,  ADPCM_OUTPUT_LUT_BYTES/4
-.equ ADPCM_BANK_COPIES,       2
+.equ PCM_ENV,                 0x00FF0001
+.equ PCM_PAN,                 0x00FF0003
+.equ PCM_FDL,                 0x00FF0005
+.equ PCM_FDH,                 0x00FF0007
+.equ PCM_LSL,                 0x00FF0009
+.equ PCM_LSH,                 0x00FF000B
+.equ PCM_ST,                  0x00FF000D
+.equ PCM_CTRL,                0x00FF000F
+.equ PCM_ONOFF,               0x00FF0011
+.equ PCM_WAVE,                0x00FF2001
+.equ WAVE_RING_END,           0x8000
+.equ PCM_BOOT_INIT_OFF,       0x0300
 .equ SP_TAIL_MARKER_BASE,      0x00007400
 .equ SP_TAIL_MARKER_END,       0x00008000
 .equ SP_TAIL_MARKER_XOR,       0xA55A
@@ -41,11 +60,18 @@
 .text
 .global adpcm_boot_copy
 adpcm_boot_copy:
-	/* Keep the on-disc 8,800-byte image unchanged. Copy only the runtime-hot
-	   next-index and output tables into Sub-owned PRG-RAM. */
+	/* Keep the on-disc 8,800-byte image unchanged. Copy all three runtime-hot
+	   decode tables once into Sub-owned PRG-RAM. */
 	lea	ROUTING_TMP, a0
 	lea	ADPCM_INDEX_TABLE, a1
 	move.w	#ADPCM_INDEX_LONGS-1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+
+	lea	ROUTING_TMP+ADPCM_DELTA_OFFSET, a0
+	lea	ADPCM_DELTA_TABLE, a1
+	move.w	#ADPCM_DELTA_LONGS-1, d0
 1:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
@@ -56,23 +82,6 @@ adpcm_boot_copy:
 1:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
-
-	/* The signed-delta table remains at its original offset in each physical
-	   Word-RAM bank. The unused index/LUT holes stay reserved for an exact
-	   player-only A/B with unchanged WordBuf capacities and stream bytes. */
-	moveq	#ADPCM_BANK_COPIES-1, d1
-2:
-	lea	ROUTING_TMP+ADPCM_DELTA_OFFSET, a0
-	movea.l	a2, a1
-	move.w	#ADPCM_DELTA_LONGS-1, d0
-1:
-	move.l	(a0)+, (a1)+
-	dbra	d0, 1b
-	bchg	#0, (MEMMODE+1).l
-1:
-	btst	#1, (MEMMODE+1).l
-	bne.s	1b
-	dbra	d1, 2b
 
 	rts
 
@@ -209,6 +218,59 @@ sp_tail_check_image:
 	.align 4
 sp_tail_check_end:
 .endif
+
+/* Boot-only wave-RAM clear and channel setup. d0 supplies the RF5C164
+   frequency delta from the authenticated profile header. Keeping this large
+   one-shot loop out of the resident image makes 0x7400 the hard SP boundary. */
+.org PCM_BOOT_INIT_OFF
+.global pcm_boot_init
+pcm_boot_init:
+	movem.l	d1-d3/a0, -(sp)
+	move.w	d0, d3
+	move.b	#0xFF, (PCM_ONOFF).l
+	moveq	#0, d2
+1:
+	move.w	d2, d1
+	andi.w	#0x0FFF, d1
+	bne.s	2f
+	move.w	d2, d0
+	lsr.w	#8, d0
+	lsr.w	#4, d0
+	ori.b	#0x80, d0
+	move.b	d0, (PCM_CTRL).l
+2:
+	lea	(PCM_WAVE).l, a0
+	add.w	d1, d1
+	adda.w	d1, a0
+	move.b	#0x00, (a0)
+	addq.w	#1, d2
+	cmp.w	#WAVE_RING_END, d2
+	blo.s	1b
+	move.b	#0x88, (PCM_CTRL).l
+	move.b	#0xFF, (PCM_WAVE).l
+	move.b	#0xC0, (PCM_CTRL).l
+	move.b	#0xFF, (PCM_ENV).l
+	nop
+	nop
+	move.b	#0xFF, (PCM_PAN).l
+	nop
+	nop
+	move.b	d3, (PCM_FDL).l
+	nop
+	nop
+	lsr.w	#8, d3
+	move.b	d3, (PCM_FDH).l
+	nop
+	nop
+	move.b	#0x00, (PCM_LSL).l
+	nop
+	nop
+	move.b	#0x00, (PCM_LSH).l
+	nop
+	nop
+	move.b	#0x30, (PCM_ST).l
+	movem.l	(sp)+, d1-d3/a0
+	rts
 
 	.align 4
 adpcm_boot_copy_end:

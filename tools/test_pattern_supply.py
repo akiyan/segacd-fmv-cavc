@@ -62,10 +62,10 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             layout.routing_offset + layout.routing_bytes,
             supply.WORD_RAM_BANK_BYTES,
         )
-        self.assertEqual(layout.wr0_load_bytes, 4 + 1120 * 32)
-        self.assertEqual(layout.wr1_load_bytes, 180 * 36)
-        self.assertEqual(layout.wr0_patterns, 2048)
-        self.assertEqual(layout.wr1_patterns, 2944)
+        self.assertEqual(layout.wr0_load_bytes, 1120 * 32 + 22)
+        self.assertEqual(layout.wr1_load_bytes, 180 * (32 + 22))
+        self.assertEqual(layout.wr0_patterns, 2368)
+        self.assertEqual(layout.wr1_patterns, 3200)
         self.assertLess(layout.status_offset - layout.wr0_end, 2048)
         self.assertLess(layout.status_offset - layout.wr1_end, 2048)
         self.assertEqual(
@@ -77,9 +77,25 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             layout.pad_scr_offset,
         )
         self.assertEqual(
-            layout.pcm_dec_buf_offset + supply.PCM_DEC_BUF_BYTES,
+            layout.pad_scr_offset + supply.PAD_SCR_BYTES,
             layout.routing_offset,
         )
+
+    def test_exact_output_peaks_reclaim_sector_rounded_wordbuf_space(self):
+        layout = supply.word_ram_layout(
+            frames=6576,
+            cells=40 * 28,
+            cold_cap=180,
+            wr0_load_bytes=376,
+            wr1_load_bytes=206,
+        )
+
+        self.assertEqual(layout.wr0_offset, 384)
+        self.assertEqual(layout.wr1_offset, 224)
+        self.assertEqual(layout.wr0_patterns, 3456)
+        self.assertEqual(layout.wr1_patterns, 3456)
+        self.assertEqual(layout.wr0_load_bytes, 376)
+        self.assertEqual(layout.wr1_load_bytes, 206)
 
     def test_shorter_movie_reclaims_routing_sectors(self):
         short = supply.word_ram_layout(

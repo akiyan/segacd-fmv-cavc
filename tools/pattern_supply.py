@@ -48,11 +48,11 @@ DIC_RUN_BLOCK = 256
 
 # The specialized player derives its physical 1M Word-RAM map from the packed
 # movie. Both parity banks share the compact fixed tail below, while their
-# output peak and therefore their WordBuf start differ. Frame 0 is always built
-# in Wr0; Wr1 needs only the timed cold/run envelope.
+# exact O_LOADS peak and therefore their WordBuf start differ. Frame 0 is
+# always built in Wr0.
 WORD_RAM_BANK_BYTES = 0x20000
 SECTOR_BYTES = 2048
-OUTPUT_HEADER_BYTES = 4  # O_PALW + O_NLOAD; O_LOADS starts immediately after.
+OUTPUT_HEADER_BYTES = 4  # O_NRUN + O_NLOAD; O_LOADS starts immediately after.
 # BODY control blocks retain their compact four-byte source-run descriptors.
 # O_LOADS v2 is a different, expanded handoff object: the Sub CPU writes one
 # VDP-ready record per physical transfer run directly into Word RAM.
@@ -61,11 +61,6 @@ OUTPUT_RUN_RECORD_BYTES = 22
 STATUS_BYTES = 0x100
 CTRL_SCR_BYTES = 0x2000
 PAD_SCR_BYTES = 0x0800
-ADPCM_TABLE_BYTES = 8800
-# Keep this 1.5 KiB Word-RAM gap in the generated layout so player-only A/B
-# builds use identical WordBuf capacities and streams. The live decoded PCM
-# scratch is Sub PRG-RAM; tools/check_player_ring.py proves both sizes match.
-PCM_DEC_BUF_BYTES = 0x0600
 
 PALTAB_STAGE_OFFSET = 0x0000
 PALTAB_STAGE_BYTES = 0x6000
@@ -90,8 +85,6 @@ class WordRamLayout:
     cold_cap: int
     routing_bytes: int
     routing_offset: int
-    pcm_dec_buf_offset: int
-    adpcm_table_offset: int
     pad_scr_offset: int
     ctrl_scr_offset: int
     status_offset: int
@@ -170,13 +163,21 @@ def output_load_peaks(
     return peaks[0], peaks[1]
 
 
-def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
+def word_ram_layout(
+    frames: int,
+    cells: int,
+    cold_cap: int,
+    *,
+    wr0_load_bytes: int | None = None,
+    wr1_load_bytes: int | None = None,
+) -> WordRamLayout:
     """Pack the common tail and parity-specific output/WordBuf spans.
 
-    The frame-0 output is one contiguous run covering at most ``cells``
-    patterns. The timed bank reserves the stricter case of one four-byte run
-    descriptor per cold pattern. This makes the allocation safe before the
-    encoder decides the actual source grouping.
+    Before the final source grouping exists, callers may omit the two O_LOADS
+    peaks. The conservative envelope then treats frame 0 as one Prg run over
+    the whole grid and every timed cold pattern as an independent Prg run.
+    Once grouping is final, the encoder passes the independently recomputed
+    even/odd peaks so sector-rounded residual space becomes WordBuf capacity.
     """
     frames = int(frames)
     cells = int(cells)
@@ -190,16 +191,21 @@ def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
 
     routing_bytes = _align_up(frames, SECTOR_BYTES)
     routing_offset = WORD_RAM_BANK_BYTES - routing_bytes
-    pcm_dec_buf_offset = routing_offset - PCM_DEC_BUF_BYTES
-    adpcm_table_offset = pcm_dec_buf_offset - ADPCM_TABLE_BYTES
-    pad_scr_offset = adpcm_table_offset - PAD_SCR_BYTES
+    pad_scr_offset = routing_offset - PAD_SCR_BYTES
     ctrl_scr_offset = pad_scr_offset - CTRL_SCR_BYTES
     status_offset = ctrl_scr_offset - STATUS_BYTES
 
-    wr0_load_bytes = PACKED_RUN_DESCRIPTOR_BYTES + cells * PATTERN_BYTES
-    timed_patterns = cold_cap if cold_cap else cells
-    wr1_load_bytes = timed_patterns * (
-        PATTERN_BYTES + PACKED_RUN_DESCRIPTOR_BYTES)
+    if wr0_load_bytes is None:
+        wr0_load_bytes = output_load_bytes(cells, 1)
+    if wr1_load_bytes is None:
+        timed_patterns = cold_cap if cold_cap else cells
+        wr1_load_bytes = output_load_bytes(timed_patterns, timed_patterns)
+    wr0_load_bytes = int(wr0_load_bytes)
+    wr1_load_bytes = int(wr1_load_bytes)
+    if wr0_load_bytes < 0 or wr1_load_bytes < 0:
+        raise ValueError(
+            "Word-RAM O_LOADS peaks must be non-negative: "
+            f"Wr0={wr0_load_bytes} Wr1={wr1_load_bytes}")
     wr0_offset = _align_up(
         OUTPUT_HEADER_BYTES + wr0_load_bytes, PATTERN_BYTES)
     wr1_offset = _align_up(
@@ -210,8 +216,7 @@ def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
             f"Wr0={wr0_offset:#x} Wr1={wr1_offset:#x} "
             f"tail={status_offset:#x}")
     if any(offset % PATTERN_BYTES for offset in (
-            routing_offset, pcm_dec_buf_offset, adpcm_table_offset,
-            pad_scr_offset, ctrl_scr_offset, status_offset,
+            routing_offset, pad_scr_offset, ctrl_scr_offset, status_offset,
             wr0_offset, wr1_offset)):
         raise AssertionError("Word-RAM layout lost 32-byte alignment")
 
@@ -228,8 +233,6 @@ def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
         cold_cap=cold_cap,
         routing_bytes=routing_bytes,
         routing_offset=routing_offset,
-        pcm_dec_buf_offset=pcm_dec_buf_offset,
-        adpcm_table_offset=adpcm_table_offset,
         pad_scr_offset=pad_scr_offset,
         ctrl_scr_offset=ctrl_scr_offset,
         status_offset=status_offset,

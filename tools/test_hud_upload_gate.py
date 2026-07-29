@@ -214,9 +214,9 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertNotIn("cd_wait_count", result["limits"])
         self.assertEqual(result["limits"]["vblank_spill"], 3)
         self.assertEqual(result["limits"]["prgbuf_jitter_peak_kib"], 45)
-        self.assertEqual(result["prg_buf_cap_kib"], 376)
+        self.assertEqual(result["prg_buf_cap_kib"], 374)
         self.assertEqual(result["jitter_headroom_kib"], 40)
-        self.assertEqual(result["delivery_limit_kib"], 376)
+        self.assertEqual(result["delivery_limit_kib"], 374)
         result = self.evaluate(
             groups(4, capture_interval=4, vblank_spill=4), 4, 15)
         self.assertTrue(result["pass"])
@@ -230,7 +230,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertNotIn("cd_wait_count", result["limits"])
         self.assertEqual(result["limits"]["vblank_spill"], 3)
         self.assertEqual(result["limits"]["prgbuf_jitter_peak_kib"], 30)
-        self.assertEqual(result["prg_buf_cap_kib"], 391)
+        self.assertEqual(result["prg_buf_cap_kib"], 389)
         self.assertEqual(result["jitter_headroom_kib"], 25)
 
     def test_each_cadence_rejects_a_full_physical_ring(self):

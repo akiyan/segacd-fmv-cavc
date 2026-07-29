@@ -3421,25 +3421,78 @@ def main():
             dic_loads=dic_loads,
             dic_indices=tuple(ring_dic_indices_log),
         )
-        ring_plan = wordbuf_ring.plan(
-            per=ring_per_log,
-            prefetch_per=ring_prefetch_log,
-            transfer_orders=ring_transfer_orders_log,
-            current_plan=current_supply,
-            n_updates=stats[:, 3].astype(np.int64),
-            update_lists=shadow_list_flags,
-            fps=FPS,
-            cells=C_CELLS,
-            audio_frame_bytes=AUDIO_CONTROL_BYTES,
-            prg_capacity_patterns=(
-                PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-            word_capacities=(
+        # O_LOADS and WordBuf share each physical Word-RAM bank. Source
+        # grouping determines the exact 22-byte record peak, while the
+        # sector-rounded residual determines how many WordBuf patterns the
+        # ring planner can select. Iterate those two deterministic decisions
+        # to a fixed point, starting from word_ram_layout's safe envelope.
+        seen_layouts = set()
+        for _layout_pass in range(8):
+            layout_key = (
+                wordram_layout.wr0_load_bytes,
+                wordram_layout.wr1_load_bytes,
                 wordram_layout.wr0_patterns,
                 wordram_layout.wr1_patterns,
-            ),
-            baseline_occupancy=np.asarray(
-                physical_schedule["ring_occupancy"], np.int64),
-        )
+            )
+            if layout_key in seen_layouts:
+                raise AssertionError(
+                    "O_LOADS/WordBuf layout entered a capacity cycle")
+            seen_layouts.add(layout_key)
+            ring_plan = wordbuf_ring.plan(
+                per=ring_per_log,
+                prefetch_per=ring_prefetch_log,
+                transfer_orders=ring_transfer_orders_log,
+                current_plan=current_supply,
+                n_updates=stats[:, 3].astype(np.int64),
+                update_lists=shadow_list_flags,
+                fps=FPS,
+                cells=C_CELLS,
+                audio_frame_bytes=AUDIO_CONTROL_BYTES,
+                prg_capacity_patterns=(
+                    PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+                word_capacities=(
+                    wordram_layout.wr0_patterns,
+                    wordram_layout.wr1_patterns,
+                ),
+                baseline_occupancy=np.asarray(
+                    physical_schedule["ring_occupancy"], np.int64),
+            )
+            peak_prg = np.asarray(
+                (
+                    ring_plan.prg_loads
+                    if ring_plan.feasible else current_supply.prg_loads
+                ),
+                np.int64,
+            ).copy()
+            peak_runs = np.asarray(
+                (
+                    ring_plan.runs
+                    if ring_plan.feasible else transfer_runs_log
+                ),
+                np.int64,
+            )
+            # Boot-sidecar patterns are copied from the static boot stage and
+            # never appear as inline Prg bytes in frame 0 O_LOADS.
+            peak_prg[0] -= int(boot_sidecar_requests)
+            if peak_prg[0] < 0:
+                raise AssertionError(
+                    "boot sidecar exceeds frame-0 Prg source count")
+            wr0_peak, wr1_peak = pattern_supply.output_load_peaks(
+                peak_prg, peak_runs)
+            exact_layout = pattern_supply.word_ram_layout(
+                n,
+                C_CELLS,
+                MAX_COLD,
+                wr0_load_bytes=wr0_peak.bytes,
+                wr1_load_bytes=wr1_peak.bytes,
+            )
+            if exact_layout == wordram_layout:
+                break
+            wordram_layout = exact_layout
+        else:
+            raise AssertionError(
+                "O_LOADS/WordBuf layout did not converge in eight passes")
+
         if ring_plan.feasible:
             ring_enabled = True
             supply_sources_log = [
@@ -3468,6 +3521,8 @@ def main():
                 f"boot={ring_plan.boot_patterns} "
                 f"timed refill={ring_plan.selected_refill_patterns}; "
                 f"runs {ring_plan.current_runs}->{ring_plan.model_runs}; "
+                f"O_LOADS peaks={wordram_layout.wr0_load_bytes}/"
+                f"{wordram_layout.wr1_load_bytes}B; "
                 f"Prg min={physical_schedule['ring_min_evaluation']} patterns",
                 flush=True,
             )
@@ -4053,7 +4108,7 @@ def main():
                 "rows": dec_category_rows,
             },
             "pattern_supply": {
-                "schema_version": 4,
+                "schema_version": 5,
                 "enabled": bool(PATTERN_SUPPLY_ON),
                 "policy": (
                     "deadline-run-sector-refill"

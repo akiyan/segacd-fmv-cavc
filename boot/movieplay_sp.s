@@ -120,9 +120,12 @@
 .equ GA_STOPWATCH_ABS_W,GA_STOPWATCH-0x01000000
 
 .equ SUB_BANK_1M, 0x000C0000
+.equ MAIN_WORD_DELTA, 0x00140000 /* Main 0x200000 view minus Sub 0x0C0000 */
+.equ DIC_BUF, 0x00FFBA40
+.equ DIC_BUF_END, 0x00FFFA40
 
-/* --- TTRC v22 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       22
+/* --- TTRC BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
+.equ ROUTING_VERSION,       23
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -158,46 +161,76 @@
 .equ ROUTING_BANK_COPIES,   2
 
 /* --- PRG-RAM layout --- */
-/* The BIOS loads this resident image at 0x6000. ISO directory discovery uses
-   the timed-ring tail only during boot, before any PrgBuf/frame-0 owner exists,
-   so the initial SP may extend beyond the former 4 KiB project layout. */
+/* The BIOS loads this 5 KiB resident image at 0x6000. ISO directory discovery
+   uses the timed-ring tail only during boot, before any PrgBuf/frame-0 owner. */
 .equ ISO_BUF,     0x00067000
 .equ ISO_BUF_BYTES, 0x00010000
-.equ SUB_PRG_SAFE_BASE, 0x00008000
+.equ SUB_PRG_SAFE_BASE, 0x00007400
 .equ SUB_PRG_SAFE_END,  0x00009800
 .equ PCM_DEC_BUF,       0x00008000  /* Sub専用decoded PCM scratch。Word-RAM DMAと競合させない */
 .equ PCM_DEC_BUF_BYTES, 0x00000600
 .equ PCM_DEC_BUF_END,   0x00008600
+.ifndef ISO_VERIFY_SP_TAIL
 .equ WORD_PENDING0,     0x00008600  /* bank待ちWord sectorをCDCから退避するSub専用scratch */
 .equ WORD_PENDING1,     0x00008E00
 .equ WORD_PENDING_SAFE_END,0x00009600
+.else
+/* During qualification these two timed-only destinations reuse the extension
+   and APPLY head after frame-0 construction has overwritten both. */
+.equ WORD_PENDING0,     0x00076800
+.equ WORD_PENDING1,     0x00077000
+.equ WORD_PENDING_SAFE_END,0x00077800
+.endif
 .equ WORD_PENDING3,     0x00076800  /* boot extension tail; timed playback may reuse it */
-.equ ADPCM_INDICES,     0x0000C000  /* 89*16 u16 new-index*32 */
 .equ ADPCM_INDEX_BYTES, 0x00000B20
-.equ ADPCM_INDICES_END, 0x0000CB20
-.equ ADPCM_LUT,         0x0000CB20  /* offset-high -> RF5C164 sign-magnitude */
 .equ ADPCM_LUT_BYTES,   0x00000100
-.equ ADPCM_LUT_END,     0x0000CC20
+.equ ADPCM_DELTA_BYTES, 0x00001640
+.ifndef ISO_VERIFY_SP_TAIL
+.equ ADPCM_INDICES,     0x00007400  /* 89*16 u16 new-index*32 */
+.equ ADPCM_INDICES_END, 0x00007F20
+.equ ADPCM_LUT,         0x00009600  /* offset-high -> RF5C164 sign-magnitude */
+.equ ADPCM_LUT_END,     0x00009700
+.equ ADPCM_DELTAS,      0x0000C000  /* 89*16 s32 signed delta */
+.equ ADPCM_DELTAS_END,  0x0000D640
+.else
+/* The qualification build leaves 0x7400..0x7FFF marker-owned. Its index table
+   temporarily uses the normal first pending-sector region; the guarded stream
+   therefore uses the two timed-only destinations at the ring/APPLY boundary. */
+.equ ADPCM_INDICES,     0x00008600
+.equ ADPCM_INDICES_END, 0x00009120
+.equ ADPCM_LUT,         0x00009600
+.equ ADPCM_LUT_END,     0x00009700
+.equ ADPCM_DELTAS,      0x0000C000
+.equ ADPCM_DELTAS_END,  0x0000D640
+.endif
 .equ ADPCM_BOOT_COPY,   0x00076800
 .equ ADPCM_BOOT_COPY_BYTES, 0x0058
 .equ ADPCM_BOOT_COPY_LONGS, ADPCM_BOOT_COPY_BYTES/4
+.equ PCM_BOOT_INIT_OFF, 0x0300
 .if PCM_DEC_BUF < SUB_PRG_SAFE_BASE
 .error "PCM_DEC_BUF begins below the marker-verified Sub PRG range"
 .endif
 .if PCM_DEC_BUF_END > SUB_PRG_SAFE_END
 .error "PCM_DEC_BUF exceeds the marker-verified Sub PRG range"
 .endif
+.ifndef ISO_VERIFY_SP_TAIL
 .if WORD_PENDING0 != PCM_DEC_BUF_END
 .error "Word pending scratch must follow PCM_DEC_BUF"
 .endif
 .if WORD_PENDING_SAFE_END > SUB_PRG_SAFE_END
 .error "Word pending scratch exceeds the marker-verified Sub PRG range"
 .endif
-.if ADPCM_INDICES_END != ADPCM_LUT
-.error "ADPCM output LUT does not follow the index table"
 .endif
-.if ADPCM_LUT_END > 0x0000D000
-.error "hot ADPCM tables exceed their reserved PrgBuf page"
+.ifndef ISO_VERIFY_SP_TAIL
+.if ADPCM_INDICES_END > PCM_DEC_BUF
+.error "ADPCM index table overlaps decoded PCM"
+.endif
+.if ADPCM_LUT_END > SUB_PRG_SAFE_END
+.error "ADPCM output LUT exceeds marker-qualified scratch"
+.endif
+.if ADPCM_DELTAS_END > 0x0000D800
+.error "ADPCM delta table overlaps PrgBuf"
+.endif
 .endif
 .if ISO_BUF+ISO_BUF_BYTES > 0x00077000
 .error "boot ISO directory scratch overlaps timed APPLY"
@@ -209,29 +242,36 @@
 .error "loaded Sub extension exceeds the boot-time PrgBuf tail"
 .endif
 .equ SP_STACK,    0x0007FF00        /* スタック最上位(apply端0x7F800の上, 1.8KB) */
-/* 0x9800-0xC000は連続読み中にBIOSが踏む。0xC000の4KBはhot table、RINGは0xD000から。 */
-.equ RING_BASE,   0x0000D000
-.equ RING_SIZE,   0x00069800        /* 422KB。末尾2KBは4本目のbank待ちWord sector */
+/* 0x9800-0xC000 is BIOS-touched during continuous reads. Signed ADPCM deltas
+   occupy 0xC000..0xD63F; the physical PrgBuf begins at the next sector. */
+.equ RING_BASE,   0x0000D800
+.equ RING_SIZE,   0x00069000        /* 420KB; end is the third pending sector */
 .equ RING_END,    RING_BASE+RING_SIZE     /* 0x76800 = WORD_PENDING3 */
 .equ RING_PATTERNS, RING_SIZE/32
 .equ F0PAT_TMP,   0x00072000        /* boot限定: H40最大1120 patterns=36KBを固定scratchから
                                        未使用APPLY先頭まで連続配置し、BODY前に展開する。 */
+.ifndef ISO_VERIFY_SP_TAIL
 .equ APPLY_BASE,  0x00077000
-.equ APPLY_SIZE,  0x00008800        /* 34KB(16KBは頭詰まり→滑りを実測。42KB→34KBはrouting移設分) */
+.equ APPLY_SIZE,  0x00008800        /* 34KB */
+.else
+.equ APPLY_BASE,  0x00077800
+.equ APPLY_SIZE,  0x00008000        /* marker-only pending-sector relocation */
+.endif
 .equ APPLY_END,   APPLY_BASE+APPLY_SIZE   /* 0x7F800 */
 .equ ROUTING_TMP, 0x0007B000        /* boot限定。最大frame0 staging直後の未使用APPLY 16KB */
 .if RING_END != WORD_PENDING3
 .error "fourth pending Word sector must begin at the physical PrgBuf end"
 .endif
+.ifndef ISO_VERIFY_SP_TAIL
 .if WORD_PENDING3+0x800 != APPLY_BASE
 .error "fourth pending Word sector must end at APPLY_BASE"
+.endif
 .endif
 
 /* --- Word-RAM compact tail (same offsets in both physical banks) --- */
 .ifdef PLAYER_SPECIALIZED
 .equ CTRL_SCR,    SUB_BANK_1M+PC_CTRL_SCR_OFFSET
 .equ PAD_SCR,     SUB_BANK_1M+PC_PAD_SCR_OFFSET
-.equ ADPCM_TABLE, SUB_BANK_1M+PC_ADPCM_TABLE_OFFSET
 .equ WORD_BUF0,   SUB_BANK_1M+PC_WR0_OFFSET
 .equ WORD_BUF1,   SUB_BANK_1M+PC_WR1_OFFSET
 .equ WORD_BUF0_END,SUB_BANK_1M+PC_WR0_END
@@ -243,7 +283,6 @@
 .else
 .equ CTRL_SCR,    0x000D0000
 .equ PAD_SCR,     0x000D2000
-.equ ADPCM_TABLE, 0x000D2800
 .equ WORD_BUF0,   0x000D5200
 .equ WORD_BUF1,   0x000D5200
 .equ WORD_BUF0_END,0x000DC000
@@ -253,14 +292,8 @@
 .equ ROUTING,     0x000DC000
 .equ O_STATUS,    SUB_BANK_1M+0xAF00
 .endif
-/* PC_PCM_DEC_BUF_OFFSET / generic +0x14C00 and the index/LUT portions of
-   ADPCM_TABLE remain unused A/B-stable Word-RAM reserves. Timed decode uses
-   only the signed deltas from Word RAM; the other hot data is Sub PRG above. */
-.equ ADPCM_DELTAS, ADPCM_TABLE+2848 /* 89*16 s32 signed delta = 5696B */
 .equ ADPCM_TABLE_BYTES, 8800
-.equ ADPCM_DELTA_BYTES, 5696
 .equ ADPCM_TABLE_SECTORS, 5
-.equ ADPCM_BANK_COPIES, 2
 .if SP_EXTENSION_LOAD_BASE != ROUTING_TMP+ADPCM_TABLE_BYTES
 .error "Sub extension preload must follow the ADPCM table image"
 .endif
@@ -278,10 +311,10 @@
 .endif
 .endif
 
-/* --- Word-RAM 出力(MDが読む) ---
+/* --- Word-RAM output read by Main ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
    starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
-.equ O_PALW,    SUB_BANK_1M+0x0000	/* reserved word; palette switches are M-PALIDX driven */
+.equ O_NRUN,    SUB_BANK_1M+0x0000
 .equ O_NLOAD,   SUB_BANK_1M+0x0002
 .equ O_LOADS,   SUB_BANK_1M+0x0004
 .equ O_SLIP,   O_STATUS+0x00
@@ -337,7 +370,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v22ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v23ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -422,7 +455,7 @@ stream_start:
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
 	   timed reader is idle, then starts BODY.DAT from its own ISO extent. */
 	clr.w	slip_count
-	clr.w	desync_count
+	clr.l	desync_count			/* desync_count + adjacent resync_count */
 	clr.w	(COMSTAT1).l
 	clr.w	(COMSTAT2).l
 	clr.w	drain_frame
@@ -433,7 +466,8 @@ stream_start:
 	clr.w	(O_PRGPEAK).l
 	clr.w	(O_READAHEAD).l
 .endif
-	bsr	init_pcm
+	move.b	#0xFF, (PCM_ONOFF).l		/* extension initializes the channel after HEADER load */
+	clr.w	pcm_running
 	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
 	clr.l	base_msf
 	move.l	header_lba, d0
@@ -489,11 +523,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v22: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v23: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v22: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v23: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -523,9 +557,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v22 optional stream features */
+	move.w	62(a0), h_features		/* v23 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v22 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v23 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -641,8 +675,16 @@ pm_set:
 1:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
-	lea	ADPCM_DELTAS, a2
 	jsr	ADPCM_BOOT_COPY
+	/* The extension remains intact in the HEADER staging image. Run its
+	   one-shot wave clear before frame-0 data reuses that scratch. */
+.ifdef PLAYER_SPECIALIZED
+	move.w	#PC_AUDIO_FD, d0
+.else
+	move.w	h_audio_fd, d0
+.endif
+	jsr	(SP_EXTENSION_LOAD_BASE+PCM_BOOT_INIT_OFF).l
+	move.w	#SYNC_LEAD, write_ptr
 	/* Wr0 is the physical frame-0 bank and Wr1 is the other bank. Their
 	   generated starts and sector-rounded capacities differ. Two toggles
 	   restore the frame-0 bank phase. */
@@ -679,6 +721,10 @@ pm_set:
 	move.l	d0, word_write_ptr1
 	move.w	#PC_WR0_PATTERNS, word_level0
 	move.w	#PC_WR1_PATTERNS, word_level1
+.endif
+.ifdef INCLUDE_COLD_RUN_FASTPATH
+	move.l	#WORD_BUF0, word_read_ptr0
+	move.l	#WORD_BUF1, word_read_ptr1
 .endif
 	/* HEADER ends with the static routing table and frame-1 Prg prebuffer. */
 	moveq	#0, d0
@@ -941,11 +987,18 @@ dump_ring_head:
 	swap	d0
 	move.w	desync_count, d0
 	move.l	d0, 16(a3)			/* [4]=drain_frame|desync_count */
-	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
-	/* O_LOADS: slot0=黒(0x0000), slot1=白(0xFFFF) */
+	move.w	#1, (O_NRUN).l
+	/* One O_LOADS v2 Prg record: slot0..1, followed by black/white patterns. */
 	lea	(O_LOADS).l, a1
-	move.w	#0, (a1)+			/* slot_start=0 */
-	move.w	#2, (a1)+			/* count=2 */
+	move.w	#0x0020, (a1)+			/* len=2 patterns * 16 words */
+	move.w	#0x9320, (a1)+
+	move.w	#0x9400, (a1)+
+	move.l	#0x40200000, (a1)+		/* VRAM tile 1 */
+	move.w	#0x0020, (a1)+
+	move.w	#0x950E, (a1)+
+	move.w	#0x9600, (a1)+
+	move.w	#0x9710, (a1)+
+	move.l	#0x0020001A, (a1)+
 	move.w	#16-1, d0
 1:
 	clr.w	(a1)+
@@ -993,10 +1046,17 @@ uh_put:
    全面ノイズなら 0xC000 のリング内容が壊れている。 */
 dump_pats:
 	movem.l	d0-d7/a0-a6, -(sp)
-	clr.w	(O_PALW).l			/* reserved output word stays deterministic */
+	move.w	#1, (O_NRUN).l
 	lea	(O_LOADS).l, a1
-	move.w	#0, (a1)+			/* slot_start=0 */
-	move.w	#1120, (a1)+			/* count=1120 */
+	move.w	#0x4600, (a1)+			/* len=1120 patterns * 16 words */
+	move.w	#0x9300, (a1)+
+	move.w	#0x9446, (a1)+
+	move.l	#0x40200000, (a1)+
+	move.w	#0x0020, (a1)+
+	move.w	#0x950E, (a1)+
+	move.w	#0x9600, (a1)+
+	move.w	#0x9710, (a1)+
+	move.l	#0x0020001A, (a1)+
 	movea.l	#RING_BASE, a4			/* PREBUF1先頭(frame1 cold)を固定で見る */
 	move.w	#1120*8-1, d0			/* 1120*32B = 8960 long */
 1:
@@ -1281,7 +1341,7 @@ p1_read:
 .ifdef INCLUDE_WORDBUF_RING
 	/* A future frame's control and Word prefix may be drained before the bank
 	   swap. word_accept_guard either proves a direct write or reserves one of
-	   four Sub-PRG pending sectors, keeping the continuous CDC read moving. */
+	   three Sub-PRG pending sectors, keeping the continuous CDC read moving. */
 	move.w	drain_k, d3
 	move.w	cur_n_ctrl, d1
 	cmp.w	d1, d3
@@ -1352,11 +1412,6 @@ p1_word_pending:
 	movea.l	#WORD_PENDING1, a1
 	bra.s	4f
 2:
-	cmpi.w	#2, d0
-	bne.s	3f
-	lea	word_pending2, a1
-	bra.s	4f
-3:
 	movea.l	#WORD_PENDING3, a1
 4:
 	bsr	stage_copy
@@ -1612,7 +1667,7 @@ pp_done:
 .ifdef INCLUDE_WORDBUF_RING
 /* Return d0=1 iff the next Word sector has a bounded destination. Direct
    writes require the current parity bank. A not-yet-owned bank reserves up to
-   four sectors without making those queued patterns logically resident.
+   three sectors without making those queued patterns logically resident.
    Accept the sector's frame at or ahead of the expanding frame: the packer's
    replay commits every refill sector at its arrival slot, and the CD keeps
    delivering while frame_idx catches up, so demanding equality stalls the
@@ -1645,7 +1700,11 @@ word_accept_guard:
 	rts
 wag_pending:
 	move.w	word_pending_count, d4
-	cmpi.w	#4, d4
+.ifdef ISO_VERIFY_SP_TAIL
+	cmpi.w	#2, d4
+.else
+	cmpi.w	#3, d4
+.endif
 	bhs.s	wag_no
 	tst.w	d4
 	beq.s	1f
@@ -1675,10 +1734,6 @@ flush_word_pending:
 	movea.l	#WORD_PENDING1, a0
 	bsr	flush_word_one
 	cmpi.w	#3, word_pending_count
-	blo.s	fwp_clear
-	lea	word_pending2, a0
-	bsr	flush_word_one
-	cmpi.w	#4, word_pending_count
 	blo.s	fwp_clear
 	movea.l	#WORD_PENDING3, a0
 	bsr	flush_word_one
@@ -1723,11 +1778,7 @@ process_frame:
 	/* The extension-installed checker covers one 64-byte slice per content
 	   frame. Reuse the gated desync counter as the diagnostic failure latch. */
 	jsr	0x00009700
-	tst.w	d0
-	beq.s	9f
-	addq.w	#1, desync_count
-	move.w	desync_count, (COMSTAT1).l
-9:
+	add.w	d0, desync_count
 .endif
 .ifdef DEBUG
 	clr.w	pf_ctrl_wait
@@ -1819,7 +1870,9 @@ pf_ready:
 	rts
 pf_desync:
 	addq.w	#1, desync_count
+.ifndef ISO_VERIFY_SP_TAIL
 	move.w	desync_count, (COMSTAT1).l	/* 診断: desync回数 */
+.endif
 .equ DESYNC_DUMP, 0				/* 1: 初回desyncで[frame_idx,seq,apply_cur,apply_tail,drainF|cnt]を表示して静止 */
 .if DESYNC_DUMP
 	cmp.w	#1, desync_count
@@ -1838,7 +1891,7 @@ dsd_w:
 	bra	dsd_lp
 1:
 .endif
-	clr.w	(O_PALW).l
+	clr.w	(O_NRUN).l
 	move.w	#0, (O_NLOAD).l			/* このコマは更新破棄=前コマ維持 */
 	bsr	pump_poll_core
 	rts
@@ -1911,12 +1964,12 @@ fc_copy_even:
 5:
 	rts
 
-/* CTRL_SCR(線形 control block) を Word-RAM へ展開。cold は ring pop。
+/* Expand one linear control block into the Main-facing Word-RAM bank.
    block = >H total_len >H frame_seq >H n_upd
            72 bitmap n_upd*(entry) h_audio_bytes audio [even pad]   (MOVIE.md 準拠)
-   パレット切替はplayer内蔵のM-PALIDX表がMain側で起点となり、controlに切替バイトは無い。
-   loads はラン形式: [slot_start.w count.w pattern(count*32B)] の列。エンコーダが
-   フレーム内coldを連番スロットに割当てるので、MDは1ランを1回の大DMAで転送できる。 */
+   O_LOADS v2 interleaves one 22-byte VDP-ready record per run with only that
+   run's inline Prg payload. Wr/Dic records point at persistent storage. Main
+   consumes this single cursor in place; no Main-RAM staging table exists. */
 expand_frame:
 	lea	CTRL_SCR, a0
 	addq.l	#4, a0				/* skip total_len(2) + frame_seq(2) */
@@ -1933,7 +1986,7 @@ ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v22 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v23 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -1979,6 +2032,7 @@ ef_audio_positioned:
 	bsr	write_wave_chunk
 	movea.l	a6, a0
 	lea	(O_LOADS).l, a1
+	clr.w	(O_NRUN).l
 	movea.l	ring_head, a4			/* pop ptr(PRG読み) */
 	tst.w	f0_expand
 	beq	ef_ring_count
@@ -2029,12 +2083,20 @@ ef_runs_setup:
 	addq.l	#1, a0
 1:
 	move.w	(a0)+, d7			/* n_runs */
-	move.w	d5, d1				/* ordinary streams: runs/cold cannot exceed updates */
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0020)
+	move.w	#PC_CELLS, d1			/* prefetch runs have no corresponding name update */
+.else
+	move.w	d5, d1				/* ordinary runs cannot exceed updates */
+.endif
+.else
+	move.w	d5, d1
 	PC_MOVE_W h_features, PC_FEATURES, d0
 	btst	#FEATURE_VRAM_RAW_PREFETCH_BIT, d0
 	beq.s	2f
 	PC_MOVE_W h_cells, PC_CELLS, d1		/* prefetch runs have no corresponding name update */
 2:
+.endif
 	cmp.w	d1, d7
 	bls	1f
 	move.w	d1, d7				/* corrupt-count clamp */
@@ -2045,12 +2107,20 @@ ef_runs_setup:
 ef_run:
 	move.w	(a0)+, d2			/* Dic index high5 + zero-based slot low11 */
 	move.w	(a0)+, d3			/* source2 + Dic index low3 + count low11 */
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0020)
+	move.w	#PC_CELLS, d1
+.else
+	move.w	d5, d1
+.endif
+.else
 	move.w	d5, d1
 	PC_MOVE_W h_features, PC_FEATURES, d0
 	btst	#FEATURE_VRAM_RAW_PREFETCH_BIT, d0
 	beq.s	2f
 	PC_MOVE_W h_cells, PC_CELLS, d1
 2:
+.endif
 	move.w	d3, d0
 	andi.w	#0xC000, d0			/* preserve source for O_LOADS and the copy decision */
 	andi.w	#0x07FF, d3
@@ -2069,29 +2139,145 @@ ef_run:
 1:
 	tst.w	d3
 	beq	ef_run_next
-	move.w	-4(a0), (a1)+			/* preserve packed Dic index high bits */
-	move.w	-2(a0), d1
-	andi.w	#0xF800, d1			/* preserve source + Dic index low bits */
-	or.w	d3, d1
-	move.w	d1, (a1)+			/* indexed source/count; cached runs carry no inline bytes */
-	add.w	d3, d4
-.ifdef INCLUDE_WORDBUF_RING
+	/* Record prefix:
+	     +0 len.w  +2 reg93.w  +4 reg94.w  +6 cmd.l  +10 dst.w
+	     +12 reg95.w  +14 reg96.w  +16 reg97.w  +18 raw source.l */
+	move.w	d3, d1
+	lsl.w	#4, d1				/* VDP DMA length in words */
+	move.w	d1, (a1)+
+	move.w	#0x9300, d2
+	move.b	d1, d2
+	move.w	d2, (a1)+
+	move.w	d1, d2
+	lsr.w	#8, d2
+	ori.w	#0x9400, d2
+	move.w	d2, (a1)+
+	move.w	-4(a0), d2
+	andi.w	#0x07FF, d2
+	addq.w	#1, d2
+	lsl.w	#5, d2
+	movea.w	d2, a5
+	moveq	#0, d1
+	move.w	d2, d1
+	move.l	d1, d2
+	andi.l	#0x00003FFF, d2
+	swap	d2
+	ori.l	#0x40000000, d2
+	lsr.w	#7, d1
+	lsr.w	#7, d1
+	andi.w	#0x0003, d1
+	or.w	d1, d2
+	move.l	d2, (a1)+
+	move.w	a5, (a1)+			/* byte destination, retained for split DMA */
+
+	/* Resolve the raw source in Main's address space. */
+	tst.w	d0
+	bne.s	ef_source_preload
+	lea	10(a1), a3			/* Prg bytes follow the remaining source fields */
+	adda.l	#MAIN_WORD_DELTA, a3
+	bra	ef_source_word_ready
+ef_source_preload:
 	cmpi.w	#0x4000, d0
-	bne.s	3f
-	/* frame_idx already points one past the descriptor being expanded. Retire
-	   that frame's parity now; Main completes the read before the bank returns. */
+	bne	ef_source_dic
+	/* frame_idx points one past the descriptor being expanded. Each parity has
+	   its own Sub-owned read cursor; a complete run never crosses its end. */
 	move.w	frame_idx, d1
 	subq.w	#1, d1
 	andi.w	#1, d1
+	lsl.w	#2, d1
+	lea	word_read_ptr0, a6
+	adda.w	d1, a6
+	movea.l	(a6), a3
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0100)
+	tst.w	d1
+	bne.s	1f
+	cmpa.l	#WORD_BUF0_END, a3
 	bne.s	2f
-	sub.w	d3, word_level0
-	bra.s	3f
+	movea.l	#WORD_BUF0, a3
+	bra.s	2f
+1:
+	cmpa.l	#WORD_BUF1_END, a3
+	bne.s	2f
+	movea.l	#WORD_BUF1, a3
 2:
-	sub.w	d3, word_level1
-3:
 .endif
+.endif
+	move.l	a3, d2
+	moveq	#0, d1
+	move.w	d3, d1
+	lsl.l	#5, d1
+	add.l	d1, d2
+	cmpa.l	#word_read_ptr0, a6
+	bne.s	1f
+	cmpi.l	#WORD_BUF0_END, d2
+	bra.s	2f
+1:
+	cmpi.l	#WORD_BUF1_END, d2
+2:
+	bhi	ef_run_next
+	move.l	d2, (a6)
+.ifdef INCLUDE_WORDBUF_RING
+	cmpa.l	#word_read_ptr0, a6
+	bne.s	1f
+	sub.w	d3, word_level0
+	bra.s	2f
+1:
+	sub.w	d3, word_level1
+2:
+.endif
+	adda.l	#MAIN_WORD_DELTA, a3
+	bra.s	ef_source_word_ready
+ef_source_dic:
+	/* Source 2 addresses Dic 0..255; source 3 carries dictionary index bit 8. */
+	move.w	-4(a0), d1
+	andi.w	#0xF800, d1
+	lsr.w	#8, d1
+	move.w	-2(a0), d2
+	lsr.w	#8, d2
+	lsr.w	#3, d2
+	andi.w	#7, d2
+	or.w	d2, d1
+	cmpi.w	#0x8000, d0
+	beq.s	1f
+	ori.w	#0x0100, d1
+1:
+	lsl.w	#5, d1
+	lea	DIC_BUF, a3
+	adda.w	d1, a3
+	move.l	a3, d2
+	moveq	#0, d1
+	move.w	d3, d1
+	lsl.l	#5, d1
+	add.l	d1, d2
+	cmpi.l	#DIC_BUF_END, d2
+	bhi	ef_run_next
+	bra.s	ef_source_ready
+
+ef_source_word_ready:
+	move.l	a3, d2
+	addq.l	#2, d2				/* measured Word-RAM DMA first-word correction */
+	bra.s	ef_source_regs
+ef_source_ready:
+	move.l	a3, d2				/* Main-RAM Dic DMA needs no source correction */
+ef_source_regs:
+	lsr.l	#1, d2
+	move.w	#0x9500, d1
+	move.b	d2, d1
+	move.w	d1, (a1)+
+	lsr.l	#8, d2
+	move.w	#0x9600, d1
+	move.b	d2, d1
+	move.w	d1, (a1)+
+	lsr.l	#8, d2
+	move.w	#0x9700, d1
+	move.b	d2, d1
+	move.w	d1, (a1)+
+	move.l	a3, (a1)+
+	addq.w	#1, (O_NRUN).l
+	add.w	d3, d4
 	tst.w	d0
-	bne	ef_run_next			/* Wr/Dic: Main DMA reads the persistent preload directly */
+	bne	ef_run_next			/* Wr/Dic records carry no inline bytes */
 .ifdef DEBUG_PRGBUF_Q
 	/* Charge the complete Prg run before its bytes are copied.  Unlike the
 	   modulo head/tail distance, this signed balance preserves an underflow
@@ -2213,7 +2399,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v22 streams use run descriptors above. Retain a final-balance
+	/* Canonical v23 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2349,71 +2535,6 @@ get_info:
 	rts
 
 /* ---- RF5C164 PCM ---- */
-init_pcm:
-	movem.l	d0-d2/a0, -(sp)
-	move.b	#0xFF, (PCM_ONOFF).l		/* keep playback stopped while the ring is armed */
-	clr.w	pcm_running
-	moveq	#0, d2
-ip_loop:
-	move.w	d2, d1
-	andi.w	#0x0FFF, d1
-	bne	1f
-	move.w	d2, d0
-	lsr.w	#8, d0
-	lsr.w	#4, d0
-	ori.b	#0x80, d0
-	move.b	d0, (PCM_CTRL).l
-1:
-	lea	(PCM_WAVE).l, a0
-	add.w	d1, d1
-	adda.w	d1, a0
-	move.b	#0x00, (a0)
-	addq.w	#1, d2
-	cmp.w	#WAVE_RING_END, d2
-	blo	ip_loop
-	move.b	#0x88, (PCM_CTRL).l
-	move.b	#0xFF, (PCM_WAVE).l
-	move.b	#0xC0, (PCM_CTRL).l
-	move.b	#0xFF, (PCM_ENV).l
-	nop
-	nop
-	move.b	#0xFF, (PCM_PAN).l
-	nop
-	nop
-.ifdef PLAYER_SPECIALIZED
-	move.b	#(PC_AUDIO_FD & 0x00FF), (PCM_FDL).l
-.else
-	move.w	h_audio_fd, d0
-	move.b	d0, (PCM_FDL).l
-.endif
-	nop
-	nop
-.ifdef PLAYER_SPECIALIZED
-	move.b	#((PC_AUDIO_FD >> 8) & 0x00FF), (PCM_FDH).l
-.else
-	lsr.w	#8, d0
-	move.b	d0, (PCM_FDH).l
-.endif
-	nop
-	nop
-	move.b	#0x00, (PCM_LSL).l
-	nop
-	nop
-	move.b	#0x00, (PCM_LSH).l
-	nop
-	nop
-	/* PCM_ST is the high byte of the 16-bit sample address. Start at
-	   SYNC_LEAD, where BODY-arm audio was written, instead of 0x0000 silence. */
-	move.b	#0x30, (PCM_ST).l		/* SYNC_LEAD=0x3000 */
-	nop
-	nop
-	/* 起動時からリードを SYNC_LEAD で確立する。PCM_ST と write_ptr を同じ
-	   サンプル位置に置き、先頭リング無音を再生しない。 */
-	move.w	#SYNC_LEAD, write_ptr
-	clr.w	resync_count
-	movem.l	(sp)+, d0-d2/a0
-	rts
-
 pcm_on:
 	move.w	#1, pcm_running
 	/* GPGX reloads a channel's address on the OFF write. Repeat OFF here so
@@ -2423,10 +2544,10 @@ pcm_on:
 	move.b	#0xFE, (PCM_ONOFF).l
 	rts
 
-/* Decode one checkpointed IMA chunk from a0 to PCM_DEC_BUF. Signed deltas stay
-   at the same offset in both physical 1M banks, while next-index/output tables
-   are Sub-owned PRG-RAM. Each checkpoint records the continuous movie state;
-   no decoder state is carried between frames. */
+/* Decode one checkpointed IMA chunk from a0 to PCM_DEC_BUF. All three hot
+   lookup tables are Sub-owned PRG-RAM and independent of Word-RAM bank phase.
+   Each checkpoint records the continuous movie state; no decoder state is
+   carried between frames. */
 decode_adpcm_chunk:
 	movem.l	d0-d7/a0-a4, -(sp)
 	move.w	(a0)+, d6			/* checkpoint predictor (signed) */
@@ -2765,7 +2886,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v22: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v23: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:
@@ -2797,6 +2918,12 @@ write_ptr:
 	.word	0
 f0_expand:
 	.word	0				/* !=0: frame0 cold pop is contiguous boot storage, not streaming ring */
+.ifdef INCLUDE_COLD_RUN_FASTPATH
+word_read_ptr0:
+	.long	0				/* next Wr0 run source; owned by Sub expansion */
+word_read_ptr1:
+	.long	0				/* next Wr1 run source; owned by Sub expansion */
+.endif
 .ifdef INCLUDE_WORDBUF_RING
 word_write_ptr0:
 	.long	0				/* next timed Wr0 sector destination */
@@ -2811,7 +2938,7 @@ word_owned_bank:
 word_pending_frame:
 	.word	0				/* one routed slot owns all queued sectors */
 word_pending_count:
-	.word	0				/* zero to four queued 2 KiB sectors */
+	.word	0				/* zero to three queued 2 KiB sectors */
 .endif
 .if ring_tail-ring_head != 4
 .error "Sub extension ring state layout changed"
@@ -2860,15 +2987,4 @@ ring_frame_min:
 .endif
 .endif
 
-.ifdef INCLUDE_WORDBUF_RING
-	.align 4
-.ifdef ISO_VERIFY_SP_TAIL
-/* This diagnostic is build-time guarded to routes with at most two pending
-   Word sectors, so no third resident sector may occupy the marker interval. */
-.equ word_pending2, WORD_PENDING3
-.else
-word_pending2:
-	.space 0x800				/* third pending sector; resident image stays below 8 KiB */
-.endif
-.endif
 sp_end:

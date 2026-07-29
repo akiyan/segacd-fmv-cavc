@@ -58,8 +58,8 @@ def main() -> None:
     ]
     if maximum > args.max_pending_sectors:
         raise SystemExit(
-            "SP tail marker build cannot omit the third resident pending "
-            f"sector: route maximum is {maximum} sectors at frames {frames[:8]}, "
+            "SP tail marker build has only two relocated pending destinations: "
+            f"route maximum is {maximum} sectors at frames {frames[:8]}, "
             f"limit is {args.max_pending_sectors}")
     print(
         "SP tail marker profile guard: "

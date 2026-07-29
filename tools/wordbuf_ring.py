@@ -8,6 +8,7 @@ from typing import Sequence
 
 import numpy as np
 
+import av_config
 import pattern_supply
 import stream_schedule
 import ttrc_routing
@@ -19,7 +20,7 @@ PRG = pattern_supply.SOURCE_PRG
 WORD = pattern_supply.SOURCE_WR
 MANDATORY_PRG = 3
 PATTERNS_PER_SECTOR = stream_schedule.PATTERNS_PER_SECTOR
-MAX_WORD_STAGE_SECTORS = ttrc_routing.MAX_WORD_SECTORS
+MAX_WORD_STAGE_SECTORS = av_config.WORD_PENDING_SECTORS
 MAX_SLOT_SECTORS = ttrc_routing.FRAME_SECTORS
 BOOT_REFILL_RESERVE_SECTORS = (2, 0)
 PRG_BACKUP_TRIGGER_PATTERNS = (

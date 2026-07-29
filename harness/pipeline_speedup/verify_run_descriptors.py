@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v22 files and reconstructs every current control and payload byte. The
+TTRC v23 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -51,7 +51,7 @@ RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 22
+VERSION = 23
 CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
@@ -290,15 +290,15 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     wr0_patterns = wr1_patterns = dic_patterns = 0
     wr0_sectors = wr1_sectors = dic_sectors = 0
     if features & FEATURE_PATTERN_SUPPLY:
-        supply = struct.unpack_from(">4s9H", header, PATTERN_SUPPLY_OFFSET)
+        supply = struct.unpack_from(">4s11H", header, PATTERN_SUPPLY_OFFSET)
         supply_magic, supply_version, supply_reserved = supply[:3]
-        if supply_magic != b"PSUP" or supply_version != 3 or supply_reserved:
+        if supply_magic != b"PSUP" or supply_version != 4 or supply_reserved:
             raise AssertionError(f"invalid pattern-supply extension: {supply!r}")
         (
             wr0_patterns, wr1_patterns, dic_patterns,
             wr0_sectors, wr1_sectors, dic_sectors,
             _cold_cap,
-        ) = supply[3:]
+        ) = supply[3:10]
         if dic_patterns > DIC_CAPACITY:
             raise AssertionError(
                 f"Dic preload {dic_patterns} exceeds {DIC_CAPACITY} patterns")

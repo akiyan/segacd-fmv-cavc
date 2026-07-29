@@ -11,7 +11,7 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v22): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
+TTRCレイアウト(v23): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
               sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
@@ -233,21 +233,21 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v22: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v23: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v22: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v23: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v22: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v23: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v22: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v23: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
 
 
@@ -522,9 +522,13 @@ def run_stats(
     print(f"  source patterns: Prg={int(prg_per_frame.sum())} "
           f"Wr0={int(wr_per_frame[::2].sum())} Wr1={int(wr_per_frame[1::2].sum())} "
           f"Dic={int(dic_per_frame.sum())} BootSidecar={sidecar_count}")
-    # O_LOADS stores four bytes per run and only ordinary Prg patterns inline.
+    # O_LOADS v2 stores one VDP-ready 22-byte record per run and only ordinary
+    # Prg patterns inline.
     # Wr/Dic runs point at their persistent preload instead of copying bytes.
-    loads_bytes = prg_per_frame * PAT + runs_per_frame * 4
+    loads_bytes = (
+        prg_per_frame * PAT
+        + runs_per_frame * pattern_supply.OUTPUT_RUN_RECORD_BYTES
+    )
     if loads_caps is not None:
         caps = tuple(int(value) for value in loads_caps)
         if len(caps) != 2:
@@ -855,7 +859,7 @@ def build_control(
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v22 keeps the 16-bit entry array word-aligned even when
+            # TTRC v23 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -1150,7 +1154,7 @@ def _decode_control_chunk(chunk):
 def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v22 split stream and a combined tooling container.
+    """Write the v23 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
@@ -1239,7 +1243,7 @@ def write_stream(
 
     control = b"".join(disc_blocks)
     # Split frame 0 from the timed stream. It remains an untimed exact
-    # construction, but v22 carries its bytes in the BODY arm rather than HEADER.
+    # construction, but v23 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1370,7 +1374,7 @@ def write_stream(
     fps_int = int(round(FPS))                         # 名目fps。FEATURE_FIXED_N時はvsync_n由来のCD rate
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v22 requires an untimed frame0 BODY arm")
+        raise SystemExit("pack v23 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
     if av_config.uses_fixed_n_cadence(FPS):
         features |= FEATURE_FIXED_N
@@ -1392,13 +1396,13 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v22 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v23 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
     header += struct.pack(">HH", audio_fd, audio_preload_sec)  # offset 58: RF5C164 FD; 60: prefetch sectors
     header += struct.pack(">H", features)          # offset 62: optional stream features
-    # v22: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
+    # v23: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
     # inside the player image, not a header field.
     header += b"\0" * (SECTOR - len(header))
     header = bytearray(header)
@@ -1412,6 +1416,8 @@ def write_stream(
             len(supply_plan.dic_patterns),
             wr0_sec, wr1_sec, dic_sec,
             int(log["max_cold"]),
+            wordram_layout.wr0_load_bytes,
+            wordram_layout.wr1_load_bytes,
         )
     header = player_constants.stamp_header_sector(header)
     frame0_blk = (f0_ctrl.ljust(f0_ctrl_sec * SECTOR, b"\0")
@@ -1621,15 +1627,29 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v22 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v23 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
-    wordram_layout = pattern_supply.word_ram_layout(
-        len(per), C_CELLS, int(sim_cold))
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:
         raise SystemExit(
-            "pack v22 requires a decision log with a frozen Word-RAM layout; "
+            "pack requires a decision log with a frozen Word-RAM layout; "
             "re-run sim with the current encoder")
+    supply_schema = int(supply_meta.get("schema_version", 0))
+    if supply_schema != 5:
+        raise SystemExit(
+            "pack requires an O_LOADS-v2 Word-RAM decision log; re-run sim")
+    try:
+        wordram_layout = pattern_supply.word_ram_layout(
+            len(per),
+            C_CELLS,
+            int(sim_cold),
+            wr0_load_bytes=int(frozen_layout["wr0_load_bytes"]),
+            wr1_load_bytes=int(frozen_layout["wr1_load_bytes"]),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise SystemExit(
+            "pack: frozen Word-RAM layout lacks valid O_LOADS peaks; "
+            "re-run sim") from exc
     expected_layout = dataclasses.asdict(wordram_layout)
     if frozen_layout != expected_layout:
         raise SystemExit(
@@ -1641,14 +1661,9 @@ def main():
         enabled=supply_enabled,
         wr0_patterns=wordram_layout.wr0_patterns,
         wr1_patterns=wordram_layout.wr1_patterns)
-    supply_schema = int(supply_meta.get("schema_version", 0))
-    if supply_schema not in (3, 4):
-        raise SystemExit(
-            "pack requires a current Word-RAM decision log; re-run sim")
     word_ring_meta = supply_meta.get("word_ring") or {}
     word_ring_enabled = (
-        supply_schema >= 4
-        and bool(word_ring_meta.get("enabled", False))
+        bool(word_ring_meta.get("enabled", False))
     )
     print(f"  pattern supply: enabled={int(supply_plan.enabled)} "
           f"Prg={len(supply_plan.prg_patterns)} "
@@ -1695,8 +1710,8 @@ def main():
         per, supply_plan.sources, inline_prefetch_per,
         supply_plan.dic_indices, transfer_orders, boot_sidecar,
         loads_caps=(
-            wordram_layout.wr0_offset - pattern_supply.OUTPUT_HEADER_BYTES,
-            wordram_layout.wr1_offset - pattern_supply.OUTPUT_HEADER_BYTES,
+            wordram_layout.wr0_load_bytes,
+            wordram_layout.wr1_load_bytes,
         ))
     if not np.array_equal(packed_tiles, n_load):
         frame = int(np.flatnonzero(packed_tiles != n_load)[0])
@@ -1704,6 +1719,21 @@ def main():
             f"pack: internal cold tile mismatch at frame {frame}: "
             f"runs={int(packed_tiles[frame])} resolve={int(n_load[frame])}")
     verify_sim_pattern_transfers(log, packed_tiles, packed_runs, supply_plan)
+    inline_prg = np.asarray(supply_plan.prg_loads, np.int64).copy()
+    inline_prg[0] -= len(boot_sidecar)
+    if inline_prg[0] < 0:
+        raise SystemExit("pack: boot sidecar exceeds frame-0 Prg source count")
+    wr0_peak, wr1_peak = pattern_supply.output_load_peaks(
+        inline_prg, packed_runs)
+    packed_peaks = (wr0_peak.bytes, wr1_peak.bytes)
+    frozen_peaks = (
+        wordram_layout.wr0_load_bytes,
+        wordram_layout.wr1_load_bytes,
+    )
+    if packed_peaks != frozen_peaks:
+        raise SystemExit(
+            "pack: independently recomputed O_LOADS peaks differ from sim: "
+            f"pack={packed_peaks} sim={frozen_peaks}; re-run sim")
     shadow_meta = log.get("shadow_updates") or {}
     update_lists = np.asarray(
         shadow_meta.get("selected", np.zeros(len(per), np.bool_)), np.bool_)
