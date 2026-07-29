@@ -20,12 +20,12 @@ resize_filter = "area"
 master_denoise = false
 
 [output]
-directory = "tmpfs/BadApple_H40_320x224_adpcm22_cold200/sim"
+directory = "tmpfs/BadApple_H40_320x224_adpcm22_cold210/sim"
 reuse = false
 emit_decisions = true
 
 [encoder]
-cold_cap = 200
+cold_cap = 210
 
 [palette]
 algorithm = "mosaic-gm"

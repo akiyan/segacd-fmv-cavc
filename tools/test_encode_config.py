@@ -153,10 +153,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(
             env["CBRSIM_OUT"].endswith(
-                "tmpfs/BadApple_H40_320x224_adpcm22_cold200/sim"))
+                "tmpfs/BadApple_H40_320x224_adpcm22_cold210/sim"))
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
         self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)
