@@ -64,8 +64,8 @@ Each source has a strict TOML profile.
 - **Frame rate:** the source's native rate, including delivery-paced rates
   such as 24 fps.
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM.
-- **Cold cap:** an fps-derived baseline, optionally raised by a fully qualified
-  source profile.
+- **Cold cap:** a required per-source profile value, changed and qualified
+  through that profile.
 - **Palette algorithm:** `stl4` or `mosaic-gm`.
 - **Analysis canvas:** optional and never changes the encoded stream.
 
@@ -401,7 +401,7 @@ sourceごとにstrict TOML profileを使います。
 - **Display:** H32、H40、mode4。tile-aligned output geometryとaspect-awareなpad/crop。
 - **Frame rate:** 24 fpsのようなdelivery-paced rateも含むsource native rate。
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
-- **Cold cap:** fps由来baseline。完全に認定したsource profileだけ引き上げ可能。
+- **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
 - **Analysis canvas:** optionalで、encoded streamは変えない。
 

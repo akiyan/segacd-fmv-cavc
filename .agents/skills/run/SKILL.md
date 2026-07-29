@@ -118,9 +118,9 @@ Follow `sim` source inspection exactly:
 - preserve the displayed aspect with the mode's HAR-aware fit/pad conversion;
 - allow starvation instead of shrinking the raster.
 
-Create or update one strict `schema_version = 3` profile under `profiles/`. Put
+Create or update one strict `schema_version = 4` profile under `profiles/`. Put
 the exact full duration, source timing and aspect, mode raster, output path,
-optional timed `raw_prefetch`, optional qualified `cold_cap`, and palette
+required qualified `cold_cap`, optional timed `raw_prefetch`, and palette
 algorithm in the profile. ADPCM22, the 1,535-tile VRAM pool, GPU, Bayer
 dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
 pattern supply, forward fill, and startup-audio policy are fixed pipeline

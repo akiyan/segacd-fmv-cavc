@@ -139,11 +139,11 @@ Rules:
 
 This can take about 10-13 minutes for 2700-3100 frames.
 
-Create one strict `schema_version = 3` profile under `profiles/` for each
+Create one strict `schema_version = 4` profile under `profiles/` for each
 source/mode combination. Use the schema in `CONFIG.md`; the checked-in Bad
 Apple H32/H40 profiles are complete examples. The profile must name the source,
 native fps, exact duration, full mode raster, HAR-aware `fit`, the selected
-output directory, optional timed `raw_prefetch`, optional qualified `cold_cap`,
+output directory, required qualified `cold_cap`, optional timed `raw_prefetch`,
 and palette algorithm. Do not add fixed GPU, VRAM, dither, segmented-palette,
 Near, boot-prefetch, forward-fill, or startup-audio keys.
 
