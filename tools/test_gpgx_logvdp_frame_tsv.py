@@ -45,12 +45,13 @@ def vram(vcounter: int, pc: int) -> str:
 class GpgxLogvdpFrameTsvTests(unittest.TestCase):
     def setUp(self):
         self.pattern_pc = 0x0D7E
+        self.split_pattern_pc = 0x10BC
         self.nt_pc = 0x1338
         self.compact = [
             dma(102, 47, 47, self.pattern_pc),
             dma(102, 1792, 1792, self.nt_pc),
             dma(9, 9, 31, self.pattern_pc),
-            dma(102, 22, 22, self.pattern_pc),
+            dma(102, 22, 22, self.split_pattern_pc),
             dma(102, 1792, 1792, self.nt_pc),
             dma(102, 1792, 1792, self.nt_pc),
         ]
@@ -59,7 +60,7 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
         events = extract.dma_events(self.compact)
         self.assertEqual(
             extract.infer_dma_pcs(events, 3),
-            (self.pattern_pc, self.nt_pc, 102),
+            ((self.pattern_pc, self.split_pattern_pc), self.nt_pc, 102),
         )
 
     def test_accepts_a_complete_first_loop_followed_by_tail_replay(self):
@@ -71,16 +72,18 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
         )
         self.assertEqual(
             extract.infer_dma_pcs(events, 3),
-            (self.pattern_pc, self.nt_pc, 102),
+            ((self.pattern_pc, self.split_pattern_pc), self.nt_pc, 102),
         )
         rows = extract.extract_dma_rows(
-            events, 3, self.pattern_pc, self.nt_pc, 102)
+            events, 3, (self.pattern_pc, self.split_pattern_pc),
+            self.nt_pc, 102)
         self.assertEqual(len(rows), 3)
 
     def test_extracts_dma_and_cpu_words_on_the_same_frame_axis(self):
         events = extract.dma_events(self.compact)
         rows = extract.extract_dma_rows(
-            events, 3, self.pattern_pc, self.nt_pc, 102)
+            events, 3, (self.pattern_pc, self.split_pattern_pc),
+            self.nt_pc, 102)
         full = [
             self.compact[0],
             *[vram(224, self.pattern_pc) for _ in range(47)],
@@ -90,7 +93,7 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
             self.compact[2],
             *[vram(10, self.pattern_pc) for _ in range(9)],
             self.compact[3],
-            *[vram(224, self.pattern_pc) for _ in range(22)],
+            *[vram(224, self.split_pattern_pc) for _ in range(22)],
             vram(20, 0x0D90),
             *[vram(20, 0x0DFE) for _ in range(16)],
             self.compact[4],
@@ -99,7 +102,7 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
             *[vram(227, self.nt_pc) for _ in range(1792)],
         ]
         extract.extract_cpu_rows(
-            full, rows, self.pattern_pc, self.nt_pc)
+            full, rows, (self.pattern_pc, self.split_pattern_pc), self.nt_pc)
 
         self.assertEqual(rows[0]["pattern_dma_blank_words"], 47)
         self.assertEqual(rows[0]["pattern_cpu_blank_words"], 1)
@@ -125,7 +128,7 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
                 dma(102, 1792, 1792, self.nt_pc),
             ],
             rows,
-            self.pattern_pc,
+            (self.pattern_pc,),
             self.nt_pc,
         )
         self.assertEqual(rows[0]["pattern_cpu_boundary_words"], 2)

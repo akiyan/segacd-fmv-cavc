@@ -52,7 +52,6 @@ R2V_DMA_REPAIR_WORDS = r2v_model.DMA_REPAIR_WORDS
 P125_H40_NAME_TABLE_WORDS = (
     r2v_model.H40_STAGE_PITCH * r2v_model.H40_STAGE_ROWS)
 P125_CRAM_WORDS = r2v_model.CRAM_WORDS
-P125_RUN_SPLIT_WORDS = 3400
 
 REQ_ORDER = tuple(style.REQ_TIMELINE_CATS)
 REQ_COLORS = {name: style.CATEGORY_COLORS[name] for name in REQ_ORDER}
@@ -214,7 +213,7 @@ def load_r2v_workload(
     frames: int,
     data: dict[str, np.ndarray],
 ) -> dict[str, np.ndarray]:
-    """Load and cross-check the exact packed p125 transfer workload."""
+    """Load and cross-check the exact packed transfer workload."""
 
     required = {
         "frame", "n_runs", "loads_total", "pass2_words", "short_runs",
@@ -256,14 +255,6 @@ def load_r2v_workload(
             f"R2V workload/timeline run mismatch at frame {mismatch}: "
             f"{values['n_runs'][mismatch]} != "
             f"{expected_runs[mismatch]} runs")
-    oversized = np.flatnonzero(
-        values["max_run_words"][1:] > P125_RUN_SPLIT_WORDS)
-    if oversized.size:
-        frame = int(oversized[0]) + 1
-        raise SystemExit(
-            f"R2V p125 model cannot count split-DMA repairs: frame {frame} "
-            f"has a {values['max_run_words'][frame]}-word run above "
-            f"{P125_RUN_SPLIT_WORDS}")
     components = calculate_r2v_words(
         values["pass2_words"], values["n_runs"], values["short_runs"],
         values["pal_switch"],

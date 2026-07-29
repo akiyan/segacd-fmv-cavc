@@ -99,8 +99,8 @@ def dma_events(lines: Iterable[str]) -> list[tuple[int, int, int, int, int, int]
 def infer_dma_pcs(
     events: list[tuple[int, int, int, int, int, int]],
     frame_count: int,
-) -> tuple[int, int, int]:
-    """Infer the fixed name-table and ordinary pattern DMA call sites."""
+) -> tuple[tuple[int, ...], int, int]:
+    """Infer the fixed name-table and all timed pattern-DMA call sites."""
     nt_counts = Counter(
         pc for dma_type, _rate, _left, _capacity, remaining, pc in events
         if dma_type == 1 and remaining == 1792
@@ -126,20 +126,37 @@ def infer_dma_pcs(
         )
     nt_pc = nt_candidates[0][0]
 
-    pattern_counts = Counter(
-        pc for dma_type, _rate, _left, _capacity, _remaining, pc in events
-        if dma_type == 1 and pc != nt_pc
-    )
+    # Pattern DMA has separate whole-run, split Word-RAM, and split DicBuf
+    # wait sites.  Ignore boot-time DMA sites by discovering pattern PCs only
+    # between the first and final movie name-table markers.
+    pattern_counts: Counter[int] = Counter()
+    movie_started = False
+    name_table_frames = 0
+    for dma_type, _rate, _left, _capacity, remaining, pc in events:
+        if dma_type != 1:
+            continue
+        if pc == nt_pc and remaining == 1792:
+            movie_started = True
+            name_table_frames += 1
+            if name_table_frames >= frame_count:
+                break
+            continue
+        if movie_started:
+            pattern_counts[pc] += 1
     if not pattern_counts:
         raise ValueError("LOGVDP trace contains no pattern DMA candidate")
-    pattern_pc, _count = pattern_counts.most_common(1)[0]
+    pattern_pcs = tuple(
+        pc for pc, _count in sorted(
+            pattern_counts.items(), key=lambda item: (-item[1], item[0])
+        )
+    )
 
     nt_rates = Counter(
         rate for dma_type, rate, _left, _capacity, remaining, pc in events
         if dma_type == 1 and pc == nt_pc and remaining == 1792
     )
     blank_rate, _count = nt_rates.most_common(1)[0]
-    return pattern_pc, nt_pc, blank_rate
+    return pattern_pcs, nt_pc, blank_rate
 
 
 def empty_rows(frame_count: int) -> list[dict[str, int]]:
@@ -152,7 +169,7 @@ def empty_rows(frame_count: int) -> list[dict[str, int]]:
 def extract_dma_rows(
     events: list[tuple[int, int, int, int, int, int]],
     frame_count: int,
-    pattern_pc: int,
+    pattern_pcs: tuple[int, ...],
     nt_pc: int,
     blank_rate: int,
 ) -> list[dict[str, int]]:
@@ -188,7 +205,7 @@ def extract_dma_rows(
             nt_open = remaining > capacity
             continue
 
-        if pc != pattern_pc:
+        if pc not in pattern_pcs:
             continue
         if next_frame >= frame_count:
             raise ValueError("pattern DMA appeared after the final HUD frame")
@@ -218,7 +235,7 @@ def extract_dma_rows(
 def extract_cpu_rows(
     lines: Iterable[str],
     rows: list[dict[str, int]],
-    pattern_pc: int,
+    pattern_pcs: tuple[int, ...],
     nt_pc: int,
 ) -> None:
     """Count non-DMA VRAM writes between the inferred movie-frame markers.
@@ -230,7 +247,7 @@ def extract_cpu_rows(
     """
     frame_count = len(rows)
     next_frame = 0
-    generated_pcs = {pattern_pc, nt_pc}
+    generated_pcs = {*pattern_pcs, nt_pc}
     for line in lines:
         dma_match = DMA_RE.search(line)
         if dma_match:
@@ -320,15 +337,15 @@ def main() -> None:
     try:
         hud_rows = load_hud(hud_tsv)
         events = dma_events(log_lines(compact_log))
-        pattern_pc, nt_pc, blank_rate = infer_dma_pcs(events, len(hud_rows))
+        pattern_pcs, nt_pc, blank_rate = infer_dma_pcs(events, len(hud_rows))
         rows = extract_dma_rows(
             events,
             len(hud_rows),
-            pattern_pc,
+            pattern_pcs,
             nt_pc,
             blank_rate,
         )
-        extract_cpu_rows(log_lines(full_log), rows, pattern_pc, nt_pc)
+        extract_cpu_rows(log_lines(full_log), rows, pattern_pcs, nt_pc)
         validate_frame_axis(rows, hud_rows)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -346,7 +363,7 @@ def main() -> None:
         "output_tsv": str(output),
         "output_tsv_sha256": digest(output),
         "frames": len(rows),
-        "pattern_dma_pc": f"0x{pattern_pc:04X}",
+        "pattern_dma_pcs": [f"0x{pc:04X}" for pc in pattern_pcs],
         "name_table_dma_pc": f"0x{nt_pc:04X}",
         "blank_dma_rate_words_per_line": blank_rate,
         "cpu_blank_vcounter_range": [224, 260],
