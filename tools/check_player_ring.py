@@ -30,6 +30,9 @@ QUALIFIED_ADPCM_BOOT_COPY_BYTES = 0x58
 QUALIFIED_ADPCM_BOOT_COPY_SHA256 = (
     "8bca1932c1351273279a3329519a4051e5796749b05b43be911e3247af79d925"
 )
+SP_TAIL_MARKER_ADPCM_BOOT_COPY_SHA256 = (
+    "d68bf023717f28c36134c48c339e786f87259f0a7c3a70bb0604780eade8d862"
+)
 sp_text = SP.read_text()
 sp_ext_text = SP_EXT.read_text()
 ip_text = IP.read_text()
@@ -73,6 +76,14 @@ parser.add_argument(
     type=Path,
     help="generated sp_extension.inc",
 )
+parser.add_argument(
+    "--sp-tail-marker",
+    action="store_true",
+    help=(
+        "expect the diagnostic extension whose index table leaves "
+        "0x7400..0x7fff marker-owned"
+    ),
+)
 args = parser.parse_args()
 
 pc_text = args.constants.read_text() if args.constants else ""
@@ -85,13 +96,18 @@ if extension_include_values != extension_values:
         "check_player_ring: Sub extension constants do not match the linked "
         "binary size/hash/address contract")
 qualified_adpcm_entry = extension_bytes[:QUALIFIED_ADPCM_BOOT_COPY_BYTES]
+expected_adpcm_entry_hash = (
+    SP_TAIL_MARKER_ADPCM_BOOT_COPY_SHA256
+    if args.sp_tail_marker
+    else QUALIFIED_ADPCM_BOOT_COPY_SHA256
+)
 if (
     len(qualified_adpcm_entry) != QUALIFIED_ADPCM_BOOT_COPY_BYTES
     or hashlib.sha256(qualified_adpcm_entry).hexdigest()
-    != QUALIFIED_ADPCM_BOOT_COPY_SHA256
+    != expected_adpcm_entry_hash
 ):
     sys.exit(
-        "check_player_ring: the qualified 88-byte ADPCM boot entry changed")
+        "check_player_ring: the expected 88-byte ADPCM boot entry changed")
 def pc(name: str) -> int:
     if not pc_text:
         sys.exit(
