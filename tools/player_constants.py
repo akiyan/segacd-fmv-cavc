@@ -265,7 +265,9 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             raise ValueError("pattern-supply extension is present while feature bit 3 is clear")
         wr0_patterns = wr1_patterns = dic_patterns = 0
         wr0_sectors = wr1_sectors = dic_sectors = 0
-        cold_cap = av_config.baseline_cold_cap_for_fps(fps_int)
+        # A header without pattern supply carries no cold-cap field. Its empty
+        # WordBuf layout uses the full grid only as a conservative size input.
+        cold_cap = cells
         wordram = pattern_supply.word_ram_layout(frames, cells, cold_cap)
 
     return PlayerConstants(

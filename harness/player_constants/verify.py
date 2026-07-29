@@ -33,14 +33,15 @@ class Case:
     pattern_supply: bool = False
     tcols: int | None = None
     trows: int = 28
+    cold_cap: int = 200
 
 
 CASES = (
-    Case("h32-15", 0, 15),
-    Case("h32-24-supply", 0, 24, True),
+    Case("h32-15", 0, 15, cold_cap=360),
+    Case("h32-24-supply", 0, 24, True, cold_cap=225),
     Case("h32-30-supply", 0, 30, True),
-    Case("h40-15", 1, 15),
-    Case("h40-24-supply", 1, 24, True),
+    Case("h40-15", 1, 15, cold_cap=360),
+    Case("h40-24-supply", 1, 24, True, cold_cap=225),
     Case("h40-30-supply", 1, 30, True),
     Case("h40-30-centered", 1, 30, True, 36, 25),
 )
@@ -84,7 +85,7 @@ def make_header(case: Case) -> bytes:
     sector = bytearray(
         prefix + bytes(128) + bytes(player_constants.SECTOR - 192))
     if case.pattern_supply:
-        cold_cap = av_config.baseline_cold_cap_for_fps(case.fps)
+        cold_cap = case.cold_cap
         layout = pattern_supply.word_ram_layout(
             frames, cells, cold_cap)
         player_constants.PATTERN_SUPPLY_STRUCT.pack_into(

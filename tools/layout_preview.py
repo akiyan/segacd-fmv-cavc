@@ -17,7 +17,6 @@ import math
 import random
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
-import av_config   # cold_cap_for_fps (Coldバーのフルスケール)
 import analysis_style as style
 import stream_schedule
 
@@ -293,7 +292,7 @@ def dummy_data():
                 supply_remaining={name: values[126] for name, values in supply_series.items()},
                 cold=displayed_cold + prefetch, cold_prefetch=prefetch,
                 prefetch_cap=32,
-                cold_cap=av_config.cold_cap_for_fps(fps),
+                cold_cap=200,
                 dma_tiles=dma_tiles, dma_runs=23,
                 r2v_words=r2v_words, r2v_max=r2v_max,
                 tl=tl, supply_series=supply_series, tln=tln,

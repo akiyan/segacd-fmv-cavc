@@ -277,12 +277,15 @@ if CRAM_QUALITY_PRIORITY_SEARCH_FRAMES < 0:
 # 0で無効(=従来の帯域余し挙動に戻せる, 比較用)。
 UPGRADE_ON = os.environ.get("CBRSIM_UPGRADE", "1") != "0"
 # cold(=新規パターン転送: Raw+Buf)の1コマ上限。実機MDの実時間デコード天井対策
-# (BUDGETS.md 'Encoder cap')。超過セルは Flbk近似 or Miss繰越。0=無効。
-# 1コマの cold baseline はfpsだけから導出する。モードと画面タイル数は
-# baselineに関与しない。profileは全編認定済みの上限へ引き上げられる。
+# (BUDGETS.md 'Encoder cap')。超過セルは Flbk近似 or Miss繰越。
+# Executable encodes always receive the explicit profile value. Import-only
+# utility callers use the full grid because they do not produce an artifact.
 # frame0 は下の frame_max_cold で別途免除。
-COLD_CAP_QUALIFICATION = av_config.cold_cap_qualification(FPS)
-MAX_COLD = COLD_CAP_QUALIFICATION.cap
+MAX_COLD = av_config.cold_cap(
+    C_CELLS if CONFIG_PROFILE is None
+    and not os.environ.get("CBRSIM_COLD_CAP", "").strip()
+    else None
+)
 MAX_RUN_CONTROL_BYTES = stream_schedule.max_run_control_reservation(
     MAX_COLD, ACTIVE_TILES)
 # Boot VRAM prefetch uses otherwise-unused frame-0 HEADER/staging capacity and
@@ -1299,14 +1302,7 @@ def main():
                 f"{measured_active_tiles} tiles that are ever non-black")
     print(f"  {n} frames @ {W}x{H} ({TCOLS}x{TROWS}={C_CELLS} cells, "
           f"active={ACTIVE_TILES})")
-    baseline_cap = (
-        COLD_CAP_QUALIFICATION.baseline_cap
-        if COLD_CAP_QUALIFICATION.baseline_cap is not None
-        else MAX_COLD)
-    print(
-        f"  cold cap={MAX_COLD}: source={COLD_CAP_QUALIFICATION.source} "
-        f"baseline={baseline_cap}; "
-        f"fps={COLD_CAP_QUALIFICATION.fps:g}")
+    print(f"  cold cap={MAX_COLD}: profile; fps={FPS:g}")
 
     # The source WAV remains the packer's input.  Analysis must instead audition
     # the exact stream reconstructed by the Sub CPU and quantized for RF5C164.
@@ -4015,11 +4011,6 @@ def main():
                 "prg_physical_ring_kb": int(av_config.RING_SIZE_KB),
                 "quality_budget_kb": int(QUALITY_BUDGET_KB),
                 "max_cold": int(MAX_COLD),
-                "baseline_cold_cap": int(
-                    COLD_CAP_QUALIFICATION.baseline_cap
-                    if COLD_CAP_QUALIFICATION.baseline_cap is not None
-                    else MAX_COLD),
-                "cold_cap_source": COLD_CAP_QUALIFICATION.source,
             },
             "encoder": {
                 "detail_alpha": float(DETAIL_ALPHA),
@@ -4416,12 +4407,6 @@ def _rebind_cached_profile(data):
     source_config = config.get("source")
     if isinstance(source_config, dict):
         source_config["path"] = str(SRC)
-    hardware = config.get("hardware")
-    if isinstance(hardware, dict):
-        hardware["baseline_cold_cap"] = int(
-            COLD_CAP_QUALIFICATION.baseline_cap
-            if COLD_CAP_QUALIFICATION.baseline_cap is not None else MAX_COLD)
-        hardware["cold_cap_source"] = COLD_CAP_QUALIFICATION.source
     temporary = decision_path.with_name(
         f".{decision_path.name}.{os.getpid()}.tmp")
     with temporary.open("wb") as output:

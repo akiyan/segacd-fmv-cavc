@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 
 [source]
 path = "assets/ps2_sakura_op.mp4"
@@ -18,6 +18,9 @@ raw_filter = "setsar=1,crop=640:376:0:52,scale=256:172:flags=lanczos,pad=256:224
 directory = "tmpfs/ps2_sakura_op_H32_256x224_adpcm22/sim"
 reuse = false
 emit_decisions = true
+
+[encoder]
+cold_cap = 200
 
 [palette]
 algorithm = "mosaic-gm"

@@ -10,9 +10,9 @@ than the sim modelled (e.g. sim cap 350 -> pack realized 357). Even with matchin
 re-derived allocation is never bit-identical.
 
 The fix: one allocator, imported by both. When the sim caps its per-frame cold at
-``cold_cap_for_fps`` using THIS allocator, and the pack replays the SAME allocator on
+the profile cold cap using THIS allocator, and the pack replays the SAME allocator on
 the SAME per-frame update order, the pack's realized cold equals the sim's cap by
-construction. So ``COLD_CAP_REALIZED`` collapses into the single ``cold_cap_for_fps``.
+construction. So ``COLD_CAP_REALIZED`` collapses into the single profile cap.
 
 Policy: **contiguous** (a clock hand walks the slot ring), which keeps cold tiles in
 neighbouring VRAM slots so the Main CPU can DMA them in long runs. Displayed tiles

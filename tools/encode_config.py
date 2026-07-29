@@ -15,7 +15,6 @@ import os
 import re
 import sys
 import tomllib
-from fractions import Fraction
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, MutableMapping
@@ -23,7 +22,7 @@ from typing import Any, MutableMapping
 import av_config
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 ARTIFACT_ROOT = Path("out")
 TEMP_ROOT = Path("tmp")
 _ARTIFACT_STEM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -105,6 +104,7 @@ REQUIRED = {
     "source": {"path", "fps", "duration"},
     "video": {"mode", "width", "height", "fit"},
     "output": {"directory", "emit_decisions"},
+    "encoder": {"cold_cap"},
     "palette": {"algorithm"},
 }
 
@@ -230,18 +230,18 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     if not 1 <= active_tiles <= total_tiles:
         raise ValueError(
             f"{profile_path}: video.active_tiles must be within 1..{total_tiles}")
-    source_fps = float(Fraction(str(data["source"]["fps"])))
-    baseline_cold_cap = av_config.baseline_cold_cap_for_fps(source_fps)
-    requested_cold_cap = data.get("encoder", {}).get("cold_cap")
-    if requested_cold_cap is not None:
-        if isinstance(requested_cold_cap, bool) or not isinstance(
-                requested_cold_cap, int):
-            raise ValueError(
-                f"{profile_path}: encoder.cold_cap must be an integer")
-        if requested_cold_cap < baseline_cold_cap:
-            raise ValueError(
-                f"{profile_path}: encoder.cold_cap {requested_cold_cap} is "
-                f"below baseline {baseline_cold_cap} for fps={source_fps:g}")
+    requested_cold_cap = data["encoder"]["cold_cap"]
+    if isinstance(requested_cold_cap, bool) or not isinstance(
+            requested_cold_cap, int):
+        raise ValueError(
+            f"{profile_path}: encoder.cold_cap must be an integer")
+    if requested_cold_cap <= 0:
+        raise ValueError(
+            f"{profile_path}: encoder.cold_cap must be positive")
+    if requested_cold_cap > av_config.VRAM_PATTERN_POOL_TILES:
+        raise ValueError(
+            f"{profile_path}: encoder.cold_cap {requested_cold_cap} exceeds "
+            f"the {av_config.VRAM_PATTERN_POOL_TILES}-tile resident pool")
     cram_priority_search_frames = data.get(
         "encoder", {}).get("cram_quality_priority_search_frames")
     if cram_priority_search_frames is not None:
@@ -335,15 +335,6 @@ def apply_profile_env(
         value = str(int(video["width"]) * int(video["height"]) // 64)
         env["CBRSIM_ACTIVE_TILES"] = value
         applied["CBRSIM_ACTIVE_TILES"] = value
-    # Omission means the fps-derived baseline, never an inherited value from
-    # another source. An explicit profile value was already applied by ENV_MAP
-    # and validated not to lower that baseline.
-    if "CBRSIM_COLD_CAP" not in applied:
-        source = profile.data["source"]
-        value = str(av_config.baseline_cold_cap_for_fps(
-            float(Fraction(str(source["fps"])))))
-        env["CBRSIM_COLD_CAP"] = value
-        applied["CBRSIM_COLD_CAP"] = value
     for name, value in PROFILE_ENV_DEFAULTS.items():
         if name not in applied:
             env[name] = value

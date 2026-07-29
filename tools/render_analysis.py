@@ -107,8 +107,9 @@ STAT_COLUMNS = tuple(str(z["cols"]).split())
 idx = {k: i for i, k in enumerate(STAT_COLUMNS)}
 FPS = float(z["fps"]); C = int(z["cells"]); BUDGET = int(z["budget_tiles"])
 ACTIVE_TILES = int(z["active_tiles"]) if "active_tiles" in z else C
-COLD_CAP = (int(z["max_cold"]) if "max_cold" in z else
-            L.av_config.cold_cap_for_fps(FPS))
+if "max_cold" not in z:
+    raise ValueError("stats.npz has no profile cold cap; re-run sim")
+COLD_CAP = int(z["max_cold"])
 NF = len(S)
 DECISION_PATH = Path(SIM) / "decisions.pkl"
 if not DECISION_PATH.is_file():

@@ -1658,22 +1658,17 @@ def main():
           f"ring={int(word_ring_enabled)} "
           f"refill={len(supply_plan.wr0_refill_patterns)}/"
           f"{len(supply_plan.wr1_refill_patterns)}")
-    # 不変条件(単一真実源 av_config): 実配信(pack)の1コマ cold が drop-safe 上限を超えたら失敗。
+    # 不変条件: 実配信(pack)の1コマ cold がprofile上限を超えたら失敗。
     # sim のモデル cap が pack の連続スロット割当に対して高すぎる兆候(=解析は合うが実機で滑る)。
     # frame0(完全ロードのヘッダ)は除外。
-    # realized == cap(共有 TileAllocator で構成上保証)。上限=cap を自動取得(手動env廃止)。
+    # realized == cap(共有 TileAllocator で構成上保証)。上限はprofile/logから取得する。
     if profile is not None:
-        profile_cold_cap = profile.section("encoder").get("cold_cap")
-        if profile_cold_cap is None:
-            profile_cold_cap = av_config.baseline_cold_cap_for_fps(FPS)
-        requested_cold_cap = int(profile_cold_cap)
+        requested_cold_cap = int(profile.section("encoder")["cold_cap"])
     else:
         # A direct decision-log pack has no TOML to authenticate. Preserve the
-        # cap frozen by that sim while still enforcing its fps baseline.
+        # cap frozen by that sim.
         requested_cold_cap = int(log.get("max_cold", 0))
-    cold_qualification = av_config.cold_cap_qualification(
-        FPS, requested_cap=requested_cold_cap)
-    cold_ceiling = cold_qualification.cap
+    cold_ceiling = av_config.cold_cap(requested_cold_cap)
     if int(sim_cold) != cold_ceiling:
         raise SystemExit(
             f"pack: sim cold cap={sim_cold} differs from effective profile "
@@ -1683,9 +1678,8 @@ def main():
         raise SystemExit(
             f"pack: realized per-frame cold max={realized_max} > cap={cold_ceiling}. "
             f"共有 TileAllocator では realized=cap のはず=想定外。sim/pack の割り当て食い違いを疑う。")
-    print(f"  realized cold: max={realized_max} <= {FPS:g}fps cap {cold_ceiling} "
-          f"(source={cold_qualification.source}, baseline="
-          f"{cold_qualification.baseline_cap}; 共有割り当て)")
+    print(f"  realized cold: max={realized_max} <= profile cap {cold_ceiling} "
+          "(共有割り当て)")
     if len(n_load) and int(n_load[0]) > POOL:
         raise SystemExit(
             f"pack: frame0 exact+prefetch cold={int(n_load[0])} exceeds "
