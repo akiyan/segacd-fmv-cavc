@@ -20,13 +20,13 @@ resize_filter = "area"
 master_denoise = false
 
 [output]
-directory = "videos/BadApple_H40_320x224_adpcm22_cold210/tmp"
+directory = "videos/BadApple_H40_320x224_adpcm22_cold200/tmp"
 reuse = false
 emit_decisions = true
 
 [encoder]
 raw_prefetch = true
-cold_cap = 210
+cold_cap = 200
 
 [palette]
 algorithm = "mosaic-gm"

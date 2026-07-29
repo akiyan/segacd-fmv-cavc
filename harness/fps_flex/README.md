@@ -109,11 +109,11 @@ Remaining player work (v4), all delicate + emulator-tested:
 Built the first true 30fps disc (Sonic Jam OP, H32 256x208, 832 cells, cap 175,
 MOVIE.DAT v4, N=2 = 29.97) and recorded it on Genesis Plus GX.
 
-**It plays** — correct content, palettes switch, **D=0 (zero desync), runs to the
-end (F 0x9ED)**. The v4 variable-frame format + player are sound. BUT the player
-**cannot sustain 30fps for this dense spec**: the HUD S (CD sector-slip recoveries)
-climbs to ~316 and R (audio re-sync) to ~147 over the movie, and the effective rate
-measured from the F counter is **~16 fps** (about half of 29.97) — each slip forces a
+**It plays** — correct content, palettes switch, `control_desync=0`, and runs
+to `frame=0x9ED`. The v4 variable-frame format + player are sound. BUT the
+player **cannot sustain 30fps for this dense spec**: HUD `sector_slip` climbs
+to about 316 and `audio_resync` to about 147 over the movie, and the effective
+rate measured from `frame` is **about 16 fps** (about half of 29.97) — each slip forces a
 re-seek that costs time.
 
 Root cause: at 30fps the Sub-CPU must drain the CDC at ~2x the 15fps rate, and the
@@ -122,7 +122,8 @@ current pump can't keep up on the 832-cell frames → the CDC overflows → sect
 described in BUDGETS.md: the real limit is the pipeline, not raw DMA.
 
 Conclusion: **true 30fps is NOT structurally impossible** — the format, the data rate
-(fits CD 1x), and the player all work (D=0, plays to completion). The binding limit is
+(fits CD 1x), and the player all work (`control_desync=0`, plays to
+completion). The binding limit is
 Sub-CPU pump throughput, which the MOVEM block-copy and reduced-polling work is
 designed to lift. A lighter spec (fewer cells) would already hit 30fps clean now.
 
@@ -145,17 +146,20 @@ plain data-pacing (Sub-signal handshake) already gives the right fps, and the pa
 was itself nudging the Main off the disc rate and causing extra slips.
 
 Results:
-- **ed (15fps, H40 1120-cell): S=0, D=0, R=1, steady 15.0fps** — identical to v3
+- **ed (15fps, H40 1120-cell): `sector_slip=0`, `control_desync=0`,
+  `audio_resync=1`, steady 15.0fps** — identical to v3
   (15fps rate-matches to a constant 5 sectors/frame). Uploaded.
-- **Sonic (30fps, H32 832-cell): D=0, plays clean to the end, correct content — but
-  still ~16fps** with slips (S) growing (~12% of frames). Rate-matching removed the
+- **Sonic (30fps, H32 832-cell): `control_desync=0`, plays clean to the end,
+  correct content — but still ~16fps** with `sector_slip` growing
+  (about 12% of frames). Rate-matching removed the
   over-delivery component but Sonic's binding limit is **Sub-CPU expand throughput**:
   832 cells at 30fps is ~2x the per-second decode work of 15fps, more than the Sub
   can do alongside the CD drain, so the ring fills → back-pressure → slips → the
   effective rate settles at what the Sub can sustain (~16fps). This is the
   pipeline-speed limit, not a format/over-delivery problem.
 
-Bottom line: 30fps is structurally correct (D=0, rate-matched disc, plays fully).
+Bottom line: 30fps is structurally correct (`control_desync=0`, rate-matched
+disc, plays fully).
 Clean 30fps of a **dense** spec needs the Sub speedup; a lighter grid
 (~≤500 cells, so cells·30fps ≤ the ~16800 cells/s the Sub sustains at 15fps) would
 already play clean 30fps now.

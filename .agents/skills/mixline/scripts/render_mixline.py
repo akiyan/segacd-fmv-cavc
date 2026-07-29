@@ -366,20 +366,24 @@ def main() -> None:
     limits = hudline["gate_limits"]
     gate_text = "  ".join(
         f"{key} {int(maxima[key])}/{int(limits[key])}"
-        for key in ("S", "D", "R", "M", "J")
+        for key in limits
     )
-    diagnostic_c = int(
-        hudline.get("diagnostic_maxima", {}).get("C", 0)
+    cd_wait_max = int(
+        hudline.get("diagnostic_maxima", {}).get("cd_wait_count", 0)
     )
-    diagnostic_g = hudline.get("diagnostic_maxima", {}).get("G")
-    diagnostic_g_text = (
-        f"G diagnostic max {int(diagnostic_g)} ticks | "
-        if diagnostic_g is not None else ""
+    pump_gap_max = hudline.get(
+        "diagnostic_maxima",
+        {},
+    ).get("pump_gap_ticks")
+    pump_gap_text = (
+        f"pump gap diagnostic max {int(pump_gap_max)} ticks | "
+        if pump_gap_max is not None else ""
     )
-    apply_guard_frames = hudline.get("apply_guard_blocked_frames")
-    apply_guard_text = (
-        f"B APPLY block {int(apply_guard_frames)} frames | "
-        if apply_guard_frames is not None else ""
+    apply_backpressure_frames = hudline.get("apply_backpressure_frames")
+    apply_backpressure_text = (
+        "APPLY back-pressure "
+        f"{int(apply_backpressure_frames)} frames | "
+        if apply_backpressure_frames is not None else ""
     )
     vblank_text = ""
     if hudline.get("display_vblank_warning_supported"):
@@ -393,10 +397,11 @@ def main() -> None:
         (24, 127),
         (
             f"Playback /hudline | gate maxima / limits  {gate_text} | "
-            f"C diagnostic max {diagnostic_c} | "
-            f"{diagnostic_g_text}"
-            f"{apply_guard_text}"
-            f"J normal {int(hudline['jitter_normal_kib'])} KiB | "
+            f"cd_wait_count diagnostic max {cd_wait_max} | "
+            f"{pump_gap_text}"
+            f"{apply_backpressure_text}"
+            "PrgBuf jitter normal "
+            f"{int(hudline['jitter_normal_kib'])} KiB | "
             f"OCR {float(hudline.get('ocr_confidence_min', 0.0)):.3f}"
             f"{vblank_text}"
         ),

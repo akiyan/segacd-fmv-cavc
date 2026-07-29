@@ -18,7 +18,7 @@ H40_STAGE_ROWS = 28
 
 # DEBUG specialized players publish this many name-table cells outside the
 # encoded movie grid. Fixed-N H40 stages them inside its 64x28 name-table DMA.
-DEBUG_HUD_WORDS = 69
+DEBUG_HUD_WORDS = 39
 
 
 def name_table_words(

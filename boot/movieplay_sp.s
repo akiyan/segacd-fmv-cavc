@@ -777,7 +777,7 @@ arm_audio_lp:
 
 frame0_handoff:
 	/* One CMD_STREAM command spans startup. Hand frame 0 to Main with the
-	   suffix still stopped; Main shows F=FFFF, builds and flips F=0000, then
+	   suffix still stopped; Main shows frame=FFFF, builds and flips frame=0000, then
 	   clears CMD_STREAM to launch the first timed BODY read. */
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle

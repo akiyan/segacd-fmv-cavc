@@ -1,36 +1,18 @@
 #!/usr/bin/env python3
-"""Extract and aggregate the DEBUG HUD from a native playback recording.
+"""Extract and aggregate the 39-cell DEBUG HUD from a native recording.
 
-The player renders values only in one fixed 30-cell order in both modes:
+Every output field uses a descriptive snake_case name. H32 wraps the sequence
+after 32 cells; H40 fits it in one row. The OCR layer unpacks Main VBlank spill
+from the transfer stopwatch, APPLY back-pressure from the pump-gap word, and
+reader frame/sector lead from their shared byte.
 
-    H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
+Frames are decoded sequentially through ffmpeg. High-confidence OCR samples
+with the same frame value are combined before audio_resync transitions are
+reported. This is a diagnostic tool only; its HUD timing must not be used to
+trim a publication recording or to place YouTube chapters.
 
-The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H32 and
-H40 DEBUG builds append Q/V/O/E/G/K/H/X/Y/Z/T/I/Y3/Y4 as one 69-cell logical
-sequence, wrapped after 32 or 40 cells respectively. Q is the signed minimum logical
-PrgBuf balance observed during that frame, in exact 32-byte patterns.
-G is the maximum time spent outside the Sub CDC pump between service
-opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
-sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
-that APPLY back-pressure rejected a control-sector pump. H is the per-frame
-physical PrgBuf peak in exact patterns. X packs complete reader frame slots
-ahead in its high byte and the current slot's sector index in its low byte.
-Y/Z/Y3/Y4 are the exact pattern words charged to fresh runtime VBlank budgets
-1--4, O/I are the V-counters after the first/last actual pattern share, and T
-is the number of budgets opened. A whole run can physically cross active
-display without opening another budget. A supplied H32 or H40 profile selects
-its combined layout
-automatically. Legacy one-row recordings remain readable through their
-explicit layout options.
-
-Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
-with the same F value are combined before R transitions are reported.  This is
-a diagnostic tool only; its HUD timing must not be used to trim a publication
-recording or to place YouTube chapters.
-
-Current players expose their black pre-roll state as F=FFFF. The extractor
-prefers an F0000 anchor immediately after that sentinel, but retains the older
-plausible-run fallback for recordings made before the sentinel existed.
+Current players expose their black pre-roll state as frame=FFFF. The extractor
+anchors content at the immediately following frame=0000.
 """
 
 from __future__ import annotations
@@ -141,31 +123,12 @@ def iter_samples(
     probe: Probe,
     confidence: float,
     crop_x: int,
-    flip_fields: bool = False,
-    poll_gap_fields: bool = False,
-    combined_fields: bool = False,
 ) -> Iterable[Sample]:
     # Only the top-left HUD area is sent through the pipe.  Decoding still sees
     # every source frame, while pipe traffic stays small even for an upscaled MP4.
     available_width = probe.width - crop_x
-    layout = read_frameno.hud_common_layout_for_width(available_width)
-    selected_layouts = sum((flip_fields, poll_gap_fields, combined_fields))
-    if selected_layouts > 1:
-        raise SystemExit(
-            "--flip-fields, --poll-gap-fields, and --combined-fields "
-            "are mutually exclusive"
-        )
-    if flip_fields:
-        if layout is not read_frameno.HUD_H40_LAYOUT:
-            raise SystemExit("--flip-fields requires a native H40 recording")
-        layout = read_frameno.HUD_H40_FLIP_LAYOUT
-    elif poll_gap_fields:
-        if layout is not read_frameno.HUD_H40_LAYOUT:
-            raise SystemExit("--poll-gap-fields requires a native H40 recording")
-        layout = read_frameno.HUD_H40_POLL_GAP_LAYOUT
-    elif combined_fields:
-        layout = read_frameno.hud_layout_for_width(available_width)
-    fields = tuple(name for name, _col, _digits in layout)
+    layout = read_frameno.hud_layout_for_width(available_width)
+    fields = read_frameno.hud_fields_for_layout(layout)
     hud_width_cells, hud_height_cells = read_frameno.hud_layout_dimensions(
         layout
     )
@@ -262,7 +225,7 @@ def group_samples(samples: Iterable[Sample], max_gap: int) -> list[FrameGroup]:
     pending: list[Sample] = []
     for sample in samples:
         if pending and (
-            sample.values["F"] != pending[-1].values["F"]
+            sample.values["frame"] != pending[-1].values["frame"]
             or sample.capture - pending[-1].capture > max_gap
         ):
             groups.append(aggregate(pending))
@@ -277,7 +240,7 @@ def _has_anchor_run(groups: list[FrameGroup], start: int, length: int, max_step:
     previous = 0
     accepted = 1
     for group in groups[start + 1:start + length * 3]:
-        frame = group.values["F"]
+        frame = group.values["frame"]
         if frame == previous:
             continue
         if 1 <= frame - previous <= max_step:
@@ -295,20 +258,21 @@ def find_movie_anchor(
 ) -> tuple[int, bool]:
     plausible = [
         index for index, group in enumerate(groups)
-        if group.values["F"] == 0
+        if group.values["frame"] == 0
         and _has_anchor_run(groups, index, anchor_run, max_step)
     ]
     sentinel_anchored = [
         index for index in plausible
         if index > 0
-        and groups[index - 1].values["F"] == read_frameno.FRAME_MINUS_ONE
+        and groups[index - 1].values["frame"] == read_frameno.FRAME_MINUS_ONE
     ]
     anchor = sentinel_anchored[0] if sentinel_anchored else (
         plausible[0] if plausible else None
     )
     if anchor is None:
         raise SystemExit(
-            f"could not find F0000 followed by {anchor_run - 1} plausible HUD frames; "
+            "could not find frame=0000 followed by "
+            f"{anchor_run - 1} plausible HUD frames; "
             "check --confidence and --crop-x"
         )
     return anchor, bool(sentinel_anchored)
@@ -323,7 +287,7 @@ def select_movie_groups(
     loop = 0
     previous = -1
     for group in groups[anchor:]:
-        frame = group.values["F"]
+        frame = group.values["frame"]
         if not selected:
             pass
         elif frame == previous:
@@ -353,7 +317,7 @@ def select_movie_groups(
 def transition_indices(groups: list[FrameGroup]) -> list[int]:
     return [
         index for index in range(1, len(groups))
-        if groups[index].values["R"] != groups[index - 1].values["R"]
+        if groups[index].values["audio_resync"] != groups[index - 1].values["audio_resync"]
     ]
 
 
@@ -361,7 +325,7 @@ def timed_first_loop(groups: list[FrameGroup]) -> list[FrameGroup]:
     """Return timed movie frames, excluding frame 0 and later loops."""
     return [
         group for group in groups
-        if group.loop == 0 and group.values["F"] != 0
+        if group.loop == 0 and group.values["frame"] != 0
     ]
 
 
@@ -392,22 +356,28 @@ def field_statistics(
     }
 
 
-def c_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
+def cd_wait_statistics(
+    groups: list[FrameGroup],
+) -> dict[str, int | float]:
     """Summarize blocking CD pumps over the timed first movie loop."""
-    return field_statistics(groups, "C")
+    return field_statistics(groups, "cd_wait_count")
 
 
-def a_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
+def adpcm_decode_statistics(
+    groups: list[FrameGroup],
+) -> dict[str, int | float]:
     """Summarize Sub ADPCM decode time over the timed first movie loop."""
-    return field_statistics(groups, "A")
+    return field_statistics(groups, "adpcm_decode_units")
 
 
-def g_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
-    """Summarize maximum time outside the Sub CDC pump, excluding B."""
+def pump_gap_statistics(
+    groups: list[FrameGroup],
+) -> dict[str, int | float]:
+    """Summarize maximum time outside the Sub CDC pump."""
     values = [
-        group.values["G"] & 0x0FFF
+        group.values["pump_gap_ticks"]
         for group in timed_first_loop(groups)
-        if "G" in group.values
+        if "pump_gap_ticks" in group.values
     ]
     if not values:
         return {
@@ -426,27 +396,13 @@ def g_statistics(groups: list[FrameGroup]) -> dict[str, int | float]:
     }
 
 
-def apply_guard_blocked_frames(groups: list[FrameGroup]) -> int:
-    """Count timed frames whose packed G field records APPLY back-pressure."""
+def apply_backpressure_frame_count(groups: list[FrameGroup]) -> int:
+    """Count timed frames that report APPLY back-pressure."""
     return sum(
-        bool(group.values["G"] & 0x8000)
+        bool(group.values["apply_backpressure"])
         for group in timed_first_loop(groups)
-        if "G" in group.values
+        if "apply_backpressure" in group.values
     )
-
-
-def signed_q(raw: int) -> int:
-    """Decode the four-digit Q field as a signed 16-bit pattern balance."""
-    return raw - 0x10000 if raw & 0x8000 else raw
-
-
-def prgbuf_minimum(groups: list[FrameGroup]) -> int | None:
-    values = [
-        signed_q(group.values["Q"])
-        for group in timed_first_loop(groups)
-        if "Q" in group.values
-    ]
-    return min(values) if values else None
 
 
 def format_field_statistics(
@@ -464,37 +420,40 @@ def format_field_statistics(
     )
 
 
-def format_c_statistics(result: dict[str, int | float]) -> str:
-    return format_field_statistics("C", result)
+def format_cd_wait_statistics(result: dict[str, int | float]) -> str:
+    return format_field_statistics("cd_wait_count", result)
 
 
-def format_a_statistics(result: dict[str, int | float]) -> str:
-    return format_field_statistics("A", result)
+def format_adpcm_decode_statistics(
+    result: dict[str, int | float],
+) -> str:
+    return format_field_statistics("adpcm_decode_units", result)
 
 
 def _fmt(group: FrameGroup) -> str:
     v = group.values
-    transfer = f" U{v['U']:04X} N{v['N']:02X}" if "U" in v else ""
-    jitter = f" J{v['J']:02X}" if "J" in v else ""
-    prgbuf = f" Q{v['Q']:04X}" if "Q" in v else ""
-    poll_gap = (
-        f" G{v['G'] & 0x0FFF:04X} B{int(bool(v['G'] & 0x8000)):02X}"
-        if "G" in v else ""
-    )
-    msf_gap = f" K{v['K']:02X}" if "K" in v else ""
-    physical_peak = f" H{v['H']:04X}" if "H" in v else ""
-    reader_ahead = f" X{v['X']:04X}" if "X" in v else ""
-    transfer_split = (
-        f" Y{v['Y']:03X} Z{v['Z']:03X} T{v['T']:01X} I{v['I']:02X}"
-        if all(field in v for field in "YZTI") else ""
-    )
     return (
         f"loop={group.loop} t={group.time_first:8.3f}s "
         f"cap={group.capture_first:5d}-{group.capture_last:<5d} "
-        f"F{v['F']:04X} P{v['P']:02X} S{v['S']:02X} D{v['D']:02X} "
-        f"R{v['R']:02X} L{v['L']:02X} C{v['C']:02X} W{v['W']:02X} "
-        f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf}"
-        f"{poll_gap}{msf_gap}{physical_peak}{reader_ahead}{transfer_split} "
+        f"frame={v['frame']:04X} palette_segment={v['palette_segment']:X} "
+        f"sector_slip={v['sector_slip']:X} "
+        f"control_desync={v['control_desync']:X} "
+        f"audio_resync={v['audio_resync']:X} "
+        f"audio_lead_256b={v['audio_lead_256b']:02X} "
+        f"cd_wait_count={v['cd_wait_count']:X} "
+        f"sub_wait_scanlines={v['sub_wait_scanlines']:02X} "
+        f"vblank_spill={v['vblank_spill']:X} "
+        f"adpcm_decode_units={v['adpcm_decode_units']:02X} "
+        f"transfer_ticks={v['transfer_ticks']:03X} "
+        f"cold_runs={v['cold_runs']:02X} "
+        f"prgbuf_jitter_peak_kib={v['prgbuf_jitter_peak_kib']:02X} "
+        f"pump_gap_ticks={v['pump_gap_ticks']:03X} "
+        f"apply_backpressure={v['apply_backpressure']} "
+        f"msf_gap_recoveries={v['msf_gap_recoveries']:X} "
+        f"reader_ahead_frames={v['reader_ahead_frames']:X} "
+        f"reader_slot_sector={v['reader_slot_sector']:X} "
+        f"transfer_vblanks={v['transfer_vblanks']:X} "
+        f"transfer_end_vcounter={v['transfer_end_vcounter']:02X} "
         f"n={group.sample_count} "
         f"conf={group.confidence:.3f}"
     )
@@ -505,59 +464,64 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
     print(f"movie HUD groups: {len(groups)}")
     print(f"first: {_fmt(groups[0])}")
     print(f"last:  {_fmt(groups[-1])}")
-    print(format_c_statistics(c_statistics(groups)))
-    print(format_a_statistics(a_statistics(groups)))
-    if "G" in groups[0].values:
-        print(format_field_statistics("G", g_statistics(groups)))
+    print(format_cd_wait_statistics(cd_wait_statistics(groups)))
+    print(format_adpcm_decode_statistics(adpcm_decode_statistics(groups)))
+    if "pump_gap_ticks" in groups[0].values:
         print(
-            "B APPLY back-pressure frames "
-            f"(timed first loop): {apply_guard_blocked_frames(groups)}"
+            format_field_statistics(
+                "pump_gap_ticks",
+                pump_gap_statistics(groups),
+            )
         )
-    print(f"R transitions: {len(transitions)}")
-    if "J" in groups[0].values:
-        peak = max(group.values["J"] for group in groups)
-        peak_group = next(group for group in groups if group.values["J"] == peak)
+        print(
+            "apply_backpressure frames "
+            f"(timed first loop): {apply_backpressure_frame_count(groups)}"
+        )
+    print(f"audio_resync transitions: {len(transitions)}")
+    if "prgbuf_jitter_peak_kib" in groups[0].values:
+        peak = max(group.values["prgbuf_jitter_peak_kib"] for group in groups)
+        peak_group = next(group for group in groups if group.values["prgbuf_jitter_peak_kib"] == peak)
         updates = sum(
-            groups[index].values["J"] > groups[index - 1].values["J"]
+            groups[index].values["prgbuf_jitter_peak_kib"] > groups[index - 1].values["prgbuf_jitter_peak_kib"]
             for index in range(1, len(groups))
         )
         print(
-            f"J high-water: {peak:02X} ({peak} KiB ceil) first at "
-            f"F{peak_group.values['F']:04X} ({peak_group.values['F']}), "
-            f"updates={updates}"
+            f"prgbuf_jitter_peak_kib high-water: {peak:02X} "
+            f"({peak} KiB ceil) first at "
+            f"frame={peak_group.values['frame']:04X} "
+            f"({peak_group.values['frame']}), updates={updates}"
         )
-    minimum = prgbuf_minimum(groups)
-    if minimum is not None:
-        print(
-            f"Q logical minimum: {minimum} patterns "
-            f"({minimum * 32} bytes); "
-            f"underflow peak={max(0, -minimum)} patterns"
+    if "reader_ahead_frames" in groups[0].values:
+        lead_group = max(
+            groups,
+            key=lambda group: (
+                group.values["reader_ahead_frames"],
+                group.values["reader_slot_sector"],
+            ),
         )
-    if "H" in groups[0].values:
-        peak_group = max(groups, key=lambda group: group.values["H"])
-        peak = peak_group.values["H"]
         print(
-            f"H physical peak: {peak} patterns ({peak * 32} bytes) at "
-            f"F{peak_group.values['F']:04X}"
-        )
-    if "X" in groups[0].values:
-        lead_group = max(groups, key=lambda group: group.values["X"])
-        raw = lead_group.values["X"]
-        print(
-            f"X reader lead: {raw >> 8} complete frame slots + "
-            f"sector {raw & 0xFF} at F{lead_group.values['F']:04X}"
+            "reader lead: "
+            f"{lead_group.values['reader_ahead_frames']} complete frame slots "
+            f"+ sector {lead_group.values['reader_slot_sector']} at "
+            f"frame={lead_group.values['frame']:04X}"
         )
     for number, index in enumerate(transitions, 1):
         previous = groups[index - 1]
         current = groups[index]
         following = groups[index + 1] if index + 1 < len(groups) else None
-        after_lead = f"{following.values['L']:02X}" if following else "--"
+        after_lead = (
+            f"{following.values['audio_lead_256b']:02X}"
+            if following else "--")
         print(
-            f"\n[{number}] R{previous.values['R']:02X}->R{current.values['R']:02X} "
-            f"at F{current.values['F']:04X} ({current.values['F']}) "
+            f"\n[{number}] audio_resync "
+            f"{previous.values['audio_resync']:X}->"
+            f"{current.values['audio_resync']:X} "
+            f"at frame={current.values['frame']:04X} "
+            f"({current.values['frame']}) "
             f"t={current.time_first:.3f}s; "
-            f"L256 before/current/after={previous.values['L']:02X}/"
-            f"{current.values['L']:02X}/{after_lead}"
+            "audio_lead_256b before/current/after="
+            f"{previous.values['audio_lead_256b']:02X}/"
+            f"{current.values['audio_lead_256b']:02X}/{after_lead}"
         )
         for row in groups[max(0, index - context):min(len(groups), index + context + 1)]:
             marker = ">" if row is current else " "
@@ -571,25 +535,18 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
     temporary = path.with_name(path.name + ".tmp")
     columns = [
         "loop", "capture_first", "capture_last", "time_first_s", "time_last_s",
-        "sample_count", "confidence", "frame", "frame_hex", "palette", "slip",
-        "desync", "resync", "lead_256b", "lead_hex", "cd_wait", "sub_wait_lines",
-        "main_vblank_wait", "sub_adpcm_decode_units", "main_pattern_ticks",
-        "main_pattern_ms", "cold_runs_low8", "prgbuf_jitter_peak_kib",
-        "prgbuf_min_patterns_raw16", "prgbuf_min_patterns_signed",
-        "prgbuf_underflow_patterns",
-        "prgbuf_physical_peak_patterns",
-        "reader_ahead_raw16", "reader_ahead_frames", "reader_slot_sector",
-        "pattern_vblank1_words", "pattern_vblank1_patterns",
-        "pattern_vblank2_words", "pattern_vblank2_patterns",
-        "pattern_vblank3_words", "pattern_vblank3_patterns",
-        "pattern_vblank4_words", "pattern_vblank4_patterns",
-        "pattern_transfer_vblanks", "pattern_exit_vcounter",
-        "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
-        "apply_guard_blocked",
-        "slip_msf_gap_count", "slip_trn_retry_count",
-        "flip_vcounter", "pattern_vblank1_exit_vcounter", "pass2_entry_q4",
-        "r_transition", "prev_frame",
-        "prev_lead_256b", "next_frame", "next_lead_256b",
+        "sample_count", "confidence", "frame", "frame_hex",
+        "palette_segment", "sector_slip", "control_desync", "audio_resync",
+        "audio_lead_256b", "audio_lead_hex", "cd_wait_count",
+        "sub_wait_scanlines", "vblank_spill", "adpcm_decode_units",
+        "transfer_ticks", "transfer_ms", "cold_runs",
+        "prgbuf_jitter_peak_kib", "reader_ahead_frames",
+        "reader_slot_sector", "transfer_vblanks", "transfer_end_vcounter",
+        "pump_gap_ticks", "pump_gap_ms", "apply_backpressure",
+        "msf_gap_recoveries", "transport_retry_recoveries",
+        "flip_vcounter", "first_share_exit_vcounter", "pass2_delay_q4",
+        "audio_resync_transition", "prev_frame",
+        "prev_audio_lead_256b", "next_frame", "next_audio_lead_256b",
     ]
     with temporary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(
@@ -601,14 +558,6 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         writer.writeheader()
         for index, group in enumerate(groups):
             values = group.values
-            prg_min_raw = values.get("Q")
-            prg_min_signed = (
-                signed_q(prg_min_raw) if prg_min_raw is not None else None
-            )
-            poll_gap_raw = values.get("G")
-            poll_gap_ticks = (
-                poll_gap_raw & 0x0FFF if poll_gap_raw is not None else None
-            )
             changed = index in transition_set
             previous = groups[index - 1] if changed else None
             following = groups[index + 1] if changed and index + 1 < len(groups) else None
@@ -620,95 +569,51 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "time_last_s": f"{group.time_last:.6f}",
                 "sample_count": group.sample_count,
                 "confidence": f"{group.confidence:.3f}",
-                "frame": values["F"],
-                "frame_hex": f"{values['F']:04X}",
-                "palette": values["P"],
-                "slip": values["S"],
-                "desync": values["D"],
-                "resync": values["R"],
-                "lead_256b": values["L"],
-                "lead_hex": f"{values['L']:02X}",
-                "cd_wait": values["C"],
-                "sub_wait_lines": values["W"],
-                "main_vblank_wait": values["M"],
-                "sub_adpcm_decode_units": values["A"],
-                "main_pattern_ticks": values.get("U", ""),
-                "main_pattern_ms": (
-                    f"{values['U'] * 0.03072:.5f}" if "U" in values else ""
+                "frame": values["frame"],
+                "frame_hex": f"{values['frame']:04X}",
+                "palette_segment": values["palette_segment"],
+                "sector_slip": values["sector_slip"],
+                "control_desync": values["control_desync"],
+                "audio_resync": values["audio_resync"],
+                "audio_lead_256b": values["audio_lead_256b"],
+                "audio_lead_hex": f"{values['audio_lead_256b']:02X}",
+                "cd_wait_count": values["cd_wait_count"],
+                "sub_wait_scanlines": values["sub_wait_scanlines"],
+                "vblank_spill": values["vblank_spill"],
+                "adpcm_decode_units": values["adpcm_decode_units"],
+                "transfer_ticks": values["transfer_ticks"],
+                "transfer_ms": (
+                    f"{values['transfer_ticks'] * 0.03072:.5f}"),
+                "cold_runs": values["cold_runs"],
+                "prgbuf_jitter_peak_kib": values[
+                    "prgbuf_jitter_peak_kib"],
+                "reader_ahead_frames": values["reader_ahead_frames"],
+                "reader_slot_sector": values["reader_slot_sector"],
+                "transfer_vblanks": values["transfer_vblanks"],
+                "transfer_end_vcounter": (
+                    f"{values['transfer_end_vcounter']:02X}"),
+                "pump_gap_ticks": values["pump_gap_ticks"],
+                "pump_gap_ms": (
+                    f"{values['pump_gap_ticks'] * 0.03072:.5f}"),
+                "apply_backpressure": values["apply_backpressure"],
+                "msf_gap_recoveries": values["msf_gap_recoveries"],
+                "transport_retry_recoveries": (
+                    values["sector_slip"] - values["msf_gap_recoveries"]
+                ) & 0xF,
+                "flip_vcounter": f"{values['flip_vcounter']:02X}",
+                "first_share_exit_vcounter": (
+                    f"{values['first_share_exit_vcounter']:02X}"),
+                "pass2_delay_q4": values["pass2_delay_q4"],
+                "audio_resync_transition": (
+                    f"{previous.values['audio_resync']:X}->"
+                    f"{values['audio_resync']:X}" if previous else ""
                 ),
-                "cold_runs_low8": values.get("N", ""),
-                "prgbuf_jitter_peak_kib": values.get("J", ""),
-                "prgbuf_min_patterns_raw16": (
-                    prg_min_raw if prg_min_raw is not None else ""
-                ),
-                "prgbuf_min_patterns_signed": (
-                    prg_min_signed if prg_min_signed is not None else ""
-                ),
-                "prgbuf_underflow_patterns": (
-                    max(0, -prg_min_signed)
-                    if prg_min_signed is not None else ""
-                ),
-                "prgbuf_physical_peak_patterns": values.get("H", ""),
-                "reader_ahead_raw16": values.get("X", ""),
-                "reader_ahead_frames": (
-                    values["X"] >> 8 if "X" in values else ""
-                ),
-                "reader_slot_sector": (
-                    values["X"] & 0xFF if "X" in values else ""
-                ),
-                "pattern_vblank1_words": values.get("Y", ""),
-                "pattern_vblank1_patterns": (
-                    f"{values['Y'] / 16:.4f}" if "Y" in values else ""
-                ),
-                "pattern_vblank2_words": values.get("Z", ""),
-                "pattern_vblank2_patterns": (
-                    f"{values['Z'] / 16:.4f}" if "Z" in values else ""
-                ),
-                "pattern_vblank3_words": values.get("Y3", ""),
-                "pattern_vblank3_patterns": (
-                    f"{values['Y3'] / 16:.4f}" if "Y3" in values else ""
-                ),
-                "pattern_vblank4_words": values.get("Y4", ""),
-                "pattern_vblank4_patterns": (
-                    f"{values['Y4'] / 16:.4f}" if "Y4" in values else ""
-                ),
-                "pattern_transfer_vblanks": values.get("T", ""),
-                "pattern_exit_vcounter": (
-                    f"{values['I']:02X}" if "I" in values else ""
-                ),
-                "sub_poll_gap_raw16": (
-                    poll_gap_raw if poll_gap_raw is not None else ""
-                ),
-                "sub_poll_gap_ticks": (
-                    poll_gap_ticks if poll_gap_ticks is not None else ""
-                ),
-                "sub_poll_gap_ms": (
-                    f"{poll_gap_ticks * 0.03072:.5f}"
-                    if poll_gap_ticks is not None else ""
-                ),
-                "apply_guard_blocked": (
-                    int(bool(poll_gap_raw & 0x8000))
-                    if poll_gap_raw is not None else ""
-                ),
-                "slip_msf_gap_count": values.get("K", ""),
-                "slip_trn_retry_count": (
-                    (values["S"] - values["K"]) & 0xFF
-                    if "K" in values else ""
-                ),
-                "flip_vcounter": (
-                    f"{values['V']:02X}" if "V" in values else ""
-                ),
-                "pattern_vblank1_exit_vcounter": (
-                    f"{values['O']:02X}" if "O" in values else ""
-                ),
-                "pass2_entry_q4": values.get("E", ""),
-                "r_transition": (
-                    f"{previous.values['R']:02X}->{values['R']:02X}" if previous else ""
-                ),
-                "prev_frame": previous.values["F"] if previous else "",
-                "prev_lead_256b": previous.values["L"] if previous else "",
-                "next_frame": following.values["F"] if following else "",
-                "next_lead_256b": following.values["L"] if following else "",
+                "prev_frame": previous.values["frame"] if previous else "",
+                "prev_audio_lead_256b": (
+                    previous.values["audio_lead_256b"] if previous else ""),
+                "next_frame": following.values["frame"] if following else "",
+                "next_audio_lead_256b": (
+                    following.values["audio_lead_256b"] if following else ""),
             })
     temporary.replace(path)
     print(f"TSV: {path}")
@@ -732,14 +637,14 @@ def upload_gate_limits(content_fps: float) -> tuple[dict[str, int], str]:
         # spill.
         m_limit = math.ceil(av_config.NTSC_VSYNC / fps)
     return {
-        "S": 0,
-        "D": 0,
-        "R": 0,
-        "M": m_limit,
-        # J is ceil-KiB. Leave one complete KiB below the physical ring end so
-        # an accepted value proves head and tail never became equal at full.
-        # Values beyond jitter headroom remain visible for mandatory review.
-        "J": (
+        "sector_slip": 0,
+        "control_desync": 0,
+        "audio_resync": 0,
+        "vblank_spill": m_limit,
+        # This is ceil-KiB. Leave one complete KiB below the physical ring end
+        # so an accepted value proves head and tail never became equal at
+        # full. Values beyond jitter headroom remain visible for review.
+        "prgbuf_jitter_peak_kib": (
             av_config.RING_SIZE_KB
             - av_config.prg_buf_cap_kb(fps)
             - 1
@@ -757,8 +662,8 @@ def display_vblank_cadence(
     histogram: Counter[int] = Counter()
     observations: list[dict[str, int]] = []
     for current, following in zip(first_loop, first_loop[1:]):
-        frame = current.values["F"]
-        next_frame = following.values["F"]
+        frame = current.values["frame"]
+        next_frame = following.values["frame"]
         # Frame 0 is untimed boot staging. The last movie frame has no
         # following transition and is excluded naturally by zip().
         if frame == 0 or next_frame != frame + 1:
@@ -804,8 +709,11 @@ def evaluate_upload_gate(
     # sequence-completeness proof, but never let its placeholder/startup HUD
     # values affect a timed playback metric or gate.
     timed_loop = timed_first_loop(groups)
-    gate_fields = ("S", "D", "R", "M", "J")
-    measured_fields = ("S", "D", "R", "C", "M", "J")
+    gate_fields = (
+        "sector_slip", "control_desync", "audio_resync",
+        "vblank_spill", "prgbuf_jitter_peak_kib",
+    )
+    measured_fields = (*gate_fields, "cd_wait_count")
     failures: list[str] = []
     warnings: list[str] = []
     missing = [
@@ -822,7 +730,7 @@ def evaluate_upload_gate(
     if missing:
         failures.append(f"HUD fields missing: {','.join(missing)}")
 
-    frames = [group.values["F"] for group in first_loop]
+    frames = [group.values["frame"] for group in first_loop]
     wanted = list(range(expected_frames))
     if frames != wanted:
         first_bad = next(
@@ -843,17 +751,17 @@ def evaluate_upload_gate(
         if maxima[field] > limit:
             message = (
                 f"{field} peak {maxima[field]:02X} exceeds "
-                f"{'cadence warning' if field == 'M' else 'upload'} "
+                f"{'cadence warning' if field == 'vblank_spill' else 'upload'} "
                 f"limit {limit:02X}"
             )
-            (warnings if field == "M" else failures).append(message)
+            (warnings if field == "vblank_spill" else failures).append(message)
     fixed_n = av_config.fixed_vblank_interval(float(content_fps))
     transfer_vblank_max = (
         max(
-            (group.values.get("T", 0) for group in timed_loop),
+            (group.values.get("transfer_vblanks", 0) for group in timed_loop),
             default=0,
         )
-        if first_loop and "T" in first_loop[0].values else None
+        if first_loop and "transfer_vblanks" in first_loop[0].values else None
     )
     if (
         fixed_n is not None
@@ -861,13 +769,14 @@ def evaluate_upload_gate(
         and transfer_vblank_max > fixed_n
     ):
         warnings.append(
-            f"T peak {transfer_vblank_max:X} exceeds fixed-N transfer "
+            f"transfer_vblanks peak {transfer_vblank_max:X} exceeds fixed-N "
+            "transfer "
             f"window count {fixed_n:X}"
         )
     display_cadence = display_vblank_cadence(groups, content_fps)
     if display_cadence["violation_count"]:
         examples = ", ".join(
-            f"F{row['frame']:04d}={row['display_vblanks']}"
+            f"frame={row['frame']:04d}:{row['display_vblanks']}"
             for row in display_cadence["violations"][:8]
         )
         remaining = display_cadence["violation_count"] - 8
@@ -883,11 +792,9 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 11,
+        "schema_version": 12,
         "gate": gate,
         "alert": alert,
-        # Keep the old fields while stored schema-5 results and external
-        # consumers migrate. WARNING remains upload-capable.
         "pass": gate == "PASS",
         "status": status,
         "recording": str(recording.resolve()),
@@ -907,29 +814,18 @@ def evaluate_upload_gate(
             display_cadence["violation_count"]),
         "display_vblank_violations": display_cadence["violations"],
         "gate_fields": list(gate_fields),
-        "warning_fields": ["M"],
+        "warning_fields": ["vblank_spill"],
         "diagnostic_fields": [
-            "C", "A",
-            *(["Q"] if "Q" in first_loop[0].values else []),
-            *(["G"] if "G" in first_loop[0].values else []),
-            *(["B"] if "G" in first_loop[0].values else []),
-            *(["K"] if "K" in first_loop[0].values else []),
-            *(["H"] if "H" in first_loop[0].values else []),
-            *(["X"] if "X" in first_loop[0].values else []),
-            *([
-                "Y", "O", "Z", "T", "I"
-            ] if all(
-                field in first_loop[0].values for field in "YOZTI"
-            ) else []),
-            *([
-                "Y3", "Y4"
-            ] if all(
-                field in first_loop[0].values for field in ("Y3", "Y4")
-            ) else []),
+            "cd_wait_count", "adpcm_decode_units", "pump_gap_ticks",
+            "apply_backpressure", "msf_gap_recoveries",
+            "reader_ahead_frames", "reader_slot_sector", "cold_runs",
+            "transfer_ticks", "transfer_vblanks", "transfer_end_vcounter",
+            "sub_wait_scanlines", "flip_vcounter",
+            "first_share_exit_vcounter", "pass2_delay_q4",
         ],
         "maxima": maxima,
-        "c_statistics": c_statistics(groups),
-        "a_statistics": a_statistics(groups),
+        "cd_wait_statistics": cd_wait_statistics(groups),
+        "adpcm_decode_statistics": adpcm_decode_statistics(groups),
         "limits": limits,
         "prg_buf_cap_kib": av_config.prg_buf_cap_kb(content_fps),
         "jitter_headroom_kib": (
@@ -942,78 +838,37 @@ def evaluate_upload_gate(
         "warnings": warnings,
         "failures": failures,
     }
-    minimum = prgbuf_minimum(groups)
-    if minimum is not None:
-        result["prgbuf_minimum_patterns"] = minimum
-        result["prgbuf_underflow_peak_patterns"] = max(0, -minimum)
-    if "G" in first_loop[0].values:
-        result["sub_poll_gap_statistics"] = g_statistics(groups)
-        result["apply_guard_blocked_frames"] = apply_guard_blocked_frames(groups)
-    if "H" in first_loop[0].values:
-        result["prgbuf_physical_peak_patterns"] = max(
-            (group.values["H"] for group in timed_loop),
+    if "pump_gap_ticks" in first_loop[0].values:
+        result["pump_gap_statistics"] = pump_gap_statistics(groups)
+        result["apply_backpressure_frames"] = apply_backpressure_frame_count(
+            groups)
+    if "reader_ahead_frames" in first_loop[0].values:
+        result["reader_ahead_max_frames"] = max(
+            (group.values["reader_ahead_frames"] for group in timed_loop),
             default=0,
         )
-    if "X" in first_loop[0].values:
-        reader_ahead = max(
-            (group.values["X"] for group in timed_loop),
+        result["reader_slot_sector_max"] = max(
+            (group.values["reader_slot_sector"] for group in timed_loop),
             default=0,
         )
-        result["reader_ahead_max_raw16"] = reader_ahead
-        result["reader_ahead_max_frames"] = reader_ahead >> 8
-        result["reader_ahead_max_slot_sector"] = reader_ahead & 0xFF
-    if all(field in first_loop[0].values for field in "YZTI"):
-        result["pattern_vblank1_max_words"] = max(
-            (group.values["Y"] for group in timed_loop),
+    if "transfer_vblanks" in first_loop[0].values:
+        result["transfer_vblanks_max"] = max(
+            (group.values["transfer_vblanks"] for group in timed_loop),
             default=0,
         )
-        result["pattern_vblank2_max_words"] = max(
-            (group.values["Z"] for group in timed_loop),
+        result["transfer_end_vcounter_max"] = max(
+            (group.values["transfer_end_vcounter"] for group in timed_loop),
             default=0,
         )
-        if all(
-            field in first_loop[0].values for field in ("Y3", "Y4")
-        ):
-            result["pattern_vblank3_max_words"] = max(
-                (group.values["Y3"] for group in timed_loop),
-                default=0,
-            )
-            result["pattern_vblank4_max_words"] = max(
-                (group.values["Y4"] for group in timed_loop),
-                default=0,
-            )
-        result["pattern_transfer_vblank_max"] = max(
-            (group.values["T"] for group in timed_loop),
-            default=0,
-        )
-        result["pattern_exit_vcounter_max"] = max(
-            (group.values["I"] for group in timed_loop),
-            default=0,
-        )
-    if "O" in first_loop[0].values:
-        result["pattern_vblank1_exit_vcounter_max"] = max(
-            (group.values["O"] for group in timed_loop),
+    if "first_share_exit_vcounter" in first_loop[0].values:
+        result["first_share_exit_vcounter_max"] = max(
+            (group.values["first_share_exit_vcounter"] for group in timed_loop),
             default=0,
         )
     if profile is not None:
         result["profile"] = str(profile.path.resolve())
         result["profile_sha256"] = profile.sha256
     return result
-
-
-def standard_combined_fields(
-    profile: encode_config.EncodeProfile | None,
-    *,
-    flip_fields: bool,
-    poll_gap_fields: bool,
-    combined_fields: bool,
-) -> bool:
-    """Select the standard wrapped layout for an H32 or H40 profile."""
-    if combined_fields:
-        return True
-    if flip_fields or poll_gap_fields or profile is None:
-        return False
-    return profile.data["video"]["mode"] in {"H32", "H40"}
 
 
 def write_gate_json(path: Path, result: dict) -> None:
@@ -1024,8 +879,11 @@ def write_gate_json(path: Path, result: dict) -> None:
     maxima = result["maxima"]
     print(
         f"HUD record gate: {gate}  alert={alert}  "
-        + " ".join(f"{field}{maxima[field]:02X}" for field in "SDRMJ")
-        + f"  C diagnostic max={maxima['C']:02X}"
+        + " ".join(
+            f"{field}={maxima[field]:X}"
+            for field in result["gate_fields"]
+        )
+        + f"  cd_wait_count diagnostic max={maxima['cd_wait_count']:X}"
         + f"  frames={result['observed_first_loop_frames']}/"
         f"{result['expected_frames']}  cadence={result['cadence']} "
         f"fps={result['content_fps']:g}"
@@ -1042,50 +900,29 @@ def write_gate_json(path: Path, result: dict) -> None:
         f"violations={result['display_vblank_violation_count']}/"
         f"{result['display_vblank_evaluated_frames']}"
     )
-    if "prgbuf_minimum_patterns" in result:
+    if "reader_ahead_max_frames" in result:
         print(
-            f"  Q diagnostic min={result['prgbuf_minimum_patterns']} patterns "
-            f"underflow_peak={result['prgbuf_underflow_peak_patterns']} patterns"
-        )
-    if "prgbuf_physical_peak_patterns" in result:
-        peak = result["prgbuf_physical_peak_patterns"]
-        print(
-            f"  H diagnostic max={peak} patterns ({peak * 32} bytes)"
-        )
-    if "reader_ahead_max_raw16" in result:
-        print(
-            "  X diagnostic max="
+            "  reader lead max="
             f"{result['reader_ahead_max_frames']} complete frame slots + "
-            f"sector {result['reader_ahead_max_slot_sector']}"
+            f"sector {result['reader_slot_sector_max']}"
         )
-    if "pattern_transfer_vblank_max" in result:
-        later = (
-            f"third/fourth max={result['pattern_vblank3_max_words']}/"
-            f"{result['pattern_vblank4_max_words']} words, "
-            if "pattern_vblank3_max_words" in result else ""
-        )
+    if "transfer_vblanks_max" in result:
         print(
-            "  Y/O/Z/T/I/Y3/Y4 diagnostics: first max="
-            f"{result['pattern_vblank1_max_words']} words "
-            f"({result['pattern_vblank1_max_words'] / 16:g} patterns), "
-            f"first exit max="
-            f"{result.get('pattern_vblank1_exit_vcounter_max', 0):02X}, "
-            f"second max={result['pattern_vblank2_max_words']} words "
-            f"({result['pattern_vblank2_max_words'] / 16:g} patterns), "
-            + later
-            + f"opened VBlank budgets max={result['pattern_transfer_vblank_max']}, "
-            f"exit V-counter max={result['pattern_exit_vcounter_max']:02X}"
+            "  transfer diagnostics: opened VBlank budgets max="
+            f"{result['transfer_vblanks_max']}, end V-counter max="
+            f"{result['transfer_end_vcounter_max']:02X}, first-share exit max="
+            f"{result.get('first_share_exit_vcounter_max', 0):02X}"
         )
-    if "sub_poll_gap_statistics" in result:
+    if "pump_gap_statistics" in result:
         print(
             "  "
             + format_field_statistics(
-                "G", result["sub_poll_gap_statistics"]
+                "pump_gap_ticks", result["pump_gap_statistics"]
             )
         )
         print(
-            "  B APPLY back-pressure frames "
-            f"(timed first loop): {result['apply_guard_blocked_frames']}"
+            "  apply_backpressure frames "
+            f"(timed first loop): {result['apply_backpressure_frames']}"
         )
     for failure in result["failures"]:
         print(f"  gate failure: {failure}")
@@ -1096,7 +933,8 @@ def write_gate_json(path: Path, result: dict) -> None:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Aggregate the DEBUG HUD and report audio R transitions."
+        description=(
+            "Aggregate the DEBUG HUD and report audio_resync transitions.")
     )
     parser.add_argument("recording", type=Path, help="native FFV1 MKV or MP4 recording")
     parser.add_argument(
@@ -1125,39 +963,20 @@ def parse_args() -> argparse.Namespace:
         help="left edge of the native HUD crop (default: 0; legacy centered H32 may use 32)",
     )
     parser.add_argument(
-        "--flip-fields", action="store_true",
-        help="parse the 40-cell H40 layout with signed Q PrgBuf and V/O/E "
-             "flip-phase fields "
-             "(HUD_FLIP_FIELDS DEBUG builds only)",
-    )
-    parser.add_argument(
-        "--poll-gap-fields", action="store_true",
-        help="parse the 40-cell H40 G/K/O/E diagnostic layout; G is the "
-             "maximum time outside the Sub CDC pump in exact 30.72 us ticks; "
-             "G bit 15 carries B, a per-frame APPLY back-pressure marker; "
-             "K is the cumulative MSF-gap recovery count "
-             "(legacy one-row poll-gap builds only)",
-    )
-    parser.add_argument(
-        "--combined-fields", action="store_true",
-        help="force the standard wrapped H32/H40 layout when no profile is "
-             "supplied; H32/H40 profiles select it automatically",
-    )
-    parser.add_argument(
         "--max-gap", type=int, default=3,
-        help="maximum capture-frame gap inside one F group (default: 3)",
+        help="maximum capture-frame gap inside one frame group (default: 3)",
     )
     parser.add_argument(
         "--max-frame-step", type=int, default=4,
-        help="largest accepted F increment after a missed OCR group (default: 4)",
+        help="largest accepted frame increment after a missed OCR group",
     )
     parser.add_argument(
         "--anchor-run", type=int, default=4,
-        help="plausible groups required to accept an F0000 anchor (default: 4)",
+        help="plausible groups required to accept a frame-0000 anchor",
     )
     parser.add_argument(
         "--context", type=int, default=2,
-        help="aggregated frames printed on each side of an R transition (default: 2)",
+        help="frames printed on each side of an audio_resync transition",
     )
     args = parser.parse_args()
     if not args.recording.is_file():
@@ -1169,11 +988,6 @@ def parse_args() -> argparse.Namespace:
             parser.error(f"--{name.replace('_', '-')} must be at least 1")
     if args.context < 0:
         parser.error("--context must not be negative")
-    if sum((args.flip_fields, args.poll_gap_fields, args.combined_fields)) > 1:
-        parser.error(
-            "--flip-fields, --poll-gap-fields, and --combined-fields "
-            "are mutually exclusive"
-        )
     if args.gate_json and not args.expected_frames:
         parser.error("--gate-json requires --expected-frames")
     if args.gate_json and args.profile is None:
@@ -1193,33 +1007,25 @@ def main() -> int:
         encode_config.load_profile(args.profile)
         if args.profile is not None else None
     )
-    combined_fields = standard_combined_fields(
-        profile,
-        flip_fields=args.flip_fields,
-        poll_gap_fields=args.poll_gap_fields,
-        combined_fields=args.combined_fields,
-    )
     probe = probe_video(args.recording)
     print(
         f"input: {args.recording} ({probe.width}x{probe.height}, "
         f"{float(probe.fps):.6f} capture fps)"
     )
     raw_groups = group_samples(
-        iter_samples(args.recording, probe, args.confidence, args.crop_x,
-                     args.flip_fields, args.poll_gap_fields,
-                     combined_fields),
+        iter_samples(args.recording, probe, args.confidence, args.crop_x),
         args.max_gap,
     )
     anchor, sentinel_anchor = find_movie_anchor(
         raw_groups, args.anchor_run, args.max_frame_step)
     groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)
     anchor_method = (
-        "F=FFFF frame -1 sentinel" if sentinel_anchor
-        else "legacy plausible F0000 sequence"
+        "frame=FFFF player-only sentinel" if sentinel_anchor
+        else "plausible frame=0000 sequence"
     )
     print(
         f"movie start anchor: {anchor_method}; "
-        f"F0000 capture={raw_groups[anchor].capture_first}")
+        f"frame=0000 capture={raw_groups[anchor].capture_first}")
     transitions = print_report(groups, args.context)
     hud_tsv = args.tsv
     if hud_tsv is None and profile is not None:

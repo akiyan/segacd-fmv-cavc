@@ -83,8 +83,9 @@ and `MOVIE.DAT` for each profile) had identical SHA-256 values.
 The normal two-job pipeline completed through both HUD gates in 39.2 seconds
 with the default two EMU tokens. H40 and H32 each recorded 2,880 raw packets,
 produced a 2,278-frame bounded capture with 1,677,312 stereo PCM sample frames,
-and passed `S/D/R=0`, `M=1`, `J=0`. Xvfb selected separate displays `:2` and
-`:3`.
+and passed `sector_slip/control_desync/audio_resync=0`,
+`vblank_spill=1`, `prgbuf_jitter_peak_kib=0`. Xvfb selected separate displays
+`:2` and `:3`.
 
 Two unrelated one-profile orchestrator processes were also started without a
 shared job list. H40 passed through HUD in 46.7 seconds and H32 passed in 44.7

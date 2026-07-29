@@ -2869,7 +2869,7 @@ def main():
         if not L3_TILES and dma_tiles != cold_spent:
             raise AssertionError(
                 f"frame {i}: encoder cold={cold_spent} allocator cold={dma_tiles}")
-        # MainのHUD Nと同じsource-aware physical run数。p45では1-2 tile runはCPU直書き、長runは
+        # MainのHUD cold_runsと同じsource-aware physical run数。p45では1-2 tile runはCPU直書き、長runは
         # VBlank境界で複数DMAに割れるため、物理VDP DMA発行回数とは意図的に異なる。
         run_prefetch_count = (
             boot_inline_requests if i == 0 else len(prefetch_cold_slots))
@@ -4186,7 +4186,7 @@ def main():
                 "forecast_requested": np.asarray(
                     prefetch_forecast.requested_patterns, np.uint16),
             },
-            # simが決めた値をpackで全frame再計算し、descriptor/HUD Nとのズレを即時検出する。
+            # simが決めた値をpackで全frame再計算し、descriptor/HUD cold_runsとのズレを即時検出する。
             "pattern_transfers": {
                 "schema_version": 3,
                 "tiles": np.asarray(transfer_tiles_log, np.uint16),

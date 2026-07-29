@@ -236,7 +236,7 @@ print(
 
 # TTRC v22 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
-# F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
+# frame=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
 # sector, so ROM_READN startup latency remains outside the movie clock.
 for removed in ("STAT_BOOT_VRAM", "arm_body_after_frame0", "body_start_pending"):
@@ -258,7 +258,7 @@ for source, token, description in (
         (sp_text, "startup_ready:", "post-first-slot startup release"),
         (sp_text, "bsr\tpcm_on", "first-sector playback-start PCM edge"),
         (ip_text, "bsr\tshow_frame_minus_one", "frame -1 display"),
-        (ip_text, "move.w\t#-1, frame_no", "F=FFFF HUD sentinel"),
+        (ip_text, "move.w\t#-1, frame_no", "frame=FFFF HUD sentinel"),
         (ip_text, "bsr\tstart_playback", "post-frame-0 command clear"),
 ):
     if token not in source:
@@ -358,11 +358,6 @@ require(
     ip_text,
     r"^\s*move\.w\s+\(PROBE_BANK\+STATUS_OFF\+0x26\)\.l,\s*d4\s*$",
     "separate Main-side Sub pump-gap HUD read",
-)
-require(
-    ip_text,
-    r"^\s*move\.w\s+\(PROBE_BANK\+STATUS_OFF\+0x28\)\.l,\s*d4\s*$",
-    "separate Main-side physical PrgBuf peak HUD read",
 )
 require(
     ip_text,

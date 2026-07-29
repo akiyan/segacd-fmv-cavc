@@ -394,6 +394,7 @@ the four physical supplies are fixed behavior.
 |---|---:|---|
 | `MAIN_CODEGEN` | 1 | Generate specialized bitmap handlers and name-table blitters. Zero selects the reference bit loop. |
 | `DMA_RUN_FASTPATH` | 1 | CPU-copy one/two-tile runs and DMA longer runs. Zero selects all-DMA diagnosis. |
+| `VBLANK_RUN_SPLIT` | 1 | Split a DMA run at the remaining VBlank budget boundary. Zero is an intentionally unsafe A/B mode that keeps every run whole; a run longer than one complete budget can enter active display. |
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
 
@@ -803,6 +804,7 @@ segmented palette、Near、boot prefetch、4つの物理供給は固定behavior�
 |---|---:|---|
 | `MAIN_CODEGEN` | 1 | specialized bitmap handlerとname-table blitterを生成する。zeroはreference bit loop。 |
 | `DMA_RUN_FASTPATH` | 1 | 1〜2 tile runをCPU、長いrunをDMAで転送する。zeroは診断用all-DMA。 |
+| `VBLANK_RUN_SPLIT` | 1 | DMA runを残りVBlank予算の境界で分割する。zeroは全runをwholeのまま転送する意図的にunsafeなA/B modeで、1 complete budgetより長いrunはactive displayへはみ出し得る。 |
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
 

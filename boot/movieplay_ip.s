@@ -146,14 +146,13 @@
 .endif
 
 .ifdef HUD_HEX_TABLE
-/* Specialized H32/H40 DEBUG builds publish the same 69 hexadecimal cells:
-   common fields, signed per-frame PrgBuf minimum Q, flip phase V/O/E, then
-   pump diagnostics G/K, physical-buffer diagnostics H/X, and Main transfer
-   split diagnostics Y/Z/T/I plus the third/fourth VBlank word counts. H32
-   wraps after 32 cells and H40 after 40. */
+/* Specialized H32/H40 DEBUG builds publish the same 39 hexadecimal cells.
+   Small counters use one digit, Main VBlank spill is packed into the high
+   nibble of the 12-bit transfer stopwatch, and reader lead/slot use one
+   nibble each. H32 wraps after 32 cells; H40 fits one row. */
 .equ HUD_FLIP_FIELDS, 1
 .equ HUD_SUB_POLL_GAP, 1
-.equ HUD_COMBINED_WORDS, 69
+.equ HUD_COMBINED_WORDS, 39
 .endif
 
 .ifdef PLAYER_SPECIALIZED
@@ -476,8 +475,8 @@ ip_entry:
 	dbra	d1, 1b
 .endif
 .endif
-	/* Frame -1 is a player-only black state. DEBUG publishes F=FFFF on it, so
-	   capture OCR can find the exact F0000 playback boundary without wall time. */
+	/* Frame -1 is a player-only black state. DEBUG publishes frame=FFFF on it,
+	   so capture OCR can find the exact frame=0000 playback boundary. */
 	bsr	show_frame_minus_one
 	clr.w	frame_no
 	clr.w	started
@@ -1110,9 +1109,13 @@ bf_dma:
 .endif
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port. Fill the current budget, then continue
-	   a boundary-crossing DMA run in the next budget. The cadence-final budget
-	   has already withheld NT/HUD/CRAM/flip capacity. */
+	   straight into the control port. VBLANK_RUN_SPLIT fills the current
+	   budget and continues a boundary-crossing DMA run in the next one. The
+	   diagnostic whole-run mode instead waits for a fresh budget whenever a
+	   run does not fit the residual, then issues it without splitting. A run
+	   larger than a complete budget can therefore enter active display in
+	   that diagnostic mode. The cadence-final budget has already withheld
+	   NT/HUD/CRAM/flip capacity. */
 	move.w	(a2)+, d1			/* +0 len(語) */
 .ifdef DMA_RUN_FASTPATH
 	/* A one-time run branch is much cheaper than programming a DMA for one or
@@ -1124,7 +1127,24 @@ bf_run_lp:
 	addq.w	#CPU_VDP_WORD_COST, d6		/* full DMA + one CPU repair word */
 	cmp.w	d7, d6				/* whole run fits the remaining budget? */
 	bls.s	1f
+.ifdef VBLANK_RUN_SPLIT
 	bra	bf_split_run			/* fill this budget before continuing the run */
+.else
+	/* OFF means no run splitting at all. A cadence-final budget can be smaller
+	   because it reserves NT/HUD/CRAM/flip work, so bounded runs continue to a
+	   later fresh budget until they fit. An individually oversized run starts
+	   at one fresh head and deliberately overruns it for this A/B diagnostic. */
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
+	cmp.w	d0, d6
+	bhi.s	3f
+2:
+	bsr	bf_next_vbudget
+	cmp.w	d7, d6
+	bhi.s	2b
+	bra.s	1f
+3:
+	bsr	bf_next_vbudget			/* intentionally unsafe whole-run overflow */
+.endif
 1:
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
 	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
@@ -1248,7 +1268,7 @@ bf_flip:
 	andi.w	#0x0FFF, d0			/* stopwatch wraps naturally after 4096 ticks */
 	move.w	d0, dma_elapsed_ticks
 1:
-	move.w	vsync_acc, frame_vblank_waits	/* exclude display pacing from workload HUD M */
+	move.w	vsync_acc, frame_vblank_waits	/* exclude display pacing from vblank_spill */
 	tst.w	frame_no			/* frame 0 is an untimed boot construction */
 	bne.s	1f
 	clr.w	frame_vblank_waits		/* its VBlank count is not playback load */
@@ -1526,28 +1546,22 @@ bf_wait_fixed_flip_vblank:
    Trashes d0/d3/d4/a0. */
 bf_patch_dbg_stage:
 	lea	dbg_hex_pairs, a1
-	lea	nt_stage+4*2, a0		/* P */
+	lea	nt_stage+4*2, a0		/* final palette segment */
 	move.w	dbg_seg, d4
-	bsr	dbg_stage_put2
-	lea	nt_stage+18*2, a0		/* M */
-	move.w	frame_vblank_waits, d4
-	bsr	dbg_stage_put2
-	lea	nt_stage+22*2, a0		/* U */
+	bsr	dbg_put1
+	lea	nt_stage+15*2, a0		/* spill nibble + transfer ticks */
 	move.w	dma_elapsed_ticks, d4
+	andi.w	#0x0FFF, d4
+	move.w	frame_vblank_waits, d0
+	andi.w	#0x000F, d0
+	ror.w	#4, d0
+	or.w	d0, d4
 	bsr	dbg_stage_put4
-	lea	nt_stage+0x80+14*2, a0		/* Y/Z/T/I on H40 row 1 */
-	move.w	pattern_vblank1_words, d4
-	bsr	dbg_fast_put3
-	move.w	pattern_vblank2_words, d4
-	bsr	dbg_fast_put3
+	lea	nt_stage+36*2, a0		/* transfer VBlanks/end V-counter */
 	move.w	pattern_transfer_vblanks, d4
 	bsr	dbg_put1
 	move.w	pattern_exit_v, d4
 	bsr	dbg_stage_put2
-	move.w	pattern_vblank3_words, d4
-	bsr	dbg_fast_put3
-	move.w	pattern_vblank4_words, d4
-	bsr	dbg_fast_put3
 	rts
 
 /* Deadline-side byte pairs use the specialized 256-entry tile-pair table.
@@ -2108,7 +2122,7 @@ swap_or_end:
 	rts
 
 /* Display the player-only frame -1 while frame 0 is built. It is a black movie
-   plane; DEBUG overlays the complete ordinary HUD with F=FFFF. The visible
+   plane; DEBUG overlays the complete ordinary HUD with frame=FFFF. The visible
    name table is back_idx^1 because back_idx always names the next build target. */
 show_frame_minus_one:
 	movem.l	d0-d2, -(sp)
@@ -2154,13 +2168,12 @@ wait_vblank:
    Publishing the finished rows into the inactive Plane A table is a short fixed
    copy; reg2 selects the completed picture and HUD atomically.
    Category glyphs are omitted to reserve cells for future supply metrics.
-   H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx = 30 words.
-   Both modes append Q/V/O/E/G/K/H/X/Y/Z/T/I plus two three-digit counters for
-   opened VBlank budgets 3/4, for 69 words total. H32 wraps at 32 words and H40
-   at 40 words. Y/Z are budgets 1/2, O/I are the first/final transfer exit
-   V-counters, and T is the number of fresh budgets opened. O/I remain the
-   physical phase check when the weighted budget is still optimistic.
-	frame/Main-timeは16-bit、leadはhigh byte、他はlow byteの2桁。leadは256B単位。 */
+   The 39-word layout uses four frame digits; one digit each for palette,
+   slip, desync, resync and CD wait; two for audio lead, Sub wait and ADPCM;
+   four for packed VBlank-spill/transfer ticks; two for runs and PrgBuf jitter;
+   then flip/share/delay, packed pump-gap/back-pressure, one-digit MSF gap,
+   packed reader lead/slot, transfer-VBlank count and transfer-end V-counter.
+   H32 wraps after 32 words; H40 fits one row. */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
 	movem.l	d0-d4/a0-a1, -(sp)
@@ -2172,18 +2185,18 @@ prepare_dbg:
 	/* frame number, 4 digits */
 	move.w	frame_no, d4
 	DBG_PUT4
-	/* palette segment, low byte */
+	/* palette segment, low nibble */
 	move.w	dbg_seg, d4
-	DBG_PUT2
-	/* slip/reseek count, low byte */
+	DBG_PUT1
+	/* slip/reseek count, low nibble */
 	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d4
-	DBG_PUT2
-	/* desync count, low byte */
+	DBG_PUT1
+	/* desync count, low nibble */
 	move.w	(PROBE_BANK+STATUS_OFF+0x7E).l, d4
-	DBG_PUT2
-	/* audio re-sync count, low byte */
+	DBG_PUT1
+	/* audio re-sync count, low nibble */
 	move.w	(PROBE_BANK+STATUS_OFF+0x20).l, d4
-	DBG_PUT2
+	DBG_PUT1
 	/* current audio lead high byte (256-byte units) */
 	move.w	(PROBE_BANK+STATUS_OFF+0x22).l, d4
 	lsr.w	#8, d4
@@ -2191,19 +2204,22 @@ prepare_dbg:
 	/* total blocking CD pumps (current control + older BODY slot) */
 	move.w	(PROBE_BANK+STATUS_OFF+0x18).l, d4
 	add.w	(PROBE_BANK+STATUS_OFF+0x1A).l, d4
-	DBG_PUT2
+	DBG_PUT1
 	/* Main's CMD_SWAP wait for Sub completion, in approximate scanlines */
 	move.w	sub_wait_lines, d4
-	DBG_PUT2
-	/* VBlank starts waited by this frame's Main-side pattern path */
-	move.w	frame_vblank_waits, d4
 	DBG_PUT2
 	/* Sub ADPCM decode time in 4*30.72us units (zero for PCM builds). */
 	move.w	(PROBE_BANK+STATUS_OFF+0x1C).l, d4
 	lsr.w	#2, d4
 	DBG_PUT2
-	/* Keep one common layout for every display mode. */
+	/* Pack the one-digit Main VBlank spill into the unused high nibble of
+	   the 12-bit pattern-transfer stopwatch. */
 	move.w	dma_elapsed_ticks, d4
+	andi.w	#0x0FFF, d4
+	move.w	frame_vblank_waits, d0
+	andi.w	#0x000F, d0
+	ror.w	#4, d0
+	or.w	d0, d4
 	DBG_PUT4
 	move.w	n_runs, d4
 	DBG_PUT2
@@ -2228,12 +2244,6 @@ prepare_dbg:
 2:
 	DBG_PUT2
 .ifdef HUD_FLIP_FIELDS
-	/* Q: signed minimum logical PrgBuf balance observed during this frame,
-	   in exact 32-byte patterns.  0000 is truly empty; FFFF is one-pattern
-	   underflow.  Unlike tail-head modulo arithmetic, it cannot turn an
-	   underflow into a false near-full value. */
-	move.w	(PROBE_BANK+STATUS_OFF+0x24).l, d4
-	DBG_PUT4
 	/* V: V-counter at the previous accepted flip (this row is built before
 	   its own frame's flip, so the freshest sample is one frame old). */
 	move.w	flip_hv_v, d4
@@ -2256,36 +2266,24 @@ prepare_dbg:
 	ori.w	#0x8000, d4
 9:
 	DBG_PUT4
-	/* K: cumulative MSF sequence-gap recoveries packed into S's high byte.
-	   S's low byte remains the total slip/recovery count. */
+	/* Cumulative MSF sequence-gap recoveries, low nibble. */
 	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d4
 	lsr.w	#8, d4
-	DBG_PUT2
-	/* H: exact physical PrgBuf peak during this frame, in 32-byte patterns. */
-	move.w	(PROBE_BANK+STATUS_OFF+0x28).l, d4
-	DBG_PUT4
-	/* X: CD reader lead. High byte is complete frame slots ahead; low byte
-	   is the sector index inside the current physical slot. */
+	DBG_PUT1
+	/* CD reader lead: one nibble of complete frame slots followed by one
+	   nibble of sector position inside the current physical slot. */
 	move.w	(PROBE_BANK+STATUS_OFF+0x2A).l, d4
-	DBG_PUT4
-	/* Y/Z: exact logical pattern words issued in the first and second fresh
-	   VBlank budgets. Weighted CPU/DMA capacity cost remains separate. */
-	move.w	pattern_vblank1_words, d4
-	DBG_PUT3
-	move.w	pattern_vblank2_words, d4
-	DBG_PUT3
-	/* T: number of fresh VBlank budgets opened; I: V-counter when Pass2
+	move.w	d4, d3
+	lsr.w	#8, d4
+	DBG_PUT1
+	move.w	d3, d4
+	DBG_PUT1
+	/* Number of fresh VBlank budgets opened and V-counter when Pass2
 	   pattern transfer ended, before HUD/NT/CRAM/flip work. */
 	move.w	pattern_transfer_vblanks, d4
 	DBG_PUT1
 	move.w	pattern_exit_v, d4
 	DBG_PUT2
-	/* VBlank 3/4 exact pattern words. They remain zero when an N=4 cadence
-	   has enough slack to finish its cold transfer in the earlier blanks. */
-	move.w	pattern_vblank3_words, d4
-	DBG_PUT3
-	move.w	pattern_vblank4_words, d4
-	DBG_PUT3
 .endif
 .endif
 .ifdef HUD_HEX_TABLE
@@ -2303,12 +2301,7 @@ prepare_dbg:
 stamp_dbg_stage:
 	lea	dbg_row, a0
 	lea	nt_stage, a1
-	moveq	#20-1, d0			/* H40 row 0: 40 words */
-1:
-	move.l	(a0)+, (a1)+
-	dbra	d0, 1b
-	lea	48(a1), a1			/* row-0 80B -> row-1 128B */
-	moveq	#14-1, d0			/* H40 row 1: first 28 of 29 words */
+	moveq	#19-1, d0			/* H40 row 0: first 38 words */
 1:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
@@ -2333,55 +2326,29 @@ publish_dbg:
 .ifdef PLAYER_SPECIALIZED
 .ifdef HUD_FLIP_FIELDS
 .if PC_MODE == 0
-	.rept 16				/* H32 row 0: common 30 + first two Q digits */
+	.rept 16				/* H32 row 0: first 32 words */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
 .else
-.ifdef NT_DMA_FLIP
-	moveq	#20-1, d1			/* H40 fixed-N: startup frame -1 only */
+	moveq	#19-1, d1			/* H40 row 0: first 38 words */
 1:
 	move.l	(a0)+, (VDP_DATA).l
 	dbra	d1, 1b
-.else
-	.rept 20				/* row 0: common 30 + Q/V/O/E */
-	move.l	(a0)+, (VDP_DATA).l
-	.endr
-.endif
+	move.w	(a0)+, (VDP_DATA).l
 .endif
 .ifdef HUD_SUB_POLL_GAP
-	/* Name tables use a 64-cell pitch. H32 resumes the linear 69-cell stream
-	   at logical cell 32; H40 resumes it at logical cell 40. */
+	/* Name tables use a 64-cell pitch. H32 resumes the linear 39-cell stream
+	   at logical cell 32; H40 already completed its single row. */
+.if PC_MODE == 0
 	moveq	#0, d0
 	move.w	back_idx, d0
 	lsl.l	#8, d0
 	lsl.l	#5, d0
 	add.l	#NT0+0x80, d0
 	bsr	set_vram_write
-.if PC_MODE == 0
-	.rept 16				/* H32 row 1: 32 words */
+	.rept 3				/* H32 row 1: first six of seven words */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
-	moveq	#0, d0
-	move.w	back_idx, d0
-	lsl.l	#8, d0
-	lsl.l	#5, d0
-	add.l	#NT0+0x100, d0
-	bsr	set_vram_write
-	.rept 2				/* H32 row 2: first four of five words */
-	move.l	(a0)+, (VDP_DATA).l
-	.endr
-	move.w	(a0)+, (VDP_DATA).l
-.else
-.ifdef NT_DMA_FLIP
-	moveq	#14-1, d1			/* H40 fixed-N: startup frame -1 only */
-1:
-	move.l	(a0)+, (VDP_DATA).l
-	dbra	d1, 1b
-.else
-	.rept 14				/* H40 row 1: first 28 of 29 words */
-	move.l	(a0)+, (VDP_DATA).l
-	.endr
-.endif
 	move.w	(a0)+, (VDP_DATA).l
 .endif
 .endif
@@ -2497,7 +2464,7 @@ shadow:
 	.space 0x1000				/* logical H40=2240B; padded for bounded list offsets */
 dbg_row:
 .ifdef HUD_SUB_POLL_GAP
-	.space HUD_COMBINED_WORDS*2		/* H32/H40 combined HUD; wraps at native width */
+	.space HUD_COMBINED_WORDS*2		/* H32 wraps; H40 fits one row */
 .else
 	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
 .endif
@@ -2546,9 +2513,9 @@ dbg_seg:
 palidx_ptr:
 	.space 4				/* next unconsumed M-PALIDX switch entry */
 sub_wait_lines:
-	.space 2				/* DEBUG HUD W: Main wait for Sub at last bank swap */
+	.space 2				/* DEBUG sub_wait_scanlines */
 frame_vblank_waits:
-	.space 2				/* DEBUG HUD M snapshot before display pacing */
+	.space 2				/* DEBUG vblank_spill snapshot before display pacing */
 dma_elapsed_ticks:
 	.space 2				/* DEBUG Uxxxx: 30.72 us stopwatch ticks */
 dma_start_tick:
@@ -2560,23 +2527,23 @@ pattern_final_reserve_words:
 vbudget_held_reserve:
 	.space 2				/* final capacity withheld from the current pattern d7 */
 flip_hv_v:
-	.space 2				/* DEBUG HUD V: V-counter at the last accepted flip */
+	.space 2				/* DEBUG flip_vcounter */
 pattern_vblank1_exit_v:
-	.space 2				/* DEBUG HUD O: V-counter after budget 1 */
+	.space 2				/* DEBUG first_share_exit_vcounter */
 pass2_entry_q:
-	.space 2				/* DEBUG HUD E: Pass2 entry delay since prev flip, ticks/4 */
+	.space 2				/* DEBUG pass2_delay_q4 */
 pattern_vblank1_words:
-	.space 2				/* DEBUG HUD Y: exact logical pattern words in budget 1 */
+	.space 2				/* internal pattern words in budget 1 */
 pattern_vblank2_words:
-	.space 2				/* DEBUG HUD Z: exact logical pattern words in budget 2 */
+	.space 2				/* internal pattern words in budget 2 */
 pattern_vblank3_words:
-	.space 2				/* DEBUG HUD Y3: exact logical pattern words in budget 3 */
+	.space 2				/* internal pattern words in budget 3 */
 pattern_vblank4_words:
-	.space 2				/* DEBUG HUD Y4: exact logical pattern words in budget 4 */
+	.space 2				/* internal pattern words in budget 4 */
 pattern_transfer_vblanks:
-	.space 2				/* runtime budget index; DEBUG HUD T */
+	.space 2				/* runtime budget index; DEBUG transfer_vblanks */
 pattern_exit_v:
-	.space 2				/* DEBUG HUD I: V-counter at Pass2 pattern exit */
+	.space 2				/* DEBUG transfer_end_vcounter */
 wr_ptr0:
 	.space 4				/* next Wr0 preload address in the currently mapped bank */
 wr_ptr1:

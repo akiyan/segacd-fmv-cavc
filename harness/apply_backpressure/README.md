@@ -13,7 +13,7 @@ fixed-cadence control consumer.
 The harness replays that producer lead through the exact BODY order:
 `control`, then `payload`, then `pad`. It advances APPLY by complete 2 KiB
 control sectors and advances the consumer by each control block's exact
-`total_len`. A predicted `B` requires both:
+`total_len`. A predicted `apply_backpressure` event requires both:
 
 - queued APPLY data is at or above the player's 30 KiB pump guard; and
 - the next physical BODY sector is control.

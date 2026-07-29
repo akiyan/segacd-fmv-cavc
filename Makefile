@@ -274,6 +274,10 @@ MAIN_CODEGEN ?= 1
 # Main-CPU pattern-transfer fast path.  Set to 0 only for reproducible A/B
 # diagnostics against the former all-DMA run path.
 DMA_RUN_FASTPATH ?= 1
+# Split a DMA run at the remaining VBlank budget boundary.  Zero is an
+# intentionally unsafe diagnostic mode: every run stays whole, including a
+# run longer than one complete VBlank, and may enter active display.
+VBLANK_RUN_SPLIT ?= 1
 # Bind player hot constants to this profile's HEADER.DAT.  Set to 0 only for
 # the generic runtime-header reference player used in A/B diagnostics.
 PLAYER_SPECIALIZE ?= 1
@@ -302,7 +306,7 @@ $(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(DMA_RUN_FASTPATH)),--defsym DMA_RUN_FASTPATH=1) $(if $(filter 1,$(VBLANK_RUN_SPLIT)),--defsym VBLANK_RUN_SPLIT=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
 	$(PYTHON) tools/gen_debugfont.py

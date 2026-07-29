@@ -68,18 +68,29 @@ class TimelineRenderingTests(unittest.TestCase):
                 np.asarray([16]), np.asarray([1]), np.asarray([2]),
                 np.asarray([0]))
 
+    def test_req_cold_cap_guide_uses_the_req_cell_scale(self):
+        self.assertEqual(timeline.req_cold_cap_y(100, 101, 400, 100), 175)
+        self.assertEqual(timeline.req_cold_cap_y(100, 101, 400, 0), 200)
+        self.assertEqual(timeline.req_cold_cap_y(100, 101, 400, 999), 100)
+
     def test_hud_run_scale_uses_timed_observed_maximum(self):
         data = {
             "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
-            "cold_runs_low8": np.asarray([255, 7, 12], np.float64),
+            "cold_runs": np.asarray([255, 7, 12], np.float64),
         }
         gate = {
             "content_fps": 30,
-            "limits": {"S": 0, "D": 0, "R": 0, "M": 1, "J": 25},
+            "limits": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 1,
+                "prgbuf_jitter_peak_kib": 25,
+            },
             "jitter_headroom_kib": 20,
         }
         specs = hudline.row_specs(data, gate, 2)
-        run = next(spec for spec in specs if spec.key == "cold_runs_low8")
+        run = next(spec for spec in specs if spec.key == "cold_runs")
         self.assertEqual(run.maximum, 12)
 
     def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
@@ -101,7 +112,13 @@ class TimelineRenderingTests(unittest.TestCase):
         }
         gate = {
             "content_fps": 30,
-            "limits": {"S": 0, "D": 0, "R": 0, "M": 1, "J": 25},
+            "limits": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 1,
+                "prgbuf_jitter_peak_kib": 25,
+            },
             "jitter_headroom_kib": 20,
         }
         specs = hudline.row_specs(data, gate, 2)

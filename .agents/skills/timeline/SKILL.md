@@ -114,6 +114,10 @@ Keep these parts in every image:
   Req uses cells and Supply uses patterns. R2V uses calculated VDP-memory
   transfer words.
   Band's axis remains a percentage of each frame's physical slot.
+- Draw the configured `cold_cap_tiles` as a yellow horizontal guide across
+  the REQ row, mapped to the same cell scale, and add its exact value as a
+  vertical-axis tick. This is the per-frame cold-update ceiling, not a
+  physical buffer level.
 - The header legend lists every analysis legend category
   (`analysis_style.LEGEND_ORDER`) with its whole-movie EVAL-scope displayed
   tile total, mirroring the analysis overlay's category legend as one

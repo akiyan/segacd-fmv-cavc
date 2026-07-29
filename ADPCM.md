@@ -100,7 +100,7 @@ No inter-frame codec state is carried in PRG-RAM; the decoded output buffer is
 overwritten for every chunk. A malformed step index is clamped to 88, and the
 fixed chunk size bounds every table and output-buffer access.
 
-The DEBUG `Axx` HUD field measures the decode phase, including an opportunistic
+The DEBUG `adpcm_decode_units` field measures the decode phase, including an opportunistic
 CDC pump on low-rate profiles. One displayed unit is four 30.72 microsecond
 Mega-CD stopwatch ticks, about 0.1229 ms.
 
@@ -203,7 +203,7 @@ Frame間codec stateはPRG-RAMに保持せず、decode済みoutput bufferはchunk
 上書きします。不正なstep indexは88へclampし、固定chunk sizeによって全table accessと
 output-buffer accessを範囲内に保ちます。
 
-DEBUG HUDの`Axx` fieldは、low-rate profileでのopportunistic CDC pumpを含むdecode phaseを
+DEBUG HUDの`adpcm_decode_units` fieldは、low-rate profileでのopportunistic CDC pumpを含むdecode phaseを
 計測します。表示1 unitはMega-CD stopwatchの30.72 microsecond tick 4個分、約0.1229 ms
 です。
 

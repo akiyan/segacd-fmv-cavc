@@ -92,12 +92,18 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   - `<specs>`: the descriptive spec suffix (mode, resolution/grid, "max
     resolution", etc.). No **sequence** version numbers (no `vNNN`).
   - `<ver>`: the encoder/player build version `YYYYMMDD.eN.pM` (from
-    `tools/av_version.txt`). `e` = encoder (sim.py / pack_stream.py params or
-    code), `p` = player (`boot/movieplay_*.s`). Bump `e` and/or `p` whenever
-    that side's output-affecting params or code change; never decrease either.
-    When bumping, set the date to today if it differs. This is the title build
-    version only — the on-disc `HEADER.DAT` format-version field is separate
-    and must NOT be touched. Update `tools/av_version.txt` whenever you bump.
+    `tools/av_version.txt`). `e` = shared encoder implementation and defaults
+    (`sim.py` / `pack_stream.py`), `p` = shared player implementation
+    (`boot/movieplay_*.s`). Bump `e` or `p` only when that shared side changes
+    in a way that can alter its output; never decrease either. Do **not** bump
+    `e` for a source-specific profile edit such as its input, trim, geometry,
+    frame rate, cold cap, or another encoder setting. Those values are tracked
+    by the profile/settings identity and are not encoder build revisions.
+    Likewise, do not bump `p` merely because a different profile or stream is
+    played. When bumping, set the date to today if it differs. This is the
+    title build version only — the on-disc `HEADER.DAT` format-version field is
+    separate and must NOT be touched. Update `tools/av_version.txt` whenever
+    you bump.
   - Example: `SEGA-CD FMV of <Work> - mode4 max resolution 256x176/32x22 20260710.e1.p1`.
 - **Description structure** (in both languages, in this order):
   1. Overview — one or two lines on what the video is.
@@ -125,9 +131,9 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   `tools/youtube_chapters.py <sim_out>` and prepend the block to the description
   (a blank line after it), before the Overview. For a playback recording that
   retains the Mega-CD startup, pass its matching complete gate as
-  `--hud-gate-json videos/<stem>_emu_hud_gate.json --intro-label "Mega-CD startup"`.
-  The gate must record the first valid `F=0000` immediately after the
-  player-only `F=FFFF` sentinel; that exact HUD transition supplies the content
+  `--hud-gate-json logs/<run>_hud_gate.json --intro-label "Mega-CD startup"`.
+  The gate must record the first valid `frame=0000` immediately after the
+  player-only `frame=FFFF` sentinel; that exact HUD transition supplies the content
   offset. It shifts chapter metadata only: do not trim or seek the recording.
   The tool reads the sim's `frame_seg` and enforces YouTube's rules (first at
   0:00, 10 s minimum spacing, ascending). This is not optional or per-video —
@@ -481,9 +487,11 @@ path for verification and upload.
   change was theoretically faster; require an observable benefit or a separate
   correctness need.
 - **Interpret waiting in context, not as severity.** A faster Sub path can
-  reach the next sector wait earlier and therefore increase HUD `C`; that alone
-  is neither improvement nor regression. Keep `C` diagnostic-only and read it
-  with `S/D/R`, visible playback, cadence, `J`, `A`, and `W`.
+  reach the next sector wait earlier and therefore increase
+  `cd_wait_count`; that alone is neither improvement nor regression. Keep it
+  diagnostic-only and read it with `sector_slip`, `control_desync`,
+  `audio_resync`, visible playback, cadence, `prgbuf_jitter_peak_kib`,
+  `adpcm_decode_units`, and `sub_wait_scanlines`.
 - **A graph near zero is not proof of zero.** Fixed whole-movie scales can hide
   a small positive balance. Add an exact signed diagnostic when zero,
   underflow, wraparound, or debt matters, and preserve its per-frame minimum
@@ -507,8 +515,9 @@ path for verification and upload.
   entry, and PCM start make this window different from steady playback. Before
   changing a steady-state knob such as cold cap, compare the first bad HUD
   frame with the first timed pattern load and inspect those handoffs in order.
-  If `S`, `C`, `D`, or another fault begins before timed cold loads begin, do
-  not attribute it to cold cap; diagnose the startup path first.
+  If `sector_slip`, `cd_wait_count`, `control_desync`, or another fault begins
+  before timed cold loads begin, do not attribute it to cold cap; diagnose the
+  startup path first.
 - **Transient vs persistent artifacts**: if an `ISO_HOLD_N` freeze of frame N
   is clean but live playback of the same frame shows artifacts, the corruption
   is stochastic per run (timing/phase dependent), not deterministic data
@@ -561,9 +570,10 @@ path for verification and upload.
   absent. Preserve all three images, their layout JSON files, and Gist receipts
   next to the recording. The HUD result has a binary `gate` (`PASS` or `FAIL`)
   and a separate `alert` (`NONE`, `WARNING`, or `FAIL`). `NONE` and `WARNING`
-  keep the gate at `PASS`; only alert `FAIL` makes the gate `FAIL`. `C` is
-  diagnostic only and never changes either result; report its
-  minimum, mean, median, and maximum together with the same `A` statistics.
+  keep the gate at `PASS`; only alert `FAIL` makes the gate `FAIL`.
+  `cd_wait_count` is diagnostic only and never changes either result; report
+  its minimum, mean, median, and maximum together with the same
+  `adpcm_decode_units` statistics.
   Publish failed gates and their mixlines too as diagnostic evidence, but do
   not proceed to analysis/playback uploads when `gate` is `FAIL`.
 - Extract visual-check stills with `tools/extract_verification_frames.sh`. It

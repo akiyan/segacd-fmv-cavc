@@ -38,14 +38,14 @@ report = load_module(
 class HudlineFrameZeroTests(unittest.TestCase):
     def test_c_and_a_statistics_omit_frame_zero(self):
         data = {
-            "cd_wait": np.asarray([255, 0, 2, 4], np.float64),
-            "sub_adpcm_decode_units": np.asarray(
+            "cd_wait_count": np.asarray([255, 0, 2, 4], np.float64),
+            "adpcm_decode_units": np.asarray(
                 [254, 60, 64, 64], np.float64),
         }
         rows = [
             {
-                "cd_wait": str(c_value),
-                "sub_adpcm_decode_units": str(a_value),
+                "cd_wait_count": str(c_value),
+                "adpcm_decode_units": str(a_value),
             }
             for c_value, a_value in zip(
                 (255, 0, 2, 4),
@@ -58,13 +58,13 @@ class HudlineFrameZeroTests(unittest.TestCase):
             (report, rows),
         ):
             with self.subTest(implementation=implementation.__name__):
-                c_stats = implementation.c_statistics(source)
+                c_stats = implementation.cd_wait_statistics(source)
                 self.assertEqual(c_stats["minimum"], 0)
                 self.assertEqual(c_stats["mean"], 2.0)
                 self.assertEqual(c_stats["median"], 2)
                 self.assertEqual(c_stats["maximum"], 4)
                 self.assertEqual(c_stats["sample_count"], 3)
-                a_stats = implementation.a_statistics(source)
+                a_stats = implementation.adpcm_decode_statistics(source)
                 self.assertEqual(a_stats["minimum"], 60)
                 self.assertAlmostEqual(
                     a_stats["mean"], 62.666666666666664)
@@ -97,36 +97,47 @@ class HudlineFrameZeroTests(unittest.TestCase):
     def test_c_never_creates_a_gate_overage_event(self):
         rows = [
             {
-                "slip": "0",
-                "desync": "0",
-                "resync": "0",
-                "cd_wait": str(c_value),
-                "main_vblank_wait": "0",
+                "sector_slip": "0",
+                "control_desync": "0",
+                "audio_resync": "0",
+                "cd_wait_count": str(c_value),
+                "vblank_spill": "0",
                 "prgbuf_jitter_peak_kib": "0",
             }
             for c_value in (0, 255, 255)
         ]
         gate = {
-            "limits": {"S": 0, "D": 0, "R": 0, "M": 1, "J": 25},
-            "maxima": {"S": 0, "D": 0, "R": 0, "C": 255, "M": 0, "J": 0},
+            "limits": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 1,
+                "prgbuf_jitter_peak_kib": 25,
+            },
+            "maxima": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "cd_wait_count": 255,
+                "vblank_spill": 0,
+                "prgbuf_jitter_peak_kib": 0,
+            },
         }
         self.assertEqual(report.gate_overage_events(rows, gate), {})
 
     def test_blank_optional_schema_columns_are_not_available_fields(self):
         rows = [
             {
-                "prgbuf_min_patterns_signed": "",
-                "sub_poll_gap_ticks": "",
+                "pump_gap_ticks": "",
             },
             {
-                "prgbuf_min_patterns_signed": "",
-                "sub_poll_gap_ticks": "276",
+                "pump_gap_ticks": "276",
             },
         ]
         self.assertFalse(
-            report.has_values(rows, "prgbuf_min_patterns_signed")
+            report.has_values(rows, "missing_field")
         )
-        self.assertTrue(report.has_values(rows, "sub_poll_gap_ticks"))
+        self.assertTrue(report.has_values(rows, "pump_gap_ticks"))
 
     def test_incomplete_prefix_keeps_the_expected_frame_axis(self):
         image = Image.new("RGBA", (32, 16), (0, 0, 0, 255))

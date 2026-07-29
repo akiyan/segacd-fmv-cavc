@@ -1,9 +1,9 @@
 # Pipeline speedup — where the Sub actually spends time
 
 Goal: let a dense spec (Sonic H32, 256x208, 832 cells) play clean 29.97fps. The
-first rate-matched build was structurally correct (`D=0`) but ran at ~16fps with
+first rate-matched build was structurally correct (`control_desync=0`) but ran at ~16fps with
 CD sector slips. The completed p11 path now saturates the 29.97 display cadence
-and finishes with `S=0`, `D=0` on the same e14 disc.
+and finishes with `sector_slip=0`, `control_desync=0` on the same e14 disc.
 
 ## Initial diagnostic: it was NOT the cold cap / cold-pop
 
@@ -23,7 +23,8 @@ in **both** (6777 sectors), so the pump/drain load is identical; only the cold-p
 
 Compare the sustained **cell-update rate** (cells × fps):
 
-- ed 15fps, 1120 cells: 16,800 cell-updates/s → plays clean (S=0).
+- ed 15fps, 1120 cells: 16,800 cell-updates/s → plays clean
+  (`sector_slip=0`).
 - Sonic 30fps, 832 cells: wants 24,960 cell-updates/s → the Sub can't, settles ~16fps
   (≈13,300/s) with slips.
 
@@ -53,8 +54,8 @@ grid (fewer cells) reaches clean 30fps now without any of this (cell-rate is the
 
 ## Results (first optimization pass, Sonic H32 832-cell 30fps)
 
-Measured effective fps (from the debug F counter, 60s window), D=0 throughout, full
-movie plays correct:
+Measured effective fps (from the DEBUG `frame` counter, 60s window),
+`control_desync=0` throughout, full movie plays correct:
 
 | build | change | fps | slips (mid-movie) |
 |---|---|---|---|
@@ -71,7 +72,8 @@ more than its cycle cost — hence a few percent of Sub work buys a big fps jump
 Consequence: **slips cannot reach 0 until the Sub actually sustains 30fps** (matches the
 disc). The pump/fixed-cost lever has largely plateaued (opt1 +5, opt2 +2, opt3 +1). The
 remaining ~6fps to 30 requires speeding the **raw per-cell decode** (`ef_bit` + cold
-handling), which is the harder, higher-risk work (must preserve D=0). At 24fps the value
+handling), which is the harder, higher-risk work (must preserve
+`control_desync=0`). At 24fps the value
 already holds: if the cell count is later reduced, fewer cells need cutting.
 
 ## opt4: per-cell decode restructure (26fps)
@@ -81,7 +83,7 @@ already holds: if the cell count is later reduced, fewer cells need cutting.
 | opt3 | (pump lever) | ~24.0 | ~68 |
 | opt4 | ef_bit: strip cold-bit only for cold cells (reuse writes entry directly); compute slot into d2 first so d3 is free for the occ check → drop the per-cold-cell d0 push/pop | ~26.0 | ~48 |
 
-**16 → 26fps (+63%)**, full movie D=0. The decode restructure preserved correctness and
+**16 → 26fps (+63%)**, full movie `control_desync=0`. The decode restructure preserved correctness and
 still gained via the nonlinear slip effect.
 
 ## opt5: interleaved PCM writes reach 29.97fps
@@ -97,9 +99,9 @@ frame counter:
 
 | build | 80/60-second HUD window | effective fps | full-loop result |
 |---|---:|---:|---|
-| e14 baseline (opt4) | `F0221` -> `F0866` / 60s | 26.750 | `S=65 D=0 R=32` |
-| opt5 MOVEP | `F0282` -> `F098B` / 60s | ~30.02 | `S=1 D=0 R=3` |
-| opt5 + armed startup | `F0024` -> `F0981` / 80s | **29.9625** | **`S=0 D=0 R=2`** |
+| e14 baseline (opt4) | `frame=0221` -> `frame=0866` / 60s | 26.750 | `sector_slip=65 control_desync=0 audio_resync=32` |
+| opt5 MOVEP | `frame=0282` -> `frame=098B` / 60s | ~30.02 | `sector_slip=1 control_desync=0 audio_resync=3` |
+| opt5 + armed startup | `frame=0024` -> `frame=0981` / 80s | **29.9625** | **`sector_slip=0 control_desync=0 audio_resync=2`** |
 
 The slight 30.02 reading is capture timestamp granularity; the wider final
 window matches the 29.97 display limit. Historical waveform diagnostics found
@@ -107,7 +109,7 @@ no clip or jump candidates in either capture, but those content-dependent
 thresholds are no longer recorder gates and do not constitute a listening
 test.
 
-### Startup arming removes the last `S=1`
+### Startup arming removes the last `sector_slip=1`
 
 The remaining slip already existed on displayed frame 0 and never increased,
 then repeated once on the next loop. Frame 0 was being expanded while the
@@ -126,9 +128,9 @@ build:
    flowing, then finishes that physical slot before acknowledging Main.
 
 For the measured Sonic file the split is sector 211, leaving 6777 timed sectors.
-`S` is not cleared at that split: prefix slips remain visible, and the first FRAMES
-sector is checked against the prefix's final MSF. The observed zero is therefore a
-real zero, not a counter reset.
+`sector_slip` is not cleared at that split: prefix slips remain visible, and
+the first FRAMES sector is checked against the prefix's final MSF. The observed
+zero is therefore a real zero, not a counter reset.
 
 ### Boundary proof
 
@@ -161,9 +163,11 @@ time the scalar RF5C164 loop consumed.
 ## p13/p14: full-height H32 (896 cells)
 
 Treating the 4:3 source as full-screen H32 increases the grid from 32x26 to
-32x28. The first p12 full-height run ended at `S=6 D=0 R=4`. p13 batches the
+32x28. The first p12 full-height run ended at
+`sector_slip=6 control_desync=0 audio_resync=4`. p13 batches the
 75 Hz CDC stage copy with 48-byte MOVEM transfers and copies variable control
-blocks as longwords; the same 896-cell encode improved to `S=4 D=0 R=3`.
+blocks as longwords; the same 896-cell encode improved to
+`sector_slip=4 control_desync=0 audio_resync=3`.
 
 p14 removes another per-cell loop cost without changing stream content. It
 shifts the bitmap one bit at a time and advances the cell cursor directly,
@@ -171,47 +175,56 @@ instead of indexed `BTST`, `cell=base+bit`, and an add/cmp/branch loop tail.
 This targets the remaining sub-percent throughput gap measured over the full
 2714-frame loop.
 
-p14 produced the same `S=4 D=0 R=3` as p13. A 60fps HUD scan showed the first
+p14 produced the same `sector_slip=4 control_desync=0 audio_resync=3` as p13.
+A 60fps HUD scan showed the first
 resync at lead `0x03C2`, just below the `0x0400` guard, but later decline proves
 that lowering the guard would only hide a real underrun. p15 instead halves two
 redundant poll cadences at 30fps (bitmap 64->128 bytes, PCM 256->512 bytes),
 while retaining the proven 15fps cadence.
 
-p15 improved the full loop to `S=3 D=0 R=3`. p16 removes a fixed per-sector
+p15 improved the full loop to `sector_slip=3 control_desync=0 audio_resync=3`.
+p16 removes a fixed per-sector
 cost: steady-state callers already preserve all registers, so they call a
 non-preserving `pump1_core` rather than duplicating a 15-register save/restore
 at up to 75 sectors/s. Boot arming keeps the preserving wrapper.
 
-p16 measured `S=4 D=0 R=3`, within the run-to-run slip variation and therefore
+p16 measured `sector_slip=4 control_desync=0 audio_resync=3`, within the
+run-to-run slip variation and therefore
 not a useful speedup. p17 removes the larger per-cold occupancy calculation.
 `process_frame` has already drained all sectors assigned to the frame, sector
 loss recovery completes inside `drain1`, and the pack verifies `under=0`; the
 check therefore always succeeded on valid streams while costing several
 instructions for about 96 cold tiles per frame.
 
-p17 improved the result to `S=2 D=0 R=3`. With its occupancy temporary gone,
+p17 improved the result to `sector_slip=2 control_desync=0 audio_resync=3`.
+With its occupancy temporary gone,
 p18 keeps the open run count in d3 instead of PRG RAM and derives the cold slot
 in d2 directly. This removes the memory increment and redundant register moves
 for every cold tile.
 
-p18 reached `S=1 D=0 R=3`. p19 removes the remaining mid-wave poll at 30fps:
+p18 reached `sector_slip=1 control_desync=0 audio_resync=3`. p19 removes the
+remaining mid-wave poll at 30fps:
 the 443-byte write is shorter than one CD-sector interval and is already
 bracketed by frame/expand polls. The <=20fps path retains its 256-byte cadence.
 
-p19 reproducibly regressed to `S=2 D=0 R=3` with both FFV1 and x264 CRF0
+p19 reproducibly regressed to `sector_slip=2 control_desync=0 audio_resync=3`
+with both FFV1 and x264 CRF0
 recording, so p20 restores the p18 wave cadence. It instead unrolls the variable
 control-block copy from 16 to 32 bytes per loop, halving its loop branches.
 
-p20 remained `S=1 D=0 R=3`. p21 changes the copy operation itself: eleven
+p20 remained `sector_slip=1 control_desync=0 audio_resync=3`. p21 changes the
+copy operation itself: eleven
 registers carry 44 bytes per MOVEM batch, and the absent 22-byte debug block is
 cleared with five longs plus one word rather than an 11-iteration loop.
 
-p21 regressed to `S=2 D=0 R=3`; MOVEM is slower than the unrolled MOVE.L path
+p21 regressed to `sector_slip=2 control_desync=0 audio_resync=3`; MOVEM is
+slower than the unrolled MOVE.L path
 on this bus, so p22 restores p20's copy. The R2/R3 window (frames 120--180)
 averages 854/896 updated cells, so p22 adds a 0xFF bitmap-byte path that handles
 eight consecutive updates without per-cell LSR/BCC.
 
-p22 reached `S=0 D=0 R=3` for the complete loop and into the next loop. e17
+p22 reached `sector_slip=0 control_desync=0 audio_resync=3` for the complete
+loop and into the next loop. e17
 extends boot-time PCM arming from 32 to 45 frames at 30fps, moving thirteen more
 PCM writes out of the live startup bottleneck. The pack derives a safe maximum
 from AUDIO and keeps a 0x200 lead margin, clamping 15fps content to 22 frames.
@@ -251,8 +264,9 @@ truth.
 The important A/B result is that the first dense section did **not** move after
 the CPU work was removed. Relative to the first visible frame, both p34 and p35
 reach frame `0x0101` at 9.376 seconds and frame `0x0181` at 13.447 seconds
-(within one 60000/1001 capture frame at earlier landmarks). `S=0` and `D=0`
-remain unchanged. This proves that the remaining early ~27 fps reading is not
+(within one 60000/1001 capture frame at earlier landmarks).
+`sector_slip=0` and `control_desync=0` remain unchanged. This proves that the
+remaining early ~27 fps reading is not
 the Sub loop: it is the on-disc delivery order. Each slot currently delivers
 two or three sectors of future ring refill before the current control stream,
 even though the current patterns are already in the 380 KB boot prebuffer.
@@ -323,8 +337,9 @@ boot-sidecar records.
 The report gives the exact added control bytes/sectors,
 startup frames 1--42 statistics, and decimal frame 2019 statistics.
 
-The Main CPU counts these descriptors into `n_runs`; H40 DEBUG HUD `N` displays
-its low byte. This logical run count is intentionally independent of the p45
+The Main CPU counts these descriptors into `n_runs`; H40 DEBUG HUD
+`cold_runs` displays its low byte. This logical run count is intentionally
+independent of the p45
 transfer path: a one- or two-tile run is CPU-written, while a longer run is DMA'd
 and can be split at a VBlank boundary. To compare the HUD OCR from a real emulator
 recording with the exact descriptors in the recorded disc, run:

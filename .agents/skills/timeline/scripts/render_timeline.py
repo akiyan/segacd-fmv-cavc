@@ -145,6 +145,20 @@ def r2v_scale_max(values: np.ndarray) -> int:
     return max(int(timed.max(initial=0)), 1)
 
 
+def req_cold_cap_y(
+    row_top: int,
+    row_height: int,
+    cells: float,
+    cold_cap_tiles: float,
+) -> int:
+    """Map the configured cold-tile cap onto the REQ row's cell scale."""
+    scale = max(float(cells), 1.0)
+    cap = min(max(float(cold_cap_tiles), 0.0), scale)
+    return row_top + row_height - 1 - int(
+        round((row_height - 1) * cap / scale)
+    )
+
+
 def calculate_r2v_words(
     pass2_words: np.ndarray,
     run_count: np.ndarray,
@@ -863,6 +877,25 @@ def draw_timeline(
             )
 
     draw_scale(req_top, req_h, cells)
+    cold_cap_tiles = float(data["cold_cap_tiles"][0])
+    cold_cap_y = req_cold_cap_y(
+        req_top,
+        req_h,
+        cells,
+        cold_cap_tiles,
+    )
+    draw.line(
+        (left, cold_cap_y, left + width - 1, cold_cap_y),
+        fill=style.COL_LIMIT,
+        width=2,
+    )
+    draw.text(
+        (left - 10, cold_cap_y),
+        f"{fmt_int(cold_cap_tiles)} cap",
+        fill=style.COL_LIMIT,
+        font=scale_font,
+        anchor="rm",
+    )
     draw_scale(supply_top, supply_h, total_capacity)
     draw_scale(run_top, run_h, run_capacity, show_midpoint=False)
     if r2v is not None:

@@ -18,9 +18,9 @@ Use this skill to:
 - build a DEBUG disc by default, or release only when explicitly requested;
 - launch RetroArch, send START, and record synchronized A/V;
 - validate timing, video, audio, logs, and optional diagnostic counters;
-- run the mandatory `S/D/R/M/J` HUD upload gate for any capture that may
-  proceed to `compilation` or another upload step, while preserving `C/A` as
-  diagnostics;
+- run the mandatory descriptive schema-12 HUD upload gate for any capture
+  that may proceed to `compilation` or another upload step, while preserving
+  `cd_wait_count` and `adpcm_decode_units` as diagnostics;
 - render the complete HUD TSV through the `hudline` skill, show it inline, and
   publish the PNG to a public Gist after every full recording, then require the
   matching codec timeline and render, show, and publicly publish the combined
@@ -28,7 +28,7 @@ Use this skill to:
 - return the raw lossless MKV, sidecars, and verification preview.
 
 Do not apply upload PAR/upscaling, create YouTube metadata, or upload here. Pass the verified
-lossless MKV to `compilation`. Do not locate `F0000` or trim to the movie unless the user
+lossless MKV to `compilation`. Do not locate `frame=0000` or trim to the movie unless the user
 explicitly asks for a movie-only clip.
 
 ## Preconditions
@@ -261,61 +261,38 @@ Check the raw MKV and reports before trusting a capture:
    matching gate to `_gate.json`. Use the two printed direct paths for every
    downstream tool; no compatibility symlink is created.
 
-   An H32 or H40 profile automatically selects its standard two-row layout.
-   Both preserve `Q/V/O/E/G/K`; H32 wraps the logical stream after 32 cells
-   and H40 after 40 cells. The analyzer decodes `G` low
-   12 bits as the longest interval outside the Sub CDC pump in 30.72 us ticks,
-   separates `G` bit 15 as the per-frame APPLY back-pressure marker `B`, and
-   records `K` as the cumulative MSF-gap recovery count. `Q` is the raw signed
-   16-bit per-frame minimum streamed-PrgBuf balance in exact 32-byte patterns:
-   `0000` means truly empty and `FFFF` means one pattern of underflow. Keep
-   `--flip-fields` and `--poll-gap-fields` only for legacy one-row H40
-   recordings. Use `--combined-fields` only when the profile is unavailable.
+   An H32 or H40 profile automatically selects the standard 39-cell layout.
+   H32 wraps after 32 cells into a second seven-cell row; H40 keeps all cells
+   on one row. The analyzer unpacks `vblank_spill` from the high nibble of the
+   transfer word, `apply_backpressure` from bit 15 of the pump-gap word, and
+   reader lead into `reader_ahead_frames` plus `reader_slot_sector`.
 
-   The profile is mandatory and positional because the M/J limits follow the
-   packed player's cadence. The result contains gate `PASS`/`FAIL` and alert
+   The profile is mandatory and positional because cadence and PrgBuf limits
+   follow the packed player. The result contains gate `PASS`/`FAIL` and alert
    `NONE`/`WARNING`/`FAIL`. Alert `WARNING` keeps gate `PASS`, exits zero, and
    remains upload-capable; alert `FAIL` makes gate `FAIL` and exits nonzero.
-   The first loop must contain every frame. Thresholds are:
-
-   - fixed-N2: `S/D/R=00`; `M>01` raises a cadence warning;
-   - fixed-N4: `S/D/R=00`; `M>03` raises a cadence warning;
-   - delivery-paced 24 fps: `S/D/R=00`; `M>03` raises a cadence warning;
-   - every cadence: `S/D/R=00`; `J<=2D` at 15fps, `J<=1E` at 24fps,
-     or `J<=19` at 30fps.
+   The first loop must contain every frame. `sector_slip`,
+   `control_desync`, and `audio_resync` must remain zero.
+   `vblank_spill` above the cadence-derived limit raises a warning.
+   `prgbuf_jitter_peak_kib` must remain below its physical-ring-derived limit.
 
    For fixed-N playback, compare consecutive first-capture positions for every
-   timed, nonterminal `F`. A visible duration other than N VBlanks raises alert
-   `WARNING` while retaining gate `PASS`. Preserve the complete duration
-   histogram and affected frames in the gate JSON. Delivery-paced playback
-   records the histogram without an exact-duration warning.
+   timed, nonterminal `frame`. A visible duration different from the cadence
+   raises alert `WARNING` while retaining gate `PASS`. Preserve the complete
+   histogram and affected frames. At fixed cadence,
+   `transfer_vblanks` above the cadence interval is another warning.
 
-   `C`, `Q`, `G`, `B`, `K`, `H`, `X`, `Y`, `Z`, `Y3`, `Y4`, `T`, and `I`
-   preserve diagnostics. At fixed cadence, `T>N` raises alert `WARNING` while
-   retaining gate `PASS`; the word shares and phases have no limits. Report the C
-   distribution and Q minimum when available. For the pump layout, report the G distribution, B
-   frame count, H physical peak, X reader lead, Y/Z/Y3/Y4 VBlank word shares, T
-   transfer-VBlank count, I pattern-exit phase, and `(S-K) & 0xFF` CDC_TRN
-   retry-exhaustion count, and correlate them with actual playback failures.
-   The M warning limit marks the display fields available to one content frame;
-   exceeding it does not by itself fail the upload gate. The
-   `J` limit is derived from the stream's generated
-   normal PrgBuf ceiling: normal/jitter is 378/40 KiB at 15fps,
-   393/25 KiB at 24fps, and 398/20 KiB at 30fps. A value above `28`, `19`, or
-   `14` respectively means sector-granular occupancy crossed the 418 KiB
-   delivery observation boundary and entered its 2 KiB back-pressure guard or the
-   separate 4 KiB physical guard; report this explicitly, but a value at or below the
-   cadence-specific passing limit does not by itself require another
-   confirmation or fail the recording.
-   Do not waive, hand-edit, or reuse a gate JSON from another recording.
+   Report distributions for `cd_wait_count`, `adpcm_decode_units`, and
+   `pump_gap_ticks`; APPLY back-pressure frame count; cumulative
+   `msf_gap_recoveries`; reader lead; and transfer VBlank/phase maxima.
+   Correlate these diagnostics with actual playback failures. Do not waive,
+   hand-edit, or reuse a gate JSON from another recording.
 
-   On every result, report the minimum, mean, median, and maximum of `C` and
-   `A` across the timed first loop, excluding frame 0. When `Q` is present,
-   also report its signed logical minimum and peak underflow debt. The analyzer must store
-   these statistics in the gate JSON so `hudline` can validate and preserve
-   them. When `G` is present, also report and preserve its minimum, mean,
-   median, and maximum after separating `B`. On gate `PASS`, also report all five gate maxima and the
-   diagnostic C maximum. A standalone `record` request ends with the
+   On every result, report minimum, mean, median, and maximum for
+   `cd_wait_count` and `adpcm_decode_units` across the timed first loop,
+   excluding frame 0. Do the same for `pump_gap_ticks`. On gate `PASS`, also
+   report all five descriptive gate maxima and the diagnostic
+   `cd_wait_count` maximum. A standalone `record` request ends with the
    verified recording because it did not authorize publication. Under `$run`,
    the existing upload authorization is sufficient; continue without asking
    again merely because the gate ran.
@@ -337,11 +314,9 @@ sound is clean or free of audible clicks only after listening to the final file.
 
 ## Required upload HUD gate and optional diagnostics
 
-The standard capture already builds DEBUG. The HUD omits category glyphs and
-uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` prefix in H32 and H40.
-Both modes append `Q/V/O/E/G/K/H/X/Y/Z/T/I/Y3/Y4` and wrap the same 69-cell
-logical stream into three H32 rows or two H40 rows. The profile selects the matching combined
-OCR layout automatically. Parse the complete first loop
+The standard capture already builds DEBUG. The HUD is a 39-cell values-only
+stream. H32 wraps after 32 cells; H40 fits it on one row. The profile selects
+the layout automatically. Parse the complete first loop
 whenever the capture can be uploaded; for a local-only recording, full OCR
 remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
@@ -353,21 +328,13 @@ OUTDIR="$PWD/videos" tools/run_headless.sh out/PROFILE.cue \
   --record-size 256x224 --shots 68 --interval 2
 ```
 
-Confirm the contiguous top-row Plane A HUD is visible before a long OCR scan.
-The common row uses `xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx`. `F` and `U`
-contain four hexadecimal digits; every other common value contains two. In
-the extended H40 row, `Q` also contains four hexadecimal digits and `V/O/E`
-contain two each. Read the
-requested counters over the complete loop. `U` is the Main pattern-transfer
-time in 30.72 us Mega-CD stopwatch ticks, `N` is the packed cold-run count's low
-byte, and `J` is the sticky ceil-KiB streamed PrgBuf excess above the
-fps-derived normal ceiling. `Q` is a signed exact-pattern balance: values with
-the high bit set are negative underflow, not a large positive occupancy. A
-Gate `PASS` in the `S/D/R/M/J` result JSON is the required handoff condition;
-alert may be `NONE` or `WARNING`. A fixed-N visible-duration mismatch is one
-source of `WARNING` and does not block upload. A fixed-N `T>N` is another
-warning. `C/A/Q/G/B/K/H/X` remain recorded diagnostics, as do the Main
-pattern-split fields `Y/Z/Y3/Y4/T/I`. When the
+Confirm the Plane A HUD is visible before a long OCR scan. Read the complete
+loop. `transfer_ticks` is the Main pattern-transfer time in 30.72 us ticks,
+`cold_runs` is the packed run count's low byte, and
+`prgbuf_jitter_peak_kib` is sticky ceil-KiB excess above the cadence-derived
+normal ceiling. Gate `PASS` in the descriptive schema-12 result is the
+required handoff condition; alert may be `NONE` or `WARNING`. Fixed-cadence
+visible-duration and transfer-budget excesses are warning-only. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
 trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and
@@ -415,7 +382,8 @@ whether human listening was performed. For offline runs also report the Replay
 path, requested/max frame count, wall time, and speed. When the run requalifies
 the fast path, additionally report the exact-comparison JSON/pass state and
 repeat-run result. For an upload-capable capture, report the HUD gate JSON,
-complete-loop frame count, `S/D/R/M/J` gate maxima, the diagnostic C maximum,
-`C/A` minimum, mean, median, and maximum, plus G statistics and B/K cause
-counts, H/X maxima, and Y/Z/Y3/Y4/T/I split maxima when present, gate state, hudline
-and mixline PNGs, and both public Gist/raw image URLs.
+complete-loop frame count, all five descriptive gate maxima, diagnostic
+`cd_wait_count` maximum, `cd_wait_count` / `adpcm_decode_units` /
+`pump_gap_ticks` statistics, APPLY and MSF recovery counts, reader and transfer
+maxima, gate state, hudline and mixline PNGs, and both public Gist/raw image
+URLs.

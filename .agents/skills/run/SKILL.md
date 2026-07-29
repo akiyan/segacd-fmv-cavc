@@ -242,21 +242,21 @@ Before accepting the recording, verify:
 - representative lossless frames against the sim when timing or fps behavior is new or suspect.
 - one complete HUD loop with `harness/startup_resync/analyze.py --gate-json`;
   pass the encode profile as the required second positional argument and
-  require every expected movie frame. Every cadence requires `S/D/R=00`.
-  `M>01` at fixed N2, `M>03` at fixed N4, or `M>03` at delivery-paced
-  24 fps raises alert `WARNING` without failing the gate. `C` is diagnostic
-  only and never changes the gate status. Always report the `C/A` minimum,
-  mean, median, and maximum. The
-  generated gate uses
-  the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
-  and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's
-  normal jitter interval (`28`, `19`, or `14` respectively).
+  require every expected movie frame. Every cadence requires
+  `sector_slip`, `control_desync`, and `audio_resync` to remain zero.
+  `vblank_spill` above its cadence-derived limit raises alert `WARNING`
+  without failing the gate. `cd_wait_count` is diagnostic only and never
+  changes gate status. Always report `cd_wait_count` and
+  `adpcm_decode_units` minimum, mean, median, and maximum. The generated gate
+  derives the `prgbuf_jitter_peak_kib` limit from the fps-specific normal
+  PrgBuf ceiling and the physical ring.
   Preserve the encoder/player-versioned HUD TSV body and matching
   upload-capable `_gate.json` under `logs/`. Use their direct paths; no
   compatibility symlink is created.
-  Fixed-N `T>N` also raises alert `WARNING` without failing the gate. Both H32
-  and H40 profiles select the same 69-cell diagnostic field set; OCR wraps it
-  into three H32 rows or two H40 rows.
+  Fixed-cadence `transfer_vblanks` above the cadence interval also raises
+  alert `WARNING` without failing the gate. Both H32 and H40 profiles select
+  the same 39-cell diagnostic set; OCR wraps H32 after 32 cells and keeps H40
+  on one row.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
 timestamps and a `videos/<stem>/record_check` base; inspect only the new directory and its
@@ -336,8 +336,9 @@ tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_analysis_descr
 Upload the newly rebuilt analysis as unlisted, category 20. Use `--force` only
 for a re-upload and retain the returned URL.
 
-After the analysis upload succeeds, report the exact `S/D/R/M/J` gate maxima,
-the diagnostic C maximum, and the `C/A` minimum, mean, median, and maximum.
+After the analysis upload succeeds, report the five descriptive gate maxima,
+the diagnostic `cd_wait_count` maximum, and the `cd_wait_count` /
+`adpcm_decode_units` minimum, mean, median, and maximum.
 Continue to the already-authorized playback compilation/upload. Do not request
 another approval merely because the gate ran.
 
@@ -350,7 +351,7 @@ validated H32/H40 pixel aspect into 2048x1568 square pixels using nearest-neighb
 scaling, H.264 CRF 10 slow, yuv420p, AAC 192 kbps, and faststart. Do not add
 `-ss`, `-t`, an fps filter, or `-r`.
 
-Use the matching complete HUD gate's verified `F=FFFF` to `F=0000` transition
+Use the matching complete HUD gate's verified `frame=FFFF` to `frame=0000` transition
 as the CRAM chapter offset. Pass that gate through
 `tools/youtube_chapters.py --hud-gate-json`; do not trim the video.
 
@@ -381,7 +382,7 @@ unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
 fix it when the requested scope permits, and rerun the failed stage plus every
 downstream stage whose inputs changed.
 
-An absent or `FAIL` `S/D/R/M/J` gate is a Stage 4 failure. Alert `WARNING`
+An absent or `FAIL` descriptive schema-12 HUD gate is a Stage 4 failure. Alert `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
 public MP4 until a complete loop returns gate `PASS`.
 
@@ -410,7 +411,8 @@ Report one compact result block per source with:
 - analysis URL, output path, average rate, and starvation result;
 - pack verification result;
 - lossless recording and preview paths, duration, raster/fps, and audio metrics;
-- hudline path, `S/D/R/M/J` gate maxima, diagnostic C maximum, `C/A`
+- hudline path, five descriptive gate maxima, diagnostic `cd_wait_count`
+  maximum, `cd_wait_count` / `adpcm_decode_units`
   minimum/mean/median/maximum, and public Gist/raw image URLs;
 - timeline and final mixline paths plus their public Gist/raw image URLs;
 - whether startup was retained and whether human listening was performed;

@@ -29,10 +29,13 @@ For every case it requires:
 - CPU-written VDP words cost four DMA-word units, including one-/two-tile
   direct runs and Word-RAM DMA first-word repairs, while boundary-crossing DMA
   runs keep the bounded chunk fallback;
+- the standard `VBLANK_RUN_SPLIT=1` build contains that boundary split, while
+  the H40/30 diagnostic `VBLANK_RUN_SPLIT=0` build assembles and links with no
+  branch from the ordinary run loop to `bf_split_run`;
 - the fixed cadence is generated as N2 at 30 fps and N4 at 15 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
-- the fixed-N H40 DEBUG reserve includes the complete 69-cell HUD staging
+- the fixed-N H40 DEBUG reserve includes the complete 39-cell HUD staging
   allowance;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;

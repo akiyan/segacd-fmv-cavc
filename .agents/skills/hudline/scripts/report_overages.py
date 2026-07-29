@@ -22,51 +22,50 @@ import hud_gate  # noqa: E402
 
 
 GATE_COLUMNS = {
-    "S": "slip",
-    "D": "desync",
-    "R": "resync",
-    "M": "main_vblank_wait",
-    "J": "prgbuf_jitter_peak_kib",
+    "sector_slip": "sector_slip",
+    "control_desync": "control_desync",
+    "audio_resync": "audio_resync",
+    "vblank_spill": "vblank_spill",
+    "prgbuf_jitter_peak_kib": "prgbuf_jitter_peak_kib",
 }
 
 MAXIMUM_COLUMNS = {
     **GATE_COLUMNS,
-    "C": "cd_wait",
+    "cd_wait_count": "cd_wait_count",
 }
 
-# S/D/R are cumulative counters and J is a sticky maximum. Once they exceed a
-# limit, repeating the same value on every later frame is state, not another
-# event. Report the transition into each new over-limit value instead.
-TRANSITION_FIELDS = {"S", "D", "R", "J"}
+# The first three fields are cumulative counters and PrgBuf jitter is a sticky
+# maximum. Repeating an over-limit value is state, not a new event.
+TRANSITION_FIELDS = {
+    "sector_slip",
+    "control_desync",
+    "audio_resync",
+    "prgbuf_jitter_peak_kib",
+}
 
 HUD_COLUMNS = (
-    ("P", "palette", 2),
-    ("S", "slip", 2),
-    ("D", "desync", 2),
-    ("R", "resync", 2),
-    ("L", "lead_256b", 2),
-    ("C", "cd_wait", 2),
-    ("W", "sub_wait_lines", 2),
-    ("M", "main_vblank_wait", 2),
-    ("A", "sub_adpcm_decode_units", 2),
-    ("U", "main_pattern_ticks", 4),
-    ("N", "cold_runs_low8", 2),
-    ("J", "prgbuf_jitter_peak_kib", 2),
-    ("Q", "prgbuf_min_patterns_raw16", 4),
-    ("G", "sub_poll_gap_ticks", 4),
-    ("B", "apply_guard_blocked", 2),
-    ("K", "slip_msf_gap_count", 2),
-    ("H", "prgbuf_physical_peak_patterns", 4),
-    ("X", "reader_ahead_raw16", 4),
-    ("Y", "pattern_vblank1_words", 3),
-    ("O", "pattern_vblank1_exit_vcounter", 2),
-    ("Z", "pattern_vblank2_words", 3),
-    ("Y3", "pattern_vblank3_words", 3),
-    ("Y4", "pattern_vblank4_words", 3),
-    ("T", "pattern_transfer_vblanks", 1),
-    ("I", "pattern_exit_vcounter", 2),
-    ("V", "flip_vcounter", 2),
-    ("E", "pass2_entry_q4", 2),
+    ("palette_segment", "palette_segment", 1),
+    ("sector_slip", "sector_slip", 1),
+    ("control_desync", "control_desync", 1),
+    ("audio_resync", "audio_resync", 1),
+    ("audio_lead_256b", "audio_lead_256b", 2),
+    ("cd_wait_count", "cd_wait_count", 1),
+    ("sub_wait_scanlines", "sub_wait_scanlines", 2),
+    ("vblank_spill", "vblank_spill", 1),
+    ("adpcm_decode_units", "adpcm_decode_units", 2),
+    ("transfer_ticks", "transfer_ticks", 3),
+    ("cold_runs", "cold_runs", 2),
+    ("prgbuf_jitter_peak_kib", "prgbuf_jitter_peak_kib", 2),
+    ("flip_vcounter", "flip_vcounter", 2),
+    ("first_share_exit_vcounter", "first_share_exit_vcounter", 2),
+    ("pass2_delay_q4", "pass2_delay_q4", 2),
+    ("pump_gap_ticks", "pump_gap_ticks", 3),
+    ("apply_backpressure", "apply_backpressure", 1),
+    ("msf_gap_recoveries", "msf_gap_recoveries", 1),
+    ("reader_ahead_frames", "reader_ahead_frames", 1),
+    ("reader_slot_sector", "reader_slot_sector", 1),
+    ("transfer_vblanks", "transfer_vblanks", 1),
+    ("transfer_end_vcounter", "transfer_end_vcounter", 2),
 )
 
 
@@ -92,8 +91,8 @@ def as_int(row: dict[str, str], column: str) -> int:
     try:
         return int(round(float(text)))
     except ValueError:
-        # The analyzer preserves some HUD-native fields, notably H40's V
-        # counter, as hexadecimal glyph text such as "EE".
+        # The analyzer preserves V-counter fields as hexadecimal glyph text
+        # such as "EE".
         return int(text, 16)
 
 
@@ -135,16 +134,22 @@ def field_statistics(
     }
 
 
-def c_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
-    return field_statistics(rows, "cd_wait")
+def cd_wait_statistics(
+    rows: list[dict[str, str]],
+) -> dict[str, int | float]:
+    return field_statistics(rows, "cd_wait_count")
 
 
-def a_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
-    return field_statistics(rows, "sub_adpcm_decode_units")
+def adpcm_decode_statistics(
+    rows: list[dict[str, str]],
+) -> dict[str, int | float]:
+    return field_statistics(rows, "adpcm_decode_units")
 
 
-def g_statistics(rows: list[dict[str, str]]) -> dict[str, int | float]:
-    return field_statistics(rows, "sub_poll_gap_ticks")
+def pump_gap_statistics(
+    rows: list[dict[str, str]],
+) -> dict[str, int | float]:
+    return field_statistics(rows, "pump_gap_ticks")
 
 
 def format_field_statistics(
@@ -161,12 +166,14 @@ def format_field_statistics(
     )
 
 
-def format_c_statistics(result: dict[str, int | float]) -> str:
-    return format_field_statistics("C", result)
+def format_cd_wait_statistics(result: dict[str, int | float]) -> str:
+    return format_field_statistics("cd_wait_count", result)
 
 
-def format_a_statistics(result: dict[str, int | float]) -> str:
-    return format_field_statistics("A", result)
+def format_adpcm_decode_statistics(
+    result: dict[str, int | float],
+) -> str:
+    return format_field_statistics("adpcm_decode_units", result)
 
 
 def load_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
@@ -178,7 +185,7 @@ def load_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
             "frame",
             "capture_first",
             *MAXIMUM_COLUMNS.values(),
-            "sub_adpcm_decode_units",
+            "adpcm_decode_units",
         }
         missing = required - set(fields)
         if missing:
@@ -210,13 +217,14 @@ def load_gate(path: Path) -> dict:
     for key in GATE_COLUMNS:
         if key not in gate["limits"] or key not in gate["maxima"]:
             raise SystemExit(f"gate JSON lacks {key} limit or maximum")
-    if "C" not in gate["maxima"]:
-        raise SystemExit("gate JSON lacks diagnostic C maximum")
-    if int(gate.get("schema_version", 0)) >= 5:
-        if "C" in gate["limits"]:
-            raise SystemExit("schema-5+ gate must not define a C limit")
-        if list(gate.get("gate_fields", ())) != list(GATE_COLUMNS):
-            raise SystemExit("schema-5+ gate_fields do not match the HUD gate")
+    if int(gate.get("schema_version", 0)) != 12:
+        raise SystemExit("overage report requires descriptive HUD gate schema 12")
+    if "cd_wait_count" not in gate["maxima"]:
+        raise SystemExit("gate JSON lacks diagnostic cd_wait_count maximum")
+    if "cd_wait_count" in gate["limits"]:
+        raise SystemExit("gate must not define a cd_wait_count limit")
+    if list(gate.get("gate_fields", ())) != list(GATE_COLUMNS):
+        raise SystemExit("gate_fields do not match the descriptive HUD gate")
     return gate
 
 
@@ -250,53 +258,26 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
     if int(gate.get("evaluation_first_frame", 1)) != 1:
         raise SystemExit("HUD gate must exclude untimed frame 0")
     for field, statistics_key, expected in (
-        ("C", "c_statistics", c_statistics(rows)),
-        ("A", "a_statistics", a_statistics(rows)),
+        (
+            "cd_wait_count",
+            "cd_wait_statistics",
+            cd_wait_statistics(rows),
+        ),
+        (
+            "adpcm_decode_units",
+            "adpcm_decode_statistics",
+            adpcm_decode_statistics(rows),
+        ),
     ):
         recorded = gate.get(statistics_key)
         if recorded is None:
-            if int(gate.get("schema_version", 0)) >= 4:
-                raise SystemExit(f"gate JSON lacks {statistics_key}")
-            continue
+            raise SystemExit(f"gate JSON lacks {statistics_key}")
         for key in ("minimum", "maximum", "sample_count"):
             if int(recorded[key]) != int(expected[key]):
                 raise SystemExit(
                     f"gate {field} {key} {recorded[key]} does not match "
                     f"TSV value {expected[key]}"
                 )
-    for field, column, gate_key in (
-        ("H", "prgbuf_physical_peak_patterns",
-         "prgbuf_physical_peak_patterns"),
-        ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
-        ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
-        ("O", "pattern_vblank1_exit_vcounter",
-         "pattern_vblank1_exit_vcounter_max"),
-        ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
-        ("Y3", "pattern_vblank3_words", "pattern_vblank3_max_words"),
-        ("Y4", "pattern_vblank4_words", "pattern_vblank4_max_words"),
-        ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
-        ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
-    ):
-        present = has_values(rows, column)
-        declared = field in gate.get("diagnostic_fields", ())
-        if present:
-            actual = max(
-                (as_int(row, column) for row in rows[1:]),
-                default=0,
-            )
-            if gate_key not in gate:
-                raise SystemExit(f"gate JSON lacks {gate_key}")
-            if int(gate[gate_key]) != actual:
-                raise SystemExit(
-                    f"gate {field} maximum {gate[gate_key]} does not match "
-                    f"TSV maximum {actual}"
-                )
-            if not declared:
-                raise SystemExit(
-                    f"gate diagnostic_fields omit available {field}")
-        elif declared:
-            raise SystemExit(
-                f"gate declares {field} but HUD TSV has no {column} values")
         for key in ("mean", "median"):
             if not math.isclose(
                 float(recorded[key]),
@@ -307,6 +288,36 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
                     f"gate {field} {key} {recorded[key]} does not match "
                     f"TSV value {expected[key]}"
                 )
+    for column, gate_key in (
+        ("reader_ahead_frames", "reader_ahead_max_frames"),
+        ("reader_slot_sector", "reader_slot_sector_max"),
+        ("transfer_vblanks", "transfer_vblanks_max"),
+        ("transfer_end_vcounter", "transfer_end_vcounter_max"),
+        (
+            "first_share_exit_vcounter",
+            "first_share_exit_vcounter_max",
+        ),
+    ):
+        present = has_values(rows, column)
+        declared = column in gate.get("diagnostic_fields", ())
+        if present:
+            actual = max(
+                (as_int(row, column) for row in rows[1:]),
+                default=0,
+            )
+            if gate_key not in gate:
+                raise SystemExit(f"gate JSON lacks {gate_key}")
+            if int(gate[gate_key]) != actual:
+                raise SystemExit(
+                    f"gate {column} maximum {gate[gate_key]} does not match "
+                    f"TSV maximum {actual}"
+                )
+            if not declared:
+                raise SystemExit(
+                    f"gate diagnostic_fields omit available {column}")
+        elif declared:
+            raise SystemExit(
+                f"gate declares {column} but HUD TSV has no {column} values")
 
 
 def displayed_vblanks(rows: list[dict[str, str]]) -> list[int | None]:
@@ -390,29 +401,7 @@ def render_markdown(
     available_hud = [
         (name, column, digits)
         for name, column, digits in HUD_COLUMNS
-        if (
-            column in fields
-            and (
-                column not in {
-                    "prgbuf_min_patterns_raw16",
-                    "sub_poll_gap_ticks",
-                    "apply_guard_blocked",
-                    "slip_msf_gap_count",
-                    "prgbuf_physical_peak_patterns",
-                    "reader_ahead_raw16",
-                    "pattern_vblank1_words",
-                    "pattern_vblank1_exit_vcounter",
-                    "pattern_vblank2_words",
-                    "pattern_vblank3_words",
-                    "pattern_vblank4_words",
-                    "pattern_transfer_vblanks",
-                    "pattern_exit_vcounter",
-                    "flip_vcounter",
-                    "pass2_entry_q4",
-                }
-                or has_values(rows, column)
-            )
-        )
+        if column in fields and has_values(rows, column)
     ]
     summary = []
     summary.append(f"HUD gate: {gate['gate']}; alert: {alert}.")
@@ -420,100 +409,67 @@ def render_markdown(
         "Frame 0 is untimed boot staging and is excluded from every metric, "
         "gate, scale, and VBLANK statistic."
     )
-    summary.append(format_c_statistics(c_statistics(rows)))
-    summary.append(format_a_statistics(a_statistics(rows)))
-    if (
-        "prgbuf_min_patterns_signed" in fields
-        and has_values(rows, "prgbuf_min_patterns_signed")
-    ):
-        q_minimum = min(
-            as_int(row, "prgbuf_min_patterns_signed")
-            for row in rows[1:]
-        )
+    summary.append(
+        format_cd_wait_statistics(cd_wait_statistics(rows))
+    )
+    summary.append(
+        format_adpcm_decode_statistics(adpcm_decode_statistics(rows))
+    )
+    if "pump_gap_ticks" in fields and has_values(rows, "pump_gap_ticks"):
         summary.append(
-            f"Q logical minimum (timed first loop): {q_minimum} patterns; "
-            f"underflow peak={max(0, -q_minimum)} patterns."
+            format_field_statistics(
+                "pump_gap_ticks",
+                pump_gap_statistics(rows),
+            )
         )
-    if "sub_poll_gap_ticks" in fields and has_values(rows, "sub_poll_gap_ticks"):
-        summary.append(format_field_statistics("G", g_statistics(rows)))
     if (
-        "apply_guard_blocked" in fields
-        and has_values(rows, "apply_guard_blocked")
+        "apply_backpressure" in fields
+        and has_values(rows, "apply_backpressure")
     ):
         blocked = sum(
-            as_int(row, "apply_guard_blocked") != 0
+            as_int(row, "apply_backpressure") != 0
             for row in rows[1:]
         )
         summary.append(
-            "B APPLY back-pressure frames "
+            "APPLY back-pressure frames "
             f"(timed first loop): {blocked}."
         )
     if (
-        "prgbuf_physical_peak_patterns" in fields
-        and has_values(rows, "prgbuf_physical_peak_patterns")
+        "reader_ahead_frames" in fields
+        and has_values(rows, "reader_ahead_frames")
     ):
-        physical_peak = max(
-            as_int(row, "prgbuf_physical_peak_patterns")
+        reader_ahead_frames = max(
+            as_int(row, "reader_ahead_frames")
+            for row in rows[1:]
+        )
+        reader_slot_sector = max(
+            as_int(row, "reader_slot_sector")
             for row in rows[1:]
         )
         summary.append(
-            f"H physical PrgBuf peak (timed first loop): {physical_peak} "
-            f"patterns ({physical_peak * 32} bytes)."
+            "Reader lead (timed first loop): "
+            f"{reader_ahead_frames} complete frame slots + "
+            f"sector {reader_slot_sector}."
         )
-    if (
-        "reader_ahead_raw16" in fields
-        and has_values(rows, "reader_ahead_raw16")
-    ):
-        reader_ahead = max(
-            as_int(row, "reader_ahead_raw16")
-            for row in rows[1:]
-        )
-        summary.append(
-            "X reader lead (timed first loop): "
-            f"{reader_ahead >> 8} complete frame slots + "
-            f"sector {reader_ahead & 0xFF}."
-        )
-    split_columns = (
-        ("Y", "pattern_vblank1_words"),
-        ("O", "pattern_vblank1_exit_vcounter"),
-        ("Z", "pattern_vblank2_words"),
-        ("T", "pattern_transfer_vblanks"),
-        ("I", "pattern_exit_vcounter"),
-    )
     if all(
         column in fields and has_values(rows, column)
-        for _field, column in split_columns
+        for column in (
+            "first_share_exit_vcounter",
+            "transfer_vblanks",
+            "transfer_end_vcounter",
+        )
     ):
-        split_maxima = {
-            field: max(as_int(row, column) for row in rows[1:])
-            for field, column in split_columns
-        }
-        later_columns = (
-            ("Y3", "pattern_vblank3_words"),
-            ("Y4", "pattern_vblank4_words"),
-        )
-        later_maxima = {
-            field: max(as_int(row, column) for row in rows[1:])
-            for field, column in later_columns
-            if column in fields and has_values(rows, column)
-        }
-        later_text = (
-            f", VB3/VB4 {later_maxima['Y3']}/{later_maxima['Y4']} words"
-            if len(later_maxima) == 2 else ""
-        )
         summary.append(
-            "Y/O/Z/T/I/Y3/Y4 Main transfer-budget maxima "
-            f"(timed first loop): {split_maxima['Y']}/"
-            f"{split_maxima['Z']} words "
-            f"({split_maxima['Y'] / 16:g}/"
-            f"{split_maxima['Z'] / 16:g} patterns)"
-            f"{later_text}, "
-            f"first exit V-counter {split_maxima['O']:02X}, "
-            f"opened VBlank budget count {split_maxima['T']}, "
-            f"final exit V-counter {split_maxima['I']:02X}."
+            "Main transfer maxima (timed first loop): "
+            "first-share exit V-counter "
+            f"{max(as_int(row, 'first_share_exit_vcounter') for row in rows[1:]):02X}, "
+            "opened VBlank budget count "
+            f"{max(as_int(row, 'transfer_vblanks') for row in rows[1:])}, "
+            "final exit V-counter "
+            f"{max(as_int(row, 'transfer_end_vcounter') for row in rows[1:]):02X}."
         )
     summary.append(
-        "C is diagnostic only and does not affect the HUD gate status."
+        "cd_wait_count is diagnostic only and does not affect the HUD gate status."
     )
     expected_frames = int(gate["expected_frames"])
     if expected_frames != len(rows):
@@ -545,7 +501,7 @@ def render_markdown(
     if not events:
         return "\n".join(summary) + "\n"
     headers = [
-        "F",
+        "frame",
         "Warning / over limit",
         "VBLANK",
         *[name for name, _, _ in available_hud],

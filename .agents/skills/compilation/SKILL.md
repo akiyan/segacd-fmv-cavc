@@ -1,6 +1,6 @@
 ---
 name: compilation
-description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, anchor boot-aware CRAM chapters to the verified F=FFFF to F=0000 HUD transition, add project metadata, verify the result, and upload without recording or trimming. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
+description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, anchor boot-aware CRAM chapters to the verified frame=FFFF to frame=0000 HUD transition, add project metadata, verify the result, and upload without recording or trimming. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
 ---
 
 # compilation — 録画済み再生映像をYouTubeへ
@@ -30,7 +30,8 @@ description: Prepare and upload an existing, verified record lossless playback c
 
 - `record` が作成したネイティブ解像度のロスレスMKV
 - 同じMKVを直接OCRして作られた、gateが`PASS`でalertが`NONE`または
-  `WARNING`の`S/D/R/M/J` HUD result JSON（`C/A`はdiagnostic）
+  `WARNING`のdescriptive schema-12 HUD result JSON
+  （`cd_wait_count`と`adpcm_decode_units`はdiagnostic）
 - 同gateの`ocr_start_anchor`。`method=frame_minus_one`、
   `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須
 - 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
@@ -40,8 +41,9 @@ description: Prepare and upload an existing, verified record lossless playback c
 アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
 `recording`、`recording_size`、`recording_mtime_ns`が入力MKVと一致しない、全映画
 フレームを含まない、またはgateが`FAIL`なら変換・アップロード前に停止して
-`record`へ戻る。Gateが`PASS`でも、そのJSONの`S/D/R/M/J` gate maximum、diagnostic C
-maximum、`C/A`のminimum/mean/median/maximumを提示した後のユーザーの明示承認が
+`record`へ戻る。Gateが`PASS`でも、そのJSONの5つのdescriptive gate maximum、
+diagnostic `cd_wait_count` maximum、`cd_wait_count`と`adpcm_decode_units`の
+minimum/mean/median/maximumを提示した後のユーザーの明示承認が
 無ければ停止する。HUD時刻を頭出しやチャプターには使わない。
 
 ## YouTube用square-pixel raster
@@ -94,7 +96,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
 3. **起動画面込みのCRAMチャプターを作る**
 
-   matching HUD gate JSONの`F=FFFF`直後にある最初のvalidな`F=0000`時刻を使う。
+   matching HUD gate JSONの`frame=FFFF`直後にある最初のvalidな`frame=0000`時刻を使う。
    `youtube_chapters.py`がsentinel anchorを検証してoffsetを読みます。この時刻は
    チャプターだけをずらす値であり、映像は切らない。
 

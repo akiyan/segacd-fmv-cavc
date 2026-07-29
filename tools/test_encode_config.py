@@ -118,7 +118,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(
             {path.name for path in (root / "profiles").glob("*.toml")},
             {
-                "bad-apple-cold200.toml",
                 "bad-apple.toml",
                 "lunar-sss-op-h32.toml",
                 "lunar-sss-op-h40.toml",
@@ -150,10 +149,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
         self.assertTrue(
             env["CBRSIM_OUT"].endswith(
-                "videos/BadApple_H40_320x224_adpcm22_cold210/tmp"))
+                "videos/BadApple_H40_320x224_adpcm22_cold200/tmp"))
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
         self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)

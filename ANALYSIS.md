@@ -92,7 +92,7 @@ per-metric flow graph or separate palette-totals slot.
 - **PL/Time/Frame** (top-right, small): `PL:cur/total Time:MM:SS.ss Frame:XXXX`.
   `PL` = current palette-segment index / highest index (zero-padded to the
   total's digit count, min 2). `Time`, `Frame` = playback position; `Frame` is
-  **4-digit hex** (`%04X`), matching the on-hardware debug HUD's F number.
+  **4-digit hex** (`%04X`), matching the on-hardware DEBUG HUD `frame` value.
 - **Source** (top of right column): big label + a small spec line with the
   *source video* `resolution / fps / audio codec+rate+channels`
   (from `ffprobe`; bitrate intentionally omitted).
@@ -371,8 +371,8 @@ zero. Full-scale is the exact largest R2V total observed among timed frames.
 ### Pattern transfer run meter
 `Run:NNNN` = the number of ascending consecutive cold VRAM-slot runs used for
 the pattern tiles, exactly matching the packer's cold-run descriptors, the
-Main CPU run-table record count, and H40 DEBUG HUD `N` (before its low-byte
-display truncation). Reuse entries do not break a run; a slot discontinuity
+Main CPU run-table record count, and the DEBUG HUD `cold_runs` value (before
+its low-byte display truncation). Reuse entries do not break a run; a slot discontinuity
 does, including a wrap from the end of the slot pool to slot zero.
 Frame 0 is outside the timed run calculation and is shown as `Run:0000`, even
 though its internal boot-transfer trace remains available for packer checks.
@@ -525,7 +525,7 @@ tmpfs実体へ直接書かれ、その実体pathをrendererが表示します。
 - **PL/Time/Frame**（右上）:
   `PL:cur/total Time:MM:SS.ss Frame:XXXX`。
   `PL`はcurrent palette-segment index / highest indexです。`Frame`はhardware
-  DEBUG HUDのFと一致する4-digit hexです。
+  DEBUG HUDの`frame`と一致する4-digit hexです。
 - **Source**（右column上）: 大labelと、`ffprobe`から得るsource videoの
   `resolution / fps / audio codec+rate+channels`。Bitrateは表示しません。
 
@@ -740,7 +740,7 @@ tableを使い、他のpathはencoded tile gridとHUD wordを使います。Fram
 ### Pattern transfer run meter
 
 `Run:NNNN`はcold VRAM slotのascending consecutive run数です。Packerのdescriptor、
-Main CPU RUN_TABLE record、H40 DEBUG HUD `N`と一致します。Reuse entryはrunを分けず、
+Main CPU RUN_TABLE record、DEBUG HUDの`cold_runs`と一致します。Reuse entryはrunを分けず、
 slot discontinuity、pool endからslot zeroへのwrap、Prg/Wr/Dic source境界が分割します。
 Frame 0はtimed計算外なので`Run:0000`です。Encoderはexact Run traceを報告し、
 全編slot-number最適化は行いません。

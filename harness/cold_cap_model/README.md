@@ -14,18 +14,18 @@ targeted player experiments, and full-length ladder recordings.
   (count, short runs, max run length), Pass2 word total, palette-switch
   flag, control bytes, and the CD slot schedule (control/payload sectors,
   rated allowance, delivery lead). With `--hud-tsv` it cross-checks the
-  parsed per-frame run count against the DEBUG HUD `N` column of a
+  parsed per-frame run count against the DEBUG HUD `cold_runs` column of a
   recording; a full-length match also proves that recording played exactly
   that stream.
 ```sh
 tools/python.sh harness/cold_cap_model/extract_frames.py \
     out/sonic-jam-op-h40 --tsv frames_175.tsv \
-    --hud-tsv videos/SonicJamOp_H40_jitter_final_hud.tsv
+    --hud-tsv logs/SonicJamOp_H40_jitter_final_hud.tsv
 ```
 
 ## Specimen inventory (all full-length Sonic Jam OP, H40/30fps/1,120 tiles)
 
-| Stream (realized max loads/frame) | Pack | Recording + HUD series | N cross-check |
+| Stream (realized max loads/frame) | Pack | Recording + HUD series | `cold_runs` cross-check |
 |---|---|---|---|
 | 175 (v12, shadow lists, pre-e83 baseline) | `out/sonic-jam-op-h40` | `SonicJamOp_H40_jitter_final(_repeat)` | 2,714/2,714 |
 | 178 (v10) | `videos/SonicJamOp_H40_cold195_test/packed` (byte-identical copy in `..._cold200_test/packed`) | `SonicJamOp_H40_cold195_emu`, `SonicJamOp_H40_cold200_emu` | 2,714/2,714 each |
@@ -41,13 +41,14 @@ the disc, not chance.
 
 **1. The "cap 195" and "cap 200" retry recordings replayed a realized-178
 stream.** The packs behind them are byte-identical and never exceed 178
-loads/frame; the full-length HUD `N` match pins both recordings to that
+loads/frame; the full-length HUD `cold_runs` match pins both recordings to that
 stream. The historical conclusion "195/200 break the cadence" therefore
 actually observed *a realized-178 stream breaking on newer player builds*.
 The realized-190 stream is a separate real specimen and broke differently.
 
 **2. Cadence-break census** (a break = a movie frame held for 3 captures in
-the 59.94 Hz HUD series; S/D/R stayed 0 everywhere):
+the 59.94 Hz HUD series; `sector_slip`, `control_desync`, and `audio_resync`
+stayed 0 everywhere):
 
 | Recording | Breaks (frame held) | Held frame's next-frame workload |
 |---|---|---|
@@ -102,7 +103,7 @@ requires a *fresh* VBlank start after the arm point, then writes 64 CRAM
 words before flipping — consistent with the realized-190 break landing
 exactly on a palette frame.
 
-**Main transfer cost is run-dominated.** Regressing the HUD `U` series
+**Main transfer cost is run-dominated.** Regressing the HUD `transfer_ticks` series
 (pattern-transfer ticks) on the extracted workload gives, consistently
 across three builds/streams (residual std ≈ 31 ticks):
 
@@ -135,9 +136,11 @@ decides *which* marginal frame slips is invisible to the current HUD:
 the flip phase inside the blank, the Sub's READY micro-timing, or CDC
 service alignment.
 
-## Phase 2 first measurements (cap-175 control, HUD p75 with V/O/E)
+## Phase 2 first measurements (cap-175 control, HUD p75 timing fields)
 
-Recording `SonicJamOp_H40_flipdiag175` (full length, S=D=R=0, J=00)
+Recording `SonicJamOp_H40_flipdiag175` (full length,
+`sector_slip=control_desync=audio_resync=0`,
+`prgbuf_jitter_peak_kib=00`)
 validated the new fields and immediately restructured the model:
 
 - **Flips land at the VBlank start.** V=`E0` on 2,693/2,714 frames: the
@@ -161,11 +164,14 @@ validated the new fields and immediately restructured the model:
   mid-blank (V=`E1..E5`), surviving on the do_flip mid-blank acceptance.
 - **An unexplained ~8.5 ms delay causes the actual break.** The one
   cadence slip (frame 471 held 3 fields; the late flip is frame 472's,
-  O=255 in row 473) has slack +277 ticks and modest E/U/W — the measured
+  `first_share_exit_vcounter=255` in row 473) has slack +277 ticks and modest
+  `pass2_delay_q4` / `transfer_ticks` / `sub_wait_scanlines` — the measured
   Main path cannot account for the lost field.  Every observable says the
   flip should have been on time.  The deciding term is still outside
-  V/O/E/U/W: candidates are a Sub-side stall inside the swap handshake
-  after `W` was sampled, VDP FIFO backpressure on the HUD publish, or an
+  `flip_vcounter` / `first_share_exit_vcounter` / `pass2_delay_q4` /
+  `transfer_ticks` / `sub_wait_scanlines`: candidates are a Sub-side stall
+  inside the swap handshake after `sub_wait_scanlines` was sampled, VDP FIFO
+  backpressure on the HUD publish, or an
   emulator-level artifact.  Break location also moved p74→p75 (1107 →
   471), confirming build-level phase sensitivity of marginal frames.
 
@@ -176,10 +182,11 @@ profile is needed for each specimen.
 
 ## Phase 2 ladder (diagnostic caps via CBRSIM_COLD_CAP_DIAG, player p75)
 
-Full-length emulator runs, one per realized cap, all with S=D=R=C=0 and
-J within gate:
+Full-length emulator runs, one per realized cap, all with
+`sector_slip=control_desync=audio_resync=cd_wait_count=0` and
+`prgbuf_jitter_peak_kib` within gate:
 
-| realized | breaks | type | min transfer slack (ticks) | V tail |
+| realized | breaks | type | min transfer slack (ticks) | flip V-counter tail |
 |---|---|---|---|---|
 | 175 | 1 (f471 held) | freeze-type: slack +277, unexplained ~8.5 ms stall | -17 (f2019) | E7 |
 | 180 | 0 | — | -15 (f1970) | F3 once (see below) |
@@ -195,7 +202,8 @@ J within gate:
   fits one blank at DMA rate — the per-run setup work is what spills.
 - The **freeze-type slips are cap-independent** (~0-1 per full run, moved
   471 -> none -> none across caps) and remain unexplained: cold180's
-  frame 1467 flip shows V=F3 / O=114 with transfer done 15 ms earlier —
+  frame 1467 flip shows `flip_vcounter=F3` /
+  `first_share_exit_vcounter=114` with transfer done 15 ms earlier —
   the Main CPU lost ~1.2 ms while only spin-waiting (interrupts are
   masked at SR=2700; VDP/GA register spins cannot block).  Emulator-level
   artifact not excluded.  A fourth probe (do_flip arrival time) can
@@ -206,7 +214,7 @@ J within gate:
 Full-length A/B recordings falsified two mechanisms and confirmed one:
 
 - **RUN_TABLE pre-swizzle** (kept): moves the per-run register arithmetic
-  into Pass1.  Helpful but small — plateau U barely moved.
+  into Pass1. Helpful but small — plateau `transfer_ticks` barely moved.
 - **CPU_DIRECT_MAX_WORDS 32 -> 128** (rejected): no improvement at all.
   Together these prove the transfer is **VRAM-access-slot bound, not
   issue-mechanism bound**: past the VBlank, both DMA and CPU writes crawl
@@ -214,12 +222,14 @@ Full-length A/B recordings falsified two mechanisms and confirmed one:
 - **build_frame reorder (Pass2 first)** (rejected): strictly worse — the
   pre-work naturally fills the time before field-1's blank; fronting the
   transfer just converts that overlap into idle waiting and pushes the
-  blit against the flip deadline (19 breaks, S=5, J=22).
+  blit against the flip deadline (19 breaks, `sector_slip=5`,
+  `prgbuf_jitter_peak_kib=22`).
 - **NT_DMA_FLIP** (kept): re-stage the 40-pitch shadow to 64-entry pitch
   in active time (~1.5 ms RAM copy) and copy the whole back name table
   with ONE linear Main-RAM DMA inside the flip VBlank, replacing the
-  ~8 ms FIFO-throttled blit.  HUD E median fell 12.7 ms -> 7.1 ms; flips
-  now sit at V=EE with 14 lines of guard margin.  (First attempt DMAed
+  ~8 ms FIFO-throttled blit. HUD `pass2_delay_q4` median fell
+  12.7 ms -> 7.1 ms; `flip_vcounter` now sits at `EE` with 14 lines of guard
+  margin. (First attempt DMAed
   the 40-pitch shadow directly and scrambled the 64-wide plane — caught
   by frame comparison, fixed by the staging buffer.)
 
@@ -253,7 +263,7 @@ a stored word):
    actually happened.
 3. **Sub READY margin** — time between the Sub posting STAT_READY and
    Main's CMD_SWAP arrival (or the wait on the other side, complementing
-   `W`).
+   `sub_wait_scanlines`).
 
 Then record the realized-178 stream (breaks expected on current builds)
 plus a realized-175 control with the instrumented DEBUG build and read

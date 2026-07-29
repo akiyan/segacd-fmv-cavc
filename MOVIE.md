@@ -75,8 +75,8 @@ The same `CMD_STREAM` command remains asserted for the rest of startup. Sub
 reads the finite BODY arm, writes its decoded audio while PCM is stopped,
 stops the read at the declared arm boundary, and expands frame 0. Sub hands the
 completed frame-0 bank to Main with `STAT_READY` while the timed suffix remains
-stopped. Main shows the black player-only frame -1 (`F=FFFF`) and builds frame
-0. Once frame 0 is visible as `F=0000`, Main clears the original `CMD_STREAM`.
+stopped. Main shows the black player-only frame -1 (`frame=FFFF`) and builds
+frame 0. Once frame 0 is visible as `frame=0000`, Main clears the original `CMD_STREAM`.
 That edge launches the continuous timed BODY read, but PCM remains stopped
 during the initial `ROM_READN` latency. Sub starts PCM as soon as the first
 frame-1 control sector proves that the 75-sector/s stream is flowing, drains
@@ -541,7 +541,7 @@ handoffは意図した `HEADER.DAT` read境界です。Subはbankを渡す前に
 BODY armを読み、PCM停止中にdecoded audioをwave RAMへ書き、宣言済みarm境界でreadを
 停止してframe 0を展開します。完成したframe-0 bankを `STAT_READY` でMainへ渡しますが、
 この時点ではtimed suffixを停止したままにします。Mainはplayer-onlyの黒いframe -1
-（`F=FFFF`）を表示し、frame 0を構築します。frame 0が `F=0000` として表示された時点で
+（`frame=FFFF`）を表示し、frame 0を構築します。frame 0が `frame=0000` として表示された時点で
 Mainが元の `CMD_STREAM` をclearします。このedgeでtimed BODYの連続readを起動しますが、
 最初の `ROM_READN` latency中はPCMを停止したままにします。最初のframe-1 control
 sectorが到着して75 sector/sのstream開始を確認した時点でPCMを開始し、frame 1の

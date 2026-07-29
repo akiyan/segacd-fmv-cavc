@@ -367,7 +367,7 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
             f"{obj}: shared deadline path lacks its two status reads")
 
     flip = block("bf_flip", "bf_after_flip")
-    normal_reserve = 64 * 28 + 69 + 128
+    normal_reserve = 64 * 28 + 39 + 128
     palette_reserve = normal_reserve + 64 * 4
     for reserve, description in (
             (normal_reserve, "normal NT/HUD/guard reserve"),
@@ -427,6 +427,31 @@ def verify_runtime_vblank_cadence(
     if not re.search(r"\bcmpiw\s+#4,%d6", snapshot):
         raise AssertionError(
             f"{obj}: runtime VBlank snapshot is still limited to two groups")
+
+
+def verify_whole_run_switch(objdump: Path, obj: Path) -> None:
+    """Prove the diagnostic build keeps every ordinary DMA run whole."""
+    disassembly = run([str(objdump), "-d", str(obj)])
+    start = re.search(
+        r"^[0-9a-f]+ <bf_run_lp>:$", disassembly, re.MULTILINE)
+    end = re.search(
+        r"^[0-9a-f]+ <bf_split_run>:$", disassembly, re.MULTILINE)
+    if not start or not end or start.start() >= end.start():
+        raise AssertionError(f"{obj}: missing whole-run verification block")
+    run_loop = disassembly[start.end():end.start()]
+    required = (
+        (r"\baddqw\s+#4,%d6", "CPU repair charge"),
+        (r"\bcmpw\s+%d7,%d6", "residual budget comparison"),
+        (r"\bmovew\s+#3200,%d0", "complete H40 budget comparison"),
+        (r"\bbsr\w*\s+[^\n]*<bf_next_vbudget>", "fresh-budget wait"),
+    )
+    for pattern, description in required:
+        if not re.search(pattern, run_loop):
+            raise AssertionError(
+                f"{obj}: whole-run mode lacks {description}")
+    if re.search(r"\b(?:b|j)\w+\s+[^\n]*<bf_split_run>", run_loop):
+        raise AssertionError(
+            f"{obj}: VBLANK_RUN_SPLIT=0 still branches to bf_split_run")
 
 
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
@@ -491,7 +516,7 @@ def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
 
     frame_minus_one = function_block("show_frame_minus_one")
     if not re.search(r"\bmovew\s+#-1,", frame_minus_one):
-        raise AssertionError(f"{obj}: frame -1 does not publish F=FFFF")
+        raise AssertionError(f"{obj}: frame -1 does not publish frame=FFFF")
     for callee in ("prepare_dbg", "publish_dbg", "wait_vblank"):
         if not re.search(
                 rf"\bbsr\w*\s+[^\n]*<{callee}>", frame_minus_one):
@@ -608,6 +633,7 @@ def build_case(
     ip_bin = case_dir / f"ip-{tag}.bin"
     run(common + [
         "--defsym", "MAIN_CODEGEN=1", "--defsym", "DMA_RUN_FASTPATH=1",
+        "--defsym", "VBLANK_RUN_SPLIT=1",
     ] + fixed + includes + [str(ROOT / "boot/movieplay_ip.s"), "-o", str(ip_obj)])
     run([
         str(linker), "-nostdlib", "--oformat", "binary",
@@ -623,6 +649,22 @@ def build_case(
             verify_runtime_vblank_cadence(
                 objdump, ip_obj,
                 expected_n=av_config.vsync_n_for_fps(case.fps))
+            if case.name == "h40-30-supply":
+                whole_obj = case_dir / "ip-specialized-whole-run.o"
+                whole_bin = case_dir / "ip-specialized-whole-run.bin"
+                run(common + [
+                    "--defsym", "MAIN_CODEGEN=1",
+                    "--defsym", "DMA_RUN_FASTPATH=1",
+                ] + fixed + includes + [
+                    str(ROOT / "boot/movieplay_ip.s"),
+                    "-o", str(whole_obj),
+                ])
+                run([
+                    str(linker), "-nostdlib", "--oformat", "binary",
+                    "-T", str(ROOT / "cfg/ip.ld"),
+                    "-o", str(whole_bin), str(whole_obj),
+                ])
+                verify_whole_run_switch(objdump, whole_obj)
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"

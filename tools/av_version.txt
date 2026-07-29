@@ -1,8 +1,10 @@
 # Encoder/Player build version for YouTube titles: format YYYYMMDD.eN.pM
 #
-# - e = encoder version. Bump when the encode pipeline (sim.py params/code OR
-#   pack_stream.py params/code) changes in a way that alters the output.
-# - p = player version. Bump when the on-disc player (boot/movieplay_*.s) changes.
+# - e = encoder version. Bump when shared sim.py / pack_stream.py behavior or
+#   defaults change in a way that alters output. Do not bump for source-specific
+#   profile settings; their settings identity tracks those changes.
+# - p = player version. Bump when the shared on-disc player
+#   (boot/movieplay_*.s) changes in a way that alters output.
 # - Bump one or both as appropriate; never decrease either.
 # - When bumping, if today's date differs from `date` below, set `date` to today.
 # - This is the YouTube-title build version only. The HEADER.DAT format-version
@@ -11,6 +13,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p128: Add a build-time VBLANK_RUN_SPLIT switch. The diagnostic off mode
+#         keeps every run whole; an individually oversized run may enter
+#         active display instead of retaining a hidden safety split.
+#   p127: Compact the DEBUG HUD to 39 hexadecimal digits, pack VBlank spill
+#         with transfer ticks, pack reader lead with slot position, remove
+#         retired diagnostics, and expose descriptive OCR/gate field names.
 #   e156: Replace the analysis DMA-tile status meter with exact Main-to-VDP
 #         words: patterns, long-run first-word repairs, mode/grid/cadence-aware
 #         name-table and DEBUG HUD writes, and palette-switch CRAM. Preserve
@@ -1090,4 +1098,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260729
 e=156
-p=126
+p=128
