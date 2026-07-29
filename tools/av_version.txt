@@ -11,6 +11,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e156: Replace the analysis DMA-tile status meter with exact Main-to-VDP
+#         words: patterns, long-run first-word repairs, mode/grid/cadence-aware
+#         name-table and DEBUG HUD writes, and palette-switch CRAM. Preserve
+#         the tile count as a TSV compatibility field and add the R2V timeline.
 #   p126: Use a conservative 3,200 DMA-word-equivalent H40 VBlank budget.
 #         Charge every CPU-written VDP word four units, including short direct
 #         runs, DMA first-word repair, and CRAM. Split DMA runs at residual
@@ -1084,6 +1088,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260728
-e=155
+date=20260729
+e=156
 p=126

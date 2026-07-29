@@ -289,7 +289,7 @@ Important rendering notes:
   - Dic/Prg/Wr use a thin colour-and-black dashed border; both Wr banks
     use the Wr1 cyan display colour
   - scrolling audio waveform with +/-2 seconds and now centered
-  - status uses Req / Cold / Band / DMA / Run / Prg / Wrd / Pre
+  - status uses Req / Cold / Band / R2V / Run / Prg / Wrd / Pre
   - Pre is the number of future patterns actually written to VRAM in the frame;
     a prefetched pattern used later is displayed as Same
   - Band is physical-slot useful BODY data split left-to-right into Raw
@@ -297,7 +297,8 @@ Important rendering notes:
     that slot's actual CD read time (0 to 150 KiB/s)
   - four-row timeline: Req, Prg/Wrd remaining, physical cold runs, and Band;
     Raw is the bottom Band segment, followed by Prg and control
-  - DMA is compared against theoretical `(60/fps)` VBlank budget
+  - R2V is the timed total of pattern, DMA-repair, name-table/HUD, and
+    palette VDP-memory words, scaled to the exact observed timed maximum
   - heading metadata plus small top-right Time / Frame, baseline-aligned
   - palette used-color blocks have no outline
 - The main Sega CD output is centered exactly like hardware. Do not scale low

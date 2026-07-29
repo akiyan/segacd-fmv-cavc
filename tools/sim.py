@@ -53,6 +53,7 @@ import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
 import physical_budget  # noqa: E402
 import raw_prefetch  # noqa: E402
+import r2v_model  # noqa: E402
 import resource_tokens  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
@@ -3536,6 +3537,78 @@ def main():
                 row.astype("<u2", copy=False).tobytes())
         dec_category_rows = rewritten_rows
 
+    # Exact Main-to-VDP workload. Physical run boundaries follow the final
+    # WordBuf plan, so direct one/two-pattern runs are counted after the
+    # physical source choice has stopped changing.
+    final_transfer_sources = (
+        ring_plan.sources if ring_enabled else
+        tuple(
+            tuple(int(source) for source in frame_sources)
+            for frame_sources in supply_sources_log
+        )
+    )
+    r2v_short_runs = np.zeros(n, np.int64)
+    for frame, (
+        (_cells, entries, _colds),
+        frame_sources,
+        frame_prefetch,
+        frame_dic_indices,
+        transfer_order,
+    ) in enumerate(zip(
+        ring_per_log,
+        final_transfer_sources,
+        ring_prefetch_log,
+        ring_dic_indices_log,
+        ring_transfer_orders_log,
+        strict=True,
+    )):
+        if frame == 0:
+            continue
+        order = tuple(int(index) for index in transfer_order)
+        slots = [
+            (int(entries[index]) & 0x07FF) - 1
+            for index in order
+        ]
+        sources = [int(frame_sources[index]) for index in order]
+        dic_indices = [int(frame_dic_indices[index]) for index in order]
+        cold_prefetch = sorted(
+            (item for item in frame_prefetch if bool(item[1])),
+            key=lambda item: int(item[0]),
+        )
+        slots.extend(int(item[0]) for item in cold_prefetch)
+        sources.extend(
+            pattern_supply.SOURCE_PRG for _item in cold_prefetch)
+        dic_indices.extend(-1 for _item in cold_prefetch)
+        lengths = pattern_supply.source_run_lengths(
+            slots, sources, dic_indices)
+        if len(lengths) != int(transfer_runs_log[frame]):
+            raise AssertionError(
+                f"frame {frame}: R2V runs={len(lengths)} differ from "
+                f"player runs={int(transfer_runs_log[frame])}")
+        if sum(lengths) != int(transfer_tiles_log[frame]):
+            raise AssertionError(
+                f"frame {frame}: R2V patterns={sum(lengths)} differ from "
+                f"player patterns={int(transfer_tiles_log[frame])}")
+        r2v_short_runs[frame] = sum(
+            length <= r2v_model.DIRECT_RUN_MAX_PATTERNS
+            for length in lengths
+        )
+    r2v_palette_switch = np.zeros(n, np.int64)
+    if n > 1:
+        r2v_palette_switch[1:] = (
+            np.asarray(frame_seg[1:]) != np.asarray(frame_seg[:-1]))
+    r2v_nt_words = r2v_model.name_table_words(
+        MODE, TCOLS, TROWS, FPS)
+    r2v_components = r2v_model.calculate_words(
+        np.asarray(transfer_tiles_log, np.int64),
+        np.asarray(transfer_runs_log, np.int64),
+        r2v_short_runs,
+        r2v_palette_switch,
+        r2v_nt_words,
+    )
+    for component in r2v_components.values():
+        component[0] = 0
+
     prg_remaining = np.asarray(
         physical_schedule["ring_occupancy"], np.int64)
     quality_budget_remaining = np.asarray(quality_budget_log, np.int64)
@@ -3778,6 +3851,13 @@ def main():
              raw_prefetch=np.asarray(prefetch_cold_log, np.int64),
              raw_prefetch_cap=np.int64(max(
                  1, RAW_PREFETCH_MAX_REQUESTS_PER_FRAME)),
+             r2v_words=r2v_components["words"],
+             r2v_pattern_words=r2v_components["pattern_words"],
+             r2v_repair_words=r2v_components["repair_words"],
+             r2v_name_table_words=r2v_components["name_table_words"],
+             r2v_cram_words=r2v_components["cram_words"],
+             r2v_short_runs=r2v_short_runs,
+             r2v_palette_switch=r2v_palette_switch,
              cd1x=CD_RATE,
              body_gross_bytes=body_gross_bytes,
              body_fixed_control_bytes=body_fixed_control_bytes,

@@ -43,6 +43,7 @@ import analysis_style as style
 import stream_schedule
 import analysis_logs
 import resource_tokens
+import r2v_model
 import tmpfs_workspace
 from cbr_paths import artifact_path, sim_work_dir
 
@@ -249,6 +250,24 @@ if "same" not in idx:
 Same = col("same")
 DMA_TILES = col("dma_tiles") if "dma_tiles" in idx else Raw + Buf
 PREFETCH = col("prefetch")
+_r2v_fields = (
+    "r2v_words", "r2v_pattern_words", "r2v_repair_words",
+    "r2v_name_table_words", "r2v_cram_words", "r2v_short_runs",
+)
+if any(name not in z for name in _r2v_fields):
+    raise SystemExit("analysis R2V workload is missing; re-run sim")
+R2V_WORDS = z["r2v_words"].astype(np.int64)
+R2V_PATTERN_WORDS = z["r2v_pattern_words"].astype(np.int64)
+R2V_REPAIR_WORDS = z["r2v_repair_words"].astype(np.int64)
+R2V_NAME_TABLE_WORDS = z["r2v_name_table_words"].astype(np.int64)
+R2V_CRAM_WORDS = z["r2v_cram_words"].astype(np.int64)
+R2V_SHORT_RUNS = z["r2v_short_runs"].astype(np.int64)
+if any(len(values) != NF for values in (
+    R2V_WORDS, R2V_PATTERN_WORDS, R2V_REPAIR_WORDS,
+    R2V_NAME_TABLE_WORDS, R2V_CRAM_WORDS, R2V_SHORT_RUNS,
+)):
+    raise SystemExit("analysis R2V workload has the wrong frame count")
+R2V_MAX = r2v_model.timed_scale_max(R2V_WORDS)
 PREFETCH_CAP = int(z["raw_prefetch_cap"]) if "raw_prefetch_cap" in z else max(
     1, int(PREFETCH.max(initial=0)))
 
@@ -544,10 +563,10 @@ GAP = 16
 REQ_W = L._w(L.f_leg, "Req:000  Miss:000") + 3
 COLD_W = L._w(L.f_leg, "Cold:000") + 3
 PRE_W = L._w(L.f_leg, "Pre:000") + 3
-BAND_W, PRG_W, WRD_W, DMA_W, RUN_W = L.meter_widths(C)
+BAND_W, PRG_W, WRD_W, R2V_W, RUN_W = L.meter_widths(R2V_MAX)
 X_TL_STATUS = (
     4 + REQ_W + GAP + COLD_W + GAP + BAND_W + GAP
-    + DMA_W + GAP + RUN_W + GAP + PRG_W + GAP + WRD_W + GAP
+    + R2V_W + GAP + RUN_W + GAP + PRG_W + GAP + WRD_W + GAP
     + PRE_W + GAP)
 
 
@@ -672,7 +691,8 @@ def draw_status_real(data):
     ly = by + BH + 3
     x = 4
     cn = data["counts"]
-    dmax = L.dma_tile_capacity(MODE, FPS, C); dval = data["dma_tiles"]
+    r2v_max = max(1, int(data["r2v_max"]))
+    r2v_val = int(data["r2v_words"])
 
     def stacked(segs, full, bw):
         px = x
@@ -714,23 +734,28 @@ def draw_status_real(data):
     )
     L.draw_field(d, x, ly, "Band:", data["band_kbps"], 3, L.f_leg, L.COL_TXT)
     x += BAND_W + GAP
-    # 4) DMA = 今フレームの32Bパターンタイル数
-    fillw = int(DMA_W * min(dval, dmax) / max(dmax, 1)); over = dval > dmax
+    # 4) R2V = pattern + DMA repair + name-table/HUD + palette words.
+    fillw = int(R2V_W * min(r2v_val, r2v_max) / r2v_max)
+    over = r2v_val > r2v_max
     d.rectangle(
         [x, by, x + fillw, by + BH],
         fill=style.COL_OVER if over else style.COL_DMA,
     )
     if over:
         d.rectangle(
-            [x + fillw, by, x + DMA_W, by + BH],
+            [x + fillw, by, x + R2V_W, by + BH],
             fill=style.COL_OVER_REMAINDER,
         )
-    d.rectangle([x, by, x + DMA_W, by + BH], outline=L.COL_FRAME_IN)
-    L.draw_field(d, x, ly, "DMA:", dval, L.dma_value_digits(C), L.f_leg, L.COL_TXT)
-    x += DMA_W + GAP
+    d.rectangle([x, by, x + R2V_W, by + BH], outline=L.COL_FRAME_IN)
+    L.draw_field(
+        d, x, ly, "R2V:", r2v_val, L.r2v_value_digits(r2v_max),
+        L.f_leg, L.COL_TXT,
+    )
+    x += R2V_W + GAP
 
     # 5) Run = playerのcold-run record数。フル=1tile/runの理論最悪ケース。
-    run_val = int(data["dma_runs"]); run_max = L.dma_run_worst_case(dval)
+    run_val = int(data["dma_runs"])
+    run_max = L.dma_run_worst_case(data["dma_tiles"])
     run_fill = (max(1, int(RUN_W * min(run_val, run_max) / run_max))
                 if run_val > 0 and run_max > 0 else 0)
     d.rectangle([x, by, x + run_fill, by + BH],
@@ -807,6 +832,8 @@ def frame_data(i):
                 },
                 dma_tiles=L.timed_metric_value(i, DMA_TILES[i]),
                 dma_runs=L.timed_metric_value(i, DMA_RUNS[i]),
+                r2v_words=L.timed_metric_value(i, R2V_WORDS[i]),
+                r2v_max=R2V_MAX,
                 body_raw_payload_bytes=L.timed_metric_value(
                     i, BODY_RAW_PAYLOAD_BYTES[i]),
                 body_prg_payload_bytes=L.timed_metric_value(
@@ -837,7 +864,9 @@ ANALYSIS_TSV_COLUMNS = (
     "legend_flbk", "legend_miss",
     "status_req", "status_miss", "status_cold", "status_pre",
     "status_band_kib_s", "status_prg", "status_wr0", "status_wr1",
-    "status_dma", "status_run",
+    "status_r2v", "status_dma", "status_run",
+    "r2v_pattern_words", "r2v_repair_words",
+    "r2v_name_table_words", "r2v_cram_words", "r2v_short_runs",
     "body_raw_payload_bytes", "body_prg_payload_bytes",
     "body_payload_bytes", "body_control_bytes", "body_pad_bytes",
     "body_physical_bytes", "body_useful_bytes", "body_band_bps",
@@ -861,7 +890,7 @@ def analysis_tsv_row(i):
     data = frame_data(i)
     cn = data["counts"]
     row = {
-        "schema_version": 6,
+        "schema_version": 7,
         "frame": i,
         "frame_hex": f"0x{i:04X}",
         "time_seconds": format(i / FPS, ".9f"),
@@ -889,8 +918,14 @@ def analysis_tsv_row(i):
         "status_prg": data["supply_remaining"]["Prg"],
         "status_wr0": data["supply_remaining"]["Wr0"],
         "status_wr1": data["supply_remaining"]["Wr1"],
+        "status_r2v": data["r2v_words"],
         "status_dma": data["dma_tiles"],
         "status_run": data["dma_runs"],
+        "r2v_pattern_words": int(R2V_PATTERN_WORDS[i]),
+        "r2v_repair_words": int(R2V_REPAIR_WORDS[i]),
+        "r2v_name_table_words": int(R2V_NAME_TABLE_WORDS[i]),
+        "r2v_cram_words": int(R2V_CRAM_WORDS[i]),
+        "r2v_short_runs": int(R2V_SHORT_RUNS[i]),
         "body_raw_payload_bytes": int(BODY_RAW_PAYLOAD_BYTES[i]),
         "body_prg_payload_bytes": int(BODY_PRG_PAYLOAD_BYTES[i]),
         "body_payload_bytes": int(BODY_PAYLOAD_BYTES[i]),

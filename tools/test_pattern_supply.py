@@ -104,6 +104,14 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         self.assertEqual(
             supply.count_source_runs(slots, sources, (256, 257, 258, 259)), 1)
 
+    def test_source_run_lengths_preserve_short_direct_runs(self):
+        slots = (1, 2, 7, 8, 9, 10, 20)
+        sources = (supply.SOURCE_PRG,) * len(slots)
+        self.assertEqual(
+            supply.source_run_lengths(slots, sources),
+            (2, 4, 1),
+        )
+
 
 class PatternSupplyPlannerTests(unittest.TestCase):
     def test_dicbuf_is_selected_first_and_hits_persist(self):
