@@ -27,3 +27,6 @@ __pycache__/
 /assets/*.mp4
 /assets/*.avi
 harness/**/out/
+
+# Locally built diagnostic emulator core and its build receipts.
+/vendor/gpgx-logvdp/
