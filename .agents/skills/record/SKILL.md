@@ -342,7 +342,7 @@ required handoff condition; alert may be `NONE` or `WARNING`. Fixed-cadence
 visible-duration and transfer-budget excesses are warning-only. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
-trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and
+trim point or as a timestamp in an upload description. The matching timeline, `hudline`, and `mixline` PNGs and
 public-Gist receipts are required recording sidecars.
 
 ## Existing recordings and smoke tests

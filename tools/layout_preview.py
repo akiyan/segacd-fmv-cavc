@@ -446,7 +446,7 @@ def draw_graph(w, h, data):
 
 def draw_status(w, h, data):
     """status帯: Req / Cold / Band / R2V / Run / Prg / Wrd / Pre + timeline。
-    数値は同じ文字色のゼロ埋めで桁固定。Tank/BufメーターとMissCarryは廃止。"""
+    数値は同じ文字色のゼロ埋めで桁固定。"""
     im = Image.new("RGB", (w, h), (16, 16, 16))
     d = ImageDraw.Draw(im)
     by, BH = 8, 16                   # 上マージンを半分(16→8)。タイムラインもこのbyから始まり下端は据置=縦に伸びる
@@ -706,7 +706,7 @@ def load_fonts():
 
 def draw_footer(cv, data):
     """Analysis / Comparison 共通フッター。上部レイアウトを差し替えても使い回せる。
-    status帯(Req/Cold/Band/DMA/Run/Prg/Wrd/Pre + palettes + timelines)と
+    status帯(Req/Cold/Band/R2V/Run/Prg/Wrd/Pre + palettes + timelines)と
     カテゴリ合計バーを、共通の STATUS_XY / PAL_XY へ貼る。"""
     st = draw_status(STATUS_W, STATUS_H, data)
     cv.paste(st, STATUS_XY)

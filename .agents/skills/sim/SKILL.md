@@ -352,8 +352,11 @@ export ANALYSIS_DESCRIPTION
 tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
 ```
 
-Shorten optional explanatory prose first; preserve the mandatory CRAM
-chapters, specs/layout/technique sections, both project links, and current
+State the encode's CRAM palette switch count from `tools/cram_switches.py
+<sim_out>` in the spec section of both language halves, and add no YouTube
+chapters or description timestamp links.
+Shorten optional explanatory prose first; preserve that switch count, the
+specs/layout/technique sections, both project links, and current
 timeline links. Upload as unlisted, category 20. See
 `[[youtube-upload-convention]]`.
 

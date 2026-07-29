@@ -58,4 +58,4 @@ tools/python.sh -m unittest discover -s harness/frame_cadence -p 'test_*.py'
 ```
 
 This DEBUG HUD is a diagnostic signal only.  It must not be used to trim an
-upload or to place YouTube chapters.
+upload or to place any timestamp in an upload description.

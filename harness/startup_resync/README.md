@@ -46,8 +46,8 @@ wall-clock time. `FFFF` is never emitted as a HUD TSV row. Recordings from
 players without the sentinel retain the plausible `frame=0000` sequence fallback.
 The console report states which anchor method was used, and gate JSON preserves
 the sentinel and frame-0 capture indices and times as `ocr_start_anchor`.
-Playback-upload CRAM chapters use its exact `frame=FFFF` to `frame=0000` transition;
-the recording itself remains untrimmed.
+That transition proves the recording covers the Mega-CD startup through the
+movie head without a gap; the recording itself remains untrimmed.
 
 Run it against the lossless output from `/record`:
 
@@ -83,6 +83,6 @@ Lower `--confidence` only for older transparent-background HUD recordings; the
 current black diagnostic row should pass the default `0.90` threshold.
 
 This harness is diagnostic only. Do **not** use its HUD timestamps to trim an
-upload or remove the Mega-CD startup. Publication recordings keep the startup
-intact. The verified `frame=FFFF` to `frame=0000` transition in the complete gate JSON
-supplies the chapter metadata offset as specified in `AGENTS.md`.
+upload, to remove the Mega-CD startup, or to write a timestamp into an upload
+description. Publication recordings keep the startup intact, and their
+descriptions carry no chapters or timestamp links, as specified in `AGENTS.md`.
