@@ -23,6 +23,7 @@ SCRIPT = Path(__file__).resolve()
 REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
+import analysis_logs  # noqa: E402
 import analysis_style as style  # noqa: E402
 import layout_preview as layout  # noqa: E402
 import tmpfs_workspace  # noqa: E402
@@ -924,7 +925,7 @@ def main() -> None:
     tsv = args.tsv.resolve()
     config_path = args.config.resolve() if args.config else None
     sim_out = args.sim_out.resolve() if args.sim_out else None
-    output = (args.output or (
+    requested_output = (args.output or (
         REPO / "videos" / (tsv.stem + "_timeline.png"))).absolute()
     rows, data = load_tsv(tsv)
     n = len(rows)
@@ -1003,29 +1004,23 @@ def main() -> None:
         "Frame 0 is boot construction. Segment lines are labelled PL. Shaded tail remains visible but is excluded from EVAL totals.",
         fill=DIM, font=font(18),
     )
-    output.parent.mkdir(parents=True, exist_ok=True)
     sim_lease = (
-        tmpfs_workspace.lease_managed_alias(sim_out)
+        tmpfs_workspace.lease_managed_path(sim_out)
         if sim_out is not None else None)
     png_lease = None
-    actual_output = output
+    actual_output = requested_output
     try:
-        videos = (REPO / "videos").absolute()
-        try:
-            output.relative_to(videos)
-        except ValueError:
-            pass
-        else:
+        if tmpfs_workspace.is_disposable_path(requested_output):
             actual_output, png_lease = tmpfs_workspace.allocate_file(
-                output,
+                requested_output,
                 kind="timeline-png",
                 key=f"{tsv.stem}-{hashlib.sha256(tsv.read_bytes()).hexdigest()[:10]}",
                 required_bytes=max(width * height * 4, 128 * 1024 ** 2),
             )
+        else:
+            actual_output.parent.mkdir(parents=True, exist_ok=True)
         image.convert("RGB").save(actual_output, optimize=True)
-        if png_lease is not None:
-            tmpfs_workspace.publish_alias(output, actual_output)
-        print(output)
+        print(actual_output)
     finally:
         if png_lease is not None:
             png_lease.release()
@@ -1098,8 +1093,8 @@ def main() -> None:
         "schema_version": 1,
         "kind": "timeline",
         "label": title,
-        "image": str(output),
-        "image_sha256": hashlib.sha256(output.resolve().read_bytes()).hexdigest(),
+        "image": str(actual_output),
+        "image_sha256": hashlib.sha256(actual_output.read_bytes()).hexdigest(),
         "tsv": str(tsv),
         "tsv_sha256": hashlib.sha256(tsv.read_bytes()).hexdigest(),
         "config": str(config_path) if config_path else None,
@@ -1171,7 +1166,11 @@ def main() -> None:
         "prg_cap_summary": prg_cap_summary(measured_cold_cap),
         "rows": receipt_rows,
     }
-    receipt_path = Path(str(output) + ".json")
+    receipt_path = analysis_logs.metadata_path(
+        requested_output,
+        kind="timeline-layout",
+        sha256=receipt["image_sha256"],
+    )
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",

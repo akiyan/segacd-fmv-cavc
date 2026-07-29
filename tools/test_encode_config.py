@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 import os
+import subprocess
 import sys
 from unittest.mock import patch
 
@@ -67,6 +68,33 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             consume_config_arg(argv, required=True)
         self.assertEqual(argv, ["render_analysis.py", "10", "20"])
+
+    def test_profile_output_is_a_direct_managed_tmpfs_path(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        profile = load_profile(root / "profiles" / "bad-apple.toml")
+        with patch.dict(os.environ, {}, clear=False):
+            output = profile.output_dir
+        self.assertTrue(str(output).startswith(
+            "/dev/shm/segacd-fmv-ttrc/artifacts/sim-"))
+        self.assertEqual(output.name, "data")
+        self.assertFalse(output.is_symlink())
+
+    def test_cli_prints_direct_sim_output(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [
+                str(root / "tools" / "python.sh"),
+                str(root / "tools" / "encode_config.py"),
+                str(root / "profiles" / "bad-apple.toml"),
+                "--print-sim-output",
+            ],
+            cwd=root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertTrue(result.stdout.strip().startswith(
+            "/dev/shm/segacd-fmv-ttrc/artifacts/sim-"))
 
     def test_missing_required_profile_is_rejected(self) -> None:
         with self.assertRaisesRegex(SystemExit, "profile is required.*positional"):

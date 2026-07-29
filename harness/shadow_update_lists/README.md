@@ -13,8 +13,10 @@ every corrupt 16-bit offset to an even word inside the padded 4 KiB shadow.
 Run it after a clean sim and verified pack:
 
 ```sh
+SIM_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/PROFILE.toml --print-sim-output)"
 tools/python.sh harness/shadow_update_lists/verify.py \
   --header out/PROFILE/HEADER.DAT \
   --body out/PROFILE/BODY.DAT \
-  --decisions videos/STEM/tmp/decisions.pkl
+  --decisions "$SIM_OUT/decisions.pkl"
 ```

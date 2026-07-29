@@ -9,7 +9,7 @@ render_analysis.pyは解析時にpreview/（オーバーレイ無しの復号フ
 ffmpeg の pad+scale だけで完結(PILループ不要=速い)。
 
 env:
-  CBRSIM_OUT      sim出力ディレクトリ(既定 videos/<stem>/tmp)。
+  CBRSIM_OUT      profileのsim要求名。cbr_pathsがtmpfs実体pathへ解決する。
                   解析工程が生成したpreview/とstats.npz指定音声を使う
   CBRSIM_MODE     画面モード H32/H40/mode4 (既定 H32)。画面サイズと PAR に使う
   STRAIGHT_OUT    出力mp4 (既定 videos/<stem>_sim.mp4)
@@ -38,11 +38,11 @@ OUT = Path(os.environ.get(
 
 
 def main():
-    sim_lease = tmpfs_workspace.lease_managed_alias(Path(SIM))
+    sim_lease = tmpfs_workspace.lease_managed_path(Path(SIM))
     actual_out = None
     out_lease = None
     try:
-        if tmpfs_workspace.is_video_alias(OUT):
+        if tmpfs_workspace.is_disposable_path(OUT):
             actual_out, out_lease = tmpfs_workspace.allocate_file(
                 OUT,
                 kind="straight-sim-mp4",
@@ -52,9 +52,7 @@ def main():
             actual_out = OUT
             actual_out.parent.mkdir(parents=True, exist_ok=True)
         _export(actual_out)
-        if out_lease is not None:
-            tmpfs_workspace.publish_alias(OUT, actual_out)
-        print("done", OUT, flush=True)
+        print("done", actual_out, flush=True)
     finally:
         if out_lease is not None:
             out_lease.release()

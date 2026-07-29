@@ -11,8 +11,8 @@
                    audio WAV/report.txt)。preview/catmap は本工程で生成する。
   CBRSIM_SRCLABEL  右Sourceパネル見出し(既定 "Source")
   CBRSIM_MODE      画面モード H32/H40 (既定 H32。DMA理論値に使う)
-  ANALYSIS_OUT     出力mp4パス (既定 videos/<stem>_analysis.mp4)
-  ANALYSIS_TSV     永続logs/ TSVを指す互換symlink (既定 ANALYSIS_OUT の .tsv)
+  ANALYSIS_OUT     出力mp4名 (videos/配下ならtmpfsの実体pathへ直接出力)
+  ANALYSIS_TSV     明示した場合の永続TSV実体path (既定はlogs/のunique path)
   ANALYSIS_CQ      h264_nvenc cq (既定 23)
 W/H/タイル数/表示アスペクト/諸元は sim 出力から自動導出。
 
@@ -82,8 +82,10 @@ SRC_SPEC = _source_spec()
 MODE = os.environ.get("CBRSIM_MODE", "H32")
 OUT_MP4 = Path(os.environ.get(
     "ANALYSIS_OUT", str(artifact_path("analysis", sim_dir=SIM))))
-OUT_TSV = Path(os.environ.get(
-    "ANALYSIS_TSV", str(OUT_MP4.with_suffix(".tsv"))))
+OUT_TSV = (
+    Path(os.environ["ANALYSIS_TSV"])
+    if os.environ.get("ANALYSIS_TSV") else None
+)
 CQ = os.environ.get("ANALYSIS_CQ", "23")
 FRAMES_DIR = f"{SIM}/analysis_frames"
 AUDIO_STR = "22.05kHz mono IMA ADPCM"       # 既定。sim出力(stats)にラベルがあればそれを使う
@@ -907,8 +909,12 @@ def analysis_tsv_row(i):
 
 
 def write_analysis_tsv():
-    """Write one permanent, uniquely named TSV and update the old alias."""
-    path = analysis_logs.unique_tsv_path(CONFIG_PROFILE, kind="timeline")
+    """Write one permanent TSV directly under logs/ or an explicit path."""
+    path = (
+        OUT_TSV
+        if OUT_TSV is not None
+        else analysis_logs.unique_tsv_path(CONFIG_PROFILE, kind="timeline")
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     with tmp.open("w", encoding="utf-8", newline="") as fh:
@@ -919,7 +925,6 @@ def write_analysis_tsv():
         for i in range(NF):
             writer.writerow(analysis_tsv_row(i))
     tmp.replace(path)
-    analysis_logs.publish_alias(OUT_TSV, path)
     return path
 
 
@@ -1018,13 +1023,13 @@ def main():
     # A rendered 1080p PNG is commonly around 2 MiB. Leave room for PNGs,
     # the muxed video, and normal compression variance before workers start.
     required = len(frames) * (5 * 1024 ** 2 // 2) + 1024 ** 3
-    sim_lease = tmpfs_workspace.lease_managed_alias(
+    sim_lease = tmpfs_workspace.lease_managed_path(
         Path(SIM), required_bytes=required)
     mp4_lease = None
     mp4_actual = None
     try:
         if rng is None:
-            if tmpfs_workspace.is_video_alias(OUT_MP4):
+            if tmpfs_workspace.is_disposable_path(OUT_MP4):
                 mp4_actual, mp4_lease = tmpfs_workspace.allocate_file(
                     OUT_MP4,
                     kind="analysis-mp4",
@@ -1066,9 +1071,7 @@ def main():
             print("Analysis mux: waiting for 1 GPU token ...", flush=True)
             with resource_tokens.acquire_tokens("gpu"):
                 mux(mp4_actual)
-            if mp4_lease is not None:
-                tmpfs_workspace.publish_alias(OUT_MP4, mp4_actual)
-            print("done", OUT_MP4, flush=True)
+            print("done", mp4_actual, flush=True)
         else:
             print("done (frames only)", len(frames), flush=True)
     finally:

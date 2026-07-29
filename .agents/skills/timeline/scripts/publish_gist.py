@@ -8,12 +8,15 @@ import hashlib
 import json
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from urllib.parse import quote
 
 
 REPO = Path(__file__).resolve().parents[4]
+sys.path.insert(0, str(REPO / "tools"))
+import analysis_logs  # noqa: E402
 
 
 def parse_args() -> argparse.Namespace:
@@ -36,16 +39,14 @@ def main() -> None:
     if not image.is_file():
         raise SystemExit(f"timeline image does not exist: {image}")
     digest = hashlib.sha256(image.read_bytes()).hexdigest()
-    receipt_path = Path(str(image) + ".gist.json")
-    receipt_alias = Path(str(requested_image) + ".gist.json")
+    receipt_path = analysis_logs.metadata_path(
+        requested_image,
+        kind="timeline-gist",
+        sha256=digest,
+    )
     if receipt_path.exists() and not args.force:
         receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
         if receipt.get("image_sha256") == digest:
-            if receipt_alias != receipt_path:
-                receipt_alias.write_text(
-                    json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
-                    encoding="utf-8",
-                )
             print(json.dumps(receipt, ensure_ascii=False, indent=2))
             return
 
@@ -121,8 +122,6 @@ def main() -> None:
     }
     receipt_text = json.dumps(receipt, ensure_ascii=False, indent=2) + "\n"
     receipt_path.write_text(receipt_text, encoding="utf-8")
-    if receipt_alias != receipt_path:
-        receipt_alias.write_text(receipt_text, encoding="utf-8")
     print(json.dumps(receipt, ensure_ascii=False, indent=2))
 
 

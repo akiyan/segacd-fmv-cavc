@@ -84,7 +84,8 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    ```
 
    `INPUT_lossless.mkv`と`STEM`は実値へ置き換える。`{output}` はtmpfs wrapperが
-   実体パスへ置き換え、成功後に `videos/STEM_emu.mp4` symlinkを公開する。nearest拡大そのものは
+   実体パスへ置き換え、最後にそのdirect pathを表示する。以降の検証とuploadは
+   表示されたpathを使う。`videos/` symlinkは作らない。nearest拡大そのものは
    新しい色を作らず、H32では8x7の完全な整数拡大になる。ただしYouTubeは必ず
    再エンコードするため、最終配信までロスレスとは呼ばない。CRF 10の高品質な
    入力を渡し、YouTube側の高解像度配信を使う。`-ss`、`-t`、fps filter、`-r`は
@@ -99,7 +100,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
    ```sh
    tools/python.sh tools/youtube_chapters.py SIM_OUT CONTENT_FPS \
-     --hud-gate-json videos/STEM_emu_hud_gate.json \
+     --hud-gate-json logs/RUN_hud_gate.json \
      --intro-label "Mega-CD startup"
    ```
 
@@ -136,7 +137,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    PY="$HOME/.config/youtube/venv/bin/python"
    tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_emu_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
    "$PY" "$HOME/.claude/skills/youtube/youtube.py" upload \
-     videos/STEM_emu.mp4 \
+     /dev/shm/segacd-fmv-ttrc/artifacts/COMPILATION_ENTRY/STEM_emu.mp4 \
      --title "$TITLE" --desc "$DESCRIPTION" \
      --privacy unlisted --category 20
    ```

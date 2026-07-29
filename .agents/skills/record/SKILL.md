@@ -106,8 +106,9 @@ Defaults and rules:
 - Omit `--display` for normal work; Xvfb allocates a free display with
   `-displayfd`. An explicit `--display :N` is diagnostic-only and fails if an
   existing server owns it.
-- Keep the preview MP4 under `videos/`. `OUTDIR` selects the raw MKV and sidecar directory;
-  the high-level harness defaults it to `videos/`.
+- Use a `videos/` preview name; the harness writes its bytes directly to tmpfs
+  and prints `OUT=` with the real path. `OUTDIR` selects the persistent raw MKV
+  and sidecar directory; the high-level harness defaults it to `videos/`.
 - A direct `tools/run_headless.sh out/PROFILE.cue` call defaults its screenshots,
   logs, PID files, and raw diagnostic capture to `tmp/PROFILE/record/`; do not
   put multiple profile runs directly in the shared `tmp/` root.
@@ -252,16 +253,13 @@ Check the raw MKV and reports before trusting a capture:
    ```sh
    tools/python.sh harness/startup_resync/analyze.py \
      videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
-     --tsv videos/STEM_emu_hud.tsv \
-     --gate-json videos/STEM_emu_hud_gate.json --expected-frames FRAME_COUNT
+     --expected-frames FRAME_COUNT
    ```
 
    With the required profile argument, the analyzer writes the HUD TSV body
-   permanently to
-   `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` and turns the requested
-   `videos/STEM_emu_hud.tsv` path into a run-specific compatibility symlink.
-   Use the persistent `logs/` path for comparisons and keep the symlink beside
-   the recording for downstream tools.
+   permanently to `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` and the
+   matching gate to `_gate.json`. Use the two printed direct paths for every
+   downstream tool; no compatibility symlink is created.
 
    An H32 or H40 profile automatically selects its standard two-row layout.
    Both preserve `Q/V/O/E/G/K`; H32 wraps the logical stream after 32 cells
@@ -328,8 +326,9 @@ Check the raw MKV and reports before trusting a capture:
    Require the matching timeline from the exact sim decision log, generating
    and publicly publishing it first when absent. Immediately invoke `mixline`,
    inspect and show the aligned combined PNG, and publish it to a public Gist.
-   Preserve the timeline, hudline, and mixline PNGs, layout receipts, and Gist
-   receipts next to the recording. A `FAIL` still stops compilation and uploads
+   Preserve the timeline, hudline, and mixline layout/Gist receipts under
+   `logs/`; the PNGs are direct tmpfs artifacts. A `FAIL` still stops
+   compilation and uploads
    after both diagnostic images have been published. Under `$run`, gate `PASS`
    continues without another approval pause, including alert `WARNING`.
 
@@ -410,7 +409,7 @@ complete, then remove only artifacts created by this session when space is neede
 
 ## Report
 
-Report the raw MKV path, preview MP4 path, duration, raster/fps, audio codec,
+Report the raw MKV path, printed direct preview MP4 path, duration, raster/fps, audio codec,
 sample rate, channels and packet presence, whether startup was retained, and
 whether human listening was performed. For offline runs also report the Replay
 path, requested/max frame count, wall time, and speed. When the run requalifies

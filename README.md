@@ -144,15 +144,15 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
 
 Completed sim artifacts are reusable only when source bytes, effective
 settings, and the output-affecting encoder fingerprint match. Sim work and
-derived videos use the managed tmpfs workspace behind `videos/`; native
-lossless emulator captures remain ordinary files. Per-frame codec timeline and
-playback HUD TSVs remain under `logs/`, with encoder and player versions in
-every filename.
+derived videos use direct managed tmpfs paths; native lossless emulator
+captures remain ordinary files under `videos/`. Per-frame codec timeline and
+playback HUD TSVs plus their gate/layout/Gist metadata remain under `logs/`,
+with encoder and player versions in every TSV filename.
 
 Heavy stages share CPU, GPU, and emulator tokens. Different profile stems may
-overlap, while the same `videos/<stem>` is rejected immediately. Xvfb displays,
-RetroArch system directories, build intermediates, tmpfs leases, and public
-aliases are isolated per run.
+overlap, while the same stem is rejected immediately. Xvfb displays, RetroArch
+system directories, build intermediates, and tmpfs leases are isolated per
+run.
 
 ## Build targets
 
@@ -473,14 +473,14 @@ timed-work valueとgraph maximumから除外します。
 - `boot/movieplay_ip.s`: Main-CPUのVRAM、CRAM、name table、DMA、DEBUG HUD runtime。
 
 completed sim artifactはsource byte、effective setting、outputに影響するencoder fingerprintが
-一致するときだけ再利用します。sim workとderived videoは `videos/` の背後にあるmanaged
-tmpfs workspaceを使い、native lossless emulator captureは通常fileとして保持します。
-Frame別codec timeline TSVとplayback HUD TSVは、encoder/player versionをfilenameへ
-入れて`logs/`に保持します。
+一致するときだけ再利用します。sim workとderived videoはmanaged tmpfs実体pathを直接使い、
+native lossless emulator captureは`videos/`の通常fileとして保持します。Frame別codec
+timeline TSVとplayback HUD TSV、およびgate/layout/Gist metadataは`logs/`へ保持し、
+TSV filenameにはencoder/player versionを入れます。
 
 heavy stageはCPU、GPU、emulator tokenを共有します。異なるprofile stemは重ねられますが、
-同じ `videos/<stem>` は即時拒否します。Xvfb display、RetroArch system directory、
-build intermediate、tmpfs lease、public aliasはrunごとに分離します。
+同じstemは即時拒否します。Xvfb display、RetroArch system directory、
+build intermediate、tmpfs leaseはrunごとに分離します。
 
 ## Build target
 

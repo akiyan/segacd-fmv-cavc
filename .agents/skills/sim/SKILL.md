@@ -157,8 +157,9 @@ Before every `/sim`, perform these steps in this exact order:
    `sar` unless they changed from the preceding comparison. Include unchanged
    settings only when they materially affect how the current result should be
    interpreted. This explanation is the user's preflight record of the run.
-2. Validate the profile with `tools/encode_config.py` and identify its exact
-   `[output].directory`.
+2. Validate the profile with `tools/encode_config.py`. Treat
+   `[output].directory` as the human-readable requested identity; the tool
+   prints the deterministic direct tmpfs path used for bytes.
 3. Confirm the profile's output stem and let the built-in stem/resource locks
    coordinate it with other jobs.
 4. Do not manually clean the simulation output directory. Let `sim.py` inspect
@@ -211,7 +212,7 @@ After completion:
   or below CD 1x (150 KiB/s). `codec_work_bps` is a separate
   quality-allocation diagnostic.
 - Starvation is allowed, but report it.
-- Output appears under `videos/<stem>/tmp/`:
+- Output appears at the direct tmpfs sim path printed by `sim.py`:
   - `stats.npz`
   - both the packer input `audio_22k05_s16_mono.wav` and the
     analysis/straight-video playback model
@@ -250,12 +251,12 @@ unique persistent file below `logs/`. Its filename includes local date/time,
 the profile name, the first 10 profile-SHA characters, encoder version, player
 version, and the `timeline` kind:
 `<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv`.
-`videos/<stem>_analysis.tsv` (or `ANALYSIS_TSV` when explicitly set) is only a
-compatibility symlink to that permanent log. Use the `logs/` file for maxima,
+No latest-run symlink is created. `ANALYSIS_TSV`, when explicitly set, is a
+real output file rather than an alias. Use the printed `logs/` file for maxima,
 totals, and frame-to-frame comparisons instead of OCR. The full render then
 generates all PNG frames in parallel (`nproc-2`) and calls FFmpeg, usually with
-`h264_nvenc`, `-r 60`, and audio. Disposable PNG/MP4 bytes live in the managed
-tmpfs workspace even though their public symlinks remain below `videos/`.
+`h264_nvenc`, `-r 60`, and audio. Disposable PNG/MP4 bytes live directly in the
+managed tmpfs workspace; use the printed real path.
 
 Frame-range check only:
 
@@ -355,8 +356,8 @@ language sections. Never use the binary magic as a codec or format name.
 - For a multi-profile local run, use `tools/parallel_run.py`. Do not hand-start
   commands that bypass its pipeline-wide stem lock or tmpfs lease handoff.
 - Never kill another session's process. Kill only jobs you started.
-- Keep every profile in its own `videos/<stem>/tmp` working directory. Do not
-  use a shared `tmp/sim` for player decision output.
+- Keep every profile on its deterministic managed tmpfs sim path. Do not use a
+  shared `tmp/sim` for player decision output.
 - The analysis layout is consolidated into:
   - `tools/layout_preview.py`: canonical layout
   - `tools/render_analysis.py`: render real data using that layout

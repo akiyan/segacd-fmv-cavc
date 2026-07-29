@@ -13,8 +13,8 @@ OCR pass. Keep the image frame-aligned with `/timeline`, then immediately use
 
 1. Require the HUD TSV and gate JSON generated from the same lossless recording.
    The HUD TSV body must be the persistent
-   `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; a run-specific
-   `videos/STEM_emu_hud.tsv` symlink to it is accepted as the input path.
+   `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; use that direct path.
+   The matching gate JSON is the adjacent persistent `_gate.json`.
    The renderer checks the first loop, contiguous frame numbers, expected frame
    count, profile SHA, gate maxima, and recording size/mtime when available.
    Render failed gates too; when playback did not complete one loop, render
@@ -27,13 +27,15 @@ OCR pass. Keep the image frame-aligned with `/timeline`, then immediately use
 
 ```sh
 tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
-  videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
+  logs/RUN_hud.tsv \
+  --gate-json logs/RUN_hud_gate.json \
   --config profiles/PROFILE.toml \
   --label "short run label" \
   --output videos/STEM_hudline.png
 ```
 
+   The renderer prints the direct tmpfs PNG path and its persistent
+   content-keyed layout receipt under `logs/`.
    When a matching managed GPGX LOGVDP run is available, first generate its
    frame TSV with `harness/gpgx_logvdp/extract_frame_tsv.py`, then add
    `--gpgx-vdp-tsv logs/RUN_gpgx_vdp.tsv`. The renderer requires the adjacent
@@ -48,8 +50,8 @@ tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
 
 ```sh
 tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
-  videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
+  logs/RUN_hud.tsv \
+  --gate-json logs/RUN_hud_gate.json \
   --output videos/STEM_emu_hud_warnings.md
 ```
 
@@ -95,7 +97,7 @@ tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
 
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  videos/STEM_hudline.png \
+  /dev/shm/segacd-fmv-ttrc/artifacts/HUDLINE_ENTRY/STEM_hudline.png \
   --description "SEGA-CD FMV playback HUD timeline: short run label"
 ```
 
@@ -179,7 +181,7 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 - `/mixline` consumes this image and its layout receipt directly. Any hudline
   row-height, scale, or colour change must therefore appear automatically in
   the immediately generated mixline without a second hard-coded layout.
-- Write a `<output>.json` layout receipt containing the input hashes, frame
+- Write a content-keyed layout receipt under `logs/` containing the input hashes, frame
   mapping, expected and observed frame counts, row geometry, fixed scales,
   gate limits, `C/A` minimum, mean, median, and maximum, optional G statistics
   and B frame count, optional H/X and Y/O/Z/Y3/Y4/T/I maxima, and recording identity. `/mixline`

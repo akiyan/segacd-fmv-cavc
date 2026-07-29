@@ -317,28 +317,27 @@ ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
   -t "$REC_SECS" -map 0:v:0 -map '0:a:0?' -c copy "$BOUNDED_MKV"
 
 echo ">> transcoding verification preview -> $OUT"
-# Keep the requested alias path lexical. A disposable preview may be a broken
-# symlink after its old tmpfs entry is evicted; following it here would make a
-# videos/ output look like a direct /dev/shm output and bypass run-file.
 OUT_ABS="$(realpath -m -s "$OUT")"
 RECORD_CPU_WORKERS="$(
   "$PYTHON" tools/resource_tokens.py cpu-workers
 )"
 echo ">> preview CPU tokens: $RECORD_CPU_WORKERS"
 if [[ "$OUT_ABS" == "$ROOT/videos/"* ]]; then
-  "$PYTHON" tools/resource_tokens.py run \
+  OUT_ACTUAL="$("$PYTHON" tools/resource_tokens.py run \
     --resource cpu --count "$RECORD_CPU_WORKERS" -- \
     "$PYTHON" tools/tmpfs_workspace.py run-file \
       --output "$OUT" --kind record-preview-mp4 --required-gb 1 -- \
       ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
         -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
-        -c:a aac -b:a 128k -movflags +faststart '{output}'
+        -c:a aac -b:a 128k -movflags +faststart '{output}' \
+    | tail -n 1)"
 else
   "$PYTHON" tools/resource_tokens.py run \
     --resource cpu --count "$RECORD_CPU_WORKERS" -- \
     ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
       -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
       -c:a aac -b:a 128k -movflags +faststart "$OUT"
+  OUT_ACTUAL="$OUT"
 fi
 
 if [ -n "$PIPELINE_WALL_START_NS" ]; then
@@ -352,8 +351,8 @@ rm -f "$RAW_MKV"
 [ -n "$REPLAY_FILE" ] && echo "REPLAY=$REPLAY_FILE"
 [ -n "$PIPELINE_WALL_START_NS" ] && echo "PIPELINE_WALL_SECONDS=$PIPELINE_WALL_SECONDS"
 echo "$BOUNDED_KEY=$BOUNDED_MKV"
-echo "OUT=$OUT"
-for artifact in "$BOUNDED_MKV" "$OUT"; do
+echo "OUT=$OUT_ACTUAL"
+for artifact in "$BOUNDED_MKV" "$OUT_ACTUAL"; do
   AUDIO_INFO="$(ffprobe -v error -count_packets -select_streams a:0 \
     -show_entries stream=codec_name,sample_rate,channels,nb_read_packets \
     -of csv=p=0 "$artifact")"

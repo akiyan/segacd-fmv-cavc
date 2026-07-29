@@ -81,9 +81,10 @@ standard parsing also preserves H/X and Y/Z/Y3/Y4/T/I maxima. `/hudline` and
 per aggregated movie frame.
 Transition rows additionally carry the previous and next lead, which makes
 preload-to-live boundary failures easy to compare between A/B recordings. With
-the profile argument, the TSV body is stored permanently as
-`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the requested `--tsv` path
-is a compatibility symlink to that log.
+the profile argument and no explicit `--tsv`, the TSV body is stored
+permanently as `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`. Supplying
+`--expected-frames` also writes the matching `_gate.json`. The tool prints both
+direct paths and creates no compatibility symlink.
 
 The default crop begins at native x=0.  A legacy 320-pixel recording whose H32
 image is centered with 32 pixels on the left can be read with `--crop-x 32`.

@@ -245,25 +245,25 @@ packed stream files live under `out/PROFILE/`, transient build, disc-staging,
 and direct-emulator scratch files live under `tmp/PROFILE/`, and the bootable
 pair is `out/PROFILE.iso` + `out/PROFILE.cue`.
 
-## Output Paths (videos/ and logs/)
+## Output Paths (tmpfs, videos/, and logs/)
 
-Generated media paths stay under `videos/` (git-ignored, never committed — they
-embed source frames). Disposable sim directories, derived MP4s (analysis,
-straight-sim, verification preview, and upload compilation), and the timeline,
-hudline, and mixline PNGs are symlinks into the project-managed tmpfs workspace
-under `/dev/shm/segacd-fmv-ttrc`; inactive oldest entries are evicted when the
-next run needs room, while active leases are never removed. Those three
-renderers take the tmpfs path only when their output stays under `videos/`; an
-output path outside it is written as an ordinary file. The layout JSON
-(`<image>.json`) and Gist receipt (`<image>.gist.json`) written next to each
-image are always ordinary disk files, so a receipt can outlive the evicted PNG
-it describes; re-render from the TSV rather than treating the receipt as proof
-the image is still present. Native lossless emulator captures remain ordinary
-disk files because compilation reuses them. Do not
-accumulate video output in `tmp/`. Per-frame codec timeline and playback HUD
-TSVs are the other exception: keep every run persistently under git-ignored
-`logs/`. Their filenames include both encoder and player versions. Use one stem
-per encode:
+Disposable sim directories, derived MP4s (analysis, straight-sim, verification
+preview, and upload compilation), and timeline, hudline, and mixline PNGs are
+written directly under the project-managed tmpfs workspace at
+`/dev/shm/segacd-fmv-ttrc`. Tools print the actual path that downstream stages
+must use. Do not create `videos/` symlinks or latest-run aliases. Inactive
+oldest tmpfs entries are evicted when the next run needs room, while active
+leases are never removed. A renderer output explicitly placed outside
+`videos/` is an ordinary file instead.
+
+Keep reusable native lossless emulator captures as ordinary git-ignored files
+under `videos/`, because compilation reads them later. Keep every reproducible
+log and metadata object persistently under git-ignored `logs/`: per-frame
+timeline/HUD TSVs, HUD gate JSON, image layout JSON, and Gist receipts. A
+persistent receipt can outlive its evicted tmpfs image; re-render from the TSV
+rather than treating the receipt as proof that the image still exists. Do not
+accumulate video output in `tmp/`. Timeline and HUD TSV filenames include both
+encoder and player versions. Use one stem per encode:
 
 Completed sim directories are reused automatically only when source bytes,
 effective encoder/TOML settings, and the output-affecting encoder-code
@@ -280,14 +280,15 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 
 | Artifact | Path |
 |---|---|
-| Analysis-frame video (from `sim`) | `videos/<stem>_analysis.mp4` |
-| Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv` (`videos/<stem>_analysis.tsv` is a latest-run symlink) |
-| Per-frame playback HUD data | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` (`videos/<stem>_emu_hud.tsv` is a run-specific symlink) |
-| Straight sim output, video+audio, no overlay (`export_sim_video.py`) | `videos/<stem>_sim.mp4` |
-| Sim inputs, stats, and decision data | `videos/<stem>/tmp/` (tmpfs-backed sim working-dir symlink; analysis creates `preview/` and `catmap/` here on demand) |
+| Analysis-frame video (from `sim`) | printed direct tmpfs path ending in `<stem>_analysis.mp4` |
+| Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv` |
+| Per-frame playback HUD data and gate | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` and matching `_gate.json` |
+| Image layout and Gist metadata | `logs/<image-stem>_<image-sha10>_<kind>.json` |
+| Straight sim output, video+audio, no overlay (`export_sim_video.py`) | printed direct tmpfs path ending in `<stem>_sim.mp4` |
+| Sim inputs, stats, and decision data | deterministic direct tmpfs `.../sim-.../data/` path; analysis creates `preview/` and `catmap/` there on demand |
 | Lossless emulator capture (`record`) | `videos/<stem>_emu_lossless.mkv` |
-| Verification preview (`record`) | `videos/<stem>_emu_preview.mp4` |
-| Upload compilation (`compilation`) | `videos/<stem>_emu.mp4` |
+| Verification preview (`record`) | printed direct tmpfs path ending in `<stem>_emu_preview.mp4` |
+| Upload compilation (`compilation`) | printed direct tmpfs path ending in `<stem>_emu.mp4` |
 
 - `<input-basename>`: the source file name without extension.
 - `<display-mode>`: `H32` / `H40` / `mode4`.
@@ -440,6 +441,9 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
     -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
     -c:a aac -b:a 192k -movflags +faststart '{output}'
 ```
+
+The final line printed by `run-file` is the direct tmpfs MP4 path. Use that
+path for verification and upload.
 
 - H32: 256x224 PAR 8:7 becomes 2048x1568 SAR 1:1. This is exact 8x horizontal
   and 7x vertical pixel replication.

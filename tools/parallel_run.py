@@ -168,15 +168,11 @@ def _expected_frames(profile: EncodeProfile) -> int:
 def _hud_command(profile: EncodeProfile) -> list[str]:
     stem = profile.sim_stem
     video = ROOT / "videos" / f"{stem}_emu_lossless.mkv"
-    hud_tsv = ROOT / "videos" / f"{stem}_emu_hud.tsv"
-    gate = ROOT / "videos" / f"{stem}_emu_hud_gate.json"
     return [
         str(ROOT / "tools" / "python.sh"),
         str(ROOT / "harness" / "startup_resync" / "analyze.py"),
         str(video),
         str(profile.path),
-        "--tsv", str(hud_tsv),
-        "--gate-json", str(gate),
         "--expected-frames", str(_expected_frames(profile)),
     ]
 
@@ -225,7 +221,7 @@ def _run_sim_with_handoff(
     while process.poll() is None:
         if ready.is_file() and not acknowledged:
             output_dir = _profile_output_dir(profile)
-            lease = tmpfs_workspace.lease_managed_alias(output_dir)
+            lease = tmpfs_workspace.lease_managed_path(output_dir)
             if lease is None:
                 process.terminate()
                 process.wait()
@@ -237,7 +233,7 @@ def _run_sim_with_handoff(
     status = process.wait()
     if ready.is_file() and not acknowledged and status == 0:
         output_dir = _profile_output_dir(profile)
-        lease = tmpfs_workspace.lease_managed_alias(output_dir)
+        lease = tmpfs_workspace.lease_managed_path(output_dir)
         if lease is None:
             raise ParallelRunError(
                 f"sim tmpfs handoff did not resolve {output_dir}")

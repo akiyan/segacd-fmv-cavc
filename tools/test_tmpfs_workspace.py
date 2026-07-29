@@ -18,18 +18,18 @@ class TmpfsWorkspaceTests(unittest.TestCase):
         return patch.dict(os.environ, {
             "SEGACD_TMPFS_ROOT": str(root),
             "SEGACD_TMPFS_ALLOW_NON_TMPFS": "1",
-            "SEGACD_TMPFS_ALLOW_ANY_ALIAS": "1",
             "SEGACD_TMPFS_MIN_FREE_GB": "0",
         })
 
-    def test_directory_alias_and_live_lease(self) -> None:
+    def test_direct_directory_path_and_live_lease(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            alias = Path(tmp) / "videos" / "movie" / "tmp"
             lease = workspace.activate_directory(
-                alias, kind="sim", key="profile-abc")
-            self.assertTrue(alias.is_symlink())
-            self.assertEqual(alias.resolve(), lease.entry / "data")
-            second = workspace.lease_managed_alias(alias.resolve())
+                kind="sim", key="profile-abc")
+            direct = workspace.managed_directory_path(
+                kind="sim", key="profile-abc")
+            self.assertEqual(direct, lease.entry / "data")
+            self.assertFalse(direct.is_symlink())
+            second = workspace.lease_managed_path(direct)
             self.assertIsNotNone(second)
             self.assertEqual(second.entry, lease.entry)
             second.release()
@@ -40,11 +40,10 @@ class TmpfsWorkspaceTests(unittest.TestCase):
 
     def test_managed_alias_lease_records_derived_space_reservation(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            alias = Path(tmp) / "videos" / "movie" / "tmp"
             owner = workspace.activate_directory(
-                alias, kind="sim", key="profile-abc")
-            derived = workspace.lease_managed_alias(
-                alias, required_bytes=123456)
+                kind="sim", key="profile-abc")
+            derived = workspace.lease_managed_path(
+                owner.entry / "data", required_bytes=123456)
             self.assertIsNotNone(derived)
             record = json.loads(derived.marker.read_text(encoding="utf-8"))
             self.assertEqual(record["required_bytes"], 123456)
@@ -53,9 +52,8 @@ class TmpfsWorkspaceTests(unittest.TestCase):
 
     def test_completed_directory_reuses_only_matching_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            alias = Path(tmp) / "videos" / "movie" / "tmp"
             first = workspace.activate_directory(
-                alias, kind="sim", key="same-effective-settings",
+                kind="sim", key="same-effective-settings",
                 reuse_token="token-a")
             (first.entry / "data" / "kept.txt").write_text(
                 "complete", encoding="utf-8")
@@ -64,7 +62,7 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             first.release()
 
             reused = workspace.activate_directory(
-                alias, kind="sim", key="same-effective-settings",
+                kind="sim", key="same-effective-settings",
                 reuse_token="token-a")
             self.assertTrue(reused.reused)
             self.assertEqual(
@@ -74,36 +72,36 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             reused.release()
 
             reset = workspace.activate_directory(
-                alias, kind="sim", key="same-effective-settings",
+                kind="sim", key="same-effective-settings",
                 reuse_token="token-b")
             self.assertFalse(reset.reused)
             self.assertFalse((reset.entry / "data" / "kept.txt").exists())
             reset.release()
 
-    def test_file_is_published_through_alias(self) -> None:
+    def test_file_is_returned_as_direct_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            alias = Path(tmp) / "videos" / "movie_analysis.mp4"
+            requested = Path(tmp) / "videos" / "movie_analysis.mp4"
             actual, lease = workspace.allocate_file(
-                alias, kind="analysis", key="profile-abc")
+                requested, kind="analysis", key="profile-abc")
             actual.write_bytes(b"video")
-            workspace.publish_alias(alias, actual)
-            self.assertTrue(alias.is_symlink())
-            self.assertEqual(alias.read_bytes(), b"video")
+            self.assertFalse(requested.exists())
+            self.assertFalse(actual.is_symlink())
+            self.assertEqual(actual.read_bytes(), b"video")
             lease.release()
 
-    def test_file_command_publishes_only_after_success(self) -> None:
+    def test_file_command_returns_direct_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
             source = Path(tmp) / "source.bin"
             source.write_bytes(b"rendered")
             alias = Path(tmp) / "videos" / "rendered.mp4"
-            workspace.run_file_command(
+            actual = workspace.run_file_command(
                 alias,
                 kind="test-render",
                 required_bytes=0,
                 command=["cp", str(source), "{output}"],
             )
-            self.assertTrue(alias.is_symlink())
-            self.assertEqual(alias.read_bytes(), b"rendered")
+            self.assertFalse(alias.exists())
+            self.assertEqual(actual.read_bytes(), b"rendered")
 
     def test_stale_lease_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
@@ -184,29 +182,26 @@ class TmpfsWorkspaceTests(unittest.TestCase):
 
     def test_required_bytes_are_published_in_live_lease(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            alias = Path(tmp) / "videos" / "movie" / "tmp"
             lease = workspace.activate_directory(
-                alias, kind="sim", key="reservation", required_bytes=123456)
+                kind="sim", key="reservation", required_bytes=123456)
             record = json.loads(lease.marker.read_text(encoding="utf-8"))
             self.assertEqual(record["required_bytes"], 123456)
             self.assertGreater(
                 workspace._active_reservation_bytes(workspace.ensure_root()), 0)
             lease.release()
 
-    def test_replacing_existing_file_alias_keeps_new_target(self) -> None:
+    def test_replacing_same_file_key_replaces_managed_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
             alias = Path(tmp) / "videos" / "movie_analysis.mp4"
             first, first_lease = workspace.allocate_file(
                 alias, kind="analysis", key="first")
             first.write_bytes(b"first")
-            workspace.publish_alias(alias, first)
             first_lease.release()
             second, second_lease = workspace.allocate_file(
                 alias, kind="analysis", key="second")
             second.write_bytes(b"second")
-            workspace.publish_alias(alias, second)
-            self.assertEqual(alias.resolve(), second)
-            self.assertEqual(alias.read_bytes(), b"second")
+            self.assertNotEqual(first, second)
+            self.assertEqual(second.read_bytes(), b"second")
             second_lease.release()
 
 

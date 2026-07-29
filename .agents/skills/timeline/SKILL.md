@@ -25,24 +25,27 @@ and include the settings that explain the result.
 tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
   logs/YYYYMMDD-HHMMSS-ffffff_PROFILE_SHA10_eNN_pNN_timeline.tsv \
   --config profiles/PROFILE.toml \
-  --sim-out videos/STEM/ADJUSTMENT \
+  --sim-out /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data \
   --r2v-workload-tsv logs/PROFILE_eNN_pNN_r2v_workload.tsv \
   --label "short adjustment label" \
   --evaluation-end-frame FRAME \
   --output videos/STEM_ADJUSTMENT_timeline.png
 ```
 
-5. Inspect the PNG with `view_image`. Check that the full time axis, tail
+   The renderer prints the direct tmpfs PNG path and the persistent layout
+   receipt under `logs/`.
+5. Inspect the printed PNG path with `view_image`. Check that the full time axis, tail
    marker, category colours, four row scales, and labels are legible. Confirm
    that the fixed effective cold cap and fps-derived normal/jitter/delivery
    PrgBuf values match the sim metadata.
 6. Publish the PNG as a public GitHub Gist. The helper creates a Git-backed
    public Gist so the binary PNG is preserved exactly, writes a
-   `<image>.gist.json` receipt, and returns both the Gist page and raw PNG URL:
+   content-keyed Gist receipt under `logs/`, and returns both the Gist page and
+   raw PNG URL:
 
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  videos/STEM_ADJUSTMENT_timeline.png \
+  /dev/shm/segacd-fmv-ttrc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
   --description "SEGA-CD FMV codec timeline: adjustment label"
 ```
 
@@ -59,8 +62,8 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 ```sh
 PY="$HOME/.config/youtube/venv/bin/python"
 "$PY" .agents/skills/timeline/scripts/sync_youtube_description.py \
-  videos/STEM_ADJUSTMENT_analysis.mp4 \
-  --timeline-receipt videos/STEM_ADJUSTMENT_timeline.png.gist.json \
+  /dev/shm/segacd-fmv-ttrc/artifacts/ANALYSIS_ENTRY/STEM_analysis.mp4 \
+  --timeline-receipt logs/STEM_SHA10_timeline-gist.json \
   --description-file videos/STEM_ADJUSTMENT_analysis_description.txt
 ```
 
@@ -128,9 +131,9 @@ Use at least two pixels per frame when practical. Req, Supply, and Band retain
 their fixed comparison scales. RUN intentionally uses the current TSV's timed
 maximum so its fragmentation remains legible.
 
-Write a `<output>.json` layout receipt with the input hashes, frame mapping,
-row geometry, and evaluation boundary. `/mixline` must consume this receipt
-instead of inferring alignment from image dimensions.
+Write a content-keyed layout receipt under `logs/` with the input hashes, frame
+mapping, row geometry, and evaluation boundary. `/mixline` must consume this
+receipt instead of inferring alignment from image dimensions.
 
 ## Interpretation safeguards
 

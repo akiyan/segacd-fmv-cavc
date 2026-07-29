@@ -80,7 +80,7 @@ from video_geometry import (  # noqa: E402
 )
 
 # 対象動画・寸法・fps は env で差し替え可(既定はサンプル動画)。
-# CBRSIM_OUT を指定しない場合は videos/<stem>/tmp に出力する。
+# Profile実行ではcbr_pathsがdeterministicなtmpfs実体pathを返す。
 SRC = os.environ.get("CBRSIM_SRC", "movies/disc1/061.mp4")
 MODE = os.environ.get("CBRSIM_MODE", "H32")
 # Keep the historical 144-line codec height, but choose the matching native
@@ -4271,15 +4271,6 @@ def _sim_tmpfs_required_bytes():
 def _activate_sim_tmpfs():
     if os.environ.get("CBRSIM_TMPFS_PREPARED") == "1":
         return None
-    videos = (Path(__file__).resolve().parents[1] / "videos").absolute()
-    try:
-        OUT.absolute().relative_to(videos)
-    except ValueError:
-        print(
-            f"tmpfs artifacts: CBRSIM_OUT is outside videos/, keeping {OUT}",
-            flush=True,
-        )
-        return None
     identity = _sim_cache_identity()
     token = sim_artifact_cache.identity_sha256(identity)
     force_reencode = os.environ.get(
@@ -4290,7 +4281,6 @@ def _activate_sim_tmpfs():
         None if force_reencode or not EMIT_DEC else token
     )
     lease = tmpfs_workspace.activate_directory(
-        OUT,
         kind="sim",
         key=_tmpfs_key(),
         required_bytes=_sim_tmpfs_required_bytes(),
@@ -4310,7 +4300,6 @@ def _activate_sim_tmpfs():
             )
             lease.release()
             lease = tmpfs_workspace.activate_directory(
-                OUT,
                 kind="sim",
                 key=_tmpfs_key(),
                 required_bytes=_sim_tmpfs_required_bytes(),
@@ -4321,7 +4310,11 @@ def _activate_sim_tmpfs():
                 f"identity={token[:12]}",
                 flush=True,
             )
-    print(f"tmpfs sim workspace: {OUT} -> {lease.entry / 'data'}", flush=True)
+    if OUT.resolve() != (lease.entry / "data").resolve():
+        lease.release()
+        raise RuntimeError(
+            f"managed sim path mismatch: {OUT} != {lease.entry / 'data'}")
+    print(f"tmpfs sim workspace: {OUT}", flush=True)
     return lease
 
 
@@ -4392,7 +4385,7 @@ def _handoff_sim_tmpfs_lease(lease):
     temporary = handoff / f".ready.{os.getpid()}.tmp"
     temporary.write_text(json.dumps({
         "entry": str(lease.entry),
-        "alias": str(OUT),
+        "path": str(OUT),
     }, sort_keys=True) + "\n", encoding="utf-8")
     os.replace(temporary, ready)
     acknowledgement = handoff / "ack"

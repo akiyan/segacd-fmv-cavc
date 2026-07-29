@@ -605,17 +605,14 @@ Write the complete per-frame series as the canonical project TSV:
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
   videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
-  --tsv videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
   --expected-frames FRAME_COUNT
 ```
 
 The log is UTF-8 with a header row, tab separators, LF line endings, and a
-`.tsv` extension. With the required profile argument, its permanent file is
-written as
-`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`; the `--tsv` path becomes
-a run-specific compatibility symlink to that log. Project-owned HUD logs are
-never comma-delimited.
+`.tsv` extension. With the required profile argument, the tool writes
+`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` and the matching
+`_gate.json`, then prints both direct paths. It creates no `videos/` alias.
+Project-owned HUD logs are never comma-delimited.
 
 For current H32/H40 combined HUDs, the TSV preserves `Q` as
 `prgbuf_min_patterns_raw16`, decodes its signed value into
@@ -1202,16 +1199,14 @@ Canonical project TSVを書きます。
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
   videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
-  --tsv videos/STEM_emu_hud.tsv \
-  --gate-json videos/STEM_emu_hud_gate.json \
   --expected-frames FRAME_COUNT
 ```
 
 LogはUTF-8、header row、tab separator、LF line ending、`.tsv` extensionです。
-Required profile引数がある場合、実体は
-`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`へ永続保存し、`--tsv` pathは
-そのlogへのrun-specific compatibility symlinkになります。Project-owned HUD logは
-comma-delimitedにしません。
+Required profile引数がある場合、
+`logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv`と対応する`_gate.json`を
+永続保存し、両方の実体pathを表示します。`videos/` aliasは作りません。
+Project-owned HUD logはcomma-delimitedにしません。
 
 Current H32/H40 combined HUDでは、TSVは`Q`を`prgbuf_min_patterns_raw16`として保持し、
 signed valueを`prgbuf_min_patterns_signed`へdecodeし、positiveなdebt magnitudeを

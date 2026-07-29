@@ -21,6 +21,7 @@ REPO = SCRIPT.parents[4]
 TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 import analysis_style as style  # noqa: E402
+import analysis_logs  # noqa: E402
 import av_config  # noqa: E402
 import hud_gate  # noqa: E402
 import layout_preview as layout  # noqa: E402
@@ -1064,7 +1065,7 @@ def main() -> None:
     plot_width = axis_frames * ppf
     width = left + plot_width + 45
     height = timeline_top + sum(spec.height for spec in specs) + 82
-    output = (
+    requested_output = (
         args.output
         or REPO / "videos" / f"{tsv_path.stem}_hudline.png"
     ).absolute()
@@ -1304,25 +1305,19 @@ def main() -> None:
         font=font(16),
     )
 
-    output.parent.mkdir(parents=True, exist_ok=True)
     lease = None
-    actual_output = output
+    actual_output = requested_output
     try:
-        videos = (REPO / "videos").absolute()
-        try:
-            output.relative_to(videos)
-        except ValueError:
-            pass
-        else:
+        if tmpfs_workspace.is_disposable_path(requested_output):
             actual_output, lease = tmpfs_workspace.allocate_file(
-                output,
+                requested_output,
                 kind="hudline-png",
                 key=f"{tsv_path.stem}-{digest(tsv_path)[:10]}",
                 required_bytes=max(width * height * 4, 128 * 1024 ** 2),
             )
+        else:
+            actual_output.parent.mkdir(parents=True, exist_ok=True)
         image.convert("RGB").save(actual_output, optimize=True)
-        if lease is not None:
-            tmpfs_workspace.publish_alias(output, actual_output)
     finally:
         if lease is not None:
             lease.release()
@@ -1350,8 +1345,8 @@ def main() -> None:
         "schema_version": 6,
         "kind": "hudline",
         "label": title,
-        "image": str(output),
-        "image_sha256": digest(output.resolve()),
+        "image": str(actual_output),
+        "image_sha256": digest(actual_output),
         "tsv": str(tsv_path),
         "tsv_sha256": digest(tsv_path),
         "gpgx_vdp_tsv": (
@@ -1459,12 +1454,16 @@ def main() -> None:
         "ocr_sample_count": int(sample_count.sum()),
         "rows": receipt_rows,
     }
-    receipt_path = Path(str(output) + ".json")
+    receipt_path = analysis_logs.metadata_path(
+        requested_output,
+        kind="hudline-layout",
+        sha256=receipt["image_sha256"],
+    )
     receipt_path.write_text(
         json.dumps(receipt, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
-    print(output)
+    print(actual_output)
     print(receipt_path)
 
 

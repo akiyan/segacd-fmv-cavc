@@ -1030,6 +1030,7 @@ def write_gate_json(path: Path, result: dict) -> None:
         f"{result['expected_frames']}  cadence={result['cadence']} "
         f"fps={result['content_fps']:g}"
     )
+    print(f"HUD gate JSON: {path.resolve()}")
     expected_vblanks = result["display_vblank_expected"]
     cadence_rule = (
         f"expected={expected_vblanks}"
@@ -1220,17 +1221,22 @@ def main() -> int:
         f"movie start anchor: {anchor_method}; "
         f"F0000 capture={raw_groups[anchor].capture_first}")
     transitions = print_report(groups, args.context)
-    if args.tsv:
-        if profile is None:
-            write_tsv(args.tsv, groups, transitions)
-        else:
-            persistent_tsv = analysis_logs.unique_tsv_path(
-                profile, kind="hud"
-            )
-            write_tsv(persistent_tsv, groups, transitions)
-            analysis_logs.publish_alias(args.tsv, persistent_tsv)
-            print(f"HUD TSV alias: {args.tsv} -> {persistent_tsv}")
-    if args.gate_json:
+    hud_tsv = args.tsv
+    if hud_tsv is None and profile is not None:
+        hud_tsv = analysis_logs.unique_tsv_path(profile, kind="hud")
+    if hud_tsv is not None:
+        write_tsv(hud_tsv, groups, transitions)
+        print(f"HUD TSV: {hud_tsv.resolve()}")
+    gate_path = args.gate_json
+    if (
+        gate_path is None
+        and profile is not None
+        and args.expected_frames is not None
+    ):
+        if hud_tsv is None:
+            raise AssertionError("profile HUD analysis did not allocate a TSV")
+        gate_path = hud_tsv.with_name(f"{hud_tsv.stem}_gate.json")
+    if gate_path is not None:
         content_fps = float(Fraction(str(profile.data["source"]["fps"])))
         result = evaluate_upload_gate(
             groups, args.expected_frames, args.recording, content_fps, profile)
@@ -1249,7 +1255,7 @@ def main() -> int:
                 "frame_minus_one_time_first_s": sentinel.time_first,
                 "frame_minus_one_time_last_s": sentinel.time_last,
             })
-        write_gate_json(args.gate_json, result)
+        write_gate_json(gate_path, result)
         if result["gate"] == "FAIL":
             return 1
     return 0

@@ -1977,7 +1977,7 @@ if __name__ == "__main__":
             raise SystemExit(75) from exc
     try:
         if _command_profile is not None:
-            _sim_lease = tmpfs_workspace.lease_managed_alias(
+            _sim_lease = tmpfs_workspace.lease_managed_path(
                 _command_profile.output_dir)
         main()
     finally:

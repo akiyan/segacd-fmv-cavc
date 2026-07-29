@@ -25,7 +25,7 @@ recording remains intact.
 Usage:
     python tools/youtube_chapters.py <sim_out_dir> [fps]
     python tools/youtube_chapters.py <sim_out_dir> [fps] \
-        --hud-gate-json videos/STEM_emu_hud_gate.json \
+        --hud-gate-json logs/RUN_hud_gate.json \
         --intro-label "Mega-CD startup"
 Prints the chapter block to stdout; prepend it (with a blank line after) to the
 video description before uploading.

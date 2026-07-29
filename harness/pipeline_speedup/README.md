@@ -270,9 +270,11 @@ eight-word group, followed by a scalar 0--7-word tail for arbitrary per-source
 widths. Run the equivalence proof against the real DEBUG control stream:
 
 ```sh
+SIM_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/PROFILE.toml --print-sim-output)"
 tools/python.sh harness/pipeline_speedup/verify_main_fastpaths.py \
   --header out/PROFILE/HEADER.DAT --body out/PROFILE/BODY.DAT \
-  --decisions videos/STEM/tmp/decisions.pkl
+  --decisions "$SIM_OUT/decisions.pkl"
 ```
 
 The checker replays all packed Sonic frames and requires the optimized shadow to
@@ -300,7 +302,7 @@ against the real split stream and its decision log:
 ```sh
 tools/python.sh harness/pipeline_speedup/verify_run_descriptors.py \
   --header out/PROFILE/HEADER.DAT --body out/PROFILE/BODY.DAT \
-  --decisions videos/STEM/tmp/decisions.pkl
+  --decisions "$SIM_OUT/decisions.pkl"
 ```
 
 The checker reconstructs controls and payload sectors without importing the packer.

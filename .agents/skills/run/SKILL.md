@@ -79,6 +79,7 @@ the answer is unambiguous. Ask only when a missing title or source identity
 would make public metadata materially wrong.
 
 Use one profile and one stem throughout sim, pack, record, and compilation.
+Retain every printed direct tmpfs artifact path in the run record.
 Never hand-copy different geometry or timing into a later stage.
 
 ## Enforce Resource Tokens and CUDA Safety
@@ -181,7 +182,7 @@ prevents the configured cap from being mistaken for the realized maximum:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  videos/STEM/tmp/decisions.pkl
+  /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data/decisions.pkl
 ```
 
 Write the persistent TSV immediately with the zero-frame analysis-data mode,
@@ -223,7 +224,8 @@ qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 - `ffv1-flac`;
 - `--record-size 256x224` for H32 or `320x224` for H40;
 - automatic private X-display allocation;
-- the canonical `videos/<stem>_emu_lossless.mkv` and preview paths.
+- the canonical persistent `videos/<stem>_emu_lossless.mkv` and the direct
+  tmpfs preview path printed by the recorder.
 
 Record emulator-synchronized A/V. "Offline" means unpaced emulation, not an
 offline audio replacement. Never replace the recorded audio with the source
@@ -249,9 +251,9 @@ Before accepting the recording, verify:
   the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
   and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's
   normal jitter interval (`28`, `19`, or `14` respectively).
-  Preserve the encoder/player-versioned HUD TSV body under `logs/`, its
-  run-specific compatibility symlink, and the upload-capable gate JSON next to
-  the recording.
+  Preserve the encoder/player-versioned HUD TSV body and matching
+  upload-capable `_gate.json` under `logs/`. Use their direct paths; no
+  compatibility symlink is created.
   Fixed-N `T>N` also raises alert `WARNING` without failing the gate. Both H32
   and H40 profiles select the same 69-cell diagnostic field set; OCR wraps it
   into three H32 rows or two H40 rows.
@@ -263,8 +265,9 @@ previous capture.
 
 Immediately after the HUD TSV and gate JSON exist, invoke the `hudline` skill
 with those exact sidecars and the same profile. Inspect and show its complete
-first-loop PNG, publish it to a public Gist, and preserve the image, layout
-receipt, and Gist receipt beside the recording. Do this for alert `NONE`,
+first-loop PNG, publish it to a public Gist, and preserve the content-keyed
+layout and Gist receipts under `logs/`; the image is a direct tmpfs artifact.
+Do this for alert `NONE`,
 `WARNING`, and `FAIL`; gate `FAIL` is still published as diagnostic evidence
 but stops Stage 5.
 `hudline` shares `/timeline`'s frame x-coordinate contract so a future
@@ -306,8 +309,8 @@ the analysis `status_cold` maximum equals the physical transfer trace:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  videos/STEM/tmp/decisions.pkl \
-  --analysis-tsv videos/STEM_analysis.tsv
+  /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data/decisions.pkl \
+  --analysis-tsv logs/RUN_timeline.tsv
 ```
 
 Regenerate `mixline` against this final analysis timeline and the already

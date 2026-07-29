@@ -19,8 +19,9 @@ Every render also writes a machine-readable, one-row-per-frame TSV under
 `timeline` kind. It is generated from the same `frame_data()` values used by
 the overlay, before PNG rendering begins, so numeric comparisons do not require
 OCR. A frame-range render still writes the complete TSV.
-`videos/<stem>_analysis.tsv` is a compatibility symlink to the newest matching
-log; `ANALYSIS_TSV` changes that symlink path, not the persistent log location.
+No latest-run symlink is created. `ANALYSIS_TSV` writes directly to an explicit
+path; canonical project runs leave it unset and use the unique `logs/` path
+printed by the renderer.
 
 Keep this file in sync whenever the layout changes (the `/analysis` skill
 automates: update layout -> update this file -> notify).
@@ -45,9 +46,10 @@ corresponding encoder values remain available in the `stat_*` columns.
 | `quality_budget_remaining_bytes` | Non-borrowed encoder-only whole-movie quality allowance remaining after the frame. A terminal-drain loan displays as zero until future suffix allowance repays it. This is diagnostic state, not a physical meter. |
 | `stat_frame` through the remaining `stat_*` columns | Every column from `stats.npz`, preserved with a `stat_` prefix and in its original order. These raw columns may grow when the simulator gains a new statistic. |
 
-The compatibility alias follows `ANALYSIS_OUT`: changing
-`videos/example_analysis.mp4` produces a timestamped `logs/*.tsv` and updates
-`videos/example_analysis.tsv` unless `ANALYSIS_TSV` selects another alias.
+`ANALYSIS_OUT` is a requested disposable name. When it is below `videos/`, the
+renderer writes the MP4 directly to tmpfs and prints its actual path. The TSV
+always uses the independently printed persistent `logs/` path unless
+`ANALYSIS_TSV` explicitly names another real file.
 
 ## Layout map
 
@@ -452,8 +454,8 @@ local date/time、profile名、10文字のprofile checksum、encoder version、p
 `timeline` kindが入ります。TSVはPNG rendering開始前に、overlayと同じ
 `frame_data()`値から生成するため、数値比較にOCRは不要です。
 Frame rangeを指定したrenderでも完全なTSVを書きます。
-`videos/<stem>_analysis.tsv`は最新の一致logへのcompatibility symlinkです。
-`ANALYSIS_TSV`はこのsymlink pathを変えますが、persistent logの場所は変えません。
+Latest-run symlinkは作りません。`ANALYSIS_TSV`を指定するとその実体pathへ直接書き、
+通常のproject runでは未指定のままrendererが表示するuniqueな`logs/` pathを使います。
 
 Layout変更時は、この文書も同時に更新します。`/analysis` skillはlayout更新、本文更新、
 通知を一連で行います。
@@ -476,9 +478,10 @@ overlayと同じ値です。Frame 0は`legend_raw`と`legend_same`を保持し�
 | `quality_budget_remaining_bytes` | Frame後に残る、借入ではないencoder-only全編画質allowance。Terminal-drain loan中はzeroを表示し、将来suffix allowanceの返済後に増える。Diagnostic stateであり物理meterではない |
 | `stat_frame`以降の`stat_*` | `stats.npz`の全columnを元の順序で保存。Simulatorへstatisticが増えると追加される |
 
-Compatibility aliasは`ANALYSIS_OUT`に従います。例えば
-`videos/example_analysis.mp4`へ変更するとtimestamp付き`logs/*.tsv`を生成し、
-`ANALYSIS_TSV`で別aliasを選ばない限り`videos/example_analysis.tsv`を更新します。
+`ANALYSIS_OUT`は使い捨てartifactの要求名です。`videos/`配下を指定した場合、MP4は
+tmpfs実体へ直接書かれ、その実体pathをrendererが表示します。TSVは独立した永続
+`logs/` pathへ書かれます。`ANALYSIS_TSV`を指定した場合だけ、指定した実体fileを
+使います。
 
 ## Layout map
 

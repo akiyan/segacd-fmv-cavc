@@ -45,7 +45,7 @@ Sim acquires CPU/GPU tokens only for Extract, Palette, and Quantize.
 Xvfb allocates a free display dynamically and each emulator gets a private
 RetroArch system directory. `tools/parallel_run.py` divides CPU workers across
 profiles and retains the sim tmpfs lease between stages. A second process for
-the same stem fails immediately; it never shares aliases or output files.
+the same stem fails immediately; it never shares managed paths or output files.
 
 ## Pattern supplies and quality budget
 
@@ -367,7 +367,7 @@ tmp/<profile>/
 | `[source]` | `path`, `fps`, `duration`, optional `sar` | Input and native timing. `sar` repairs source metadata. |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
-| `[output]` | `directory`, optional `reuse`, `emit_decisions` | Sim work directory, decoded-input reuse, and decision-log output. |
+| `[output]` | `directory`, optional `reuse`, `emit_decisions` | Human-readable requested sim identity, decoded-input reuse, and decision-log output. Sim bytes use a deterministic direct tmpfs path. |
 | `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | Timed raw prefetch, qualified cold cap, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
@@ -475,8 +475,8 @@ simはExtract、Palette、Quantizeの間だけCPU/GPU tokenを取得します。
 `render_analysis.py` とrecord preview transcodeも同じtoken poolを使います。
 Xvfbは空きdisplayを動的に割り当て、各emulatorはprivate RetroArch system directoryを
 使います。`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
-tmpfs leaseを保持します。同じstemの2つ目のprocessは即時FAILし、aliasやoutput fileを
-共有しません。
+tmpfs leaseを保持します。同じstemの2つ目のprocessは即時FAILし、managed pathや
+output fileを共有しません。
 
 ## Pattern供給とquality budget
 
@@ -777,7 +777,7 @@ tmp/<profile>/
 | `[source]` | `path`, `fps`, `duration`, optional `sar` | inputとnative timing。`sar` はsource metadataを補正する。 |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
-| `[output]` | `directory`, optional `reuse`, `emit_decisions` | sim work directory、decoded-input reuse、decision-log output。 |
+| `[output]` | `directory`, optional `reuse`, `emit_decisions` | human-readableなsim要求identity、decoded-input reuse、decision-log output。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
 | `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | timed raw prefetch、認定済みcold cap、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
