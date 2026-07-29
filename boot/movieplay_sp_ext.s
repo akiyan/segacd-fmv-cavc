@@ -23,6 +23,11 @@
 .equ ADPCM_DELTA_LONGS,       ADPCM_DELTA_BYTES/4
 .equ ADPCM_OUTPUT_LUT_LONGS,  ADPCM_OUTPUT_LUT_BYTES/4
 .equ ADPCM_BANK_COPIES,       2
+.equ SP_TAIL_MARKER_BASE,      0x00007400
+.equ SP_TAIL_MARKER_END,       0x00008000
+.equ SP_TAIL_MARKER_XOR,       0xA55A
+.equ SP_TAIL_CHECK_BASE,       0x00009700
+.equ SP_TAIL_CHECK_STATE,      0x000097FC
 .equ ROUTING_CTRL_MASK,       0x0007
 .equ ROUTING_CTRL_COUNT_MASK, 0x0003
 .equ ROUTING_WORD4_FLAG,      0x0004
@@ -68,6 +73,7 @@ adpcm_boot_copy:
 	btst	#1, (MEMMODE+1).l
 	bne.s	1b
 	dbra	d1, 2b
+
 	rts
 
 /* Fixed second entry at extension base + 0x58.  For routes up to 8 KiB it
@@ -146,12 +152,63 @@ routing_prepare:
 	clr.w	(a5)
 	move.w	#1, 4(a5)
 
+.ifdef ISO_VERIFY_SP_TAIL
+	/* Diagnostic build only: install a tiny read-only checker in the already
+	   qualified 0x9700 scratch page, then fill the complete reclaimed SP tail
+	   with address-derived words. The resident timed image calls the checker
+	   once per frame; 32 words per call cover all 3 KiB every 48 frames. */
+	lea	sp_tail_check_image, a0
+	lea	SP_TAIL_CHECK_BASE, a1
+	move.w	#(sp_tail_check_end-sp_tail_check_image)/4-1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	move.l	#SP_TAIL_MARKER_BASE, (SP_TAIL_CHECK_STATE).l
+	lea	SP_TAIL_MARKER_BASE, a0
+	move.w	#(SP_TAIL_MARKER_END-SP_TAIL_MARKER_BASE)/2-1, d0
+1:
+	move.l	a0, d1
+	eori.w	#SP_TAIL_MARKER_XOR, d1
+	move.w	d1, (a0)+
+	dbra	d0, 1b
+.endif
 	moveq	#0, d0
 	rts
 
 routing_invalid:
 	moveq	#1, d0
 	rts
+
+.ifdef ISO_VERIFY_SP_TAIL
+	/* Copied to SP_TAIL_CHECK_BASE by adpcm_boot_copy. It returns d0=0 for a
+	   clean 64-byte slice and d0=1 on the first changed word. Internal branches
+	   remain valid after relocation because the complete image moves together. */
+	.align 4
+sp_tail_check_image:
+	movem.l	d1/a0, -(sp)
+	movea.l	(SP_TAIL_CHECK_STATE).l, a0
+	moveq	#31, d0
+1:
+	move.l	a0, d1
+	eori.w	#SP_TAIL_MARKER_XOR, d1
+	cmp.w	(a0)+, d1
+	bne.s	3f
+	dbra	d0, 1b
+	cmpa.l	#SP_TAIL_MARKER_END, a0
+	blo.s	2f
+	lea	SP_TAIL_MARKER_BASE, a0
+2:
+	move.l	a0, (SP_TAIL_CHECK_STATE).l
+	moveq	#0, d0
+	movem.l	(sp)+, d1/a0
+	rts
+3:
+	moveq	#1, d0
+	movem.l	(sp)+, d1/a0
+	rts
+	.align 4
+sp_tail_check_end:
+.endif
 
 	.align 4
 adpcm_boot_copy_end:

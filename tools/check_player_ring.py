@@ -676,8 +676,14 @@ for token in (
             f"check_player_ring: inline Sub diagnostic is missing {token!r}")
 require(
     make_text,
-    rf'if \[ "\$\$bytes" -gt {av_config.SUB_BOOT_IMAGE_MAX_BYTES} \]; then',
-    "resident Sub image-size Makefile guard",
+    rf'limit=\$\(if \$\(filter 1,\$\(ISO_VERIFY_SP_TAIL\)\),5120,'
+    rf'{av_config.SUB_BOOT_IMAGE_MAX_BYTES}\);',
+    "normal/marker resident Sub image-size limits",
+)
+require(
+    make_text,
+    r'if \[ "\$\$bytes" -gt "\$\$limit" \]; then',
+    "resident Sub image-size comparison",
 )
 require(
     make_text,

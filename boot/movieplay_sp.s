@@ -1719,6 +1719,16 @@ flush_word_one:
 /* 1フレーム: BODY先頭側の control sector が揃うまでポンプ → control取り出し
    → expand → 音声。payload/pad はPrgBufを先行充填しながら後続処理と並走する。 */
 process_frame:
+.ifdef ISO_VERIFY_SP_TAIL
+	/* The extension-installed checker covers one 64-byte slice per content
+	   frame. Reuse the gated desync counter as the diagnostic failure latch. */
+	jsr	0x00009700
+	tst.w	d0
+	beq.s	9f
+	addq.w	#1, desync_count
+	move.w	desync_count, (COMSTAT1).l
+9:
+.endif
 .ifdef DEBUG
 	clr.w	pf_ctrl_wait
 	clr.w	pf_body_wait
@@ -2852,7 +2862,13 @@ ring_frame_min:
 
 .ifdef INCLUDE_WORDBUF_RING
 	.align 4
+.ifdef ISO_VERIFY_SP_TAIL
+/* This diagnostic is build-time guarded to routes with at most two pending
+   Word sectors, so no third resident sector may occupy the marker interval. */
+.equ word_pending2, WORD_PENDING3
+.else
 word_pending2:
 	.space 0x800				/* third pending sector; resident image stays below 8 KiB */
+.endif
 .endif
 sp_end:
