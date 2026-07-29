@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""解析フレーム(新レイアウト)で sim 出力を全編mp4化する本パイプライン。
+"""Render the real sim data with the canonical 1920x1080 analysis layout.
 
-新レイアウトの『正』は tools/layout_preview.py(ダミー値で秒プレビュー)。本スクリプトは
-その描画関数を実データで回して1920x1080/全フレームを描き、ffmpegでmp4(音声付き)にする。
-動画へ焼き込む数値と元statsの全列は、同じ実データから1フレーム1行のTSVにも出力する。
+``layout_preview.py`` owns layout, headings, scales, and reading rules;
+``analysis_style.py`` owns category meanings and semantic colours.  This
+module owns the real-data mapping, TSV fields, and final mux.
+
+The content panels and TSV remain indexed by the sim/content frame.  The MP4
+is exact 60 fps: ffmpeg holds each content PNG to the next content timestamp,
+then overlays independently rendered waveform+spectrum interiors at every
+1/60-second output timestamp.  Thus audio motion follows analysis-video
+frames, not Sega CD content-frame switches.  The muxed WAV and both panels use
+the sim's checkpointed playback model, never the clean source WAV.
 
 入力(env):
   CBRSIM_OUT       sim出力ディレクトリ(raw/decisions.pkl/stats.npz/
@@ -91,6 +98,7 @@ OUT_TSV = (
 )
 CQ = os.environ.get("ANALYSIS_CQ", "23")
 FRAMES_DIR = f"{SIM}/analysis_frames"
+AUDIO_FRAMES_DIR = f"{SIM}/analysis_audio_frames"
 AUDIO_STR = "22.05kHz mono IMA ADPCM"       # 既定。sim出力(stats)にラベルがあればそれを使う
 
 # ---- フォント(layout_preview のグローバルへ) ----
@@ -418,9 +426,16 @@ FRAME_SEG = _SP["frame_seg"]                   # (NF,)
 
 # ---- 音声波形 / spectrum panel用データ(sim OUT のplayback-model WAV) ----
 import wave as _wave  # noqa: E402
-WAVE_WIN_S = L.WAVE_WIN_FRAMES / FPS
+ANALYSIS_VIDEO_FPS = L.ANALYSIS_VIDEO_FPS
+WAVE_WIN_S = 1.0 / ANALYSIS_VIDEO_FPS
 WAVE_BW = L.WAVE_FRAME[2] - L.WAVE_FRAME[0] - 2
 SPEC_BW = L.SPEC_FRAME[2] - L.SPEC_FRAME[0] - 2
+AUDIO_OVERLAY_X = L.WAVE_FRAME[0] + 1
+AUDIO_OVERLAY_Y = L.WAVE_FRAME[1] + 1
+AUDIO_OVERLAY_W = L.SPEC_FRAME[2] - AUDIO_OVERLAY_X
+AUDIO_OVERLAY_H = L.WAVE_FRAME[3] - L.WAVE_FRAME[1] - 2
+AUDIO_OUTPUT_FRAMES = analysis_audio.output_frame_count(
+    NF, content_fps=FPS, output_fps=ANALYSIS_VIDEO_FPS)
 try:
     _wf = _wave.open(str(AUDIO_PATH), "rb")
     AUDIO_RATE = _wf.getframerate()
@@ -614,7 +629,7 @@ def build_base():
     d.text((_ax, _ay), "Audio", fill=L.COL_TXT, font=L.f_leg, anchor="ls")
     _sx = _ax + L._w(L.f_leg, "Audio") + L._w(L.f_sm, " ")
     d.text(
-        (_sx, _ay), L.wave_window_label(FPS),
+        (_sx, _ay), AUDIO_STR,
         fill=L.COL_DIM, font=L.f_sm, anchor="ls")
     _sx = L.SPEC_FRAME[0] + 2
     d.text((_sx, _ay), "Spectrum", fill=L.COL_TXT, font=L.f_leg, anchor="ls")
@@ -981,19 +996,18 @@ def write_analysis_tsv():
     return path
 
 
-def draw_waveform_real(i):
-    """Draw the signed playback-model samples owned by this video frame."""
+def draw_waveform_real(output_frame):
+    """Draw samples owned by one exact 60 fps analysis-video frame."""
     bw, bh = WAVE_BW, L.WAVE_FRAME[3] - L.WAVE_FRAME[1] - 2
     im = Image.new("RGB", (bw, bh), (16, 16, 16))
     d = ImageDraw.Draw(im)
     mid = bh // 2
     d.line([(0, mid), (bw - 1, mid)], fill=(60, 60, 66))
     start, stop = analysis_audio.frame_sample_bounds(
-        i,
-        fps=FPS,
+        output_frame,
+        fps=ANALYSIS_VIDEO_FPS,
         sample_rate=AUDIO_RATE,
         total_samples=len(AUDIO_SAMPLES),
-        window_frames=WAVE_WIN_S * FPS,
     )
     minima, maxima = analysis_audio.waveform_extrema(
         AUDIO_SAMPLES, start=start, stop=stop, columns=bw)
@@ -1009,14 +1023,16 @@ def draw_waveform_real(i):
     return im
 
 
-def draw_spectrum_real(i):
-    """Draw a 24-band log-frequency FFT around this frame's audio interval."""
+def draw_spectrum_real(output_frame):
+    """Draw a 24-band FFT around one 60 fps analysis-video frame."""
     bw, bh = SPEC_BW, L.SPEC_FRAME[3] - L.SPEC_FRAME[1] - 2
     im = Image.new("RGB", (bw, bh), (16, 16, 16))
     d = ImageDraw.Draw(im)
     baseline = bh - 2
     d.line([(0, baseline), (bw - 1, baseline)], fill=(60, 60, 66))
-    center_sample = round((i / FPS + WAVE_WIN_S / 2.0) * AUDIO_RATE)
+    center_sample = round(
+        (output_frame / ANALYSIS_VIDEO_FPS + WAVE_WIN_S / 2.0)
+        * AUDIO_RATE)
     levels = analysis_audio.spectrum_levels(
         AUDIO_SAMPLES,
         sample_rate=AUDIO_RATE,
@@ -1038,6 +1054,17 @@ def draw_spectrum_real(i):
                 fill=L.AUDIO_TRACE_COLOR,
             )
     return im
+
+
+def draw_audio_overlay(output_frame):
+    """Write the waveform+spectrum interiors for one analysis-video frame."""
+    overlay = Image.new(
+        "RGBA", (AUDIO_OVERLAY_W, AUDIO_OVERLAY_H), (0, 0, 0, 0))
+    overlay.paste(draw_waveform_real(output_frame), (0, 0))
+    spectrum_x = L.SPEC_FRAME[0] + 1 - AUDIO_OVERLAY_X
+    overlay.paste(draw_spectrum_real(output_frame), (spectrum_x, 0))
+    overlay.save(f"{AUDIO_FRAMES_DIR}/{output_frame:06d}.png")
+    return output_frame
 
 
 def render(i):
@@ -1085,11 +1112,13 @@ def render(i):
     d.text((tx + L._w(L.f_leg, lab_t), ty), fhex, fill=L.COL_TXT, font=L.f_leg)
     # 凡例リスト(Categoryの上) / audio panels(右下) / status
     cv.paste(L.draw_legend(L.CATLEG_W, L.CATLEG_H, data), L.CATLEG_XY)
+    output_frame = analysis_audio.output_frame_at_content_frame(
+        i, content_fps=FPS, output_fps=ANALYSIS_VIDEO_FPS)
     cv.paste(
-        draw_waveform_real(i),
+        draw_waveform_real(output_frame),
         (L.WAVE_FRAME[0] + 1, L.WAVE_FRAME[1] + 1))
     cv.paste(
-        draw_spectrum_real(i),
+        draw_spectrum_real(output_frame),
         (L.SPEC_FRAME[0] + 1, L.SPEC_FRAME[1] + 1))
     cv.paste(draw_status_real(data), L.STATUS_XY)
     cv.save(f"{FRAMES_DIR}/{i:05d}.png")
@@ -1101,10 +1130,20 @@ def mux(output: Path):
     vcodec = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr",
               "-cq", CQ, "-b:v", "0"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-           "-framerate", str(FPS), "-start_number", "0", "-i", f"{FRAMES_DIR}/%05d.png"]
+           "-framerate", str(FPS), "-start_number", "0",
+           "-i", f"{FRAMES_DIR}/%05d.png",
+           "-framerate", str(ANALYSIS_VIDEO_FPS), "-start_number", "0",
+           "-i", f"{AUDIO_FRAMES_DIR}/%06d.png"]
     if Path(audio).exists():
         cmd += ["-i", audio]
-    cmd += vcodec + ["-pix_fmt", "yuv420p", "-r", "60"]
+    filter_graph = (
+        f"[0:v]fps={ANALYSIS_VIDEO_FPS}[base];"
+        f"[base][1:v]overlay={AUDIO_OVERLAY_X}:{AUDIO_OVERLAY_Y}:"
+        "shortest=1[v]")
+    cmd += ["-filter_complex", filter_graph, "-map", "[v]"]
+    if Path(audio).exists():
+        cmd += ["-map", "2:a:0"]
+    cmd += vcodec + ["-pix_fmt", "yuv420p"]
     if Path(audio).exists():
         cmd += ["-c:a", "aac", "-ar", "22050", "-b:a", "96k", "-shortest"]  # 音声の標本化を保つ(ADPCM 22kHz対応)
     cmd += ["-fps_mode", "cfr", str(output)]
@@ -1137,7 +1176,11 @@ def main():
         return
     # A rendered 1080p PNG is commonly around 2 MiB. Leave room for PNGs,
     # the muxed video, and normal compression variance before workers start.
-    required = len(frames) * (5 * 1024 ** 2 // 2) + 1024 ** 3
+    required = (
+        len(frames) * (5 * 1024 ** 2 // 2)
+        + (AUDIO_OUTPUT_FRAMES * 64 * 1024 if rng is None else 0)
+        + 1024 ** 3
+    )
     sim_lease = tmpfs_workspace.lease_managed_path(
         Path(SIM), required_bytes=required)
     mp4_lease = None
@@ -1152,6 +1195,8 @@ def main():
                 required_bytes=512 * 1024 ** 2,
             )
         os.makedirs(FRAMES_DIR, exist_ok=True)
+        if rng is None:
+            os.makedirs(AUDIO_FRAMES_DIR, exist_ok=True)
         nw = resource_tokens.requested_cpu_workers(limit=len(frames))
         print(f"Analysis: waiting for {nw} CPU token(s) ...", flush=True)
         with resource_tokens.acquire_tokens("cpu", count=nw):
@@ -1174,6 +1219,20 @@ def main():
                         pool.imap_unordered(render, frames, chunksize=8)):
                     if k % 300 == 0:
                         print(f"  {k}/{len(frames)}", flush=True)
+                if rng is None:
+                    print(
+                        f"render {AUDIO_OUTPUT_FRAMES} audio panels "
+                        f"@ {ANALYSIS_VIDEO_FPS}fps -> {AUDIO_FRAMES_DIR}",
+                        flush=True,
+                    )
+                    for k, _ in enumerate(pool.imap_unordered(
+                            draw_audio_overlay,
+                            range(AUDIO_OUTPUT_FRAMES),
+                            chunksize=32)):
+                        if k % 1200 == 0:
+                            print(
+                                f"  audio {k}/{AUDIO_OUTPUT_FRAMES}",
+                                flush=True)
         if rng is None:
             print(f"mux -> {OUT_MP4} (tmpfs {mp4_actual})", flush=True)
             print("Analysis mux: waiting for 1 GPU token ...", flush=True)

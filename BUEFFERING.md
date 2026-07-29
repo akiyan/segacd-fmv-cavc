@@ -293,7 +293,8 @@ Every change must pass:
 - `tools/pack_stream.py`: serialization and schedule verification.
 - `boot/movieplay_sp.s`: boot loading, Prg consumption, and handoff.
 - `boot/movieplay_ip.s`: source-aware VRAM transfer.
-- `ANALYSIS.md`: meters and timelines.
+- `tools/layout_preview.py` and `tools/render_analysis.py`: meters and
+  timelines.
 - `MOVIE.md`: on-disc representation.
 
 ---
@@ -568,5 +569,5 @@ Decision logは`pattern_supply` schema 2、
 - `tools/pack_stream.py`: serializationとschedule verification
 - `boot/movieplay_sp.s`: boot loading、Prg consumption、handoff
 - `boot/movieplay_ip.s`: source-aware VRAM transfer
-- `ANALYSIS.md`: meterとtimeline
+- `tools/layout_preview.py`と`tools/render_analysis.py`: meterとtimeline
 - `MOVIE.md`: disc上の表現

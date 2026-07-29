@@ -92,8 +92,10 @@ per-cell categories, audio, physical delivery, pattern supplies, DMA, and
 whole-movie timelines. Frame 0 is omitted from timed-work values and graph
 maxima.
 
-[`ANALYSIS.md`](ANALYSIS.md) defines every panel, meter, category, and TSV
-field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
+The authoritative panel, meter, category, timeline, audio-window, and TSV
+specifications live beside their implementation in `tools/layout_preview.py`,
+`tools/analysis_style.py`, and `tools/render_analysis.py`. [`HUD.md`](HUD.md)
+defines the values-only hardware/emulator DEBUG HUD.
 
 ## Documentation
 
@@ -109,8 +111,6 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
   assignment plus whole-movie quality planning.
 - [`PLAYER.md`](PLAYER.md): Main/Sub player memory maps with named ranges,
   unallocated space, the startup sequence, and the per-frame CPU handoff.
-- [`ANALYSIS.md`](ANALYSIS.md): every analysis-video panel, category, meter,
-  timeline, and TSV field.
 - [`HUD.md`](HUD.md): the on-screen DEBUG HUD fields, units, limits, rendering,
   OCR, and upload gate.
 - [`ADPCM.md`](ADPCM.md): the 22.05 kHz mono IMA ADPCM format, Sub-CPU decoder,
@@ -425,8 +425,10 @@ optional 1920x1080 analysis videoはdecoded Sega CD output、source、cell別cat
 audio、物理delivery、pattern供給、DMA、movie全体timelineを表示します。frame 0は
 timed-work valueとgraph maximumから除外します。
 
-全panel、meter、category、TSV fieldは [`ANALYSIS.md`](ANALYSIS.md)、
-実機/emulatorのvalues-only DEBUG HUDは [`HUD.md`](HUD.md) にあります。
+全panel、meter、category、timeline、audio window、TSV fieldの正は、実装と同じ
+`tools/layout_preview.py`、`tools/analysis_style.py`、
+`tools/render_analysis.py`にあります。実機/emulatorのvalues-only DEBUG HUDは
+[`HUD.md`](HUD.md) にあります。
 
 ## Documentation
 
@@ -442,8 +444,6 @@ timed-work valueとgraph maximumから除外します。
   割り当てとmovie全体quality planning。
 - [`PLAYER.md`](PLAYER.md): 名前付きrangeによるMain/Sub playerのmemory map、
   未割当領域、startup sequence、frameごとのCPU handoff。
-- [`ANALYSIS.md`](ANALYSIS.md): analysis videoの全panel、category、meter、
-  timeline、TSV field。
 - [`HUD.md`](HUD.md): 画面上のDEBUG HUD field、unit、limit、rendering、OCR、
   upload gate。
 - [`ADPCM.md`](ADPCM.md): 22.05 kHz mono IMA ADPCM format、Sub-CPU decoder、

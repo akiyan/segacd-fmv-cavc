@@ -2,6 +2,8 @@
 """Audio-panel helpers shared by analysis rendering and regression tests."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -41,6 +43,28 @@ def frame_sample_bounds(
         int(np.clip(start, 0, total_samples)),
         int(np.clip(stop, 0, total_samples)),
     )
+
+
+def output_frame_count(
+        content_frames: int, *, content_fps: float, output_fps: float) -> int:
+    """Return the number of output frames spanning the content-frame duration."""
+    if content_frames < 0:
+        raise ValueError(
+            f"content_frames must not be negative, got {content_frames}")
+    if content_fps <= 0 or output_fps <= 0:
+        raise ValueError("content_fps and output_fps must be positive")
+    return int(math.ceil(content_frames * output_fps / content_fps))
+
+
+def output_frame_at_content_frame(
+        content_frame: int, *, content_fps: float, output_fps: float) -> int:
+    """Map a content-frame timestamp to its nearest output-frame timestamp."""
+    if content_frame < 0:
+        raise ValueError(
+            f"content_frame must not be negative, got {content_frame}")
+    if content_fps <= 0 or output_fps <= 0:
+        raise ValueError("content_fps and output_fps must be positive")
+    return int(round(content_frame * output_fps / content_fps))
 
 
 def waveform_extrema(

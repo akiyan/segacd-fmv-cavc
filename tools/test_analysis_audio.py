@@ -18,20 +18,31 @@ class AnalysisAudioTests(unittest.TestCase):
         )
         self.assertEqual(layout.SPEC_FRAME[0] - layout.WAVE_FRAME[2], 10)
         self.assertEqual(layout.SPEC_FRAME[2], layout.SRC_FRAME[2])
-        self.assertEqual(layout.wave_window_label(30), "1 frame (33ms)")
-        self.assertEqual(layout.wave_window_label(15), "1 frame (67ms)")
+        self.assertEqual(layout.ANALYSIS_VIDEO_FPS, 60)
 
-    def test_one_frame_windows_partition_samples_without_gaps(self) -> None:
+    def test_analysis_video_frame_windows_partition_samples(self) -> None:
         bounds = [
             analysis_audio.frame_sample_bounds(
-                frame, fps=30, sample_rate=22_050,
+                frame, fps=layout.ANALYSIS_VIDEO_FPS, sample_rate=22_050,
                 total_samples=100_000)
             for frame in range(4)
         ]
-        self.assertEqual(bounds[0], (0, 735))
+        self.assertEqual(bounds[0], (0, 368))
         self.assertTrue(all(
             bounds[index][1] == bounds[index + 1][0]
             for index in range(len(bounds) - 1)))
+
+    def test_output_frames_span_the_content_duration_at_60fps(self) -> None:
+        self.assertEqual(
+            analysis_audio.output_frame_count(
+                300, content_fps=30, output_fps=60),
+            600,
+        )
+        self.assertEqual(
+            analysis_audio.output_frame_at_content_frame(
+                150, content_fps=30, output_fps=60),
+            300,
+        )
 
     def test_signed_pcm_is_preserved(self) -> None:
         samples, full_scale = analysis_audio.decode_pcm_mono(

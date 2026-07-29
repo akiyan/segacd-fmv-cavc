@@ -170,8 +170,6 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   the sanctioned place for build-your-own-detector work; keep each topic's doc
   next to its code so the harness stays reproducible.
 - These dedicated reference docs are sanctioned and must be kept current:
-  - [`ANALYSIS.md`](ANALYSIS.md) - the analysis-overlay reference (every meter/category/metric).
-    Updated via the `/analysis` skill together with the layout code.
   - [`MOVIE.md`](MOVIE.md) - the `HEADER.DAT` + `BODY.DAT` on-disc stream
     format. Keep in sync with
     `tools/pack_stream.py` and the `boot/movieplay_*.s` player.
@@ -195,6 +193,11 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   - [`ENCODE.md`](ENCODE.md) - the current simulation-encoding flow and a
     versioned full-encode timing example. Keep its short stage names aligned
     with the timers and comments in `tools/sim.py`.
+- Keep the analysis-overlay specification beside its implementation:
+  `tools/layout_preview.py` owns layout and reading rules,
+  `tools/analysis_style.py` owns category semantics and colours, and
+  `tools/render_analysis.py` owns real-data, TSV, and mux timing. Do not create
+  a separate `ANALYSIS.md`.
 - Claude skill files under `.claude/skills/**/SKILL.md` are allowed and should
   remain in place.
 - Do not reintroduce game-specific extraction notes or copyrighted sample

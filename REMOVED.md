@@ -5,7 +5,7 @@ EN / [JP](#jp)
 This document preserves engineering information for features that are absent
 from the active encoder, packer, and player. Active behavior belongs in the
 dedicated reference documents such as `ENCODE.md`, `CONFIG.md`, `MOVIE.md`,
-`ANALYSIS.md`, and `HUD.md`.
+and `HUD.md`, plus source comments beside analysis-overlay code.
 
 Each removed-feature entry records:
 
@@ -127,7 +127,7 @@ limit, and physical CD/PrgBuf scheduling remain valid without it.
 
 この文書は、現行のencoder、packer、playerには存在しない機能について、実装上の情報を
 保存します。現行の動作は、`ENCODE.md`、`CONFIG.md`、`MOVIE.md`、
-`ANALYSIS.md`、`HUD.md`などの専用referenceへ記載します。
+`HUD.md`などの専用referenceとanalysis-overlay code直近のsource commentへ記載します。
 
 削除済み機能の各項目には、次を記録します。
 

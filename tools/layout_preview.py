@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
-"""解析フレーム(1920x1080)の新レイアウトを『ダミー値』で1枚だけ描くプレビュー。
-sim/ffmpeg を回さず秒で反復するためのもの。本ファイルがレイアウトの正で、
-render_analysis.py が同じ描画関数と定数を実データに使う。
+"""Canonical 1920x1080 analysis layout plus a one-frame dummy renderer.
 
-新レイアウト(この版):
-  左  = SEGA-CD sim output(4:3枠) + 下に status帯
-  右  = Source / Category(Miss赤塗り) / 全編カテゴリ合計 / Audio波形+Spectrum
-  下  = Req/Cold/Band/DMA/Run/Prg/Wrd/Pre、パレット、4段タイムライン
-        ※ Miss&MissCarryパネルと per-metric flow は廃止。
-既定出力: tmp/layout_preview.png
+This module is the analysis-frame specification.  Keep rectangle ownership,
+headings, scales, colours, and panel-reading comments next to the drawing code;
+``render_analysis.py`` reuses them with real sim data.
+
+Layout:
+  left   = Sega CD sim output in its display aperture
+  right  = source, category legend/map, whole-clip category totals, audio
+  bottom = status meters, palette strip, and Req/Supply/Run/Band timelines
+
+The two audio interiors share the right-column footer.  Waveform uses the exact
+signed sample range owned by one 60 fps analysis-video frame; Spectrum uses a
+2,048-sample Hann FFT centred on that same interval and 24 logarithmic bands
+from 40 Hz through 11.025 kHz.  Both traces are white.  The small text after
+``Audio`` is the sim playback-audio specification, not a window label.
+
+Default output: tmp/layout_preview.png
 
 usage: python3 tools/layout_preview.py [--output PATH]
 """
@@ -70,7 +78,7 @@ SRC_FRAME  = (_RCX, 52, 1877, 477)          # Source 4:3 (567x425, outputと同�
 CATLEG_XY  = (_RCX, 483); CATLEG_W, CATLEG_H = 567, 44   # 凡例リスト = Categoryの上
 CAT_FRAME  = (_RCX, 533, 1877, 958)         # Category 4:3 (567x425)
 CATTOT_XY  = (_RCX, 962); CATTOT_W, CATTOT_H = 567, 24   # 凡例合計(バー高さ1/3に縮小)= Categoryの下
-WAVE_WIN_FRAMES = 1.0
+ANALYSIS_VIDEO_FPS = 60
 SPECTRUM_FFT_SIZE = 2048
 SPECTRUM_BANDS = 24
 SPECTRUM_MIN_HZ = 40.0
@@ -706,14 +714,8 @@ def draw_footer(cv, data):
     cv.paste(ct, CATTOT_XY)
 
 
-def wave_window_label(fps):
-    """Return the compact heading for the frame-owned audio interval."""
-    milliseconds = 1000.0 * WAVE_WIN_FRAMES / float(fps)
-    return f"1 frame ({milliseconds:.0f}ms)"
-
-
 def draw_waveform_placeholder(w, h):
-    """Draw one frame-wide white waveform placeholder."""
+    """Draw one analysis-video-frame-wide white waveform placeholder."""
     im = Image.new("RGB", (w, h), (16, 16, 16))
     d = ImageDraw.Draw(im)
     mid = h // 2
@@ -779,7 +781,7 @@ def main():
     d.text((_ax, _ay), "Audio", fill=COL_TXT, font=f_leg, anchor="ls")
     _sx = _ax + _w(f_leg, "Audio") + _w(f_sm, " ")
     d.text(
-        (_sx, _ay), wave_window_label(data["fps"]),
+        (_sx, _ay), data["audio"],
         fill=COL_DIM, font=f_sm, anchor="ls")
     _sx = SPEC_FRAME[0] + 2
     d.text((_sx, _ay), "Spectrum", fill=COL_TXT, font=f_leg, anchor="ls")

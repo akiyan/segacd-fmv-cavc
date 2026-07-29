@@ -2,16 +2,17 @@
 
 Use this whenever you change ANYTHING in the analysis frame (a meter, a colour,
 a category, a timeline, a heading, the effective-Band definition, etc.). It
-keeps the code, the reference doc, and the user notification in lockstep so the
-"what does this number mean" understanding never drifts again.
+keeps the code, its specification comments, and the user notification in
+lockstep so the "what does this number mean" understanding never drifts again.
 
 The analysis frame is 1920x1080, drawn by `tools/render_analysis.py` using the
 drawing functions and layout constants in `tools/layout_preview.py`
 (the layout source of truth). Semantic colours and category-border styles live
 only in `tools/analysis_style.py` and are shared with the sim category map and
-the whole-movie timeline. The reference for every element is `ANALYSIS.md`.
+the whole-movie timeline. Those source files and their comments are the
+reference; there is no separate analysis Markdown specification.
 
-## The set (do all three, in order)
+## The set (do both, in order)
 
 1. **Change the layout in `tools/layout_preview.py`** (the source of truth).
    Change semantic colours or category-border styles in
@@ -38,12 +39,12 @@ the whole-movie timeline. The reference for every element is `ANALYSIS.md`.
    sim working directory through its `[output].directory`. Do not substitute a
    working directory with `CBRSIM_OUT`.
 
-3. **Update `ANALYSIS.md`** so every element still matches exactly: the ASCII
-   layout map at the top, the affected meter/timeline/category description, the
-   colour list, and any threshold/formula. `ANALYSIS.md` must be complete and
-   correct - it is the contract that prevents future misunderstandings. Be
-  especially precise about the tile categories (Raw/Same/Near/Flbk/
-   Buf/Miss): their meaning, byte cost, thresholds, and selection order.
+   Update the owning source comments in the same change.  Keep panel-reading
+   rules and scales in `layout_preview.py`, category meanings and colours in
+   `analysis_style.py`, and real-data/TSV/mux timing in `render_analysis.py`.
+   Be especially precise about the tile categories (Raw/Same/Near/Flbk/Miss
+   and the physical sources): their meaning, byte cost, thresholds, and
+   selection order.
 
 Show the preview image in the chat response so the layout change can be
 reviewed there.
@@ -51,12 +52,12 @@ reviewed there.
 ## Then
 
 - Commit `tools/analysis_style.py`, `tools/layout_preview.py`,
-  `tools/render_analysis.py`, any `tools/sim.py` change, and `ANALYSIS.md`
-  together (Japanese commit message per AGENTS.md). Push only if asked.
+  `tools/render_analysis.py`, and any `tools/sim.py` change together (Japanese
+  commit message per AGENTS.md). Push only if asked.
 
 ## Notes
 
-- Do not let the code and `ANALYSIS.md` diverge - they change in the same commit.
+- Do not move the specification away from the code that implements it.
 - Layout edits start in `layout_preview.py`; `render_analysis.py` mirrors them.
 - Meter widths are each label-width (no unified width). Band is useful
   `BODY.DAT` delivery in the physical slot (payload + control, excluding pad,
