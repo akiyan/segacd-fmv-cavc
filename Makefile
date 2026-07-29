@@ -63,7 +63,7 @@ ASFLAGS := -m68000 --register-prefix-optional --bitwise-or
 CFLAGS_M68K := -m68000 -ffreestanding -fno-builtin -fomit-frame-pointer -O2 -Wall -Wextra
 LDFLAGS := -nostdlib --oformat binary
 
-.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench fontbench still256 movieplay movieplay-internal moviepack dmabench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
+.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench fontbench still256 movieplay movieplay-internal moviepack dmabench cpuvrambench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
 
 all: disc
 
@@ -247,6 +247,36 @@ $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso: $(OUT_DIR)/dmabench_boot_$(DMABENCH_TAG
 $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue: $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso
 	@rm -f $@
 	@printf 'FILE "DMABENCH_$(DMABENCH_TAG).iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
+
+# --- cpuvrambench: VBLANK中 CPU→VRAM data port 書き込みスループット実測(再利用可能) ---
+# 使い方: make cpuvrambench CPUVRAMBENCH_MODE=0|1  (0=H32, 1=H40)
+# 左上に W=語/vblank F=タイル/コマ(3vblank換算) を表示。結果は BUDGETS.md 参照。
+CPUVRAMBENCH_MODE ?= 0
+CPUVRAMBENCH_TAG := mode$(CPUVRAMBENCH_MODE)
+cpuvrambench: check-tools $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue
+	@cp $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso $(OUT_DIR)/CPUVRAMBENCH.iso
+	@cp $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue $(OUT_DIR)/CPUVRAMBENCH.cue
+
+$(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).o: $(BOOT_DIR)/cpuvrambench_ip.s $(BOOT_DIR)/security.bin $(BOOT_DIR)/dbgfont.bin | setup
+	$(AS) $(ASFLAGS) --defsym MODE=$(CPUVRAMBENCH_MODE) -I$(BOOT_DIR) $< -o $@
+
+$(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).bin: $(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).o
+	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
+
+$(OUT_DIR)/cpuvrambench_boot_$(CPUVRAMBENCH_TAG).bin: $(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).bin $(OUT_DIR)/cdcbench_sp.bin $(BOOT_DIR)/cpuvrambench_boot.s
+	cp $(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).bin $(OUT_DIR)/cpuvrambench_ip.bin
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $(BOOT_DIR)/cpuvrambench_boot.s -o $(OUT_DIR)/cpuvrambench_boot_$(CPUVRAMBENCH_TAG).out
+	$(OBJCOPY) -O binary $(OUT_DIR)/cpuvrambench_boot_$(CPUVRAMBENCH_TAG).out $@
+
+$(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso: $(OUT_DIR)/cpuvrambench_boot_$(CPUVRAMBENCH_TAG).bin
+	@mkdir -p $(OUT_DIR)/disc_cpuvrambench
+	@printf "cpuvrambench\n" > $(OUT_DIR)/disc_cpuvrambench/README.TXT
+	@rm -f $@ $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue
+	$(MKISOFS) -iso-level 1 -G $< -pad -V "CPUVRAMBENCH" -o $@ $(OUT_DIR)/disc_cpuvrambench
+
+$(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue: $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso
+	@rm -f $@
+	@printf 'FILE "CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
 # --- Phase B2: 差分ストリーム再生(単バッファ, BODY.DAT を連続供給) ---
 
