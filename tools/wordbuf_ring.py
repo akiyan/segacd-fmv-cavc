@@ -1004,14 +1004,14 @@ def _next_prg_pressure_frame(
     return None
 
 
-def _transfer_runs(
+def _transfer_run_records(
     entries,
     colds,
     sources,
     prefetch,
     dic_indices,
     transfer_order,
-) -> int:
+) -> tuple[tuple[int, int, int, int], ...]:
     order = tuple(int(index) for index in transfer_order)
     slots = [
         (int(entries[index]) & 0x07FF) - BASE
@@ -1026,7 +1026,70 @@ def _transfer_runs(
     slots.extend(int(item[0]) for item in cold_prefetch)
     item_sources.extend(PRG for _item in cold_prefetch)
     item_dic.extend(-1 for _item in cold_prefetch)
-    return pattern_supply.count_source_runs(slots, item_sources, item_dic)
+    return pattern_supply.source_runs(slots, item_sources, item_dic)
+
+
+def _transfer_runs(
+    entries,
+    colds,
+    sources,
+    prefetch,
+    dic_indices,
+    transfer_order,
+) -> int:
+    return len(_transfer_run_records(
+        entries,
+        colds,
+        sources,
+        prefetch,
+        dic_indices,
+        transfer_order,
+    ))
+
+
+def _transfer_run_trace(
+    per,
+    sources,
+    prefetch_per,
+    dic_indices,
+    transfer_orders,
+    *,
+    word_capacities: tuple[int, int] | None = None,
+) -> np.ndarray:
+    """Return exact per-frame descriptors, splitting WordBuf ring crossings."""
+    word_cursors = [0, 0]
+    counts = np.zeros(len(per), np.int64)
+    for frame, (
+            (_cells, entries, colds),
+            frame_sources,
+            prefetch,
+            frame_dic_indices,
+            transfer_order,
+    ) in enumerate(zip(
+            per,
+            sources,
+            prefetch_per,
+            dic_indices,
+            transfer_orders,
+            strict=True,
+    )):
+        runs = _transfer_run_records(
+            entries,
+            colds,
+            frame_sources,
+            prefetch,
+            frame_dic_indices,
+            transfer_order,
+        )
+        if word_capacities is not None:
+            parity = frame & 1
+            runs, word_cursors[parity] = pattern_supply.split_word_ring_runs(
+                runs,
+                capacity=int(word_capacities[parity]),
+                cursor=word_cursors[parity],
+            )
+        counts[frame] = len(runs)
+    return counts
 
 
 def plan(
@@ -1106,30 +1169,13 @@ def plan(
         tuple(PRG if source == WORD else source for source in frame)
         for frame in current_plan.sources
     )
-    merged_runs = np.asarray([
-        _transfer_runs(
-            entries,
-            colds,
-            frame_sources,
-            prefetch,
-            dic_indices,
-            transfer_order,
-        )
-        for (
-            (_cells, entries, colds),
-            frame_sources,
-            prefetch,
-            dic_indices,
-            transfer_order,
-        ) in zip(
-            per,
-            merged_sources,
-            prefetch_per,
-            current_plan.dic_indices,
-            transfer_orders,
-            strict=True,
-        )
-    ], np.int64)
+    merged_runs = _transfer_run_trace(
+        per,
+        merged_sources,
+        prefetch_per,
+        current_plan.dic_indices,
+        transfer_orders,
+    )
     block_lengths = stream_schedule.control_block_lengths(
         np.asarray(n_updates, np.int64),
         merged_runs,
@@ -1290,38 +1336,55 @@ def plan(
             model_sources[item.frame][update] = source
     model_sources_tuple = tuple(
         tuple(frame) for frame in model_sources)
-    model_runs = np.asarray([
-        _transfer_runs(
-            entries,
-            colds,
-            frame_sources,
-            prefetch,
-            dic_indices,
-            transfer_order,
-        )
-        for (
-            (_cells, entries, colds),
-            frame_sources,
-            prefetch,
-            dic_indices,
-            transfer_order,
-        ) in zip(
-            per,
-            model_sources_tuple,
-            prefetch_per,
-            current_plan.dic_indices,
-            transfer_orders,
-            strict=True,
-        )
-    ], np.int64)
+    model_compact_runs = _transfer_run_trace(
+        per,
+        model_sources_tuple,
+        prefetch_per,
+        current_plan.dic_indices,
+        transfer_orders,
+    )
     if (
         not failure
-        and not np.array_equal(model_runs, merged_runs)
+        and not np.array_equal(model_compact_runs, merged_runs)
     ):
-        frame = int(np.flatnonzero(model_runs != merged_runs)[0])
+        frame = int(np.flatnonzero(
+            model_compact_runs != merged_runs)[0])
         failure = (
             f"frame {frame}: whole-run source choice changed runs "
-            f"{int(merged_runs[frame])}->{int(model_runs[frame])}")
+            f"{int(merged_runs[frame])}->"
+            f"{int(model_compact_runs[frame])}")
+    model_runs = _transfer_run_trace(
+        per,
+        model_sources_tuple,
+        prefetch_per,
+        current_plan.dic_indices,
+        transfer_orders,
+        word_capacities=capacities,
+    )
+    model_block_lengths = stream_schedule.control_block_lengths(
+        np.asarray(n_updates, np.int64),
+        model_runs,
+        cells=int(cells),
+        audio_frame_bytes=int(audio_frame_bytes),
+        update_lists=update_lists,
+    )
+    model_control_sectors = stream_schedule.control_sector_schedule(
+        model_block_lengths)
+    if (
+        not failure
+        and not np.array_equal(model_control_sectors, control_sectors)
+    ):
+        frame = int(np.flatnonzero(
+            model_control_sectors != control_sectors)[0])
+        failure = (
+            f"frame {frame}: WordBuf ring-end descriptor split changes "
+            f"control sectors {int(control_sectors[frame])}->"
+            f"{int(model_control_sectors[frame])}")
+    if not failure:
+        # The construction loop used the same sector envelope. Preserve its
+        # source/delivery choices, but replay and freeze the exact extra
+        # four-byte descriptors introduced at physical ring boundaries.
+        block_lengths = model_block_lengths
 
     prg_loads = np.zeros(frame_count, np.int64)
     wr0_loads = np.zeros(frame_count, np.int64)
@@ -1352,30 +1415,14 @@ def plan(
         min(frame_count, int(payload_frames[-1]) + 1)
         if payload_frames.size else frame_count
     )
-    current_runs = sum(
-        _transfer_runs(
-            entries,
-            colds,
-            frame_sources,
-            prefetch,
-            dic_indices,
-            transfer_order,
-        )
-        for (
-            (_cells, entries, colds),
-            frame_sources,
-            prefetch,
-            dic_indices,
-            transfer_order,
-        ) in zip(
-            per,
-            current_plan.sources,
-            prefetch_per,
-            current_plan.dic_indices,
-            transfer_orders,
-            strict=True,
-        )
-    )
+    current_runs = int(_transfer_run_trace(
+        per,
+        current_plan.sources,
+        prefetch_per,
+        current_plan.dic_indices,
+        transfer_orders,
+        word_capacities=capacities,
+    ).sum())
     if not failure:
         try:
             replay_frozen_schedule(

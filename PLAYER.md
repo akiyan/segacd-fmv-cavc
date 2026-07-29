@@ -145,7 +145,9 @@ record containing VDP-ready DMA length, registers, destination command, and
 resolved source. Only Prg records carry their 32-byte-per-pattern payload
 inline immediately after the record. Wr and Dic records point at their
 persistent stores. Main reads this one cursor in place; it does not build or
-copy a run table.
+copy a run table. The encoder splits a Wr descriptor at its parity WordBuf
+ring end before packing. Sub therefore emits only linear source spans, and
+Main can run each Word-RAM DMA without wrapping a source address.
 
 | Record offset | Size | Value |
 |---:|---:|---|
@@ -501,7 +503,9 @@ Subはdisc上の各4-byte source runを、VDP-ready DMA length、register、
 destination command、解決済みsourceを持つ22-byte `O_LOADS v2` recordへ
 展開します。Prg recordだけが直後にpattern当たり32 byteのpayloadをinlineで
 持ちます。Wr/Dic recordはpersistent storeを直接指します。Mainは単一cursorを
-in-placeで読み、run tableを構築もcopyもしません。
+in-placeで読み、run tableを構築もcopyもしません。EncoderはWr descriptorを
+pack前にparity WordBuf ring末尾で分割します。Subが出力するsource spanは常に
+linearとなり、Mainはsource addressをwrapせず各Word-RAM DMAを実行できます。
 
 | Record offset | Size | 値 |
 |---:|---:|---|

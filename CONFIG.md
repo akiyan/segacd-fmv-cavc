@@ -209,9 +209,12 @@ slot order while name updates remain in cell order.
 Every pattern run uses DMA. A Word-RAM DMA performs the required CPU
 first-word repair. Any run that crosses the current residual budget is split
 at that boundary and continues at the next fresh VBlank head.
-Prg/WordBuf/DicBuf source boundaries also split runs. Each parity's Word-RAM
-reservation is sized from the exact whole-encode record and inline-Prg peak,
-so there is no separate Main-RAM record limit.
+Prg/WordBuf/DicBuf source boundaries also split runs. A compact WordBuf
+descriptor is additionally split at its parity ring end before packing, so
+the resulting extra control bytes, `O_LOADS v2` record, and first-word repair
+are all charged before playback. Each parity's Word-RAM reservation is sized
+from the exact whole-encode record and inline-Prg peak, so there is no separate
+Main-RAM record limit.
 
 ## Physical delivery allowance
 
@@ -625,7 +628,9 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 
 全pattern runがDMAを使います。Word-RAM DMAは必須のCPU first-word repairを
 行います。Current残budget境界を越えるrunはそこで分割し、次のfresh VBlank headから
-続きを行います。Prg/WordBuf/DicBufのsource境界もrunを分けます。各parityの
+続きを行います。Prg/WordBuf/DicBufのsource境界もrunを分けます。CompactなWordBuf
+descriptorはpack前にparity ring末尾でも分割するため、追加control bytes、
+`O_LOADS v2` record、first-word repairをplayback前にすべてchargeします。各parityの
 Word-RAM予約はencode全体の正確なrecordとinline Prgピークから決めるため、独立した
 Main-RAM record上限はありません。
 

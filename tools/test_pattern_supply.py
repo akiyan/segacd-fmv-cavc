@@ -178,6 +178,38 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             (2, 4, 1),
         )
 
+    def test_word_run_splits_at_ring_end_without_reordering_slots(self):
+        runs = (
+            (100, 48, supply.SOURCE_WR, 0),
+            (200, 4, supply.SOURCE_DIC, 17),
+        )
+        split, cursor = supply.split_word_ring_runs(
+            runs,
+            capacity=2688,
+            cursor=2643,
+        )
+        self.assertEqual(
+            split,
+            (
+                (100, 45, supply.SOURCE_WR, 0),
+                (145, 3, supply.SOURCE_WR, 0),
+                (200, 4, supply.SOURCE_DIC, 17),
+            ),
+        )
+        self.assertEqual(cursor, 3)
+
+    def test_word_run_ending_exactly_at_ring_end_needs_no_extra_record(self):
+        split, cursor = supply.split_word_ring_runs(
+            ((7, 45, supply.SOURCE_WR, 0),),
+            capacity=2688,
+            cursor=2643,
+        )
+        self.assertEqual(
+            split,
+            ((7, 45, supply.SOURCE_WR, 0),),
+        )
+        self.assertEqual(cursor, 0)
+
 
 class PatternSupplyPlannerTests(unittest.TestCase):
     def test_dicbuf_is_selected_first_and_hits_persist(self):

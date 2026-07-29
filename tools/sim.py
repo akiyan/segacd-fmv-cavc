@@ -3601,6 +3601,7 @@ def main():
         )
     )
     r2v_short_runs = np.zeros(n, np.int64)
+    r2v_word_cursors = [0, 0]
     for frame, (
         (_cells, entries, _colds),
         frame_sources,
@@ -3615,8 +3616,6 @@ def main():
         ring_transfer_orders_log,
         strict=True,
     )):
-        if frame == 0:
-            continue
         order = tuple(int(index) for index in transfer_order)
         slots = [
             (int(entries[index]) & 0x07FF) - 1
@@ -3632,8 +3631,22 @@ def main():
         sources.extend(
             pattern_supply.SOURCE_PRG for _item in cold_prefetch)
         dic_indices.extend(-1 for _item in cold_prefetch)
-        lengths = pattern_supply.source_run_lengths(
-            slots, sources, dic_indices)
+        runs = pattern_supply.source_runs(slots, sources, dic_indices)
+        parity = frame & 1
+        runs, r2v_word_cursors[parity] = (
+            pattern_supply.split_word_ring_runs(
+                runs,
+                capacity=(
+                    wordram_layout.wr1_patterns
+                    if parity else wordram_layout.wr0_patterns
+                ),
+                cursor=r2v_word_cursors[parity],
+            )
+        )
+        if frame == 0:
+            continue
+        lengths = tuple(
+            count for _slot, count, _source, _dic_index in runs)
         if len(lengths) != int(transfer_runs_log[frame]):
             raise AssertionError(
                 f"frame {frame}: R2V runs={len(lengths)} differ from "

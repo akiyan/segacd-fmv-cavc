@@ -287,7 +287,12 @@ When the stream carries the WordBuf-ring feature, a slot's leading
 `n_word_sec` payload sectors append 64 patterns each to the arriving frame's
 parity ring; write and read cursors both advance forward and wrap at the
 declared capacity, and the packer's replay proves every refill sector commits
-before its frame begins expanding.
+before its frame begins expanding. A compact Wr source run that reaches the
+declared physical ring end is split there into adjacent descriptors before the
+control block is written. The VRAM destination remains contiguous, while the
+extra descriptor, `O_LOADS v2` record, DMA first-word repair, and control bytes
+are included in every capacity and work model. No linear Word-RAM DMA source
+range crosses the ring end.
 
 DicBuf holds at most 512 reusable patterns. It is staged at Word RAM
 `+0x6000..+0x9FFF` and copied once to Main RAM `0xFFBA40..0xFFFA3F`. Run
@@ -766,7 +771,12 @@ WordBuf0とWordBuf1はgenerated parity別startとcapacityを持ちます。各st
 slot先頭の `n_word_sec`
 payload sectorが到着frameのparity ringへ64 patternずつ追記されます。writeと
 readのcursorはともに前進のみで宣言capacityでwrapし、packerのreplayは全refill
-sectorがそのframeの展開開始前にcommitされることを証明します。
+sectorがそのframeの展開開始前にcommitされることを証明します。CompactなWr
+source runが宣言済みphysical ring末尾へ達する場合、control blockを書き出す前に
+その位置で隣接descriptorへ分割します。VRAM destinationは連続したままで、追加の
+descriptor、`O_LOADS v2` record、DMA first-word repair、control bytesを全capacity
+およびwork modelへ含めます。LinearなWord-RAM DMA source rangeがring末尾を
+またぐことはありません。
 
 DicBufは最大512個の再利用可能patternを持ちます。Word RAM `+0x6000..+0x9FFF` に
 一時配置し、Main RAM `0xFFBA40..0xFFFA3F` へ起動時に1回copyします。run descriptor

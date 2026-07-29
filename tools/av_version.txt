@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e160: Split compact WordBuf source descriptors at each parity ring end
+#         before writing the stream. Account for the extra descriptor in
+#         control delivery, O_LOADS v2 peaks, and Main-to-VDP repair work so
+#         no linear DMA can cross from the generated WordBuf into its tail.
 #   e159: Size each parity's Word-RAM O_LOADS v2 region from its exact
 #         independently recomputed 22-byte-record peak, then sector-round the
 #         residual into WordBuf capacity. Move all ADPCM lookup tables to
@@ -1117,5 +1121,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260729
-e=159
+e=160
 p=130

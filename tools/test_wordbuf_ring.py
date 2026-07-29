@@ -46,6 +46,43 @@ class WordBufRingTest(unittest.TestCase):
             2,
         )
 
+    def test_transfer_run_trace_splits_word_dma_at_parity_ring_end(self):
+        per = (
+            ((), (1, 2, 3), (True, True, True)),
+            ((), (), ()),
+            ((), (4, 5, 6), (True, True, True)),
+        )
+        sources = (
+            (pattern_supply.SOURCE_WR,) * 3,
+            (),
+            (pattern_supply.SOURCE_WR,) * 3,
+        )
+        prefetch = ((), (), ())
+        dic_indices = ((-1, -1, -1), (), (-1, -1, -1))
+        transfer_orders = ((0, 1, 2), (), (0, 1, 2))
+
+        np.testing.assert_array_equal(
+            wordbuf_ring._transfer_run_trace(
+                per,
+                sources,
+                prefetch,
+                dic_indices,
+                transfer_orders,
+            ),
+            [1, 0, 1],
+        )
+        np.testing.assert_array_equal(
+            wordbuf_ring._transfer_run_trace(
+                per,
+                sources,
+                prefetch,
+                dic_indices,
+                transfer_orders,
+                word_capacities=(4, 4),
+            ),
+            [1, 0, 2],
+        )
+
     def test_remaining_source_is_parity_specific(self):
         items = [
             wordbuf_ring.Item(2, 0, 10, (0,)),

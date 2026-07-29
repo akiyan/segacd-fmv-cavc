@@ -804,14 +804,17 @@ def main() -> None:
             frame_transfers.append(
                 (run_slot, source_id, dic_index, tuple(run_patterns)))
 
-        output_v2, external_v2 = encode_loads_v2(
-            frame_transfers,
-            parity=frame & 1,
-            base=base,
-            word_ptrs=word_ptrs,
-            word_starts=word_starts,
-            word_ends=word_ends,
-        )
+        try:
+            output_v2, external_v2 = encode_loads_v2(
+                frame_transfers,
+                parity=frame & 1,
+                base=base,
+                word_ptrs=word_ptrs,
+                word_starts=word_starts,
+                word_ends=word_ends,
+            )
+        except AssertionError as exc:
+            raise AssertionError(f"frame {frame}: {exc}") from exc
         decoded_v2 = decode_loads_v2(
             output_v2,
             external_v2,

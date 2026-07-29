@@ -430,11 +430,8 @@ def sourced_transfer_runs(
         int(dic_indices[index]) for index in transfer_order
     ]
     run_dic_indices.extend(-1 for _item in cold_prefetch)
-    # Reuse the authoritative source-aware grouping by presenting synthetic
-    # entries whose low 11 bits contain the allocated slot.
-    synthetic = [BASE + slot for slot in slots]
-    return sourced_cold_runs(
-        synthetic, [True] * len(synthetic), item_sources, run_dic_indices)
+    return list(pattern_supply.source_runs(
+        slots, item_sources, run_dic_indices))
 
 
 def split_boot_prefetch(log, prefetch_per):
@@ -466,7 +463,8 @@ def split_boot_prefetch(log, prefetch_per):
 
 def run_stats(
         per, sources=None, prefetch_per=None, dic_indices=None,
-        transfer_orders=None, boot_sidecar=(), loads_caps=None):
+        transfer_orders=None, boot_sidecar=(), loads_caps=None,
+        word_capacities=None):
     """フレーム内cold tile数とplayer cold-run record数を返して表示する。"""
     runs_per_frame = np.zeros(len(per), np.int64)
     colds_per_frame = np.zeros(len(per), np.int64)
@@ -483,12 +481,20 @@ def run_stats(
     prg_per_frame = np.zeros(len(per), np.int64)
     wr_per_frame = np.zeros(len(per), np.int64)
     dic_per_frame = np.zeros(len(per), np.int64)
+    word_cursors = [0, 0]
     for i, ((cells, entries, colds), frame_sources, frame_prefetch,
             frame_dic_indices, transfer_order) in enumerate(
             zip(per, sources, prefetch_per, dic_indices, transfer_orders)):
         runs = sourced_transfer_runs(
             entries, colds, frame_sources, frame_prefetch,
             frame_dic_indices, transfer_order)
+        if word_capacities is not None:
+            parity = i & 1
+            runs, word_cursors[parity] = pattern_supply.split_word_ring_runs(
+                runs,
+                capacity=int(word_capacities[parity]),
+                cursor=word_cursors[parity],
+            )
         runs_per_frame[i] = len(runs)
         colds_per_frame[i] = sum(count for _slot, count, _source, _dic in runs)
         for _slot, count, source, _dic in runs:
@@ -811,7 +817,8 @@ def build_audio_chunks(audio_path, frame_count):
 
 def build_control(
         log, per, n_upd, audio_path, sources=None, update_lists=None,
-        prefetch_per=None, dic_indices=None, transfer_orders=None):
+        prefetch_per=None, dic_indices=None, transfer_orders=None,
+        word_capacities=None):
     """Build control blocks and return their reconstructed source PCM chunks."""
     seg_cram = [pals_to_bytes_128(p) for p in log["seg_pals"]]
     audio_chunks, pcm_chunks = build_audio_chunks(audio_path, len(per))
@@ -841,6 +848,7 @@ def build_control(
     if update_lists.shape != (len(per),):
         raise ValueError("shadow update-list flags must match frame count")
     blocks = []
+    word_cursors = [0, 0]
     for i in range(len(per)):
         cells, entries, colds = per[i]
         frame_sources = sources[i]
@@ -873,6 +881,13 @@ def build_control(
         runs = sourced_transfer_runs(
             entries, colds, frame_sources, prefetch_per[i], dic_indices[i],
             transfer_orders[i])
+        if word_capacities is not None:
+            parity = i & 1
+            runs, word_cursors[parity] = pattern_supply.split_word_ring_runs(
+                runs,
+                capacity=int(word_capacities[parity]),
+                cursor=word_cursors[parity],
+            )
         body += struct.pack(">H", len(runs))
         for slot, count, source, dic_index in runs:
             body += struct.pack(
@@ -1713,6 +1728,10 @@ def main():
         loads_caps=(
             wordram_layout.wr0_load_bytes,
             wordram_layout.wr1_load_bytes,
+        ),
+        word_capacities=(
+            wordram_layout.wr0_patterns,
+            wordram_layout.wr1_patterns,
         ))
     if not np.array_equal(packed_tiles, n_load):
         frame = int(np.flatnonzero(packed_tiles != n_load)[0])
@@ -1766,7 +1785,11 @@ def main():
         raise SystemExit(f"pack: selected shadow list is not faster at frame {frame}")
     blocks, source_pcm_chunks = build_control(
         log, per, n_upd, audio_path, supply_plan.sources, update_lists,
-        inline_prefetch_per, supply_plan.dic_indices, transfer_orders)
+        inline_prefetch_per, supply_plan.dic_indices, transfer_orders,
+        word_capacities=(
+            wordram_layout.wr0_patterns,
+            wordram_layout.wr1_patterns,
+        ))
     print(
         f"  shadow updates: list={int(update_lists.sum())}/{len(update_lists)} "
         f"Main saved={int(((recomputed_legacy - recomputed_list) * update_lists).sum())} cycles "

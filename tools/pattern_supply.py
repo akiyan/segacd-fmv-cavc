@@ -349,25 +349,28 @@ def count_source_runs(
     dic_indices: Sequence[int] | None = None,
 ) -> int:
     """Count runs split by slot, physical source, or DicBuf index gap."""
-    return len(source_run_lengths(slots, sources, dic_indices))
+    return len(source_runs(slots, sources, dic_indices))
 
 
-def source_run_lengths(
+def source_runs(
     slots: Sequence[int],
     sources: Sequence[int],
     dic_indices: Sequence[int] | None = None,
-) -> tuple[int, ...]:
-    """Return source-aware physical run lengths in transfer order."""
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Return ``(slot, count, source, Dic index)`` runs in transfer order."""
     if len(slots) != len(sources):
         raise ValueError("slot and source counts differ")
     if dic_indices is None:
         dic_indices = (-1,) * len(slots)
     if len(dic_indices) != len(slots):
         raise ValueError("slot and DicBuf index counts differ")
-    runs: list[int] = []
+    runs: list[tuple[int, int, int, int]] = []
     previous_slot: int | None = None
     previous_source: int | None = None
     previous_dic = -1
+    start_slot = 0
+    start_dic = 0
+    count = 0
     for raw_slot, raw_source, raw_dic in zip(slots, sources, dic_indices):
         slot = int(raw_slot)
         source = int(raw_source)
@@ -379,13 +382,82 @@ def source_run_lengths(
                 or (source == SOURCE_DIC
                     and (dic_index != previous_dic + 1
                          or dic_index % DIC_RUN_BLOCK == 0))):
-            runs.append(1)
-        else:
-            runs[-1] += 1
+            if count:
+                runs.append((
+                    start_slot,
+                    count,
+                    int(previous_source),
+                    start_dic,
+                ))
+            start_slot = slot
+            start_dic = dic_index if source == SOURCE_DIC else 0
+            count = 0
+        count += 1
         previous_slot = slot
         previous_source = source
         previous_dic = dic_index
+    if count:
+        runs.append((
+            start_slot,
+            count,
+            int(previous_source),
+            start_dic,
+        ))
     return tuple(runs)
+
+
+def source_run_lengths(
+    slots: Sequence[int],
+    sources: Sequence[int],
+    dic_indices: Sequence[int] | None = None,
+) -> tuple[int, ...]:
+    """Return source-aware physical run lengths in transfer order."""
+    return tuple(
+        count for _slot, count, _source, _dic_index
+        in source_runs(slots, sources, dic_indices)
+    )
+
+
+def split_word_ring_runs(
+    runs: Sequence[tuple[int, int, int, int]],
+    *,
+    capacity: int,
+    cursor: int,
+) -> tuple[tuple[tuple[int, int, int, int], ...], int]:
+    """Split WordBuf runs at the physical ring end and return the next cursor.
+
+    A VDP DMA source is linear, so one WordBuf descriptor cannot cross the
+    generated parity-specific ring end. Splitting preserves destination order
+    and exposes the extra control/O_LOADS record to every byte/work model
+    before the stream is written.
+    """
+    capacity = int(capacity)
+    cursor = int(cursor)
+    if capacity <= 0:
+        raise ValueError("WordBuf ring capacity must be positive")
+    if not 0 <= cursor < capacity:
+        raise ValueError(
+            f"WordBuf ring cursor {cursor} is outside capacity {capacity}")
+    split: list[tuple[int, int, int, int]] = []
+    for raw_slot, raw_count, raw_source, raw_dic_index in runs:
+        slot = int(raw_slot)
+        remaining = int(raw_count)
+        source = int(raw_source)
+        dic_index = int(raw_dic_index)
+        if remaining <= 0:
+            raise ValueError(f"invalid source run count: {remaining}")
+        if source != SOURCE_WR:
+            split.append((slot, remaining, source, dic_index))
+            continue
+        while remaining:
+            count = min(remaining, capacity - cursor)
+            split.append((slot, count, source, 0))
+            slot += count
+            remaining -= count
+            cursor += count
+            if cursor == capacity:
+                cursor = 0
+    return tuple(split), cursor
 
 
 @dataclass(frozen=True)
