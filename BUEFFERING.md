@@ -10,10 +10,10 @@ and how boot-only memory is assigned to frames with concentrated exact demand.
 
 | Public name | Analysis | Memory | Capacity | Lifetime |
 |---|---|---|---:|---|
-| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 12,224 / 12,704 / 12,864 patterns at 15 / 24 / 30 fps (382 / 397 / 402 KiB) | Streamed circular buffer refilled from `BODY.DAT`. |
+| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 11,968 / 12,448 / 12,608 patterns at 15 / 24 / 30 fps (374 / 389 / 394 KiB) | Streamed circular buffer refilled from `BODY.DAT`. |
 | `WordBuf0` | `Wr0` | frame-0 physical 1M Word-RAM bank | Build-derived, parity-specific | Ring loaded from `HEADER.DAT`, refilled during streaming by leading BODY payload sectors, and consumed by eligible even frames. |
 | `WordBuf1` | `Wr1` | other physical 1M Word-RAM bank | Build-derived, parity-specific | Ring loaded from `HEADER.DAT`, refilled during streaming by leading BODY payload sectors, and consumed by eligible odd frames. |
-| `DicBuf` | `Dic` | Main RAM | 256 patterns / 8 KiB | Staged through Word RAM at boot, copied to Main RAM, and reused by 8-bit index. |
+| `DicBuf` | `Dic` | Main RAM | 512 patterns / 16 KiB | Staged through Word RAM at boot, copied to Main RAM, and reused by 9-bit index. |
 
 `PrgBuf` is implemented as a ring buffer, so player assembly uses internal
 names such as `RING_BASE` and `RING_SIZE`. `PrgBuf` is the public name of the
@@ -218,7 +218,7 @@ per-frame source totals, and source-aware runs. It materializes:
 
 ## Player Path
 
-On-disc format version 17 carries the source in each cold run descriptor. The descriptor is
+On-disc format version 23 carries the source in each cold run descriptor. The descriptor is
 authoritative for physical pattern transfer. Source selection changes the
 32-byte read address, not the destination VRAM slot or displayed name value.
 
@@ -228,11 +228,11 @@ authoritative for physical pattern transfer. Source selection changes the
   handed over for that frame; frame parity identifies the bank. Sub commits
   every timed ring-refill sector before that frame begins expanding, so the
   region Main reads is settled for the whole handoff.
-- `Dic`: Main addresses the persistent dictionary by 8-bit index.
+- `Dic`: Main addresses the persistent dictionary by 9-bit index.
 
 Word-RAM DMA uses the measured first-word correction. Main-RAM DicBuf DMA does
-not. One- and two-tile runs use direct CPU writes; longer runs use bounded
-VBlank DMA. A source boundary always splits a run.
+not. Every pattern run uses bounded VBlank DMA. A source boundary always
+splits a run.
 
 ## Physical PrgBuf Construction
 
@@ -249,9 +249,10 @@ Only `Prg` loads consume timed payload. The one-pass construction is:
 6. `stream_schedule.py` materializes the split, and
    `pack_stream.py --verify` repeats the proof and trace comparison.
 
-The physical ring is 428 KiB. Normal prebuffer capacity is 382 / 397 / 402 KiB
-at 15 / 24 / 30 fps. Scheduled delivery may rise to 422 KiB; the remaining
-space is delivery and overflow safety, not feature memory.
+The physical ring is 420 KiB. Normal prebuffer and scheduled-delivery capacity
+is 374 / 389 / 394 KiB at 15 / 24 / 30 fps. The remaining cadence-specific
+headroom up to the 414 KiB observation boundary is reserved for live delivery;
+the final 6 KiB is observation and overflow safety, not feature memory.
 
 ## Analysis and Diagnostics
 
@@ -311,10 +312,10 @@ encoder内のoffline画質予算の違い、boot専用memoryを正確な需要�
 
 | 公開名 | 解析表示 | Memory | 容量 | Lifetime |
 |---|---|---|---:|---|
-| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 15 / 24 / 30 fpsで12,224 / 12,704 / 12,864 pattern（382 / 397 / 402 KiB） | `BODY.DAT`から補充するstreamed circular buffer |
+| `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 15 / 24 / 30 fpsで11,968 / 12,448 / 12,608 pattern（374 / 389 / 394 KiB） | `BODY.DAT`から補充するstreamed circular buffer |
 | `WordBuf0` | `Wr0` | frame-0 physical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadしたringをstream中に先頭BODY payload sectorで補充し、対象となるeven frameが消費 |
 | `WordBuf1` | `Wr1` | 反対側のphysical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadしたringをstream中に先頭BODY payload sectorで補充し、対象となるodd frameが消費 |
-| `DicBuf` | `Dic` | Main RAM | 256 pattern / 8 KiB | boot時にWord RAM経由でMain RAMへcopyし、8-bit indexで再利用 |
+| `DicBuf` | `Dic` | Main RAM | 512 pattern / 16 KiB | boot時にWord RAM経由でMain RAMへcopyし、9-bit indexで再利用 |
 
 `PrgBuf`はring bufferとして実装されるため、player assemblyは`RING_BASE`や
 `RING_SIZE`などの内部名を使います。Pattern供給の公開名は`PrgBuf`であり、
@@ -497,7 +498,7 @@ cold flag、frame-0 rule、preload capacity、frameごとのsource total、sourc
 
 ## Player経路
 
-On-disc format version 17は各cold run descriptorにsourceを持ちます。物理pattern transferではdescriptorが
+On-disc format version 23は各cold run descriptorにsourceを持ちます。物理pattern transferではdescriptorが
 正本です。Source choiceは32-byte read addressを変えますが、destination VRAM slotや
 表示name valueは変えません。
 
@@ -506,11 +507,11 @@ On-disc format version 17は各cold run descriptorにsourceを持ちます。物
   ringを読みます。Frame parityがbankを決めます。Subは全timed ring-refill sectorを
   そのframeの展開開始前にcommitするため、Mainが読む領域はhandoff中ずっと確定
   しています。
-- `Dic`: Mainがpersistent dictionaryを8-bit indexで参照します。
+- `Dic`: Mainがpersistent dictionaryを9-bit indexで参照します。
 
 Word-RAM DMAは実測済みfirst-word correctionを使います。Main-RAM上のDicBuf DMAには
-不要です。1・2 tile runはdirect CPU write、より長いrunはbounded VBlank DMAを使います。
-Source境界は必ずrunを分割します。
+不要です。すべてのpattern runがbounded VBlank DMAを使います。Source境界は必ずrunを
+分割します。
 
 ## 物理PrgBufの構築
 
@@ -527,9 +528,10 @@ Timed payloadを消費するのは`Prg` loadだけです。1-pass構築は次の
 6. `stream_schedule.py`がsplitをmaterializeし、`pack_stream.py --verify`が証明と
    trace比較を繰り返します。
 
-Physical ringは428 KiBです。通常prebuffer capacityは15 / 24 / 30 fpsで
-382 / 397 / 402 KiBです。Scheduled deliveryは422 KiBまで使えます。残りはdeliveryと
-overflowの安全領域であり、feature memoryではありません。
+Physical ringは420 KiBです。通常prebufferとscheduled-delivery capacityは
+15 / 24 / 30 fpsで374 / 389 / 394 KiBです。414 KiB観測境界までのcadence別headroomは
+live delivery専用で、最後の6 KiBは観測・overflow安全領域です。feature memoryでは
+ありません。
 
 ## 解析とdiagnostic
 

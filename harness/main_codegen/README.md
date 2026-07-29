@@ -13,7 +13,7 @@ The reserved Main RAM layout is:
 0xFF4A00  expected Phase 1 end
 0xFF6680  maximum H40 NT blitter end
 0xFF6700  hard code-generation limit and M-STATE start
-0xFF8800  RUN_TABLE start
+0xFF8800  unallocated M-FREE start
 ```
 
 Each set bit emits exactly one entry read, register-mask cold/source-bit strip, and shadow write.
