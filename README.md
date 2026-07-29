@@ -225,10 +225,21 @@ The Japanese Mega-CD BIOS is user-supplied and git-ignored:
 test -f original/jp_mcd2_9212.bin
 ```
 
-The recording harness defaults to
-`/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so`. `CORE`,
-`BIOS_IMAGE`, and `SYSTEM_DIR` override host-specific layouts. Normally the
-harness copies the BIOS into a private per-run system directory.
+Build the managed Genesis Plus GX diagnostic core once:
+
+```sh
+harness/gpgx_logvdp/build.sh
+harness/gpgx_logvdp/build.sh --check
+```
+
+The recording harness defaults to the pinned `LOGVDP` core at
+`vendor/gpgx-logvdp/genesis_plus_gx_logvdp_libretro.so`. Generated source,
+binary, build log, and manifest stay git-ignored below that directory. There is
+no fallback to a distribution-installed core. `CORE` remains an explicit A/B
+override; `BIOS_IMAGE` and `SYSTEM_DIR` override the other host-specific
+layouts. Normally the harness copies the BIOS into a private per-run system
+directory. RetroArch and the core write the upstream VDP trace to the normal
+`retroarch_<tag>.log`.
 
 ## Build
 
@@ -327,7 +338,7 @@ cfg/         linker scripts
 profiles/    per-source TOML profiles
 harness/     reproducible diagnostics and their local documentation
 tools/       encoder, packer, analysis, build, and recording tools
-vendor/      third-party reference code
+vendor/      third-party references and ignored local tool builds
 ```
 
 Generated output and copyrighted source media are not part of the public
@@ -540,10 +551,20 @@ Japanese Mega-CD BIOSはuser suppliedかつgit-ignoredです。
 test -f original/jp_mcd2_9212.bin
 ```
 
-recording harnessのdefault coreは
-`/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so` です。
-host固有layoutは `CORE`、`BIOS_IMAGE`、`SYSTEM_DIR` で上書きします。通常はharnessが
-BIOSをrunごとのprivate system directoryへcopyします。
+managed Genesis Plus GX diagnostic coreを一度buildします。
+
+```sh
+harness/gpgx_logvdp/build.sh
+harness/gpgx_logvdp/build.sh --check
+```
+
+recording harnessのdefaultは、固定された
+`vendor/gpgx-logvdp/genesis_plus_gx_logvdp_libretro.so` の`LOGVDP` coreです。
+generated source、binary、build log、manifestはこのdirectory以下でgit-ignoredです。
+distribution-installed coreへのfallbackはありません。`CORE`は明示的なA/B overrideとして
+残し、`BIOS_IMAGE`と`SYSTEM_DIR`でその他のhost固有layoutを上書きします。通常はharnessが
+BIOSをrunごとのprivate system directoryへcopyします。RetroArchとcoreは上流VDP traceを
+通常の`retroarch_<tag>.log`へ書きます。
 
 ## Build
 
@@ -638,7 +659,7 @@ cfg/         linker scripts
 profiles/    per-source TOML profiles
 harness/     reproducible diagnostics and their local documentation
 tools/       encoder, packer, analysis, build, and recording tools
-vendor/      third-party reference code
+vendor/      third-party references and ignored local tool builds
 ```
 
 generated outputとcopyrighted source mediaはpublic repositoryに含めません。

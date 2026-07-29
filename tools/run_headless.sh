@@ -52,7 +52,8 @@
 #                     SDL_AUDIODRIVER when using SDL audio (default: unset).
 #
 # Env overrides:
-#   CORE         libretro core .so (default: system genesis_plus_gx)
+#   CORE         libretro core .so (default: managed LOGVDP genesis_plus_gx
+#                under vendor/gpgx-logvdp; no system-core fallback)
 #   BIOS_IMAGE  Japanese Mega-CD BIOS staged as bios_CD_J.bin
 #               (default: original/jp_mcd2_9212.bin)
 #   SYSTEM_DIR  RetroArch system dir receiving bios_CD_J.bin
@@ -180,10 +181,13 @@ if [ "$RECORD" -eq 1 ]; then
   [ -z "$SDL_AUDIO_DRIVER" ] && SDL_AUDIO_DRIVER="dummy"
 fi
 
-CORE="${CORE:-/usr/lib/x86_64-linux-gnu/libretro/genesis_plus_gx_libretro.so}"
+GPGX_CORE_HARNESS="$ROOT/harness/gpgx_logvdp/build.sh"
+DEFAULT_CORE="$("$GPGX_CORE_HARNESS" --print-core)"
+CORE="${CORE:-$DEFAULT_CORE}"
 BIOS_IMAGE="${BIOS_IMAGE:-$ROOT/original/jp_mcd2_9212.bin}"
 OUTDIR="${OUTDIR:-$ROOT/tmp/$DISC_STEM/record}"
 mkdir -p "$OUTDIR"
+RA_LOG="$OUTDIR/retroarch_${TAG}.log"
 RUNTIME_DIR="$(mktemp -d "$OUTDIR/.${TAG}.runtime.XXXXXX")"
 SYSTEM_DIR="${SYSTEM_DIR:-$RUNTIME_DIR/system}"
 RA_PID="$RUNTIME_DIR/retroarch.pid"
@@ -202,13 +206,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in Xvfb retroarch xdotool import montage; do
+for tool in Xvfb retroarch xdotool import montage sha256sum; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 if [ "$RECORD" -eq 1 ]; then
   command -v ffprobe >/dev/null 2>&1 || { echo "missing required tool for --record: ffprobe" >&2; exit 1; }
 fi
+if [ "$CORE" = "$DEFAULT_CORE" ]; then
+  "$GPGX_CORE_HARNESS" --check >/dev/null
+fi
 [ -f "$CORE" ] || { echo "core not found: $CORE (set CORE=)" >&2; exit 1; }
+CORE_SHA="$(sha256sum "$CORE" | awk '{print $1}')"
+echo "Core: $CORE sha256=$CORE_SHA"
 [ -f "$BIOS_IMAGE" ] || {
   echo "Japanese Mega-CD BIOS not found: $BIOS_IMAGE (set BIOS_IMAGE=)" >&2
   exit 1
@@ -306,7 +315,7 @@ if [ "$RECORD" -eq 1 ] && [ -z "$RECORD_PATH" ]; then
   RECORD_PATH="$OUTDIR/${TAG}.mkv"
 fi
 rm -f "$OUTDIR/${TAG}"_*.png "$OUTDIR/${TAG}_sheet.jpg" \
-      "$OUTDIR/retroarch_${TAG}.log"
+      "$RA_LOG"
 if [ "$RECORD" -eq 1 ]; then
   rm -f "$RECORD_PATH"
 fi
@@ -408,8 +417,12 @@ if [ -n "$SDL_AUDIO_DRIVER" ]; then
 fi
 
 RA_WALL_START_NS="$(date +%s%N)"
+{
+  printf '# GPGX core: %s\n' "$CORE"
+  printf '# GPGX core SHA-256: %s\n' "$CORE_SHA"
+} > "$RA_LOG"
 env "${RA_ENV[@]}" retroarch --verbose \
-  -c "$CFG" -L "$CORE" "${RA_RECORD_ARGS[@]}" "${RA_RUN_ARGS[@]}" "$DISC" >"$OUTDIR/retroarch_${TAG}.log" 2>&1 &
+  -c "$CFG" -L "$CORE" "${RA_RECORD_ARGS[@]}" "${RA_RUN_ARGS[@]}" "$DISC" >>"$RA_LOG" 2>&1 &
 echo $! > "$RA_PID"
 
 if [ -z "$PLAY_REPLAY" ]; then
@@ -496,14 +509,14 @@ if [ -n "$MAX_FRAMES" ] && [ "$RA_STATUS" -ne 0 ]; then
   exit 1
 fi
 if [ -n "$MAX_FRAMES" ]; then
-  if ! grep -q '\[Runtime\].*Content ran for a total of' "$OUTDIR/retroarch_${TAG}.log" || \
-     ! grep -q '\[Core\].*Unloading core' "$OUTDIR/retroarch_${TAG}.log"; then
+  if ! grep -q '\[Runtime\].*Content ran for a total of' "$RA_LOG" || \
+     ! grep -q '\[Core\].*Unloading core' "$RA_LOG"; then
     echo "RetroArch log does not show a normal runtime/core shutdown" >&2
     exit 1
   fi
 fi
 if [ -n "$PLAY_REPLAY" ] && [ -n "$MAX_FRAMES" ] && \
-   grep -q '\[Replay\].*EOF' "$OUTDIR/retroarch_${TAG}.log"; then
+   grep -q '\[Replay\].*EOF' "$RA_LOG"; then
   echo "input replay reached EOF before the fixed-frame run ended: $PLAY_REPLAY" >&2
   echo "record a replay longer than --max-frames (the high-level harness adds 120 frames)" >&2
   exit 1
@@ -519,7 +532,7 @@ if [ -z "$MAX_FRAMES" ]; then
 else
   echo "done: RetroArch completed $MAX_FRAMES frames without wall-clock screenshots"
 fi
-echo "log:  $OUTDIR/retroarch_${TAG}.log"
+echo "log:  $RA_LOG"
 if [ "$RECORD" -eq 1 ]; then
   [ -s "$RECORD_PATH" ] || { echo "recording not produced: $RECORD_PATH" >&2; exit 1; }
   RECORD_DURATION="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$RECORD_PATH" 2>/dev/null || true)"
