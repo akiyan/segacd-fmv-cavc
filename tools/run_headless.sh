@@ -182,12 +182,14 @@ if [ "$RECORD" -eq 1 ]; then
 fi
 
 GPGX_CORE_HARNESS="$ROOT/harness/gpgx_logvdp/build.sh"
+GPGX_LOG_COMPACTOR="$ROOT/harness/gpgx_logvdp/compact_log.sh"
 DEFAULT_CORE="$("$GPGX_CORE_HARNESS" --print-core)"
 CORE="${CORE:-$DEFAULT_CORE}"
 BIOS_IMAGE="${BIOS_IMAGE:-$ROOT/original/jp_mcd2_9212.bin}"
 OUTDIR="${OUTDIR:-$ROOT/tmp/$DISC_STEM/record}"
 mkdir -p "$OUTDIR"
 RA_LOG="$OUTDIR/retroarch_${TAG}.log"
+GPGX_FULL_LOG="$OUTDIR/gpgx_logvdp_${TAG}.log.gz"
 RUNTIME_DIR="$(mktemp -d "$OUTDIR/.${TAG}.runtime.XXXXXX")"
 SYSTEM_DIR="${SYSTEM_DIR:-$RUNTIME_DIR/system}"
 RA_PID="$RUNTIME_DIR/retroarch.pid"
@@ -206,7 +208,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-for tool in Xvfb retroarch xdotool import montage sha256sum; do
+for tool in Xvfb retroarch xdotool import montage sha256sum gzip; do
   command -v "$tool" >/dev/null 2>&1 || { echo "missing required tool: $tool" >&2; exit 1; }
 done
 if [ "$RECORD" -eq 1 ]; then
@@ -214,6 +216,9 @@ if [ "$RECORD" -eq 1 ]; then
 fi
 if [ "$CORE" = "$DEFAULT_CORE" ]; then
   "$GPGX_CORE_HARNESS" --check >/dev/null
+  MANAGED_GPGX=1
+else
+  MANAGED_GPGX=0
 fi
 [ -f "$CORE" ] || { echo "core not found: $CORE (set CORE=)" >&2; exit 1; }
 CORE_SHA="$(sha256sum "$CORE" | awk '{print $1}')"
@@ -315,7 +320,7 @@ if [ "$RECORD" -eq 1 ] && [ -z "$RECORD_PATH" ]; then
   RECORD_PATH="$OUTDIR/${TAG}.mkv"
 fi
 rm -f "$OUTDIR/${TAG}"_*.png "$OUTDIR/${TAG}_sheet.jpg" \
-      "$RA_LOG"
+      "$RA_LOG" "$GPGX_FULL_LOG"
 if [ "$RECORD" -eq 1 ]; then
   rm -f "$RECORD_PATH"
 fi
@@ -525,6 +530,9 @@ if [ -n "$RECORD_REPLAY" ] && [ ! -s "$RECORD_REPLAY" ]; then
   echo "input replay was not produced: $RECORD_REPLAY" >&2
   exit 1
 fi
+if [ "$MANAGED_GPGX" -eq 1 ]; then
+  "$GPGX_LOG_COMPACTOR" "$RA_LOG" "$GPGX_FULL_LOG"
+fi
 
 if [ -z "$MAX_FRAMES" ]; then
   montage "$OUTDIR/${TAG}"_*.png -tile 6x -geometry 260x195+2+2 "$OUTDIR/${TAG}_sheet.jpg" 2>/dev/null || true
@@ -533,6 +541,9 @@ else
   echo "done: RetroArch completed $MAX_FRAMES frames without wall-clock screenshots"
 fi
 echo "log:  $RA_LOG"
+if [ "$MANAGED_GPGX" -eq 1 ]; then
+  echo "full GPGX log: $GPGX_FULL_LOG"
+fi
 if [ "$RECORD" -eq 1 ]; then
   [ -s "$RECORD_PATH" ] || { echo "recording not produced: $RECORD_PATH" >&2; exit 1; }
   RECORD_DURATION="$(ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 "$RECORD_PATH" 2>/dev/null || true)"

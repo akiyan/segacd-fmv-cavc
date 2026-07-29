@@ -238,8 +238,9 @@ binary, build log, and manifest stay git-ignored below that directory. There is
 no fallback to a distribution-installed core. `CORE` remains an explicit A/B
 override; `BIOS_IMAGE` and `SYSTEM_DIR` override the other host-specific
 layouts. Normally the harness copies the BIOS into a private per-run system
-directory. RetroArch and the core write the upstream VDP trace to the normal
-`retroarch_<tag>.log`.
+directory. The normal `retroarch_<tag>.log` retains the DMA trace and unexpected
+core errors. The complete upstream trace is kept beside it as
+`gpgx_logvdp_<tag>.log.gz`.
 
 ## Build
 
@@ -563,8 +564,9 @@ recording harnessのdefaultは、固定された
 generated source、binary、build log、manifestはこのdirectory以下でgit-ignoredです。
 distribution-installed coreへのfallbackはありません。`CORE`は明示的なA/B overrideとして
 残し、`BIOS_IMAGE`と`SYSTEM_DIR`でその他のhost固有layoutを上書きします。通常はharnessが
-BIOSをrunごとのprivate system directoryへcopyします。RetroArchとcoreは上流VDP traceを
-通常の`retroarch_<tag>.log`へ書きます。
+BIOSをrunごとのprivate system directoryへcopyします。通常の
+`retroarch_<tag>.log`にはDMA traceと想定外のcore errorを残し、上流trace全体は隣の
+`gpgx_logvdp_<tag>.log.gz`へ保存します。
 
 ## Build
 

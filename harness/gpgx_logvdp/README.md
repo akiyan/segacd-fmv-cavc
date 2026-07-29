@@ -29,6 +29,7 @@ From the repository root:
 ```sh
 harness/gpgx_logvdp/build.sh
 harness/gpgx_logvdp/build.sh --check
+harness/gpgx_logvdp/test_compact_log.sh
 ```
 
 Use `--force` to fetch and rebuild even when the installed core and manifest
@@ -59,25 +60,38 @@ function declaration and does not change emulator logic.
 
 ## Runtime logs
 
-`tools/run_headless.sh` uses the managed core by default and writes the
-RetroArch/core output to:
+`tools/run_headless.sh` uses the managed core by default. After a successful
+run it keeps the DMA trace and unexpected core errors in:
 
 ```text
 <OUTDIR>/retroarch_<tag>.log
 ```
 
-The upstream trace can be isolated from a completed run with:
+The complete upstream trace, including every CPU VDP data-port access, remains
+available as a fast-compressed sidecar:
 
-```sh
-rg 'DMA type|DMA ends|CPU frozen' \
-  <OUTDIR>/retroarch_<tag>.log
+```text
+<OUTDIR>/gpgx_logvdp_<tag>.log.gz
 ```
 
 `LOGVDP` is an upstream compile-time switch, not a runtime option. It also logs
 ordinary VDP register, status, and data-port activity, so a complete playback
-log can be large. Keep the raw log until the DMA diagnosis is extracted; do
-not treat host wall-clock slowdown from log output as a change to emulated
-cycle accounting.
+log can be large. `harness/gpgx_logvdp/compact_log.sh` preserves that evidence
+with `gzip -1` and removes only the known non-DMA `LOGVDP` chatter from the
+plain RetroArch log. It retains any unrecognized core error. Do not treat host
+wall-clock slowdown from log output as a change to emulated cycle accounting.
+
+Inspect the standard DMA trace directly:
+
+```sh
+rg 'DMA type|DMA ends|CPU frozen' <OUTDIR>/retroarch_<tag>.log
+```
+
+Inspect any part of the complete trace without expanding it on disk:
+
+```sh
+gzip -cd <OUTDIR>/gpgx_logvdp_<tag>.log.gz | rg 'VDP register'
+```
 
 Set `CORE=/absolute/path/to/another_libretro_core.so` only for an explicit A/B.
 There is no automatic fallback to a system Genesis Plus GX package.
