@@ -101,6 +101,40 @@ gzip -cd <OUTDIR>/gpgx_logvdp_<tag>.log.gz | rg 'VDP register'
 Set `CORE=/absolute/path/to/another_libretro_core.so` only for an explicit A/B.
 There is no automatic fallback to a system Genesis Plus GX package.
 
+## Frame-aligned transfer TSV
+
+`extract_frame_tsv.py` aligns the compact DMA trace and the complete LOGVDP
+sidecar to the movie frame numbers in a matching HUD TSV:
+
+```sh
+tools/python.sh harness/gpgx_logvdp/extract_frame_tsv.py \
+  <OUTDIR>/retroarch_<tag>.log \
+  --full-log-gz <OUTDIR>/gpgx_logvdp_<tag>.log.gz \
+  --hud-tsv logs/<run>_hud.tsv \
+  --output logs/<run>_gpgx_vdp.tsv
+```
+
+The output separates:
+
+- pattern DMA words transferred in blanking and active display;
+- CPU pattern words written in blanking, active display, and the two ambiguous
+  LOGVDP V-counter boundary representations;
+- name-table DMA words transferred in blanking and active display; and
+- pattern DMA command and update counts.
+
+The extractor identifies the ordinary pattern-DMA and fixed 1792-word
+name-table-DMA call sites from the trace instead of depending on fixed program
+counter values. DMA-generated VRAM writes carry those call-site PCs and are
+excluded from the CPU totals. In the fixed H40 player, the remaining per-frame
+VRAM writes are the one- or two-tile direct path and one-word DMA repairs.
+
+The extractor validates every timed frame with at most four transfer budgets:
+pattern DMA words plus CPU-written pattern words must exactly equal the
+logical pattern words in the HUD TSV. It also writes a JSON receipt beside the
+TSV with source hashes, inferred call sites, phase rules, maxima, and the
+number of validated frames. Frame 0 remains untimed and is not part of this
+equivalence check.
+
 ## Qualification
 
 On 2026-07-29, the managed core was compared with the previously used Ubuntu
