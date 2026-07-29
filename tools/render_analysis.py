@@ -40,6 +40,7 @@ CONFIG_PROFILE = consume_config_arg(
     sys.argv, required=__name__ == "__main__")
 
 import layout_preview as L
+import analysis_audio
 import analysis_style as style
 import stream_schedule
 import analysis_logs
@@ -415,32 +416,28 @@ _SP = np.load(f"{SIM}/seg_palettes.npz")
 SEG_PALS = _SP["seg_pals"]                     # (nseg,4,15,3) rgb333(0-7)
 FRAME_SEG = _SP["frame_seg"]                   # (NF,)
 
-# ---- 音声波形パネル用データ(sim OUT の音声wav) ----
+# ---- 音声波形 / spectrum panel用データ(sim OUT のplayback-model WAV) ----
 import wave as _wave  # noqa: E402
-WAVE_WIN_S = 2.0                                          # 前後2s
+WAVE_WIN_S = L.WAVE_WIN_FRAMES / FPS
 WAVE_BW = L.WAVE_FRAME[2] - L.WAVE_FRAME[0] - 2
+SPEC_BW = L.SPEC_FRAME[2] - L.SPEC_FRAME[0] - 2
 try:
     _wf = _wave.open(str(AUDIO_PATH), "rb")
     AUDIO_RATE = _wf.getframerate()
     _audio_width = _wf.getsampwidth()
+    _audio_channels = _wf.getnchannels()
     _audio_raw = _wf.readframes(_wf.getnframes())
     _wf.close()
-    if _audio_width == 1:
-        _araw = np.abs(
-            np.frombuffer(_audio_raw, np.uint8).astype(np.int16) - 128)
-    elif _audio_width == 2:
-        _araw = (
-            np.abs(np.frombuffer(_audio_raw, "<i2").astype(np.int32)) >> 8
-        ).astype(np.int16)
-    else:
-        raise ValueError(f"unsupported waveform sample width: {_audio_width}")
+    AUDIO_SAMPLES, AUDIO_FULL_SCALE = analysis_audio.decode_pcm_mono(
+        _audio_raw,
+        sample_width=_audio_width,
+        channels=_audio_channels,
+    )
 except Exception as _e:
-    AUDIO_RATE = 22050; _araw = np.zeros(1, np.int16); print("waveform: 音声wav 無し ->", _e)
-_PPS = WAVE_BW / (2 * WAVE_WIN_S)                         # pixels/秒
-_BIN = max(1, int(round(AUDIO_RATE / _PPS)))             # samples/pixel(1px=1bin)
-_nb = len(_araw) // _BIN
-AUDIO_ENV = ((_araw[:_nb * _BIN].reshape(_nb, _BIN).max(axis=1)) if _nb > 0
-             else np.zeros(1, np.int16)).astype(np.int16)   # px解像度の包絡(0..128)
+    AUDIO_RATE = 22_050
+    AUDIO_SAMPLES = np.zeros(1, np.int32)
+    AUDIO_FULL_SCALE = 32768
+    print("analysis audio: playback-model WAV unavailable ->", _e)
 
 
 def seg_pal_rgb(seg):
@@ -611,13 +608,19 @@ def build_base():
     if SRC_SPEC:
         d.text((_sx + L._w(L.f_head, "Source") + 12, _sby), SRC_SPEC, fill=L.COL_DIM, font=L.f_meta, anchor="ls")
     L.panel(d, L.CAT_FRAME)
-    L.panel(d, L.WAVE_FRAME)         # 音声波形パネル。見出し=Audio + 諸元 + 読み方(小フォント, 枠外)
+    L.panel(d, L.WAVE_FRAME)
+    L.panel(d, L.SPEC_FRAME)
     _ax = L.WAVE_FRAME[0] + 2; _ay = L.WAVE_FRAME[1] - 4
     d.text((_ax, _ay), "Audio", fill=L.COL_TXT, font=L.f_leg, anchor="ls")
-    _sx = _ax + L._w(L.f_leg, "Audio") + L._w(L.f_sm, " ")   # 右スペース=半角1文字
-    d.text((_sx, _ay), AUDIO_STR, fill=L.COL_DIM, font=L.f_sm, anchor="ls")
-    d.text((_sx + L._w(L.f_sm, AUDIO_STR) + 14, _ay), "±2s, now=center, scroll left",
-           fill=L.COL_DIM, font=L.f_sm, anchor="ls")   # 波形の読み方=見出しの後ろ
+    _sx = _ax + L._w(L.f_leg, "Audio") + L._w(L.f_sm, " ")
+    d.text(
+        (_sx, _ay), L.wave_window_label(FPS),
+        fill=L.COL_DIM, font=L.f_sm, anchor="ls")
+    _sx = L.SPEC_FRAME[0] + 2
+    d.text((_sx, _ay), "Spectrum", fill=L.COL_TXT, font=L.f_leg, anchor="ls")
+    d.text(
+        (_sx + L._w(L.f_leg, "Spectrum") + L._w(L.f_sm, " "), _ay),
+        "40Hz–11kHz", fill=L.COL_DIM, font=L.f_sm, anchor="ls")
     # カテゴリ合計(全編合計=静的)を Category の下へ
     cv.paste(L.draw_cattotals(L.CATTOT_W, L.CATTOT_H, {"cat_totals": CAT_TOTALS}),
              L.CATTOT_XY)
@@ -979,22 +982,61 @@ def write_analysis_tsv():
 
 
 def draw_waveform_real(i):
-    """音声波形パネル: このコマの前後2sを描く。中央=現在(now)、左=過去(明)/右=未来(暗)、左へ流れる。"""
+    """Draw the signed playback-model samples owned by this video frame."""
     bw, bh = WAVE_BW, L.WAVE_FRAME[3] - L.WAVE_FRAME[1] - 2
     im = Image.new("RGB", (bw, bh), (16, 16, 16))
     d = ImageDraw.Draw(im)
     mid = bh // 2
-    d.line([(0, mid), (bw - 1, mid)], fill=(60, 60, 66))          # 振幅0の中央線
-    now_bin = int(i / FPS * _PPS); half = bw // 2
-    scale = bh * 0.46 / 128.0
+    d.line([(0, mid), (bw - 1, mid)], fill=(60, 60, 66))
+    start, stop = analysis_audio.frame_sample_bounds(
+        i,
+        fps=FPS,
+        sample_rate=AUDIO_RATE,
+        total_samples=len(AUDIO_SAMPLES),
+        window_frames=WAVE_WIN_S * FPS,
+    )
+    minima, maxima = analysis_audio.waveform_extrema(
+        AUDIO_SAMPLES, start=start, stop=stop, columns=bw)
+    scale = bh * 0.46 / AUDIO_FULL_SCALE
     for x in range(bw):
-        b = now_bin - half + x
-        if 0 <= b < len(AUDIO_ENV):
-            yy = int(AUDIO_ENV[b] * scale)
-            if yy > 0:
-                col = (150, 205, 150) if x < half else (95, 130, 95)   # 過去=明 / 未来=暗
-                d.line([(x, mid - yy), (x, mid + yy)], fill=col)
-    d.line([(half, 0), (half, bh - 1)], fill=(230, 230, 235))    # 現在(now)線
+        top = mid - round(int(maxima[x]) * scale)
+        bottom = mid - round(int(minima[x]) * scale)
+        if top != bottom:
+            d.line(
+                [(x, top), (x, bottom)],
+                fill=L.AUDIO_TRACE_COLOR,
+            )
+    return im
+
+
+def draw_spectrum_real(i):
+    """Draw a 24-band log-frequency FFT around this frame's audio interval."""
+    bw, bh = SPEC_BW, L.SPEC_FRAME[3] - L.SPEC_FRAME[1] - 2
+    im = Image.new("RGB", (bw, bh), (16, 16, 16))
+    d = ImageDraw.Draw(im)
+    baseline = bh - 2
+    d.line([(0, baseline), (bw - 1, baseline)], fill=(60, 60, 66))
+    center_sample = round((i / FPS + WAVE_WIN_S / 2.0) * AUDIO_RATE)
+    levels = analysis_audio.spectrum_levels(
+        AUDIO_SAMPLES,
+        sample_rate=AUDIO_RATE,
+        center_sample=center_sample,
+        full_scale=AUDIO_FULL_SCALE,
+        fft_size=L.SPECTRUM_FFT_SIZE,
+        min_hz=L.SPECTRUM_MIN_HZ,
+        max_hz=L.SPECTRUM_MAX_HZ,
+        bands=L.SPECTRUM_BANDS,
+    )
+    slot = bw / L.SPECTRUM_BANDS
+    for band, level in enumerate(levels):
+        left = round(band * slot) + 1
+        right = max(left, round((band + 1) * slot) - 2)
+        top = baseline - round(float(level) * (bh - 5))
+        if top < baseline:
+            d.rectangle(
+                [(left, top), (right, baseline - 1)],
+                fill=L.AUDIO_TRACE_COLOR,
+            )
     return im
 
 
@@ -1041,9 +1083,14 @@ def render(i):
     tx = L.MAIN_FRAME[2] - tw; ty = base_y - L.f_leg.getmetrics()[0]
     d.text((tx, ty), lab_t, fill=L.COL_TXT, font=L.f_leg)
     d.text((tx + L._w(L.f_leg, lab_t), ty), fhex, fill=L.COL_TXT, font=L.f_leg)
-    # 凡例リスト(Categoryの上) / VRAMパネル(右下) / status
+    # 凡例リスト(Categoryの上) / audio panels(右下) / status
     cv.paste(L.draw_legend(L.CATLEG_W, L.CATLEG_H, data), L.CATLEG_XY)
-    cv.paste(draw_waveform_real(i), (L.WAVE_FRAME[0] + 1, L.WAVE_FRAME[1] + 1))   # padding無し(枠内1px)
+    cv.paste(
+        draw_waveform_real(i),
+        (L.WAVE_FRAME[0] + 1, L.WAVE_FRAME[1] + 1))
+    cv.paste(
+        draw_spectrum_real(i),
+        (L.SPEC_FRAME[0] + 1, L.SPEC_FRAME[1] + 1))
     cv.paste(draw_status_real(data), L.STATUS_XY)
     cv.save(f"{FRAMES_DIR}/{i:05d}.png")
     return i

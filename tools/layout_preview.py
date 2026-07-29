@@ -5,7 +5,7 @@ render_analysis.py が同じ描画関数と定数を実データに使う。
 
 新レイアウト(この版):
   左  = SEGA-CD sim output(4:3枠) + 下に status帯
-  右  = Source / Category(Miss赤塗り) / 全編カテゴリ合計 / Audio波形
+  右  = Source / Category(Miss赤塗り) / 全編カテゴリ合計 / Audio波形+Spectrum
   下  = Req/Cold/Band/DMA/Run/Prg/Wrd/Pre、パレット、4段タイムライン
         ※ Miss&MissCarryパネルと per-metric flow は廃止。
 既定出力: tmp/layout_preview.png
@@ -63,14 +63,21 @@ REQ_TIMELINE_CATS = style.REQ_TIMELINE_CATS
 # ---- レイアウト定数(枠 = [x0,y0,x1,y1]) ----
 PAD = 11
 MAIN_FRAME = (40, 52, 1267, 978)      # 左大枠(4:3黒帯)。video (51,63) 1205x904
-# 右列: Source(4:3) / 凡例リスト / Category(4:3) / 凡例合計 / 音声波形。左隙間=main直後≈1タイル。
-# パネルを左に広げ幅577(=433高, 4:3維持)。大きくした分 Audio(波形)を薄く(32)。
+# 右列: Source(4:3) / 凡例リスト / Category(4:3) / 凡例合計 /
+# 音声波形 + spectrum。左隙間=main直後≈1タイル。
 _RCX = 1310                                 # main枠(右端1267)の直後≈43px(sim約1タイル程度)
 SRC_FRAME  = (_RCX, 52, 1877, 477)          # Source 4:3 (567x425, outputと同じ比率)
 CATLEG_XY  = (_RCX, 483); CATLEG_W, CATLEG_H = 567, 44   # 凡例リスト = Categoryの上
 CAT_FRAME  = (_RCX, 533, 1877, 958)         # Category 4:3 (567x425)
 CATTOT_XY  = (_RCX, 962); CATTOT_W, CATTOT_H = 567, 24   # 凡例合計(バー高さ1/3に縮小)= Categoryの下
-WAVE_FRAME = (_RCX, 1014, 1877, 1064)       # 音声波形(高さ50)。見出しは小フォントで合計バーとの間にmargin
+WAVE_WIN_FRAMES = 1.0
+SPECTRUM_FFT_SIZE = 2048
+SPECTRUM_BANDS = 24
+SPECTRUM_MIN_HZ = 40.0
+SPECTRUM_MAX_HZ = 11_025.0
+AUDIO_TRACE_COLOR = (225, 225, 230)
+WAVE_FRAME = (_RCX, 1014, _RCX + 284, 1064)  # 左半分: 1-frame signed waveform
+SPEC_FRAME = (_RCX + 294, 1014, 1877, 1064)  # 右半分: log-band spectrum
 # GRAPH_FRAME(per-metric flow = metricパネル)は廃止
 STATUS_XY = (40, 982); STATUS_W, STATUS_H = 1227, 84   # メイン枠(下端978)に寄せる(margin詰め)
 
@@ -699,19 +706,46 @@ def draw_footer(cv, data):
     cv.paste(ct, CATTOT_XY)
 
 
+def wave_window_label(fps):
+    """Return the compact heading for the frame-owned audio interval."""
+    milliseconds = 1000.0 * WAVE_WIN_FRAMES / float(fps)
+    return f"1 frame ({milliseconds:.0f}ms)"
+
+
 def draw_waveform_placeholder(w, h):
-    """音声波形パネルのプレースホルダ: 前後2s のスクロール波形(中央=現在, 左へ流れる)。
-    見出しは枠の外(上)に音声諸元。実装は render_analysis 側(実音声を反映)。"""
+    """Draw one frame-wide white waveform placeholder."""
     im = Image.new("RGB", (w, h), (16, 16, 16))
     d = ImageDraw.Draw(im)
     mid = h // 2
-    d.line([(0, mid), (w - 1, mid)], fill=(60, 60, 66))            # 振幅0の中央線
+    d.line([(0, mid), (w - 1, mid)], fill=(60, 60, 66))
     for x in range(w):
-        amp = (math.sin(x * 0.15) * 0.6 + math.sin(x * 0.045) * 0.4) * (0.45 + 0.55 * abs(math.sin(x * 0.017)))
+        amp = (
+            math.sin(x * 0.15) * 0.6 + math.sin(x * 0.045) * 0.4
+        ) * (0.45 + 0.55 * abs(math.sin(x * 0.017)))
         yy = int(abs(amp) * (h * 0.44))
-        col = (150, 205, 150) if x < w // 2 else (95, 130, 95)     # 過去=明 / 未来=暗
-        d.line([(x, mid - yy), (x, mid + yy)], fill=col)
-    d.line([(w // 2, 0), (w // 2, h - 1)], fill=(230, 230, 235))   # 現在(now)線。読み方は見出しの後ろに記載
+        d.line(
+            [(x, mid - yy), (x, mid + yy)],
+            fill=AUDIO_TRACE_COLOR,
+        )
+    return im
+
+
+def draw_spectrum_placeholder(w, h):
+    """Draw a deterministic 24-band white spectrum placeholder."""
+    im = Image.new("RGB", (w, h), (16, 16, 16))
+    d = ImageDraw.Draw(im)
+    baseline = h - 2
+    d.line([(0, baseline), (w - 1, baseline)], fill=(60, 60, 66))
+    slot = w / SPECTRUM_BANDS
+    for band in range(SPECTRUM_BANDS):
+        level = 0.18 + 0.72 * abs(math.sin(band * 0.41 + 0.7))
+        left = round(band * slot) + 1
+        right = max(left, round((band + 1) * slot) - 2)
+        top = baseline - round(level * (h - 5))
+        d.rectangle(
+            [(left, top), (right, baseline - 1)],
+            fill=AUDIO_TRACE_COLOR,
+        )
     return im
 
 
@@ -739,13 +773,19 @@ def main():
     d.text((_sx, _sby), "Source", fill=COL_TXT, font=f_head, anchor="ls")
     d.text((_sx + _w(f_head, "Source") + 12, _sby), data["src_spec"], fill=COL_DIM, font=f_meta, anchor="ls")
     panel(d, CAT_FRAME)          # 見出し無し(ユーザー指定)
-    panel(d, WAVE_FRAME)         # 音声波形枠。見出し=Audio + 諸元(Sourceと同じく小さく薄く)
+    panel(d, WAVE_FRAME)
+    panel(d, SPEC_FRAME)
     _ax = WAVE_FRAME[0] + 2; _ay = WAVE_FRAME[1] - 4
-    d.text((_ax, _ay), "Audio", fill=COL_TXT, font=f_leg, anchor="ls")   # 小さめ+合計バーとmargin
-    _sx = _ax + _w(f_leg, "Audio") + _w(f_sm, " ")   # 右スペース=半角1文字ぶん
-    d.text((_sx, _ay), data["audio"], fill=COL_DIM, font=f_sm, anchor="ls")
-    d.text((_sx + _w(f_sm, data["audio"]) + 14, _ay), "±2s, now=center, scroll left",
-           fill=COL_DIM, font=f_sm, anchor="ls")   # 波形の読み方=見出しの後ろへ
+    d.text((_ax, _ay), "Audio", fill=COL_TXT, font=f_leg, anchor="ls")
+    _sx = _ax + _w(f_leg, "Audio") + _w(f_sm, " ")
+    d.text(
+        (_sx, _ay), wave_window_label(data["fps"]),
+        fill=COL_DIM, font=f_sm, anchor="ls")
+    _sx = SPEC_FRAME[0] + 2
+    d.text((_sx, _ay), "Spectrum", fill=COL_TXT, font=f_leg, anchor="ls")
+    d.text(
+        (_sx + _w(f_leg, "Spectrum") + _w(f_sm, " "), _ay),
+        "40Hz–11kHz", fill=COL_DIM, font=f_sm, anchor="ls")
 
     # 現在時間/フレーム番号: メイン枠の右上・枠外・右端揃え。ベースラインは見出しと共通
     ts = data["time_s"]
@@ -779,9 +819,14 @@ def main():
     # 凡例リスト(Categoryパネルの「上」へ移動)
     leg = draw_legend(CATLEG_W, CATLEG_H, data)
     cv.paste(leg, CATLEG_XY)
-    # VRAMパネル(プレースホルダ: 64KB=2048タイルのタイルマップ。実装は render_analysis 側)
-    wv = draw_waveform_placeholder(WAVE_FRAME[2] - WAVE_FRAME[0] - 2, WAVE_FRAME[3] - WAVE_FRAME[1] - 2)
-    cv.paste(wv, (WAVE_FRAME[0] + 1, WAVE_FRAME[1] + 1))   # padding無し(枠内1pxのみ)
+    wv = draw_waveform_placeholder(
+        WAVE_FRAME[2] - WAVE_FRAME[0] - 2,
+        WAVE_FRAME[3] - WAVE_FRAME[1] - 2)
+    cv.paste(wv, (WAVE_FRAME[0] + 1, WAVE_FRAME[1] + 1))
+    spectrum = draw_spectrum_placeholder(
+        SPEC_FRAME[2] - SPEC_FRAME[0] - 2,
+        SPEC_FRAME[3] - SPEC_FRAME[1] - 2)
+    cv.paste(spectrum, (SPEC_FRAME[0] + 1, SPEC_FRAME[1] + 1))
 
     # 共通フッター(status帯 + カテゴリ合計バー)
     draw_footer(cv, data)

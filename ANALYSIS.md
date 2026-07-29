@@ -68,18 +68,19 @@ The TSV uses the independently printed persistent `logs/` path unless
 | |                                          | |   | |  Miss = red-filled hole)| |
 | +------------------------------------------+ |   | +-------------------------+ |
 +----------------------------------------------+   | CATEGORY TOTALS (whole clip)|
-+----------------------------------------------+   | +-------------------------+ |
-| STATUS BAR                                   |   | | AUDIO WAVEFORM          | |
-|  [Req][Cold][Pre][Band][Prg][Wr0][Wr1]...      | | | (+/-2s, now = centre)   | |
-|  Prev/Current/Next palette strip             |   | +-------------------------+ |
-|  3 timelines (Req / three supplies / BODY Band)| +-----------------------------+
++----------------------------------------------+   | +-----------+ +-----------+ |
+| STATUS BAR                                   |   | | WAVEFORM  | | SPECTRUM  | |
+|  [Req][Cold][Pre][Band][Prg][Wr0][Wr1]...      | | | 1 frame   | | 24 bands  | |
+|  Prev/Current/Next palette strip             |   | +-----------+ +-----------+ |
+|  4 timelines (Req / Supply / Run / Band)      | +-----------------------------+
 +----------------------------------------------+
 ```
 
 Regions (pixel rectangles in `layout_preview.py`): `MAIN_FRAME` left,
-`SRC_FRAME` / `CATLEG_XY` / `CAT_FRAME` / `CATTOT_XY` / `WAVE_FRAME` right
-column (top to bottom), and `STATUS_XY` bottom-left. The layout has no
-per-metric flow graph or separate palette-totals slot.
+`SRC_FRAME` / `CATLEG_XY` / `CAT_FRAME` / `CATTOT_XY` right column (top to
+bottom), `WAVE_FRAME` / `SPEC_FRAME` side by side at its bottom, and `STATUS_XY`
+bottom-left. The layout has no per-metric flow graph or separate
+palette-totals slot.
 
 ## Headings
 
@@ -132,15 +133,22 @@ Low-resolution grids therefore appear at their true on-screen size.
   stacked horizontal bar of the whole-clip totals per category, with a compact
   swatch+count legend above it (totals only, no unique counts). Static for the
   whole clip.
-- **Audio waveform** (bottom, `WAVE_FRAME`): scrolling envelope of the sim's
-  playback-model audio (the WAV muxed into the video). For ADPCM22 this is not
-  the clean extracted source: it is the exact continuous checkpointed IMA
-  encode/decode result after conversion to the RF5C164's 8-bit sign-magnitude
-  samples. The original signed-16 WAV remains separate as the packer input.
-  Window is +/-2 seconds with
-  **now = centre** (white line), scrolling left; the past (left half) is drawn
-  bright green, the future (right half) dim green, around a zero-amplitude
-  centre line. Heading (outside the frame): `Audio` + the audio spec.
+- **Audio waveform** (bottom-left, `WAVE_FRAME`): the signed waveform from the
+  sim's playback-model audio (the WAV muxed into the video). For ADPCM22 this
+  is not the clean extracted source: it is the exact continuous checkpointed
+  IMA encode/decode result after conversion to the RF5C164's 8-bit
+  sign-magnitude samples. The original signed-16 WAV remains separate as the
+  packer input. Frame `i` owns exactly the interval from `i / fps` to
+  `(i + 1) / fps`, so adjacent analysis frames partition the audio without a
+  gap or overlap. Each pixel column shows that interval's signed minimum and
+  maximum as a white vertical line around the grey zero-amplitude centre line.
+  There is no now marker or past/future colour split. The compact heading is
+  `Audio 1 frame (Nms)`.
+- **Audio spectrum** (bottom-right, `SPEC_FRAME`): the same playback-model
+  samples around the centre of the frame-owned interval. A 2,048-sample Hann
+  window feeds an FFT, then 24 logarithmic bands from 40 Hz to 11.025 kHz take
+  their peak magnitude. White bars show the range from -72 dB (empty) to 0 dB
+  (full height). The compact heading is `Spectrum 40Hz–11kHz`.
 - There is no separate per-metric flow-graph panel.
 
 ## Tile Categories (READ THIS CAREFULLY)
@@ -500,17 +508,18 @@ overlayと同じ値です。Frame 0は`legend_raw`と`legend_same`を保持し�
 | |                                          | |   | | Miss = red-filled hole  | |
 | +------------------------------------------+ |   | +-------------------------+ |
 +----------------------------------------------+   | CATEGORY TOTALS (whole clip)|
-+----------------------------------------------+   | +-------------------------+ |
-| STATUS BAR                                   |   | | AUDIO WAVEFORM          | |
-| [Req][Cold][Pre][Band][Prg][Wr0][Wr1]...       | | | +/-2s, now = centre     | |
-| Prev/Current/Next palette strip              |   | +-------------------------+ |
++----------------------------------------------+   | +-----------+ +-----------+ |
+| STATUS BAR                                   |   | | WAVEFORM  | | SPECTRUM  | |
+| [Req][Cold][Pre][Band][Prg][Wr0][Wr1]...       | | | 1 frame   | | 24 bands  | |
+| Prev/Current/Next palette strip              |   | +-----------+ +-----------+ |
 | 4 timelines (Req / Supply / Run / Band)      |   +-----------------------------+
 +----------------------------------------------+
 ```
 
 `layout_preview.py`内のregionは、左が`MAIN_FRAME`、右columnの上から
-`SRC_FRAME`、`CATLEG_XY`、`CAT_FRAME`、`CATTOT_XY`、`WAVE_FRAME`、
-左下が`STATUS_XY`です。Per-metric flow graphや独立palette-total slotはありません。
+`SRC_FRAME`、`CATLEG_XY`、`CAT_FRAME`、`CATTOT_XY`、最下部に横並びの
+`WAVE_FRAME` / `SPEC_FRAME`、左下が`STATUS_XY`です。Per-metric flow graphや
+独立palette-total slotはありません。
 
 ## Heading
 
@@ -551,11 +560,19 @@ Panel全体へstretchしないため、low-resolution gridは実画面上のsize
 - **Category totals**: Category map直下の`CATTOT_XY`です。全編category totalを
   thin stacked barとcompactなswatch+count legendで示します。Unique countは
   表示せず、全編で固定です。
-- **Audio waveform**: 下部`WAVE_FRAME`にsim playback-model audioのscrolling
-  envelopeを描きます。ADPCM22ではclean sourceではなく、checkpoint付きIMAを
+- **Audio waveform**: 右下左側の`WAVE_FRAME`にsim playback-model audioのsigned
+  waveformを描きます。ADPCM22ではclean sourceではなく、checkpoint付きIMAを
   encode/decodeし、RF5C164の8-bit sign-magnitudeへ変換した信号です。元のsigned-16
-  WAVはpacker inputとして別に残ります。Windowは±2秒、white centre lineが現在で、
-  左の過去をbright green、右の将来をdim greenで描きます。
+  WAVはpacker inputとして別に残ります。Frame `i`は`i / fps`から`(i + 1) / fps`
+  までのちょうど1 frame分を受け持つため、隣接frame間にgapやoverlapはありません。
+  各pixel columnのsigned minimum/maximumをwhite vertical lineで描き、greyの
+  zero-amplitude中央横線だけを残します。now markerやpast/futureの色分けはありません。
+  Compact headingは`Audio 1 frame (Nms)`です。
+- **Audio spectrum**: 右下右側の`SPEC_FRAME`に、同じplayback-model sampleの
+  frame区間中央付近を描きます。2,048-sample Hann windowをFFTへ通し、40 Hzから
+  11.025 kHzまでの24本のlogarithmic bandごとにpeak magnitudeを取ります。White barは
+  -72 dBをempty、0 dBをfull heightとして表示します。Compact headingは
+  `Spectrum 40Hz–11kHz`です。
 - 独立したper-metric flow-graph panelはありません。
 
 ## Tile category
