@@ -62,6 +62,21 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
             (self.pattern_pc, self.nt_pc, 102),
         )
 
+    def test_accepts_a_complete_first_loop_followed_by_tail_replay(self):
+        events = extract.dma_events(
+            self.compact + [
+                dma(102, 1792, 1792, self.nt_pc),
+                dma(102, 1792, 1792, self.nt_pc),
+            ]
+        )
+        self.assertEqual(
+            extract.infer_dma_pcs(events, 3),
+            (self.pattern_pc, self.nt_pc, 102),
+        )
+        rows = extract.extract_dma_rows(
+            events, 3, self.pattern_pc, self.nt_pc, 102)
+        self.assertEqual(len(rows), 3)
+
     def test_extracts_dma_and_cpu_words_on_the_same_frame_axis(self):
         events = extract.dma_events(self.compact)
         rows = extract.extract_dma_rows(

@@ -106,17 +106,25 @@ def infer_dma_pcs(
         if dma_type == 1 and remaining == 1792
     )
     nt_candidates = [
-        pc for pc, count in nt_counts.items() if count == frame_count
+        (pc, count) for pc, count in nt_counts.items() if count >= frame_count
     ]
-    if len(nt_candidates) != 1:
+    nt_candidates.sort(key=lambda item: item[1], reverse=True)
+    if (
+        not nt_candidates
+        or (
+            len(nt_candidates) > 1
+            and nt_candidates[0][1] == nt_candidates[1][1]
+        )
+    ):
         rendered = ", ".join(
             f"0x{pc:04X}:{count}" for pc, count in nt_counts.most_common(8)
         )
         raise ValueError(
-            "could not identify one 1792-word name-table DMA per HUD frame; "
+            "could not identify at least one 1792-word name-table DMA per "
+            "HUD frame; "
             f"candidates were {rendered or 'none'}"
         )
-    nt_pc = nt_candidates[0]
+    nt_pc = nt_candidates[0][0]
 
     pattern_counts = Counter(
         pc for dma_type, _rate, _left, _capacity, _remaining, pc in events
@@ -155,6 +163,8 @@ def extract_dma_rows(
     nt_frame: int | None = None
 
     for dma_type, rate, _left, capacity, remaining, pc in events:
+        if next_frame >= frame_count and not nt_open:
+            break
         if dma_type != 1:
             continue
         if pc == nt_pc:
@@ -229,6 +239,8 @@ def extract_cpu_rows(
             pc = pc16(dma_match.group(6))
             if dma_type == 1 and pc == nt_pc and remaining == 1792:
                 next_frame += 1
+                if next_frame >= frame_count:
+                    break
             continue
         if "VRAM " not in line:
             continue

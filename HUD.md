@@ -630,6 +630,18 @@ present. The pattern-split diagnostic writes `pattern_vblank1_words`,
 `pattern_vblank2_words`, `pattern_transfer_vblanks`, and
 `pattern_exit_vcounter`; the same renderers preserve those rows and maxima.
 
+An exact managed GPGX LOGVDP recording can add physical VDP-transfer rows to
+`/hudline` without changing the on-screen HUD. First,
+`harness/gpgx_logvdp/extract_frame_tsv.py` aligns the trace to this HUD TSV and
+checks each timed frame's physical pattern-word total against the logical HUD
+total. Supplying that TSV to the renderer places these rows immediately after
+`S/D/R/M/J`: pattern DMA blank/active (`PD`/`PA`), CPU direct-write and DMA
+repair blank/active-edge (`CB`/`CA`), name-table DMA blank/active (`NB`/`NA`),
+and pattern DMA command count (`DR`). `CA` includes the two ambiguous LOGVDP
+V-counter edge representations and marks that inclusion with `*`. These are
+post-recording diagnostic rows only; they do not alter playback or the upload
+gate.
+
 The reproducible glyph/layout proof is:
 
 ```sh
@@ -1212,6 +1224,16 @@ signed valueを`prgbuf_min_patterns_signed`へdecodeし、positiveなdebt magnit
 Pattern-split diagnosticは`pattern_vblank1_words`、
 `pattern_vblank2_words`、`pattern_transfer_vblanks`、
 `pattern_exit_vcounter`を書き、同じrendererがそのrowとmaximumを保持します。
+
+Exactなmanaged GPGX LOGVDP recordingがあれば、画面上のHUDを変更せずにphysical
+VDP-transfer rowを`/hudline`へ追加できます。まず
+`harness/gpgx_logvdp/extract_frame_tsv.py`がtraceをこのHUD TSVへalignし、timed frame
+ごとにphysical pattern-word totalとlogical HUD totalの一致を検証します。そのTSVを
+rendererへ渡すと、`S/D/R/M/J`の直後にpattern DMA blank/active（`PD`/`PA`）、
+CPU direct-writeおよびDMA repair blank/active-edge（`CB`/`CA`）、name-table DMA
+blank/active（`NB`/`NA`）、pattern DMA command count（`DR`）を配置します。`CA`は
+LOGVDPの曖昧な2つのV-counter edge表現を含み、`*`でそのことを明示します。これらは
+recording後のdiagnostic rowだけで、playbackやupload gateを変更しません。
 
 Glyph/layoutのreproducible proofは次です。
 

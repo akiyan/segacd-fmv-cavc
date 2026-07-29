@@ -127,6 +127,9 @@ name-table-DMA call sites from the trace instead of depending on fixed program
 counter values. DMA-generated VRAM writes carry those call-site PCs and are
 excluded from the CPU totals. In the fixed H40 player, the remaining per-frame
 VRAM writes are the one- or two-tile direct path and one-word DMA repairs.
+If the safety recording continues into another movie loop, extraction stops
+after the complete first loop named by the HUD TSV; the later trace remains in
+the compressed sidecar but does not extend the frame axis.
 
 The extractor validates every timed frame with at most four transfer budgets:
 pattern DMA words plus CPU-written pattern words must exactly equal the

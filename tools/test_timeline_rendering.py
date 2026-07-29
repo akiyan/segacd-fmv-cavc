@@ -82,6 +82,55 @@ class TimelineRenderingTests(unittest.TestCase):
         run = next(spec for spec in specs if spec.key == "cold_runs_low8")
         self.assertEqual(run.maximum, 12)
 
+    def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
+        data = {
+            "display_vblanks": np.asarray([np.nan, 2, 3], np.float64),
+            "pattern_dma_commands": np.asarray([999, 12, 31], np.float64),
+            "pattern_dma_blank_words": np.asarray(
+                [9999, 3359, 1000], np.float64),
+            "pattern_dma_active_words": np.asarray(
+                [9999, 0, 1678], np.float64),
+            "pattern_cpu_blank_words": np.asarray(
+                [9999, 1047, 10], np.float64),
+            "pattern_cpu_active_edge_words": np.asarray(
+                [9999, 1003, 10], np.float64),
+            "name_table_dma_blank_words": np.asarray(
+                [9999, 1792, 1792], np.float64),
+            "name_table_dma_active_words": np.asarray(
+                [9999, 0, 0], np.float64),
+        }
+        gate = {
+            "content_fps": 30,
+            "limits": {"S": 0, "D": 0, "R": 0, "M": 1, "J": 25},
+            "jitter_headroom_kib": 20,
+        }
+        specs = hudline.row_specs(data, gate, 2)
+        keys = [spec.key for spec in specs]
+        gate_end = keys.index("prgbuf_jitter_peak_kib")
+        self.assertEqual(
+            keys[gate_end + 1:gate_end + 8],
+            [
+                "pattern_dma_blank_words",
+                "pattern_dma_active_words",
+                "pattern_cpu_blank_words",
+                "pattern_cpu_active_edge_words",
+                "name_table_dma_blank_words",
+                "name_table_dma_active_words",
+                "pattern_dma_commands",
+            ],
+        )
+        pattern_scales = {
+            spec.maximum
+            for spec in specs
+            if spec.key in {
+                "pattern_dma_blank_words",
+                "pattern_dma_active_words",
+                "pattern_cpu_blank_words",
+                "pattern_cpu_active_edge_words",
+            }
+        }
+        self.assertEqual(pattern_scales, {3359})
+
     def test_word_banks_are_combined_before_pixel_scaling(self):
         capacities = {"Prg": 60, "Wr0": 20, "Wr1": 20}
         remaining = {"Prg": 60, "Wr0": 6, "Wr1": 6}

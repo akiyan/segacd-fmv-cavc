@@ -34,6 +34,13 @@ tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
   --output videos/STEM_hudline.png
 ```
 
+   When a matching managed GPGX LOGVDP run is available, first generate its
+   frame TSV with `harness/gpgx_logvdp/extract_frame_tsv.py`, then add
+   `--gpgx-vdp-tsv logs/RUN_gpgx_vdp.tsv`. The renderer requires the adjacent
+   extraction receipt, its matching HUD hash, the identical frame axis, and
+   exact per-frame equality between physical LOGVDP pattern writes and the HUD
+   logical pattern-word total.
+
 3. Inspect the PNG with `view_image`. Confirm that every frame is present, the
    gate summary matches the JSON, gate-limit lines are visible, palette
    boundaries and their `Pxx` labels align, and all HUD rows are legible.
@@ -138,6 +145,14 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
   with no unit subheading, but use the same heading font size as every other
   HUD metric. Put `C` first among the diagnostic rows and do not draw a gate
   line for it.
+- When a matching GPGX transfer TSV is supplied, put its diagnostic block
+  immediately after `S/D/R/M/J`: pattern DMA blank/active words, CPU
+  direct-plus-repair blank/active-edge words, name-table DMA blank/active
+  words, and pattern DMA command count. Use one common scale for the four
+  pattern word rows. Keep CPU V-counter boundary words in the extraction TSV
+  and add them to the displayed active row with an explicit `*` label; do not
+  silently classify them as blank. These are diagnostic rows and do not alter
+  the upload gate.
 - Follow with the remaining diagnostic, player-state, Sub, Main, and phase
   rows. Render `Q` as two derived rows when present: nonnegative minimum
   balance and positive underflow debt. Render `G` in 30.72 us ticks, `B` as a
