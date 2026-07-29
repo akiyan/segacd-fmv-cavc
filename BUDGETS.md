@@ -133,7 +133,7 @@ because `HEADER.DAT` loads it before timed playback. Cells that cannot be
 updated within the cap appear as Miss in the analysis category map.
 
 `boot/movieplay_ip.s` sets a per-mode VBlank word budget (`md_vbudget`):
-`VB_WORDS_H32` = 2800 and `VB_WORDS_H40` = 3400. Both are below the GPGX
+`VB_WORDS_H32` = 2800 and `VB_WORDS_H40` = 3200. Both are below the GPGX
 ceilings (H32 2982 words/VBlank, H40 3664 words/VBlank). Re-check against the
 ares `dmabench` value before raising them.
 
@@ -307,7 +307,7 @@ streamへ別のcapをかけません。Frame 0は`HEADER.DAT`によってtimed p
 されるため対象外です。Cap内で更新できないcellは、解析category mapでMissとして表示します。
 
 `boot/movieplay_ip.s`はmodeごとのVBlank word予算`md_vbudget`を設定します。
-`VB_WORDS_H32`は2800、`VB_WORDS_H40`は3400です。どちらもGPGX ceiling
+`VB_WORDS_H32`は2800、`VB_WORDS_H40`は3200です。どちらもGPGX ceiling
 （H32は2982 word/VBlank、H40は3664 word/VBlank）より小さい値です。引き上げる前に、
 aresの`dmabench`値と照合してください。
 
