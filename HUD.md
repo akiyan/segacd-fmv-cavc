@@ -113,7 +113,10 @@ An excess in `vblank_spill` is a warning. An excess in the other four fields
 is a failure. At fixed cadence, a `transfer_vblanks` value larger than the
 cadence interval is also a warning. The analyzer derives each timed frame's
 visible duration from consecutive `capture_first` values; a duration different
-from the fixed cadence is a warning.
+from the fixed cadence is a warning outside the cadence edge exception. The
+first and last four content frames at 30 fps and two at 15 fps remain in the
+measurements but do not raise this derived ALERT. This exception does not apply
+to gate fields or `transfer_vblanks`.
 
 Frame 0 and the terminal hold are excluded from gate maxima, statistics,
 events, dynamic scales, and cadence measurements. `cd_wait_count` and
@@ -128,7 +131,7 @@ Run the complete recording analyzer with the exact profile:
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
+  "$LOSSLESS" profiles/PROFILE.toml \
   --expected-frames FRAME_COUNT
 ```
 
@@ -298,7 +301,10 @@ Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` で�
 `vblank_spill` 超過は warning、ほか 4 field の超過は failure です。Fixed cadence
 では `transfer_vblanks` が cadence interval を超えた場合も warning です。
 Analyzer は連続する `capture_first` から各 timed frame の表示時間を求め、
-fixed cadence と異なる表示時間を warning にします。
+fixed cadence と異なる表示時間を cadence edge exception の外側で warning に
+します。30 fps では先頭と末尾の各 4 content frame、15 fps では各 2 content
+frame を measurement には残しますが、この derived ALERT の対象外にします。
+この例外は gate field と `transfer_vblanks` には適用しません。
 
 Frame 0 と terminal hold は gate maximum、statistics、event、dynamic scale、
 cadence measurement から除外します。`cd_wait_count` と `adpcm_decode_units` は
@@ -312,7 +318,7 @@ back-pressure frame count と reader lead / transfer phase の maximum も保存
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
+  "$LOSSLESS" profiles/PROFILE.toml \
   --expected-frames FRAME_COUNT
 ```
 

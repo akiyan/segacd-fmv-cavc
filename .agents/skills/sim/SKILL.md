@@ -242,9 +242,13 @@ function on real data.
 
 ```sh
 CBRSIM_SRCLABEL="Source (<source name>, <platform/year>)" \
-ANALYSIS_OUT=videos/<stem>_analysis.mp4 \
+ANALYSIS_OUT=<stem>_analysis.mp4 \
 tools/python.sh --gpu tools/render_analysis.py profiles/<source>-<mode>.toml
 ```
+
+When only the persistent timeline TSV is needed, run
+`tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml
+--tsv-only`; this skips all analysis-frame rendering and MP4 muxing.
 
 Every invocation first writes the complete per-frame numeric sidecar to a
 unique persistent file below `logs/`. Its filename includes local date/time,
@@ -321,7 +325,7 @@ Standalone `/sim` uploads are unaffected.
 ```sh
 PY=~/.config/youtube/venv/bin/python
 [ -x "$PY" ] || { echo "bootstrap the separate YouTube environment from README.md" >&2; exit 1; }
-"$PY" ~/.claude/skills/youtube/youtube.py upload videos/<stem>_analysis.mp4 \
+"$PY" ~/.claude/skills/youtube/youtube.py upload "$ANALYSIS_MP4" \
   --title "SEGA-CD FMV of <work> - <specs> YYYYMMDD.eNN.pNN" \
   --desc "<specs, four-rule choices, starvation rate>" \
   --tags "SEGA-CD,SegaCD,FMV,homebrew,codec" \
@@ -333,12 +337,14 @@ Titles follow AGENTS.md "YouTube Upload Style": `SEGA-CD FMV of <work> -
 resolution/grid) and `<ver>` is the build version `YYYYMMDD.eN.pM` read from
 `tools/av_version.txt`. Descriptive, never a sequence version such as
 `vNNN`. Write the exact UTF-8 description to
-`videos/<stem>_analysis_description.txt`, target 4,800 characters or fewer,
-and hard-fail before upload when its Python character count exceeds YouTube's
-5,000-character limit:
+`$(dirname "$ANALYSIS_MP4")/<stem>_analysis_description.txt`, target 4,800
+characters or fewer, and hard-fail before upload when its Python character
+count exceeds YouTube's 5,000-character limit:
 
 ```sh
-tools/python.sh -c 'from pathlib import Path; p=Path("videos/<stem>_analysis_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
+ANALYSIS_DESCRIPTION="$(dirname "$ANALYSIS_MP4")/<stem>_analysis_description.txt"
+export ANALYSIS_DESCRIPTION
+tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
 ```
 
 Shorten optional explanatory prose first; preserve the mandatory CRAM
@@ -353,7 +359,7 @@ language sections. Never use the binary magic as a codec or format name.
 
 - Sim and render acquire shared CPU/GPU tokens only around their heavy parallel
   stages. `CBRSIM_WORKERS` controls both worker width and CPU-token demand.
-  Different stems may overlap; a duplicate `videos/<stem>` fails immediately.
+  Different stems may overlap; a duplicate media `<stem>` fails immediately.
 - For a multi-profile local run, use `tools/parallel_run.py`. Do not hand-start
   commands that bypass its pipeline-wide stem lock or tmpfs lease handoff.
 - Never kill another session's process. Kill only jobs you started.

@@ -158,7 +158,7 @@ class EncodeProfile:
 
     @property
     def sim_stem(self) -> str:
-        """Shared videos/ stem used as the parallel-run isolation key."""
+        """Shared media stem used as the parallel-run isolation key."""
         from cbr_paths import sim_stem
         return sim_stem(
             self.data["source"]["path"],

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Collection, Mapping
+import math
 
 
 GATE_VALUES = ("PASS", "FAIL")
@@ -16,6 +17,40 @@ LEGACY_STATUS_BY_ALERT = {
 ALERT_BY_LEGACY_STATUS = {
     status: alert for alert, status in LEGACY_STATUS_BY_ALERT.items()
 }
+
+# Display-cadence observations at the movie edges include startup and terminal
+# handoff behavior that is not representative of the steady timed loop. Keep
+# those observations visible, but do not let them raise the cadence alert.
+CADENCE_ALERT_EDGE_FRAMES = {
+    15: 2,
+    30: 4,
+}
+
+
+def cadence_alert_edge_frames(content_fps: float) -> int:
+    """Return content frames excluded at each edge from cadence alerts."""
+
+    value = float(content_fps)
+    for nominal_fps, edge_frames in CADENCE_ALERT_EDGE_FRAMES.items():
+        if math.isclose(value, nominal_fps, rel_tol=0.0, abs_tol=0.1):
+            return edge_frames
+    return 0
+
+
+def cadence_alert_frame_is_exempt(
+    frame: int,
+    expected_frames: int,
+    content_fps: float,
+) -> bool:
+    """Whether one content frame is outside the cadence-alert steady region."""
+
+    edge_frames = cadence_alert_edge_frames(content_fps)
+    if edge_frames == 0:
+        return False
+    return (
+        frame < edge_frames
+        or frame >= max(0, expected_frames - edge_frames)
+    )
 
 
 def classify_alert(

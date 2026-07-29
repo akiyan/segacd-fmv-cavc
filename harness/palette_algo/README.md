@@ -44,8 +44,14 @@ palettes and segment assignment remain identical to the former per-line scans.
 Compare both algorithms on evenly sampled Bad Apple and Sonic master frames:
 
 ```sh
+BAD_APPLE_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/bad-apple.toml --print-sim-output)"
+SONIC_OUT="$(tools/python.sh tools/encode_config.py \
+  profiles/sonic-jam-op.toml --print-sim-output)"
 tools/python.sh --gpu \
-  harness/palette_algo/compare_sources.py --frames 60
+  harness/palette_algo/compare_sources.py --frames 60 \
+  --case "Bad Apple H40" "$BAD_APPLE_OUT/master" \
+  --case "Sonic H32" "$SONIC_OUT/master"
 ```
 
 Find the point where adding more learning frames stops improving a fixed
@@ -54,7 +60,7 @@ validation set:
 ```sh
 tools/python.sh --gpu \
   harness/palette_algo/sample_convergence.py \
-  videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/master
+  "$SONIC_OUT/master"
 ```
 
 ## Training speed result (2026-07-21)
@@ -112,9 +118,9 @@ how much quantization residual changes specifically across 8x8 boundaries:
 
 ```sh
 tools/python.sh harness/palette_algo/compare_decisions.py \
-  videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/master \
-  videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/decisions.pkl \
-  videos/SonicJamOp_H32_256x224_adpcm22_mosaic_gm/decisions.pkl
+  "$SONIC_OUT/master" \
+  "$BASE_DECISIONS" \
+  "$CANDIDATE_DECISIONS"
 ```
 
 On the fixed 240-frame validation set, full Bad Apple improved from pixel /
@@ -131,8 +137,8 @@ re-learning the palettes:
 
 ```sh
 tools/python.sh harness/palette_algo/compare_decisions.py \
-  videos/SonicJamOp_H32_256x224_adpcm22_mosaic_gm/master \
-  videos/SonicJamOp_H32_256x224_adpcm22_mosaic_gm/decisions.pkl \
+  "$SONIC_OUT/master" \
+  "$SONIC_OUT/decisions.pkl" \
   --coherent-weight 0 0.25 1 4 8 \
   --coherent-iterations 1 2 4
 ```

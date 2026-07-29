@@ -338,16 +338,15 @@ The report gives the exact added control bytes/sectors,
 startup frames 1--42 statistics, and decimal frame 2019 statistics.
 
 The Main CPU counts these descriptors into `n_runs`; H40 DEBUG HUD
-`cold_runs` displays its low byte. This logical run count is intentionally
-independent of the p45
-transfer path: a one- or two-tile run is CPU-written, while a longer run is DMA'd
-and can be split at a VBlank boundary. To compare the HUD OCR from a real emulator
-recording with the exact descriptors in the recorded disc, run:
+`cold_runs` displays its low byte. This logical run count is independent of
+the physical chunks: every run body is DMA'd and a run can be split at a
+VBlank boundary. To compare the HUD OCR from a real emulator recording with
+the exact descriptors in the recorded disc, run:
 
 ```sh
 tools/python.sh harness/pipeline_speedup/verify_run_hud.py \
   --header out/PROFILE/HEADER.DAT --body out/PROFILE/BODY.DAT \
-  --tsv videos/RECORDING.tsv
+  --tsv logs/RECORDING.tsv
 ```
 
 The checker uses high-confidence observations by default and compares every one

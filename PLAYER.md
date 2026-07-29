@@ -291,12 +291,11 @@ These counters record explicit budget openings.
 For specialized fixed-N H40 playback, one transfer deadline can serve both
 the final cold-run tail and the display flip. The Main CPU uses a conservative
 3,200 DMA-word-equivalent budget for each H40 VBlank. A DMA word costs one
-unit. Every CPU-written VDP data word costs four units: a one- or two-tile
-direct run therefore costs four times its logical word count, and a Word-RAM
-DMA also pays four units for its required first-word repair. Main grants a
-budget only after waiting for a new VBlank or while the V counter is still on
-its first blank line (`E0`). Entering an already-running blank later never
-creates a full budget; Main waits for the next head.
+unit. Every pattern run uses DMA. A Word-RAM DMA also pays four units for its
+required CPU first-word repair. Main grants a budget only after waiting for a
+new VBlank or while the V counter is still on its first blank line (`E0`).
+Entering an already-running blank later never creates a full budget; Main
+waits for the next head.
 
 Budgets 1 through N-1 are available to patterns. Before pattern work enters
 budget N, Main withholds the complete display reserve: the 1,792-word
@@ -308,12 +307,12 @@ written by the CPU, so its 64 words reserve 256 units. The normal reserves are
 1,241 pattern units in VBlank 2, or 985 on a palette switch.
 
 A DMA run crossing a residual boundary is split exactly there and continued
-at the next fresh VBlank head. A one- or two-tile CPU run remains whole and
-moves to the next budget when it does not fit. After the pattern tail, Main
-restores the withheld reserve and admits the shared name-table/CRAM/flip path
-only if the current phase is still inside that same VBlank. VBlank status is
-checked before and after the V counter, and terminal lines `FC..FF` are
-rejected. If any condition fails, Main waits for a fresh VBlank.
+at the next fresh VBlank head, regardless of run length. After the pattern
+tail, Main restores the withheld reserve and admits the shared
+name-table/CRAM/flip path only if the current phase is still inside that same
+VBlank. VBlank status is checked before and after the V counter, and terminal
+lines `FC..FF` are rejected. If any condition fails, Main waits for a fresh
+VBlank.
 
 For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the next fresh VBlank.
@@ -341,7 +340,7 @@ tools/python.sh tools/check_player_ring.py \
   --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
   --extension-constants tmp/PROFILE/build/sp_extension.inc
 make movieplay CONFIG=profiles/PROFILE.toml \
-  DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
+  DEBUG=1 MAIN_CODEGEN=1 PLAYER_SPECIALIZE=1
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-size -A \
   tmp/PROFILE/build/movieplay_ip.o \
@@ -635,11 +634,11 @@ warningになります。軽いN4 frameは1〜2 budgetだけを開き、残るca
 
 Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
 display flipで共有できます。Main CPUはH40の各VBlankに、安全側の3,200
-DMA-word相当budgetを使います。DMA wordは1 unit、CPUがVDP dataへ書くwordは
-1つ4 unitです。このため1〜2 tileのCPU direct runはlogical word数の4倍、
-Word-RAM DMAは必須の先頭word補修に4 unitを追加します。新しいVBlankを待った直後、
-またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
-すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを待ちます。
+DMA-word相当budgetを使います。DMA wordは1 unitで、全pattern runがDMAを使います。
+Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新しいVBlankを待った
+直後、またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
+すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
+待ちます。
 
 Budget 1からN-1まではpatternに使えます。Pattern workがbudget Nへ入る前に、
 Mainはdisplay work全体を先に取り置きします。内訳は64-by-28 name-table DMAの
@@ -649,11 +648,11 @@ allowance、任意のCRAM replacementです。CRAMはCPU writeなので64 word�
 2,176と2,215です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
 VBlank 2にpattern用1,241 unit、palette switch時は985 unitを持ちます。
 
-DMA runが残budget境界を越える場合はそこで正確に分割し、次のfresh VBlank headから
-続きを行います。1〜2 tileのCPU runはwholeのまま、収まらなければ次のbudgetへ送ります。
-Pattern tail後に取り置いたreserveを戻し、同じVBlank内にまだいる場合だけ
-name-table/CRAM/flip shared pathを許可します。VBlank statusはV counterの前後で確認し、
-terminalの`FC..FF` lineは拒否します。どれかを満たさなければfresh VBlankを待ちます。
+DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
+fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
+同じVBlank内にまだいる場合だけname-table/CRAM/flip shared pathを許可します。
+VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineは拒否します。
+どれかを満たさなければfresh VBlankを待ちます。
 
 multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
@@ -678,7 +677,7 @@ tools/python.sh tools/check_player_ring.py \
   --extension tmp/PROFILE/build/movieplay_sp_ext.bin \
   --extension-constants tmp/PROFILE/build/sp_extension.inc
 make movieplay CONFIG=profiles/PROFILE.toml \
-  DEBUG=1 MAIN_CODEGEN=1 DMA_RUN_FASTPATH=1 PLAYER_SPECIALIZE=1
+  DEBUG=1 MAIN_CODEGEN=1 PLAYER_SPECIALIZE=1
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-size -A \
   tmp/PROFILE/build/movieplay_ip.o \

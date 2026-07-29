@@ -94,6 +94,87 @@ class HudlineFrameZeroTests(unittest.TestCase):
             [None, 4, 4, None],
         )
 
+    def test_rendered_vblank_edge_holds_are_visible_but_not_alert_eligible(self):
+        starts = np.arange(12, dtype=np.int64) * 2
+        starts[2:] += 1
+        starts[6:] += 1
+        starts[11:] += 1
+        data = {
+            "frame": np.arange(12, dtype=np.int64),
+            "capture_first": starts.astype(np.float64),
+        }
+        values, normal = render.derive_display_vblanks(data, 30)
+        eligible, exempt, edge_frames = render.display_vblank_alert_masks(
+            data,
+            values,
+            expected_frames=12,
+            content_fps=30,
+            normal_vblanks=normal,
+        )
+        self.assertEqual(edge_frames, 4)
+        self.assertEqual(int(np.count_nonzero(eligible)), 4)
+        self.assertEqual(
+            int(np.count_nonzero(eligible & (values != normal))),
+            1,
+        )
+        self.assertEqual(
+            int(np.count_nonzero(exempt & (values != normal))),
+            2,
+        )
+
+    def test_report_counts_edge_holds_as_diagnostic_only(self):
+        starts = list(range(0, 24, 2))
+        for index in range(2, len(starts)):
+            starts[index] += 1
+        for index in range(11, len(starts)):
+            starts[index] += 1
+        rows = [
+            {
+                "frame": str(frame),
+                "capture_first": str(start),
+                "sector_slip": "0",
+                "control_desync": "0",
+                "audio_resync": "0",
+                "vblank_spill": "0",
+                "prgbuf_jitter_peak_kib": "0",
+                "cd_wait_count": "0",
+                "adpcm_decode_units": "0",
+            }
+            for frame, start in enumerate(starts)
+        ]
+        gate = {
+            "gate": "PASS",
+            "alert": "NONE",
+            "content_fps": 30,
+            "expected_frames": 12,
+            "limits": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 1,
+                "prgbuf_jitter_peak_kib": 25,
+            },
+            "maxima": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 0,
+                "prgbuf_jitter_peak_kib": 0,
+                "cd_wait_count": 0,
+            },
+            "display_vblank_alert_evaluated_frames": 4,
+            "display_vblank_edge_exempt_frames": 4,
+            "display_vblank_exempted_violation_count": 2,
+            "display_vblank_violation_count": 0,
+        }
+        text = report.render_markdown(rows, list(rows[0]), gate)
+        self.assertIn(
+            "0.00% / 0 / 4 "
+            "(normal 0x02; first/last 4 content frames excluded from ALERT; "
+            "2 observed edge violation(s)).",
+            text,
+        )
+
     def test_c_never_creates_a_gate_overage_event(self):
         rows = [
             {

@@ -12,7 +12,7 @@ env:
   CBRSIM_OUT      profileのsim要求名。cbr_pathsがtmpfs実体pathへ解決する。
                   解析工程が生成したpreview/とstats.npz指定音声を使う
   CBRSIM_MODE     画面モード H32/H40/mode4 (既定 H32)。画面サイズと PAR に使う
-  STRAIGHT_OUT    出力mp4 (既定 videos/<stem>_sim.mp4)
+  STRAIGHT_OUT    tmpfs artifactに使う要求mp4名
   STRAIGHT_SCALE  整数拡大率 (既定 4)
 
 usage: python3 tools/export_sim_video.py
@@ -42,15 +42,11 @@ def main():
     actual_out = None
     out_lease = None
     try:
-        if tmpfs_workspace.is_disposable_path(OUT):
-            actual_out, out_lease = tmpfs_workspace.allocate_file(
-                OUT,
-                kind="straight-sim-mp4",
-                required_bytes=512 * 1024 ** 2,
-            )
-        else:
-            actual_out = OUT
-            actual_out.parent.mkdir(parents=True, exist_ok=True)
+        actual_out, out_lease = tmpfs_workspace.allocate_file(
+            OUT,
+            kind="straight-sim-mp4",
+            required_bytes=512 * 1024 ** 2,
+        )
         _export(actual_out)
         print("done", actual_out, flush=True)
     finally:

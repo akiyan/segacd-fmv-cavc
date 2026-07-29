@@ -43,15 +43,15 @@ corresponding encoder values remain available in the `stat_*` columns.
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Per-frame category counts. `legend_wr` is the displayed Wr0+Wr1 total; the two source banks are also kept separately. |
 | `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_r2v`, `status_run` | Numeric values printed in the bottom status bar, including the frame-0 untimed display rule. |
 | `status_dma` | Compatibility copy of the timed pattern-tile count. It is not displayed as a status meter. |
-| `r2v_pattern_words`, `r2v_repair_words`, `r2v_name_table_words`, `r2v_cram_words`, `r2v_short_runs` | Exact components behind `status_r2v`, plus the count of one/two-pattern CPU-direct runs. |
+| `r2v_pattern_words`, `r2v_repair_words`, `r2v_name_table_words`, `r2v_cram_words`, `r2v_short_runs` | Exact components behind `status_r2v`, plus the diagnostic count of one/two-pattern runs. Every pattern run uses DMA. |
 | `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Exact physical timed-BODY delivery-slot accounting behind the Band display. Slot 0 is zero because frame 0 comes from the untimed BODY arm. |
 | `quality_budget_remaining_bytes` | Non-borrowed encoder-only whole-movie quality allowance remaining after the frame. A terminal-drain loan displays as zero until future suffix allowance repays it. This is diagnostic state, not a physical meter. |
 | `stat_frame` through the remaining `stat_*` columns | Every column from `stats.npz`, preserved with a `stat_` prefix and in its original order. These raw columns may grow when the simulator gains a new statistic. |
 
-`ANALYSIS_OUT` is a requested disposable name. When it is below `videos/`, the
-renderer writes the MP4 directly to tmpfs and prints its actual path. The TSV
-always uses the independently printed persistent `logs/` path unless
-`ANALYSIS_TSV` explicitly names another real file.
+`ANALYSIS_OUT` is only the requested name of a disposable artifact. The
+renderer always writes the MP4 directly to tmpfs and prints its actual path.
+The TSV uses the independently printed persistent `logs/` path unless
+`ANALYSIS_TSV` explicitly names a test/diagnostic file.
 
 ## Layout map
 
@@ -382,11 +382,10 @@ runs. The encoder reports the exact resulting Run trace and does not perform
 a movie-wide slot-number optimization.
 
 This is deliberately **not the number of VDP DMA commands**. In the player,
-a one- or two-tile run is copied directly by the CPU, while a longer
-run uses DMA and may be split into more than one DMA command at a VBlank budget
-boundary. Both still remain one `Run` record. The bar therefore measures the
-fragmentation seen by the player independent of the current transfer fast
-path.
+every run uses DMA and may be split into more than one DMA command at a VBlank
+budget boundary. It still remains one `Run` record. The bar therefore measures
+the source/slot fragmentation seen by the player, not the number of runtime
+DMA chunks.
 
 The bar's per-frame full-scale is the current `Cold` tile count: the theoretical
 worst case is every transferred tile isolated into its own one-tile run. A tiny
@@ -478,14 +477,14 @@ overlayと同じ値です。Frame 0は`legend_raw`と`legend_same`を保持し�
 | `legend_raw`, `legend_same`, `legend_dic`, `legend_prg`, `legend_wr`, `legend_wr0`, `legend_wr1`, `legend_near`, `legend_flbk`, `legend_miss` | Frameごとのcategory count。表示`legend_wr`はWr0+Wr1で、source bank別の値も保持 |
 | `status_req`, `status_miss`, `status_cold`, `status_pre`, `status_band_kib_s`, `status_prg`, `status_wr0`, `status_wr1`, `status_r2v`, `status_run` | Frame-0のuntimed ruleを含むbottom status barの数値 |
 | `status_dma` | Timed pattern tile countの互換copy。Status meterには表示しない |
-| `r2v_pattern_words`, `r2v_repair_words`, `r2v_name_table_words`, `r2v_cram_words`, `r2v_short_runs` | `status_r2v`の正確な内訳と、1・2 pattern CPU-direct run数 |
+| `r2v_pattern_words`, `r2v_repair_words`, `r2v_name_table_words`, `r2v_cram_words`, `r2v_short_runs` | `status_r2v`の正確な内訳と、診断用の1・2 pattern run数。全pattern runはDMAを使う |
 | `body_payload_bytes`, `body_control_bytes`, `body_pad_bytes`, `body_physical_bytes`, `body_useful_bytes`, `body_band_bps` | Band表示の元になる正確なphysical timed-BODY delivery-slot会計。Frame 0はuntimed BODY arm由来なのでslot 0は0 |
 | `quality_budget_remaining_bytes` | Frame後に残る、借入ではないencoder-only全編画質allowance。Terminal-drain loan中はzeroを表示し、将来suffix allowanceの返済後に増える。Diagnostic stateであり物理meterではない |
 | `stat_frame`以降の`stat_*` | `stats.npz`の全columnを元の順序で保存。Simulatorへstatisticが増えると追加される |
 
-`ANALYSIS_OUT`は使い捨てartifactの要求名です。`videos/`配下を指定した場合、MP4は
-tmpfs実体へ直接書かれ、その実体pathをrendererが表示します。TSVは独立した永続
-`logs/` pathへ書かれます。`ANALYSIS_TSV`を指定した場合だけ、指定した実体fileを
+`ANALYSIS_OUT`は使い捨てartifactの要求名だけです。MP4は常にtmpfs実体へ直接
+書かれ、その実体pathをrendererが表示します。TSVは独立した永続`logs/` pathへ
+書かれます。Test/diagnostic用に`ANALYSIS_TSV`を指定した場合だけ、指定した実体fileを
 使います。
 
 ## Layout map
@@ -745,8 +744,8 @@ slot discontinuity、pool endからslot zeroへのwrap、Prg/Wr/Dic source境界
 Frame 0はtimed計算外なので`Run:0000`です。Encoderはexact Run traceを報告し、
 全編slot-number最適化は行いません。
 
-これはVDP DMA command数ではありません。1・2 tile runはCPU direct copy、長いrunはDMAを
-使い、VBlank budget境界で複数DMAに分かれる場合があります。それでもRun recordは1つです。
+これはVDP DMA command数ではありません。全runがDMAを使い、VBlank budget境界で
+複数DMAに分かれる場合があります。それでもRun recordは1つです。
 Bar full-scaleはcurrent Cold tile countで、全tileが1-tile runになる場合がworstです。
 
 ### Palette strip

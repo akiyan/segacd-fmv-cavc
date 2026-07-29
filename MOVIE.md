@@ -407,11 +407,9 @@ at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
 
 The run descriptors immediately follow `n_runs`. Main schedules them at
-runtime with the guarded residual VBlank budget. An ordinary run that does not
-fit the current residual waits whole for a fresh VBlank as an overload
-fallback. Only a run longer than one complete budget may be chunked, while
-one- and two-pattern CPU-copy runs remain whole. The stream carries no encoded
-VBlank boundary.
+runtime with the guarded residual VBlank budget. Every pattern run uses DMA.
+Any run crossing the current residual is split at that boundary and continues
+at the next fresh VBlank head. The stream carries no encoded VBlank boundary.
 
 Bitmap updates use `ceil(cells / 8)` bytes, followed by a zero byte when that
 size is odd. One 16-bit entry follows for each set bit in ascending cell order:
@@ -850,9 +848,8 @@ gapがあればre-seekして正確に読み直します。それでもsequence�
 前frameを保持し、desync counterを増やします。
 
 Run descriptorは`n_runs`の直後に続きます。Mainはguard付き残余VBlank budgetで
-runtime scheduleします。Current残budgetに収まらない通常runは、overload fallback
-としてwholeのままfresh VBlankを待ちます。1回のfull budgetより長いrunだけを
-chunk分割でき、1〜2 patternのCPU-copy runもwholeのままです。Streamはencoded
+runtime scheduleします。全pattern runがDMAを使います。Current残budget境界を越える
+runはそこで分割し、次のfresh VBlank headから続きを行います。Streamはencoded
 VBlank boundaryを持ちません。
 
 bitmap updateは `ceil(cells / 8)` byteで、そのサイズが奇数ならzero byteを続けます。

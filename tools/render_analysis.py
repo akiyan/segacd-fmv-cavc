@@ -11,12 +11,13 @@
                    audio WAV/report.txt)。preview/catmap は本工程で生成する。
   CBRSIM_SRCLABEL  右Sourceパネル見出し(既定 "Source")
   CBRSIM_MODE      画面モード H32/H40 (既定 H32。DMA理論値に使う)
-  ANALYSIS_OUT     出力mp4名 (videos/配下ならtmpfsの実体pathへ直接出力)
+  ANALYSIS_OUT     tmpfs artifactに使う要求mp4名
   ANALYSIS_TSV     明示した場合の永続TSV実体path (既定はlogs/のunique path)
   ANALYSIS_CQ      h264_nvenc cq (既定 23)
 W/H/タイル数/表示アスペクト/諸元は sim 出力から自動導出。
 
 usage: python3 tools/render_analysis.py PROFILE.toml       # 全編→mp4
+       python3 tools/render_analysis.py PROFILE.toml --tsv-only
        python3 tools/render_analysis.py PROFILE.toml A B   # frame [A,B) だけPNG(検証用, mp4化しない)
 """
 import sys
@@ -267,6 +268,19 @@ if any(len(values) != NF for values in (
     R2V_NAME_TABLE_WORDS, R2V_CRAM_WORDS, R2V_SHORT_RUNS,
 )):
     raise SystemExit("analysis R2V workload has the wrong frame count")
+# R2V is a player-side interpretation of stable encoder decisions. Recalculate
+# it while rendering so a player-only transfer-policy change does not force a
+# full video re-encode or an encoder-version bump.
+_current_r2v = r2v_model.calculate_words(
+    R2V_PATTERN_WORDS // r2v_model.PATTERN_WORDS,
+    col("dma_runs"),
+    R2V_CRAM_WORDS != 0,
+    R2V_NAME_TABLE_WORDS,
+)
+for _component in _current_r2v.values():
+    _component[0] = 0
+R2V_WORDS = _current_r2v["words"]
+R2V_REPAIR_WORDS = _current_r2v["repair_words"]
 R2V_MAX = r2v_model.timed_scale_max(R2V_WORDS)
 PREFETCH_CAP = int(z["raw_prefetch_cap"]) if "raw_prefetch_cap" in z else max(
     1, int(PREFETCH.max(initial=0)))
@@ -1051,10 +1065,28 @@ def mux(output: Path):
 
 def main():
     from multiprocessing import get_context
+    arguments = sys.argv[1:]
+    tsv_only = arguments == ["--tsv-only"]
     rng = None
-    if len(sys.argv) == 3:                     # 範囲指定(検証用): PNGのみ, mp4化しない
-        rng = list(range(int(sys.argv[1]), int(sys.argv[2])))
+    if not tsv_only and len(arguments) == 2:
+        try:
+            rng = list(range(int(arguments[0]), int(arguments[1])))
+        except ValueError as exc:
+            raise SystemExit(
+                "analysis arguments must be --tsv-only or integer frame A B"
+            ) from exc
+    elif not tsv_only and arguments:
+        raise SystemExit(
+            "analysis arguments must be --tsv-only or integer frame A B")
     frames = rng if rng is not None else list(range(NF))
+    if tsv_only:
+        sim_lease = tmpfs_workspace.lease_managed_path(Path(SIM))
+        try:
+            print(f"analysis data -> {write_analysis_tsv()}", flush=True)
+        finally:
+            if sim_lease is not None:
+                sim_lease.release()
+        return
     # A rendered 1080p PNG is commonly around 2 MiB. Leave room for PNGs,
     # the muxed video, and normal compression variance before workers start.
     required = len(frames) * (5 * 1024 ** 2 // 2) + 1024 ** 3
@@ -1064,17 +1096,13 @@ def main():
     mp4_actual = None
     try:
         if rng is None:
-            if tmpfs_workspace.is_disposable_path(OUT_MP4):
-                mp4_actual, mp4_lease = tmpfs_workspace.allocate_file(
-                    OUT_MP4,
-                    kind="analysis-mp4",
-                    key=(f"{CONFIG_PROFILE.path.stem}-"
-                         f"{CONFIG_PROFILE.sha256[:10]}"),
-                    required_bytes=512 * 1024 ** 2,
-                )
-            else:
-                mp4_actual = OUT_MP4
-                mp4_actual.parent.mkdir(parents=True, exist_ok=True)
+            mp4_actual, mp4_lease = tmpfs_workspace.allocate_file(
+                OUT_MP4,
+                kind="analysis-mp4",
+                key=(f"{CONFIG_PROFILE.path.stem}-"
+                     f"{CONFIG_PROFILE.sha256[:10]}"),
+                required_bytes=512 * 1024 ** 2,
+            )
         os.makedirs(FRAMES_DIR, exist_ok=True)
         nw = resource_tokens.requested_cpu_workers(limit=len(frames))
         print(f"Analysis: waiting for {nw} CPU token(s) ...", flush=True)
@@ -1099,10 +1127,7 @@ def main():
                     if k % 300 == 0:
                         print(f"  {k}/{len(frames)}", flush=True)
         if rng is None:
-            location = (
-                f"tmpfs {mp4_actual}" if mp4_lease is not None
-                else str(mp4_actual))
-            print(f"mux -> {OUT_MP4} ({location})", flush=True)
+            print(f"mux -> {OUT_MP4} (tmpfs {mp4_actual})", flush=True)
             print("Analysis mux: waiting for 1 GPU token ...", flush=True)
             with resource_tokens.acquire_tokens("gpu"):
                 mux(mp4_actual)

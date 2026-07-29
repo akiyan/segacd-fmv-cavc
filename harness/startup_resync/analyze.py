@@ -655,8 +655,9 @@ def upload_gate_limits(content_fps: float) -> tuple[dict[str, int], str]:
 def display_vblank_cadence(
     groups: list[FrameGroup],
     content_fps: float,
+    expected_frames: int,
 ) -> dict:
-    """Measure how many captured VBlanks each timed frame stayed visible."""
+    """Measure display cadence while keeping edge observations diagnostic."""
     first_loop = [group for group in groups if group.loop == 0]
     expected = av_config.fixed_vblank_interval(float(content_fps))
     histogram: Counter[int] = Counter()
@@ -677,22 +678,57 @@ def display_vblank_cadence(
             "next_capture_first": following.capture_first,
             "display_vblanks": actual,
         })
-    violations = (
+    measured_violations = (
         [
             observation for observation in observations
             if observation["display_vblanks"] != expected
         ]
         if expected is not None else []
     )
+    edge_frames = (
+        hud_gate.cadence_alert_edge_frames(content_fps)
+        if expected is not None else 0
+    )
+    alert_observations = (
+        [
+            observation for observation in observations
+            if not hud_gate.cadence_alert_frame_is_exempt(
+                observation["frame"],
+                expected_frames,
+                content_fps,
+            )
+        ]
+        if expected is not None else []
+    )
+    exempted_violations = [
+        observation for observation in measured_violations
+        if hud_gate.cadence_alert_frame_is_exempt(
+            observation["frame"],
+            expected_frames,
+            content_fps,
+        )
+    ]
+    violations = [
+        observation for observation in measured_violations
+        if not hud_gate.cadence_alert_frame_is_exempt(
+            observation["frame"],
+            expected_frames,
+            content_fps,
+        )
+    ]
     return {
         "expected": expected,
         "evaluated_frames": len(observations),
+        "alert_evaluated_frames": len(alert_observations),
+        "edge_exempt_frames": edge_frames,
         "histogram": {
             str(display_vblanks): count
             for display_vblanks, count in sorted(histogram.items())
         },
         "violation_count": len(violations),
         "violations": violations,
+        "exempted_violation_count": len(exempted_violations),
+        "exempted_violations": exempted_violations,
     }
 
 
@@ -773,7 +809,11 @@ def evaluate_upload_gate(
             "transfer "
             f"window count {fixed_n:X}"
         )
-    display_cadence = display_vblank_cadence(groups, content_fps)
+    display_cadence = display_vblank_cadence(
+        groups,
+        content_fps,
+        expected_frames,
+    )
     if display_cadence["violation_count"]:
         examples = ", ".join(
             f"frame={row['frame']:04d}:{row['display_vblanks']}"
@@ -783,7 +823,8 @@ def evaluate_upload_gate(
         suffix = f", +{remaining} more" if remaining > 0 else ""
         warnings.append(
             f"{cadence} display cadence missed "
-            f"{display_cadence['violation_count']} deadline(s): "
+            f"{display_cadence['violation_count']} deadline(s) outside the "
+            f"{display_cadence['edge_exempt_frames']}-frame edge exception: "
             f"{examples}{suffix}"
         )
 
@@ -809,10 +850,18 @@ def evaluate_upload_gate(
         "display_vblank_expected": display_cadence["expected"],
         "display_vblank_evaluated_frames": (
             display_cadence["evaluated_frames"]),
+        "display_vblank_alert_evaluated_frames": (
+            display_cadence["alert_evaluated_frames"]),
+        "display_vblank_edge_exempt_frames": (
+            display_cadence["edge_exempt_frames"]),
         "display_vblank_histogram": display_cadence["histogram"],
         "display_vblank_violation_count": (
             display_cadence["violation_count"]),
         "display_vblank_violations": display_cadence["violations"],
+        "display_vblank_exempted_violation_count": (
+            display_cadence["exempted_violation_count"]),
+        "display_vblank_exempted_violations": (
+            display_cadence["exempted_violations"]),
         "gate_fields": list(gate_fields),
         "warning_fields": ["vblank_spill"],
         "diagnostic_fields": [
@@ -897,8 +946,12 @@ def write_gate_json(path: Path, result: dict) -> None:
     print(
         "  display VBlanks/frame "
         f"{cadence_rule} histogram={result['display_vblank_histogram']} "
-        f"violations={result['display_vblank_violation_count']}/"
-        f"{result['display_vblank_evaluated_frames']}"
+        f"alert violations={result['display_vblank_violation_count']}/"
+        f"{result['display_vblank_alert_evaluated_frames']} "
+        f"edge-exempt violations="
+        f"{result['display_vblank_exempted_violation_count']} "
+        f"(first/last {result['display_vblank_edge_exempt_frames']} frames; "
+        f"measured={result['display_vblank_evaluated_frames']})"
     )
     if "reader_ahead_max_frames" in result:
         print(

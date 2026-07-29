@@ -19,6 +19,7 @@ TOOLS = REPO / "tools"
 sys.path.insert(0, str(TOOLS))
 import av_config  # noqa: E402
 import hud_gate  # noqa: E402
+import tmpfs_workspace  # noqa: E402
 
 
 GATE_COLUMNS = {
@@ -374,17 +375,62 @@ def render_markdown(
 ) -> str:
     vblanks = displayed_vblanks(rows)
     events = gate_overage_events(rows, gate)
-    normal_vblanks = cadence_normal_vblanks(float(gate["content_fps"]))
-
-    evaluated_vblanks = sum(value is not None for value in vblanks)
+    content_fps = float(gate["content_fps"])
+    expected_frames = int(gate["expected_frames"])
+    normal_vblanks = cadence_normal_vblanks(content_fps)
+    edge_frames = (
+        hud_gate.cadence_alert_edge_frames(content_fps)
+        if normal_vblanks is not None else 0
+    )
+    eligible_vblanks = [
+        value is not None
+        and not hud_gate.cadence_alert_frame_is_exempt(
+            as_int(row, "frame"),
+            expected_frames,
+            content_fps,
+        )
+        for row, value in zip(rows, vblanks, strict=True)
+    ]
+    evaluated_vblanks = sum(eligible_vblanks)
     vblank_warning_count = (
         sum(
-            value is not None and value != normal_vblanks
-            for value in vblanks
+            eligible and value != normal_vblanks
+            for eligible, value in zip(
+                eligible_vblanks, vblanks, strict=True)
         )
         if normal_vblanks is not None
         else None
     )
+    vblank_exempted_warning_count = (
+        sum(
+            value is not None
+            and not eligible
+            and value != normal_vblanks
+            for eligible, value in zip(
+                eligible_vblanks, vblanks, strict=True)
+        )
+        if normal_vblanks is not None
+        else None
+    )
+    if "display_vblank_edge_exempt_frames" in gate:
+        for key, actual in (
+            ("display_vblank_alert_evaluated_frames", evaluated_vblanks),
+            ("display_vblank_edge_exempt_frames", edge_frames),
+            (
+                "display_vblank_exempted_violation_count",
+                vblank_exempted_warning_count,
+            ),
+            ("display_vblank_violation_count", vblank_warning_count),
+        ):
+            if (
+                key in gate
+                and actual is not None
+                and int(gate[key]) != int(actual)
+            ):
+                raise SystemExit(
+                    f"gate {key} {gate[key]} does not match "
+                    f"HUD TSV value {actual}"
+                )
     gate_warning_count = sum(
         severity == "WARNING"
         for triggers in events.values()
@@ -492,7 +538,9 @@ def render_markdown(
             f"VBLANK warning rate / count / total: "
             f"{warning_rate:.2f}% / {vblank_warning_count} / "
             f"{evaluated_vblanks} "
-            f"(normal {hex_value(normal_vblanks)})."
+            f"(normal {hex_value(normal_vblanks)}; first/last "
+            f"{edge_frames} content frames excluded from ALERT; "
+            f"{vblank_exempted_warning_count} observed edge violation(s))."
         )
     summary.append(
         f"Gate conditions: {gate_warning_count} warning, "
@@ -544,7 +592,9 @@ def render_markdown(
     lines.append("")
     lines.append(
         "VBLANK is derived from the next frame's capture start; "
-        "frame 0 and the terminal hold are not reported."
+        "edge values remain diagnostic, but the first/last 4 content frames "
+        "at 30 fps and 2 at 15 fps do not raise its ALERT; frame 0 and the "
+        "terminal hold are not reported."
     )
     return "\n".join(lines) + "\n"
 
@@ -556,8 +606,17 @@ def main() -> None:
     validate(rows, gate)
     report = render_markdown(rows, fields, gate)
     if args.output is not None:
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(report, encoding="utf-8")
+        actual_output, lease = tmpfs_workspace.allocate_file(
+            args.output,
+            kind="hud-overage-report",
+            key=f"{args.tsv.stem}-{args.gate_json.stem}",
+            required_bytes=1024 * 1024,
+        )
+        try:
+            actual_output.write_text(report, encoding="utf-8")
+        finally:
+            lease.release()
+        print(f"REPORT={actual_output}")
     print(report, end="")
 
 

@@ -40,7 +40,7 @@ class TimelineRenderingTests(unittest.TestCase):
         self.assertEqual(timeline.run_scale_max(values), 9)
         self.assertEqual(timeline.run_scale_max(np.asarray([255, 0])), 1)
 
-    def test_r2v_counts_cpu_words_once_and_one_repair_per_dma_run(self):
+    def test_r2v_counts_one_repair_per_dma_run(self):
         components = timeline.calculate_r2v_words(
             np.asarray([0, 3360, 3312]),
             np.asarray([0, 96, 31]),
@@ -48,13 +48,13 @@ class TimelineRenderingTests(unittest.TestCase):
             np.asarray([0, 0, 1]),
         )
         np.testing.assert_array_equal(
-            components["repair_words"], [0, 21, 12])
+            components["repair_words"], [0, 96, 31])
         np.testing.assert_array_equal(
             components["name_table_words"], [1792, 1792, 1792])
         np.testing.assert_array_equal(
             components["cram_words"], [0, 0, 64])
         np.testing.assert_array_equal(
-            components["words"], [1792, 5173, 5180])
+            components["words"], [1792, 5248, 5199])
 
     def test_r2v_scale_uses_exact_timed_calculated_maximum(self):
         values = np.asarray([9999, 1792, 5183, 2400], np.int64)

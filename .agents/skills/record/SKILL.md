@@ -45,8 +45,11 @@ private default, so do not point concurrent runs at one shared directory:
 ```sh
 CORE=/path/to/genesis_plus_gx_libretro.so
 SYSTEM_DIR=/path/to/retroarch/system
-OUTDIR=/home/akiyan/segacd-novel/videos
 ```
+
+The high-level recorder always replaces `OUTDIR` with one leased managed-tmpfs
+directory. Use `OUTDIR` only with a direct low-level `run_headless.sh`
+diagnostic.
 
 `tools/run_headless.sh` acquires one EMU token, dynamically allocates a private
 X display and system directory, and releases them on exit. The qualified
@@ -106,9 +109,9 @@ Defaults and rules:
 - Omit `--display` for normal work; Xvfb allocates a free display with
   `-displayfd`. An explicit `--display :N` is diagnostic-only and fails if an
   existing server owns it.
-- Use a `videos/` preview name; the harness writes its bytes directly to tmpfs
-  and prints `OUT=` with the real path. `OUTDIR` selects the persistent raw MKV
-  and sidecar directory; the high-level harness defaults it to `videos/`.
+- `--out` supplies only the preview filename. The harness writes the preview,
+  bounded raw MKV, Replay, and sidecars into one leased tmpfs directory and
+  prints `OUT=` and `LOSSLESS=` with their real paths.
 - A direct `tools/run_headless.sh out/PROFILE.cue` call defaults its screenshots,
   logs, PID files, and raw diagnostic capture to `tmp/PROFILE/record/`; do not
   put multiple profile runs directly in the shared `tmp/` root.
@@ -127,24 +130,24 @@ Defaults and rules:
 Canonical full capture for later upload:
 
 ```sh
-OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --config profiles/PROFILE.toml --seconds 180 \
+tools/record_movie.sh --config profiles/PROFILE.toml --seconds 180 \
   --tag STEM_emu --preset ffv1-flac \
   --record-size "$NATIVE_RECORD_SIZE" \
-  --out videos/STEM_emu_preview.mp4
+  --out STEM_emu_preview.mp4
 ```
 
 Replace `STEM` and the mode-specific size. The harness records with a safety tail, then
 stream-copies the requested launch-to-tail duration into the native lossless input at
-`videos/STEM_emu_lossless.mkv`. This bounds the tail without seeking past the startup.
-Do not delete it before `compilation` finishes.
+the printed `LOSSLESS=` tmpfs path. This bounds the tail without seeking past
+the startup. Keep that artifact leased through the HUD stage and use the
+printed path for `compilation`.
 
 For a short boot/playback check:
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 30 --tag rec_check \
-  --out videos/rec_check_preview.mp4
+  --out rec_check_preview.mp4
 ```
 
 ## Default fast offline capture
@@ -152,14 +155,13 @@ tools/record_movie.sh --config profiles/PROFILE.toml \
 Routine `$record` work uses faster-than-realtime FFV1/FLAC without an extra mode flag:
 
 ```sh
-OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --config profiles/PROFILE.toml --seconds 180 \
+tools/record_movie.sh --config profiles/PROFILE.toml --seconds 180 \
   --tag STEM_offline --record-size 256x224 \
-  --out videos/STEM_offline_preview.mp4
+  --out STEM_offline_preview.mp4
 ```
 
 With no `--input-replay`, the high-level harness first records an input Replay under
-`tmp/PROFILE/record/`, makes it 120 emulator frames longer than the main fixed-frame run,
+the same managed tmpfs directory, makes it 120 emulator frames longer than the main fixed-frame run,
 and prints its path as `REPLAY=...`. Playback of that saved Replay fixes the captured input
 frames. The recording retains the Mega-CD startup, CD player, START transition, full movie,
 DEBUG HUD, and tail. Replay EOF before the frame limit is a hard failure.
@@ -169,23 +171,21 @@ the Replay-generation run as the baseline: Replay initial-state handling can cha
 audio boundary by one stereo PCM sample.
 
 ```sh
-REPLAY=tmp/PROFILE/record/STEM_offline_input.replay
+REPLAY=/dev/shm/segacd-fmv-ttrc/artifacts/RECORD_ENTRY/data/replay/STEM_offline_input.replay
 
-OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --disc out/PROFILE.cue --no-build --seconds 180 --realtime-lossless \
+tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 --realtime-lossless \
   --preset ffv1-flac --input-replay "$REPLAY" \
   --tag STEM_realtime --record-size 256x224 \
-  --out videos/STEM_realtime_preview.mp4
+  --out STEM_realtime_preview.mp4
 
-OUTDIR="$PWD/videos" tools/record_movie.sh \
-  --disc out/PROFILE.cue --no-build --seconds 180 \
+tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 \
   --input-replay "$REPLAY" --tag STEM_offline_ab \
   --record-size 256x224 \
-  --out videos/STEM_offline_ab_preview.mp4
+  --out STEM_offline_ab_preview.mp4
 
 tools/python.sh tools/compare_recordings.py \
-  videos/STEM_realtime_lossless.mkv videos/STEM_offline_ab_lossless.mkv \
-  --json videos/STEM_offline_ab_compare.json
+  "$REALTIME_LOSSLESS" "$OFFLINE_AB_LOSSLESS" \
+  --json "$(dirname "$OFFLINE_AB_LOSSLESS")/STEM_offline_ab_compare.json"
 ```
 
 When requalifying the harness, run the offline command a second time with another tag and
@@ -239,7 +239,7 @@ Check the raw MKV and reports before trusting a capture:
 5. Inspect frames from the MKV and confirm that the Mega-CD startup appears first, playback
    begins later, the DEBUG Plane A HUD is visible, and the movie advances. Do not use the HUD
    to seek the movie start. Extract these stills with
-   `tools/extract_verification_frames.sh`; give it a `videos/<stem>/record_check` base and
+   `tools/extract_verification_frames.sh`; give it a `$(dirname "$LOSSLESS")/record_check` base and
    named `LABEL=SECONDS` samples. It creates a never-reused source-specific directory,
    records source/still hashes in `manifest.tsv`, and builds its montage only from the
    explicit files extracted by that invocation. Never montage a shared check directory with
@@ -252,7 +252,7 @@ Check the raw MKV and reports before trusting a capture:
 
    ```sh
    tools/python.sh harness/startup_resync/analyze.py \
-     videos/STEM_emu_lossless.mkv profiles/PROFILE.toml \
+     "$LOSSLESS" profiles/PROFILE.toml \
      --expected-frames FRAME_COUNT
    ```
 
@@ -278,8 +278,11 @@ Check the raw MKV and reports before trusting a capture:
 
    For fixed-N playback, compare consecutive first-capture positions for every
    timed, nonterminal `frame`. A visible duration different from the cadence
-   raises alert `WARNING` while retaining gate `PASS`. Preserve the complete
-   histogram and affected frames. At fixed cadence,
+   raises alert `WARNING` while retaining gate `PASS`, except within the
+   first/last four content frames at 30 fps and two at 15 fps. Preserve those
+   edge observations as diagnostics together with the complete histogram and
+   affected frames. This exception applies only to derived display duration,
+   not gate fields or transfer diagnostics. At fixed cadence,
    `transfer_vblanks` above the cadence interval is another warning.
 
    Report distributions for `cd_wait_count`, `adpcm_decode_units`, and
@@ -323,9 +326,11 @@ OCR work separate from ordinary recording and publication head cueing:
 
 ```sh
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
-OUTDIR="$PWD/videos" tools/run_headless.sh out/PROFILE.cue \
-  --tag STEM_debug --record --record-preset ffv1-flac \
-  --record-size 256x224 --shots 68 --interval 2
+tools/python.sh tools/tmpfs_workspace.py run-directory \
+  --kind record-diagnostic --key STEM_debug --required-gb 8 -- \
+  env OUTDIR='{output}' tools/run_headless.sh out/PROFILE.cue \
+    --tag STEM_debug --record --record-preset ffv1-flac \
+    --record-size 256x224 --shots 68 --interval 2
 ```
 
 Confirm the Plane A HUD is visible before a long OCR scan. Read the complete
@@ -348,7 +353,7 @@ Inspect an existing file without recording again:
 ffprobe -v error -count_packets \
   -show_entries stream=index,codec_name,codec_type,width,height,sample_rate,channels,nb_read_packets \
   -show_entries format=duration \
-  -of json videos/rec_check_preview.mp4
+  -of json "$PREVIEW"
 ```
 
 Run a headless smoke test without video recording:

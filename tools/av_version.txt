@@ -13,12 +13,18 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p129: Make residual-boundary VBlank splitting and all-DMA pattern transfer
+#         unconditional. Remove both build switches and the split-off and
+#         one/two-pattern CPU-transfer player paths; retain the mandatory
+#         first-word CPU repair after every pattern DMA.
 #   p128: Add a build-time VBLANK_RUN_SPLIT switch. The diagnostic off mode
 #         keeps every run whole; an individually oversized run may enter
 #         active display instead of retaining a hidden safety split.
 #   p127: Compact the DEBUG HUD to 39 hexadecimal digits, pack VBlank spill
 #         with transfer ticks, pack reader lead with slot position, remove
 #         retired diagnostics, and expose descriptive OCR/gate field names.
+#   e157: Enable one-frame timed Raw VRAM prefetch for the Lunar SSS OP
+#         H32/24 profile at its 225 baseline cold cap.
 #   e156: Replace the analysis DMA-tile status meter with exact Main-to-VDP
 #         words: patterns, long-run first-word repairs, mode/grid/cadence-aware
 #         name-table and DEBUG HUD writes, and palette-switch CRAM. Preserve
@@ -1097,5 +1103,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260729
-e=156
-p=128
+e=157
+p=129

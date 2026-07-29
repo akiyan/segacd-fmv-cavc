@@ -11,9 +11,10 @@ and include the settings that explain the result.
 
 ## Workflow
 
-1. Locate the adjustment-specific analysis TSV. If it does not exist, run
-   `tools/render_analysis.py` for that simulation output; it writes the TSV
-   before rendering frames.
+1. Locate the adjustment-specific analysis TSV. If it does not exist and only
+   the timeline is needed, run
+   `tools/render_analysis.py profiles/PROFILE.toml --tsv-only`. Run the full
+   analysis renderer only when its MP4 is also required.
 2. Pass the matching profile and simulation output directory. Do not combine a
    TSV from one run with metadata from another.
 3. When an intentional tail-drain rule would distort evaluation, pass its first
@@ -28,8 +29,7 @@ tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
   --sim-out /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data \
   --r2v-workload-tsv logs/PROFILE_eNN_pNN_r2v_workload.tsv \
   --label "short adjustment label" \
-  --evaluation-end-frame FRAME \
-  --output videos/STEM_ADJUSTMENT_timeline.png
+  --evaluation-end-frame FRAME
 ```
 
    The renderer prints the direct tmpfs PNG path and the persistent layout
@@ -64,7 +64,7 @@ PY="$HOME/.config/youtube/venv/bin/python"
 "$PY" .agents/skills/timeline/scripts/sync_youtube_description.py \
   /dev/shm/segacd-fmv-ttrc/artifacts/ANALYSIS_ENTRY/STEM_analysis.mp4 \
   --timeline-receipt logs/STEM_SHA10_timeline-gist.json \
-  --description-file videos/STEM_ADJUSTMENT_analysis_description.txt
+  --description-file "$ANALYSIS_DESCRIPTION"
 ```
 
 For a video that has not been uploaded yet, pass `--local-only`, then use the

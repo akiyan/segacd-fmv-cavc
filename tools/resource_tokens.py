@@ -261,7 +261,7 @@ def acquire_stem(
     wait: bool = False,
     root: Path | None = None,
 ) -> TokenLease:
-    """Acquire the one-owner lock for a complete videos stem."""
+    """Acquire the one-owner lock for a complete media artifact stem."""
 
     identifier = stem_lock_id(stem)
     if identifier in _held_stem_ids():

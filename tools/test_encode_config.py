@@ -35,7 +35,7 @@ height = 224
 fit = "pad"
 
 [output]
-directory = "videos/test/tmp"
+directory = "tmpfs/test/sim"
 emit_decisions = true
 
 [palette]
@@ -152,7 +152,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
         self.assertTrue(
             env["CBRSIM_OUT"].endswith(
-                "videos/BadApple_H40_320x224_adpcm22_cold200/tmp"))
+                "tmpfs/BadApple_H40_320x224_adpcm22_cold200/sim"))
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
         self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)
@@ -180,7 +180,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             profile.section("analysis")["source_canvas"], [320, 224])
         self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(env["CBRSIM_OUT"].endswith(
-            "videos/SonicJamOp_H40_288x200_adpcm22_cold210/tmp"))
+            "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold210/sim"))
 
     def test_analysis_source_canvas_requires_two_positive_integers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

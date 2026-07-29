@@ -28,11 +28,11 @@ tools/python.sh harness/cold_cap_model/extract_frames.py \
 | Stream (realized max loads/frame) | Pack | Recording + HUD series | `cold_runs` cross-check |
 |---|---|---|---|
 | 175 (v12, shadow lists, pre-e83 baseline) | `out/sonic-jam-op-h40` | `SonicJamOp_H40_jitter_final(_repeat)` | 2,714/2,714 |
-| 178 (v10) | `videos/SonicJamOp_H40_cold195_test/packed` (byte-identical copy in `..._cold200_test/packed`) | `SonicJamOp_H40_cold195_emu`, `SonicJamOp_H40_cold200_emu` | 2,714/2,714 each |
+| 178 (v10) | retained `SonicJamOp_H40_cold195_test/packed` workspace (byte-identical copy in the cold-200 workspace) | `SonicJamOp_H40_cold195_emu`, `SonicJamOp_H40_cold200_emu` | 2,714/2,714 each |
 | 190 (v10) | `out/sonic-jam-op-h40-cold190-hudinline` | `SonicJamOp_H40_cold190_hudinline(_repeat)` | 2,714/2,714 |
 
-Every `*_repeat` recording is hash-identical to its first run (see
-`videos/*_repeat_compare.json`), so each disc's behaviour is fully
+Every `*_repeat` recording is hash-identical to its first run (see the retained
+comparison receipts under `logs/`), so each disc's behaviour is fully
 deterministic in the emulator; when two recordings of the *same stream
 content* break at different frames, the difference is the player build on
 the disc, not chance.

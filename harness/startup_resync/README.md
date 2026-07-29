@@ -53,7 +53,7 @@ Run it against the lossless output from `/record`:
 
 ```sh
 tools/python.sh harness/startup_resync/analyze.py \
-  videos/SonicJamOp_startup_audio2_ab_debug_lossless.mkv \
+  "$LOSSLESS" \
   profiles/sonic-jam-op.toml \
   --tsv logs/SonicJamOp_startup_audio2_ab_debug_hud.tsv
 ```
@@ -64,6 +64,10 @@ median, and maximum `cd_wait_count`, `adpcm_decode_units`, and
 `pump_gap_ticks` values across the timed first loop; untimed frame 0 and later
 loops are excluded. The same statistics are stored in the gate JSON.
 `cd_wait_count` is diagnostic only and does not affect the gate status.
+At fixed cadence, the first and last four content frames at 30 fps and two at
+15 fps remain in the display-VBlank measurements but are excluded from that
+derived ALERT. The exception does not apply to gate fields or
+`transfer_vblanks`.
 `/hudline` and `/mixline` render the retained fields by their descriptive
 names. The TSV contains one row per aggregated movie frame.
 Transition rows additionally carry the previous and next lead, which makes

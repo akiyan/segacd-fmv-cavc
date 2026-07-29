@@ -21,6 +21,7 @@ list.  No production encoder or player code is imported by this proof.
 from __future__ import annotations
 
 import argparse
+import os
 import pickle
 import struct
 from dataclasses import dataclass
@@ -54,9 +55,6 @@ VERSION = 22
 CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
-DEFAULT_DECISIONS = Path(
-    "videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/decisions.pkl"
-)
 
 
 @dataclass(frozen=True)
@@ -768,8 +766,17 @@ def main() -> None:
     parser.add_argument(
         "--body", type=Path, default=Path("out/movieplay/BODY.DAT")
     )
+    default_decisions = (
+        Path(os.environ["CBRSIM_OUT"]) / "decisions.pkl"
+        if os.environ.get("CBRSIM_OUT")
+        else None
+    )
     parser.add_argument(
-        "--decisions", type=Path, default=DEFAULT_DECISIONS
+        "--decisions",
+        type=Path,
+        default=default_decisions,
+        required=default_decisions is None,
+        help="simulation decisions.pkl (defaults to $CBRSIM_OUT/decisions.pkl)",
     )
     args = parser.parse_args()
 

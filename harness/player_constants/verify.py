@@ -334,18 +334,10 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         raise AssertionError(
             f"{obj}: cadence-final budget does not withhold display work")
 
-    short_run = block("bf_short_run", "bf_run_done")
-    required_short = (
-        (r"\blslw\s+#2,%d6", "4x CPU-word charge"),
-        (r"\bcmpw\s+%d7,%d6", "weighted residual admission"),
-        (r"\bsubw\s+%d6,%d7", "weighted residual debit"),
-    )
-    for pattern, description in required_short:
-        if not re.search(pattern, short_run):
-            raise AssertionError(
-                f"{obj}: short-run path lacks {description}")
+    if "<bf_short_run>" in disassembly:
+        raise AssertionError(f"{obj}: removed short-run CPU path is still linked")
 
-    split_run = block("bf_split_run", "bf_short_run")
+    split_run = block("bf_split_run", "bf_run_done")
     if not re.search(r"\bsubqw\s+#4,%d7", split_run):
         raise AssertionError(
             f"{obj}: split Word-RAM DMA lacks its CPU-repair charge")
@@ -385,6 +377,51 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     if "<publish_dbg>" in flip:
         raise AssertionError(
             f"{obj}: H40 flip path still republishes HUD through the VDP port")
+
+
+def verify_transfer_cleanup(objdump: Path, obj: Path) -> None:
+    """Prove removed transfer paths and unnamed trailing storage are absent."""
+
+    disassembly = run([str(objdump), "-dr", str(obj)])
+    symbols = run([str(objdump), "-t", str(obj)])
+    for removed in (
+        "bf_short_run",
+        "CPU_DIRECT_MAX_WORDS",
+        "DMA_RUN_FASTPATH",
+        "VBLANK_RUN_SPLIT",
+    ):
+        if re.search(rf"\b{re.escape(removed)}\b", symbols):
+            raise AssertionError(f"{obj}: removed symbol is still linked: {removed}")
+
+    run_start = re.search(
+        r"^[0-9a-f]+ <bf_run_lp>:$", disassembly, re.MULTILINE)
+    run_end = re.search(
+        r"^[0-9a-f]+ <bf_run_done>:$", disassembly, re.MULTILINE)
+    if not run_start or not run_end or run_start.start() >= run_end.start():
+        raise AssertionError(f"{obj}: missing pattern-run transfer block")
+    run_block = disassembly[run_start.end():run_end.start()]
+    if not re.search(r"\bbra\w*\s+[^\n]*<bf_split_run>", run_block):
+        raise AssertionError(f"{obj}: residual overflow does not enter split path")
+    if re.search(r"\bmovel\s+%a3@\+,[^\n]*<VDP_DATA>", run_block):
+        raise AssertionError(f"{obj}: removed CPU pattern-body writer is still linked")
+
+    headers = run([str(objdump), "-h", str(obj)])
+    bss = re.search(
+        r"^\s*\d+\s+\.bss\s+([0-9a-fA-F]+)\b",
+        headers,
+        re.MULTILINE,
+    )
+    end = re.search(
+        r"^([0-9a-fA-F]+)\s+\w\s+\.bss\s+[0-9a-fA-F]+\s+"
+        r"md_codegen_end$",
+        symbols,
+        re.MULTILINE,
+    )
+    if not bss or not end:
+        raise AssertionError(f"{obj}: cannot prove named BSS boundary")
+    if int(end.group(1), 16) + 4 != int(bss.group(1), 16):
+        raise AssertionError(
+            f"{obj}: unnamed trailing BSS remains after md_codegen_end")
 
 
 def verify_runtime_vblank_cadence(
@@ -427,31 +464,6 @@ def verify_runtime_vblank_cadence(
     if not re.search(r"\bcmpiw\s+#4,%d6", snapshot):
         raise AssertionError(
             f"{obj}: runtime VBlank snapshot is still limited to two groups")
-
-
-def verify_whole_run_switch(objdump: Path, obj: Path) -> None:
-    """Prove the diagnostic build keeps every ordinary DMA run whole."""
-    disassembly = run([str(objdump), "-d", str(obj)])
-    start = re.search(
-        r"^[0-9a-f]+ <bf_run_lp>:$", disassembly, re.MULTILINE)
-    end = re.search(
-        r"^[0-9a-f]+ <bf_split_run>:$", disassembly, re.MULTILINE)
-    if not start or not end or start.start() >= end.start():
-        raise AssertionError(f"{obj}: missing whole-run verification block")
-    run_loop = disassembly[start.end():end.start()]
-    required = (
-        (r"\baddqw\s+#4,%d6", "CPU repair charge"),
-        (r"\bcmpw\s+%d7,%d6", "residual budget comparison"),
-        (r"\bmovew\s+#3200,%d0", "complete H40 budget comparison"),
-        (r"\bbsr\w*\s+[^\n]*<bf_next_vbudget>", "fresh-budget wait"),
-    )
-    for pattern, description in required:
-        if not re.search(pattern, run_loop):
-            raise AssertionError(
-                f"{obj}: whole-run mode lacks {description}")
-    if re.search(r"\b(?:b|j)\w+\s+[^\n]*<bf_split_run>", run_loop):
-        raise AssertionError(
-            f"{obj}: VBLANK_RUN_SPLIT=0 still branches to bf_split_run")
 
 
 def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
@@ -631,15 +643,14 @@ def build_case(
 
     ip_obj = case_dir / f"ip-{tag}.o"
     ip_bin = case_dir / f"ip-{tag}.bin"
-    run(common + [
-        "--defsym", "MAIN_CODEGEN=1", "--defsym", "DMA_RUN_FASTPATH=1",
-        "--defsym", "VBLANK_RUN_SPLIT=1",
-    ] + fixed + includes + [str(ROOT / "boot/movieplay_ip.s"), "-o", str(ip_obj)])
+    run(common + ["--defsym", "MAIN_CODEGEN=1"] + fixed + includes + [
+        str(ROOT / "boot/movieplay_ip.s"), "-o", str(ip_obj)])
     run([
         str(linker), "-nostdlib", "--oformat", "binary",
         "-T", str(ROOT / "cfg/ip.ld"), "-o", str(ip_bin), str(ip_obj),
     ])
     verify_startup_body_arm(objdump, ip_obj)
+    verify_transfer_cleanup(objdump, ip_obj)
     if specialized:
         verify_flip_control_flow(objdump, ip_obj)
         if case.mode == 1 and av_config.uses_fixed_n_cadence(case.fps):
@@ -649,22 +660,6 @@ def build_case(
             verify_runtime_vblank_cadence(
                 objdump, ip_obj,
                 expected_n=av_config.vsync_n_for_fps(case.fps))
-            if case.name == "h40-30-supply":
-                whole_obj = case_dir / "ip-specialized-whole-run.o"
-                whole_bin = case_dir / "ip-specialized-whole-run.bin"
-                run(common + [
-                    "--defsym", "MAIN_CODEGEN=1",
-                    "--defsym", "DMA_RUN_FASTPATH=1",
-                ] + fixed + includes + [
-                    str(ROOT / "boot/movieplay_ip.s"),
-                    "-o", str(whole_obj),
-                ])
-                run([
-                    str(linker), "-nostdlib", "--oformat", "binary",
-                    "-T", str(ROOT / "cfg/ip.ld"),
-                    "-o", str(whole_bin), str(whole_obj),
-                ])
-                verify_whole_run_switch(objdump, whole_obj)
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"

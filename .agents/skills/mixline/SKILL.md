@@ -19,8 +19,7 @@ tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
   /dev/shm/segacd-fmv-ttrc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
   /dev/shm/segacd-fmv-ttrc/artifacts/HUDLINE_ENTRY/STEM_hudline.png \
   --timeline-layout logs/STEM_TIMELINE_SHA10_timeline-layout.json \
-  --hudline-layout logs/STEM_HUDLINE_SHA10_hudline-layout.json \
-  --output videos/STEM_mixline.png
+  --hudline-layout logs/STEM_HUDLINE_SHA10_hudline-layout.json
 ```
 
    The renderer prints the direct tmpfs mixline path and the persistent

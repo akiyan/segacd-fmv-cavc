@@ -11,13 +11,13 @@ enough work to overlap visibly on this host. The distinct H32/H40 stems also
 exercise independent build and video paths without making content itself
 another qualification variable.
 
-`tools/parallel_run.py` holds each profile's `videos/<stem>` lock for the whole
+`tools/parallel_run.py` holds each profile's artifact-stem lock for the whole
 local pipeline. The sim transfers its live tmpfs lease to the parent before
-exiting, so another allocation cannot evict the decision data between sim and
-pack. CPU-heavy stages use shared CPU tokens, GPU stages use the GPU token, and
-each `run_headless.sh` invocation uses an EMU token. Xvfb chooses a free display
-with `-displayfd`; an explicitly requested display fails if another server owns
-it.
+exiting, and the recording lease remains held through HUD extraction, so
+another allocation cannot evict live inputs. CPU-heavy stages use shared CPU
+tokens, GPU stages use the GPU token, and each `run_headless.sh` invocation uses
+an EMU token. Xvfb chooses a free display with `-displayfd`; an explicitly
+requested display fails if another server owns it.
 
 Interactive `$run` uses this orchestrator even for one profile. That rule is
 what preserves the pipeline-wide lock and lease when unrelated Codex sessions

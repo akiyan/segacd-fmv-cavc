@@ -392,6 +392,8 @@ def main() -> None:
             f"{float(hudline['display_vblank_warning_rate_percent']):.2f}%/"
             f"{int(hudline['display_vblank_warning_count'])}/"
             f"{int(hudline['display_vblank_evaluated_total'])}"
+            f" active; edge-exempt "
+            f"{int(hudline.get('display_vblank_exempted_warning_count', 0))}"
         )
     draw.text(
         (24, 127),
@@ -483,20 +485,17 @@ def main() -> None:
 
     requested_output = (
         args.output
-        or REPO / "videos" / f"{timeline_path.stem}_mixline.png"
-    ).absolute()
+        or Path(f"{timeline_path.stem}_mixline.png")
+    )
     lease = None
     actual_output = requested_output
     try:
-        if tmpfs_workspace.is_disposable_path(requested_output):
-            actual_output, lease = tmpfs_workspace.allocate_file(
-                requested_output,
-                kind="mixline-png",
-                key=f"{timeline_path.stem}-{hudline_path.stem}",
-                required_bytes=max(width * height * 3, 128 * 1024 ** 2),
-            )
-        else:
-            actual_output.parent.mkdir(parents=True, exist_ok=True)
+        actual_output, lease = tmpfs_workspace.allocate_file(
+            requested_output,
+            kind="mixline-png",
+            key=f"{timeline_path.stem}-{hudline_path.stem}",
+            required_bytes=max(width * height * 3, 128 * 1024 ** 2),
+        )
         combined.save(actual_output, optimize=True)
     finally:
         if lease is not None:

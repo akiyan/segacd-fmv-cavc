@@ -433,6 +433,30 @@ def derive_display_vblanks(
     return displayed, normal
 
 
+def display_vblank_alert_masks(
+    data: dict[str, np.ndarray],
+    displayed: np.ndarray,
+    expected_frames: int,
+    content_fps: float,
+    normal_vblanks: int | None,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Return alert-eligible and edge-exempt measured-frame masks."""
+
+    eligible = np.zeros(len(displayed), dtype=bool)
+    exempt = np.zeros(len(displayed), dtype=bool)
+    if normal_vblanks is None:
+        return eligible, exempt, 0
+    frames = data["frame"].astype(np.int64)
+    measured = np.isfinite(displayed)
+    edge_frames = hud_gate.cadence_alert_edge_frames(content_fps)
+    eligible = measured.copy()
+    if edge_frames:
+        eligible &= frames >= edge_frames
+        eligible &= frames < max(0, expected_frames - edge_frames)
+    exempt = measured & ~eligible
+    return eligible, exempt, edge_frames
+
+
 def row_specs(
     data: dict[str, np.ndarray],
     gate: dict,
@@ -901,19 +925,61 @@ def main() -> None:
     )
     data["display_vblanks"] = display_vblanks
     finite_display_vblanks = display_vblanks[np.isfinite(display_vblanks)]
+    (
+        display_vblank_alert_mask,
+        display_vblank_exempt_mask,
+        display_vblank_edge_frames,
+    ) = display_vblank_alert_masks(
+        data,
+        display_vblanks,
+        int(gate["expected_frames"]),
+        float(gate["content_fps"]),
+        display_vblank_expected,
+    )
     display_vblank_warning_count = (
         int(np.count_nonzero(
-            finite_display_vblanks != display_vblank_expected
+            display_vblank_alert_mask
+            & (display_vblanks != display_vblank_expected)
         ))
         if display_vblank_expected is not None
         else None
     )
-    display_vblank_total = int(len(finite_display_vblanks))
-    display_vblank_warning_rate = (
-        100.0 * display_vblank_warning_count / display_vblank_total
-        if display_vblank_warning_count is not None and display_vblank_total
+    display_vblank_exempted_warning_count = (
+        int(np.count_nonzero(
+            display_vblank_exempt_mask
+            & (display_vblanks != display_vblank_expected)
+        ))
+        if display_vblank_expected is not None
         else None
     )
+    display_vblank_total = int(np.count_nonzero(display_vblank_alert_mask))
+    display_vblank_measured_total = int(len(finite_display_vblanks))
+    display_vblank_warning_rate = (
+        (
+            100.0 * display_vblank_warning_count / display_vblank_total
+            if display_vblank_total else 0.0
+        )
+        if display_vblank_warning_count is not None
+        else None
+    )
+    if "display_vblank_edge_exempt_frames" in gate:
+        for key, actual in (
+            ("display_vblank_alert_evaluated_frames", display_vblank_total),
+            ("display_vblank_edge_exempt_frames", display_vblank_edge_frames),
+            (
+                "display_vblank_exempted_violation_count",
+                display_vblank_exempted_warning_count,
+            ),
+            ("display_vblank_violation_count", display_vblank_warning_count),
+        ):
+            if (
+                key in gate
+                and actual is not None
+                and int(gate[key]) != int(actual)
+            ):
+                raise SystemExit(
+                    f"gate {key} {gate[key]} != HUD TSV value {actual}"
+                )
 
     observed_frames = len(rows)
     axis_frames = int(gate["expected_frames"])
@@ -931,8 +997,8 @@ def main() -> None:
     height = timeline_top + sum(spec.height for spec in specs) + 82
     requested_output = (
         args.output
-        or REPO / "videos" / f"{tsv_path.stem}_hudline.png"
-    ).absolute()
+        or Path(f"{tsv_path.stem}_hudline.png")
+    )
 
     image = Image.new("RGBA", (width, height), BG + (255,))
     draw = ImageDraw.Draw(image)
@@ -986,6 +1052,8 @@ def main() -> None:
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
+        f"edge-exempt {display_vblank_exempted_warning_count} "
+        f"(first/last {display_vblank_edge_frames}), "
         if display_vblank_expected is not None
         else "VBlank warning rule deferred, "
     )
@@ -1150,7 +1218,9 @@ def main() -> None:
         (left, bottom + 64),
         (
             "Frame 0 is untimed boot staging: every metric, scale and gate excludes it. "
-            "VBLANK is derived from consecutive frame capture starts; the terminal hold is also excluded. "
+            "VBLANK is derived from consecutive frame capture starts; edge observations remain visible, "
+            "but the first/last 4 content frames at 30 fps and 2 at 15 fps do not raise its ALERT. "
+            "The terminal hold is also excluded. "
             f"frame is the x-axis. {phase_note}"
             "pass2_delay_q4 belongs to frame. LOGVDP active CPU work includes writes "
             "on the two V-counter edge representations. Orange lines are gate limits; "
@@ -1163,15 +1233,12 @@ def main() -> None:
     lease = None
     actual_output = requested_output
     try:
-        if tmpfs_workspace.is_disposable_path(requested_output):
-            actual_output, lease = tmpfs_workspace.allocate_file(
-                requested_output,
-                kind="hudline-png",
-                key=f"{tsv_path.stem}-{digest(tsv_path)[:10]}",
-                required_bytes=max(width * height * 4, 128 * 1024 ** 2),
-            )
-        else:
-            actual_output.parent.mkdir(parents=True, exist_ok=True)
+        actual_output, lease = tmpfs_workspace.allocate_file(
+            requested_output,
+            kind="hudline-png",
+            key=f"{tsv_path.stem}-{digest(tsv_path)[:10]}",
+            required_bytes=max(width * height * 4, 128 * 1024 ** 2),
+        )
         image.convert("RGB").save(actual_output, optimize=True)
     finally:
         if lease is not None:
@@ -1306,6 +1373,10 @@ def main() -> None:
         "display_vblank_warning_count": display_vblank_warning_count,
         "display_vblank_warning_rate_percent": display_vblank_warning_rate,
         "display_vblank_evaluated_total": display_vblank_total,
+        "display_vblank_measured_total": display_vblank_measured_total,
+        "display_vblank_edge_exempt_frames": display_vblank_edge_frames,
+        "display_vblank_exempted_warning_count": (
+            display_vblank_exempted_warning_count),
         "display_vblank_warning_supported": (
             display_vblank_expected is not None
         ),

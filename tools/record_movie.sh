@@ -18,7 +18,8 @@
 # Options:
 #   --config TOML  profile used by make; also derives out/<toml-stem>.cue
 #   --disc CUE     explicit disc image to boot (normally derived from --config)
-#   --out MP4      verification preview (default videos/<tag>_preview.mp4)
+#   --out NAME     requested verification-preview filename
+#                  (default <tag>_preview.mp4; bytes stay in managed tmpfs)
 #   --seconds N    seconds to keep in the bounded native MKV/preview (default 160)
 #   --trim SEC     seconds to drop from the front; disables auto-audio-trim
 #                  (default: 0, preserving the startup sequence)
@@ -149,8 +150,22 @@ if [ -n "$INPUT_REPLAY" ] && [ ! -f "$INPUT_REPLAY" ]; then
 fi
 
 [ -z "$TAG" ] && TAG="rec_$(basename "${DISC%.*}")"
-[ -z "$OUT" ] && OUT="videos/${TAG}_preview.mp4"
-CAPTURE_DIR="${OUTDIR:-$ROOT/videos}"
+[ -z "$OUT" ] && OUT="${TAG}_preview.mp4"
+
+if [ "${SEGACD_RECORD_TMPFS_HELD:-0}" != "1" ]; then
+  RECORD_REQUIRED_GB=$((4 + 2 * ((REC_SECS + 59) / 60)))
+  RECORD_KEY="$TAG|$(realpath -m "$DISC")|$REC_SECS|$TRIM|$PRESET|$RECORD_SIZE|$OFFLINE_RECORD"
+  RECORD_INPUT_ARGS=()
+  [ -z "$INPUT_REPLAY" ] || RECORD_INPUT_ARGS=(--input "$INPUT_REPLAY")
+  exec "$PYTHON" tools/tmpfs_workspace.py run-directory \
+    --kind record --key "$RECORD_KEY" --required-gb "$RECORD_REQUIRED_GB" \
+    "${RECORD_INPUT_ARGS[@]}" -- \
+    env SEGACD_RECORD_TMPFS_HELD=1 OUTDIR='{output}' \
+      "$0" "${ORIGINAL_ARGS[@]}"
+fi
+
+CAPTURE_DIR="${OUTDIR:?managed recording directory is missing}"
+OUT="$CAPTURE_DIR/$(basename "$OUT")"
 
 if [ "${SEGACD_RECORD_OUTPUT_LOCKED:-0}" != "1" ]; then
   OUTPUT_LOCK="$(
@@ -200,8 +215,7 @@ if [ "$OFFLINE_RECORD" -eq 1 ] || [ -n "$INPUT_REPLAY" ]; then
 fi
 
 if [ "$OFFLINE_RECORD" -eq 1 ] && [ -z "$REPLAY_FILE" ]; then
-  DISC_STEM="$(basename "${DISC%.*}")"
-  REPLAY_DIR="$ROOT/tmp/$DISC_STEM/record"
+  REPLAY_DIR="$CAPTURE_DIR/replay"
   REPLAY_FILE="$REPLAY_DIR/${TAG}_input.replay"
   REPLAY_MAX_FRAMES=$((MAX_FRAMES + 120))
   echo ">> generating input replay ($REPLAY_MAX_FRAMES frames) -> $REPLAY_FILE"
@@ -317,28 +331,16 @@ ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
   -t "$REC_SECS" -map 0:v:0 -map '0:a:0?' -c copy "$BOUNDED_MKV"
 
 echo ">> transcoding verification preview -> $OUT"
-OUT_ABS="$(realpath -m -s "$OUT")"
 RECORD_CPU_WORKERS="$(
   "$PYTHON" tools/resource_tokens.py cpu-workers
 )"
 echo ">> preview CPU tokens: $RECORD_CPU_WORKERS"
-if [[ "$OUT_ABS" == "$ROOT/videos/"* ]]; then
-  OUT_ACTUAL="$("$PYTHON" tools/resource_tokens.py run \
-    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
-    "$PYTHON" tools/tmpfs_workspace.py run-file \
-      --output "$OUT" --kind record-preview-mp4 --required-gb 1 -- \
-      ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-        -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
-        -c:a aac -b:a 128k -movflags +faststart '{output}' \
-    | tail -n 1)"
-else
-  "$PYTHON" tools/resource_tokens.py run \
-    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
-    ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-      -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
-      -c:a aac -b:a 128k -movflags +faststart "$OUT"
-  OUT_ACTUAL="$OUT"
-fi
+"$PYTHON" tools/resource_tokens.py run \
+  --resource cpu --count "$RECORD_CPU_WORKERS" -- \
+  ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
+    -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
+    -c:a aac -b:a 128k -movflags +faststart "$OUT"
+OUT_ACTUAL="$OUT"
 
 if [ -n "$PIPELINE_WALL_START_NS" ]; then
   PIPELINE_WALL_END_NS="$(date +%s%N)"

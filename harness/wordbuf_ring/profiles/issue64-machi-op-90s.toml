@@ -16,7 +16,7 @@ master_filter = "setsar=1,crop=320:152:0:34"
 raw_filter = "setsar=1,crop=320:152:0:34"
 
 [output]
-directory = "videos/machi_op_H40_320x152_adpcm22_issue64_90s/tmp"
+directory = "tmpfs/machi_op_H40_320x152_adpcm22_issue64_90s/sim"
 reuse = false
 emit_decisions = true
 

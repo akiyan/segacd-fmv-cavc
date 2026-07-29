@@ -2869,8 +2869,9 @@ def main():
         if not L3_TILES and dma_tiles != cold_spent:
             raise AssertionError(
                 f"frame {i}: encoder cold={cold_spent} allocator cold={dma_tiles}")
-        # MainのHUD cold_runsと同じsource-aware physical run数。p45では1-2 tile runはCPU直書き、長runは
-        # VBlank境界で複数DMAに割れるため、物理VDP DMA発行回数とは意図的に異なる。
+        # MainのHUD cold_runsと同じsource-aware physical run数。VBlank境界で
+        # 1 recordが複数DMAに割れる場合があるため、物理VDP DMA発行回数とは
+        # 意図的に異なる。
         run_prefetch_count = (
             boot_inline_requests if i == 0 else len(prefetch_cold_slots))
         run_tile_count = len(transfer_order) + run_prefetch_count
@@ -3538,8 +3539,8 @@ def main():
         dec_category_rows = rewritten_rows
 
     # Exact Main-to-VDP workload. Physical run boundaries follow the final
-    # WordBuf plan, so direct one/two-pattern runs are counted after the
-    # physical source choice has stopped changing.
+    # WordBuf plan. Keep the one/two-pattern count as a run-shape diagnostic;
+    # every run is transferred by DMA.
     final_transfer_sources = (
         ring_plan.sources if ring_enabled else
         tuple(
@@ -3590,7 +3591,7 @@ def main():
                 f"frame {frame}: R2V patterns={sum(lengths)} differ from "
                 f"player patterns={int(transfer_tiles_log[frame])}")
         r2v_short_runs[frame] = sum(
-            length <= r2v_model.DIRECT_RUN_MAX_PATTERNS
+            length <= r2v_model.SHORT_RUN_MAX_PATTERNS
             for length in lengths
         )
     r2v_palette_switch = np.zeros(n, np.int64)
@@ -3602,7 +3603,6 @@ def main():
     r2v_components = r2v_model.calculate_words(
         np.asarray(transfer_tiles_log, np.int64),
         np.asarray(transfer_runs_log, np.int64),
-        r2v_short_runs,
         r2v_palette_switch,
         r2v_nt_words,
     )

@@ -31,7 +31,7 @@ def _truthy(value):
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _below_videos(path):
+def _below_retired_media_dir(path):
     try:
         Path(path).absolute().relative_to((PROJECT_ROOT / "videos").absolute())
     except ValueError:
@@ -67,17 +67,25 @@ def sim_work_dir(environ=None):
     explicit = env.get("CBRSIM_OUT")
     if explicit:
         requested = Path(explicit)
-        if not _below_videos(requested):
-            return requested
-        if not env.get("CBRSIM_CONFIG"):
+        if not env.get("CBRSIM_CONFIG") and not _below_retired_media_dir(
+                requested):
             return requested
         import tmpfs_workspace
 
         return tmpfs_workspace.managed_directory_path(
             kind="sim", key=sim_cache_key(env))
-    return Path("videos") / sim_stem() / "tmp"
+    import tmpfs_workspace
+
+    # Make expands a few artifact prerequisites before the profile handoff
+    # supplies CBRSIM_CONFIG/CBRSIM_SRC. Keep that parse-time placeholder
+    # deterministic without hashing the obsolete default source path.
+    if not env.get("CBRSIM_CONFIG"):
+        return tmpfs_workspace.managed_directory_path(
+            kind="sim", key=f"manual-{sim_stem()}")
+    return tmpfs_workspace.managed_directory_path(
+        kind="sim", key=sim_cache_key(env))
 
 
 def artifact_path(suffix, ext="mp4", sim_dir=None):
     stem = sim_stem()
-    return Path("videos") / f"{stem}_{suffix}.{ext}"
+    return Path(f"{stem}_{suffix}.{ext}")

@@ -29,8 +29,7 @@ HUD OCR pass. Use descriptive field names throughout.
      logs/RUN_hud.tsv \
      --gate-json logs/RUN_hud_gate.json \
      --config profiles/PROFILE.toml \
-     --label "short run label" \
-     --output videos/STEM_hudline.png
+     --label "short run label"
    ```
 
    The renderer prints the direct tmpfs PNG and a persistent content-keyed
@@ -49,7 +48,9 @@ HUD OCR pass. Use descriptive field names throughout.
    - descriptive row labels;
    - palette boundaries;
    - frame 0 is blank in every metric row;
-   - the terminal hold is absent from cadence statistics.
+   - the terminal hold is absent from cadence statistics;
+   - edge cadence observations remain visible but are absent from the ALERT
+     count: first/last four content frames at 30 fps and two at 15 fps.
 
 5. Generate the exact warning/over-limit report:
 
@@ -57,7 +58,7 @@ HUD OCR pass. Use descriptive field names throughout.
    tools/python.sh .agents/skills/hudline/scripts/report_overages.py \
      logs/RUN_hud.tsv \
      --gate-json logs/RUN_hud_gate.json \
-     --output videos/STEM_emu_hud_warnings.md
+     --output STEM_emu_hud_warnings.md
    ```
 
    Cumulative `sector_slip`, `control_desync`, and `audio_resync` fields and
@@ -79,7 +80,9 @@ HUD OCR pass. Use descriptive field names throughout.
 - Frame axis: `x = 220 + frame * pixels_per_frame`.
 - First row: derived displayed VBlanks per content frame. Frame 0 and the
   terminal frame are unknown. Fixed 15 fps expects four VBlanks and fixed
-  30 fps expects two. Delivery-paced cadence has no fixed guide.
+  30 fps expects two. Delivery-paced cadence has no fixed guide. At fixed
+  cadence, observations in the first/last four content frames at 30 fps and
+  two at 15 fps stay plotted as diagnostics but do not raise ALERT.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
   `prgbuf_jitter_peak_kib`.
@@ -110,7 +113,9 @@ prgbuf_jitter_peak_kib
 
 `vblank_spill` is warning-only. The other four fields fail when they exceed
 their limits. Fixed-cadence `transfer_vblanks` above the cadence interval and
-derived visible-duration misses are also warnings. `cd_wait_count`,
+derived visible-duration misses outside the cadence edge exception are also
+warnings. The edge exception affects only the derived display-duration alert;
+it does not waive gate fields or `transfer_vblanks`. `cd_wait_count`,
 `adpcm_decode_units`, `pump_gap_ticks`, APPLY back-pressure, reader lead, and
 transfer phases are diagnostic.
 

@@ -125,7 +125,7 @@ algorithm in the profile. ADPCM22, the 1,535-tile VRAM pool, GPU, Bayer
 dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
 pattern supply, forward fill, and startup-audio policy are fixed pipeline
 behavior and must not be repeated as TOML keys. Use the filename-derived
-profile identity and canonical `videos/` artifact paths from `AGENTS.md`.
+profile identity and canonical tmpfs/log artifact paths from `AGENTS.md`.
 
 Do not bump `tools/av_version.txt` merely for a new source profile. Apply the
 version policy in `AGENTS.md` if output-affecting encoder or player code changes.
@@ -224,8 +224,7 @@ qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 - `ffv1-flac`;
 - `--record-size 256x224` for H32 or `320x224` for H40;
 - automatic private X-display allocation;
-- the canonical persistent `videos/<stem>_emu_lossless.mkv` and the direct
-  tmpfs preview path printed by the recorder.
+- the direct tmpfs lossless MKV and preview paths printed by the recorder.
 
 Record emulator-synchronized A/V. "Offline" means unpaced emulation, not an
 offline audio replacement. Never replace the recorded audio with the source
@@ -259,9 +258,9 @@ Before accepting the recording, verify:
   on one row.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
-timestamps and a `videos/<stem>/record_check` base; inspect only the new directory and its
-manifest/montage. Never build a montage from a shared `*.png` glob or loose stills left by a
-previous capture.
+timestamps and a `$(dirname "$LOSSLESS")/record_check` base; inspect only the new directory
+and its manifest/montage. Never build a montage from a shared `*.png` glob or loose stills
+left by a previous capture.
 
 Immediately after the HUD TSV and gate JSON exist, invoke the `hudline` skill
 with those exact sidecars and the same profile. Inspect and show its complete
@@ -330,7 +329,7 @@ explanatory prose without removing CRAM chapters, required specs/layout/
 technique sections, both project links, or the current timeline links.
 
 ```sh
-tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_analysis_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
+tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
 ```
 
 Upload the newly rebuilt analysis as unlisted, category 20. Use `--force` only
@@ -363,7 +362,7 @@ Verify the final MP4 has:
 - video, audio, and undistorted movie content.
 
 Extract startup/movie/tail stills with `tools/extract_verification_frames.sh`, using
-`videos/<stem>/compilation_check` as the base. Inspect only that invocation's printed
+`$(dirname "$COMPILATION_MP4")/compilation_check` as the base. Inspect only that invocation's printed
 `CHECK_DIR`; do not mix files from an older compilation.
 
 Generate boot-aware CRAM chapters and current bilingual metadata according to

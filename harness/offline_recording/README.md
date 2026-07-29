@@ -42,36 +42,37 @@ saved Replay.
 One-command default capture:
 
 ```sh
-OUTDIR="$PWD/videos" tools/record_movie.sh \
+tools/record_movie.sh \
   --config profiles/ps2-sakura-op-h32.toml \
   --seconds 140 \
   --tag offline_record --record-size 256x224 --display :299 \
-  --out videos/offline_record_preview.mp4
+  --out offline_record_preview.mp4
 ```
 
-The command prints `REPLAY=...`. Reuse that exact file for the realtime
-baseline and the repeat offline capture:
+The command prints direct `REPLAY=...` and `LOSSLESS=...` paths in the managed
+tmpfs workspace. Reuse that exact replay for the realtime baseline and repeat
+offline capture, and use the two printed lossless paths for comparison:
 
 ```sh
-REPLAY=tmp/ps2-sakura-op-h32/record/offline_record_input.replay
+REPLAY=/dev/shm/segacd-fmv-ttrc/.../offline_record_input.replay
 
-OUTDIR="$PWD/videos" tools/record_movie.sh \
+tools/record_movie.sh \
   --disc out/ps2-sakura-op-h32.cue --no-build \
   --seconds 140 --realtime-lossless --preset ffv1-flac \
   --input-replay "$REPLAY" \
   --tag realtime_baseline --record-size 256x224 --display :300 \
-  --out videos/realtime_baseline_preview.mp4
+  --out realtime_baseline_preview.mp4
 
-OUTDIR="$PWD/videos" tools/record_movie.sh \
+tools/record_movie.sh \
   --disc out/ps2-sakura-op-h32.cue --no-build \
   --seconds 140 --input-replay "$REPLAY" \
   --tag offline_ab --record-size 256x224 --display :301 \
-  --out videos/offline_ab_preview.mp4
+  --out offline_ab_preview.mp4
 
 tools/python.sh tools/compare_recordings.py \
-  videos/realtime_baseline_lossless.mkv \
-  videos/offline_ab_lossless.mkv \
-  --json videos/realtime_vs_offline.json
+  "$REALTIME_LOSSLESS" \
+  "$OFFLINE_LOSSLESS" \
+  --json logs/realtime_vs_offline.json
 ```
 
 When requalifying, repeat the offline command with a new tag, then compare the

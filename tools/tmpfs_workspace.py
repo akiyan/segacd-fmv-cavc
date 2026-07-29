@@ -25,7 +25,6 @@ import time
 import uuid
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-ttrc")
 DEFAULT_MIN_FREE_BYTES = 4 * 1024 ** 3
 
@@ -365,17 +364,6 @@ def acquire_lease(
             entry, root=root, required_bytes=required_bytes)
 
 
-def is_disposable_path(path: Path) -> bool:
-    """Return whether a requested disposable name is below ``videos/``."""
-
-    videos = (PROJECT_ROOT / "videos").resolve()
-    try:
-        Path(path).absolute().relative_to(videos)
-    except ValueError:
-        return False
-    return True
-
-
 def managed_directory_path(
     *,
     kind: str,
@@ -526,6 +514,7 @@ def run_file_command(
     kind: str,
     required_bytes: int,
     command: list[str],
+    input_paths: list[Path] | tuple[Path, ...] = (),
 ) -> Path:
     """Run a producer against a leased direct tmpfs target and return it."""
 
@@ -534,17 +523,64 @@ def run_file_command(
     if all("{output}" not in part for part in command):
         raise TmpfsWorkspaceError(
             "tmpfs file producer command must contain {output}")
-    actual, lease = allocate_file(
-        requested_path, kind=kind, required_bytes=required_bytes)
-    expanded = [part.replace("{output}", str(actual)) for part in command]
+    input_leases = []
+    output_lease = None
     try:
+        for input_path in input_paths:
+            input_lease = lease_managed_path(input_path)
+            if input_lease is not None:
+                input_leases.append(input_lease)
+        actual, output_lease = allocate_file(
+            requested_path, kind=kind, required_bytes=required_bytes)
+        expanded = [part.replace("{output}", str(actual)) for part in command]
         subprocess.run(expanded, check=True)
         if not actual.is_file():
             raise TmpfsWorkspaceError(
                 f"tmpfs artifact was not produced: {actual}")
         return actual
     finally:
-        lease.release()
+        if output_lease is not None:
+            output_lease.release()
+        for input_lease in reversed(input_leases):
+            input_lease.release()
+
+
+def run_directory_command(
+    *,
+    kind: str,
+    key: str,
+    required_bytes: int,
+    command: list[str],
+    input_paths: list[Path] | tuple[Path, ...] = (),
+) -> Path:
+    """Run a producer with one leased disposable tmpfs directory."""
+
+    if not command:
+        raise TmpfsWorkspaceError("tmpfs directory producer command is empty")
+    if all("{output}" not in part for part in command):
+        raise TmpfsWorkspaceError(
+            "tmpfs directory producer command must contain {output}")
+    input_leases = []
+    output_lease = None
+    try:
+        for input_path in input_paths:
+            input_lease = lease_managed_path(input_path)
+            if input_lease is not None:
+                input_leases.append(input_lease)
+        output_lease = activate_directory(
+            kind=kind,
+            key=key,
+            required_bytes=required_bytes,
+        )
+        actual = output_lease.entry / "data"
+        expanded = [part.replace("{output}", str(actual)) for part in command]
+        subprocess.run(expanded, check=True)
+        return actual
+    finally:
+        if output_lease is not None:
+            output_lease.release()
+        for input_lease in reversed(input_leases):
+            input_lease.release()
 
 
 def _parse_cli() -> argparse.Namespace:
@@ -555,7 +591,18 @@ def _parse_cli() -> argparse.Namespace:
     run_file.add_argument("--output", required=True, type=Path)
     run_file.add_argument("--kind", required=True)
     run_file.add_argument("--required-gb", type=float, default=1.0)
+    run_file.add_argument("--input", action="append", type=Path, default=[])
     run_file.add_argument("command", nargs=argparse.REMAINDER)
+    run_directory = subparsers.add_parser(
+        "run-directory",
+        help="run a producer inside one leased disposable tmpfs directory",
+    )
+    run_directory.add_argument("--kind", required=True)
+    run_directory.add_argument("--key", required=True)
+    run_directory.add_argument("--required-gb", type=float, default=1.0)
+    run_directory.add_argument(
+        "--input", action="append", type=Path, default=[])
+    run_directory.add_argument("command", nargs=argparse.REMAINDER)
     return parser.parse_args()
 
 
@@ -568,6 +615,17 @@ def _main() -> None:
             kind=args.kind,
             required_bytes=max(0, int(args.required_gb * 1024 ** 3)),
             command=command,
+            input_paths=args.input,
+        )
+        print(actual, flush=True)
+    elif args.action == "run-directory":
+        command = args.command[1:] if args.command[:1] == ["--"] else args.command
+        actual = run_directory_command(
+            kind=args.kind,
+            key=args.key,
+            required_bytes=max(0, int(args.required_gb * 1024 ** 3)),
+            command=command,
+            input_paths=args.input,
         )
         print(actual, flush=True)
 

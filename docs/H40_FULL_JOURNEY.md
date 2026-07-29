@@ -158,11 +158,12 @@ Resolution and audio are unchanged.
 Canonical build (reproducible):
 
 ```sh
+SIM_OUT=/path/to/completed/sim
 CBRSIM_W=320 CBRSIM_H=224 CBRSIM_MODE=H40 \
 CBRSIM_RING_CAP_KB=380 CBRSIM_PACK_MAXCOLD=200 \
 tools/python.sh tools/pack_stream.py \
-  --dec-log videos/machi_ed_H40_320x224_adpcm22/decisions.pkl \
-  --audio  videos/machi_ed_H40_320x224_adpcm22/audio_22k05_s16_mono.wav \
+  --dec-log "$SIM_OUT/decisions.pkl" \
+  --audio "$SIM_OUT/audio_22k05_s16_mono.wav" \
   --output out/movieplay/MOVIE.DAT
 make disc DEBUG=1
 ```
@@ -326,11 +327,12 @@ cold cap を直接指した。
 再現ビルド（canonical）：
 
 ```sh
+SIM_OUT=/path/to/completed/sim
 CBRSIM_W=320 CBRSIM_H=224 CBRSIM_MODE=H40 \
 CBRSIM_RING_CAP_KB=380 CBRSIM_PACK_MAXCOLD=200 \
 tools/python.sh tools/pack_stream.py \
-  --dec-log videos/machi_ed_H40_320x224_adpcm22/decisions.pkl \
-  --audio  videos/machi_ed_H40_320x224_adpcm22/audio_22k05_s16_mono.wav \
+  --dec-log "$SIM_OUT/decisions.pkl" \
+  --audio "$SIM_OUT/audio_22k05_s16_mono.wav" \
   --output out/movieplay/MOVIE.DAT
 make disc DEBUG=1
 ```

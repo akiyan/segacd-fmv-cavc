@@ -78,8 +78,9 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
    ```sh
    tools/python.sh tools/tmpfs_workspace.py run-file \
-     --output videos/STEM_emu.mp4 --kind compilation-mp4 --required-gb 8 -- \
-     ffmpeg -i videos/INPUT_lossless.mkv \
+     --output STEM_emu.mp4 --kind compilation-mp4 --required-gb 8 \
+     --input "$LOSSLESS" -- \
+     ffmpeg -i "$LOSSLESS" \
        -vf "scale=2048:1568:flags=neighbor,setsar=1" \
        -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
        -c:a aac -b:a 192k -movflags +faststart '{output}'
@@ -87,7 +88,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
    `INPUT_lossless.mkv`と`STEM`は実値へ置き換える。`{output}` はtmpfs wrapperが
    実体パスへ置き換え、最後にそのdirect pathを表示する。以降の検証とuploadは
-   表示されたpathを使う。`videos/` symlinkは作らない。nearest拡大そのものは
+   表示されたpathを使う。repository内にmedia pathは作らない。nearest拡大そのものは
    新しい色を作らず、H32では8x7の完全な整数拡大になる。ただしYouTubeは必ず
    再エンコードするため、最終配信までロスレスとは呼ばない。CRF 10の高品質な
    入力を渡し、YouTube側の高解像度配信を使う。`-ss`、`-t`、fps filter、`-r`は
@@ -118,7 +119,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    - 映画開始後の絵が縦長・横長になっていない
 
    `tools/extract_verification_frames.sh`で完成MP4から起動・本編・末尾を名前付き抽出する。
-   出力先には`videos/<stem>/compilation_check`をbaseとして渡し、毎回新しく作られる
+   出力先には`$(dirname "$OUTPUT")/compilation_check`をbaseとして渡し、毎回新しく作られる
    source固有directoryの`manifest.tsv`とmontageだけを確認する。共有directoryの
    `*.png`をmontageせず、以前の録画・変換から残ったloose stillを混ぜない。
 
@@ -137,7 +138,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
    ```sh
    PY="$HOME/.config/youtube/venv/bin/python"
-   tools/python.sh -c 'from pathlib import Path; p=Path("videos/STEM_emu_description.txt"); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
+   tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["PLAYBACK_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
    "$PY" "$HOME/.claude/skills/youtube/youtube.py" upload \
      /dev/shm/segacd-fmv-ttrc/artifacts/COMPILATION_ENTRY/STEM_emu.mp4 \
      --title "$TITLE" --desc "$DESCRIPTION" \

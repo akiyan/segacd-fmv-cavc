@@ -42,13 +42,13 @@ class AnalysisDmaTests(unittest.TestCase):
             32 * 18 + r2v_model.DEBUG_HUD_WORDS,
         )
 
-    def test_r2v_components_count_short_runs_without_repairs(self) -> None:
+    def test_r2v_components_repair_every_dma_run(self) -> None:
         components = r2v_model.calculate_words(
-            [210], [20], [12], [1], [1792])
+            [210], [20], [1], [1792])
         self.assertEqual(int(components["pattern_words"][0]), 3360)
-        self.assertEqual(int(components["repair_words"][0]), 8)
+        self.assertEqual(int(components["repair_words"][0]), 20)
         self.assertEqual(int(components["cram_words"][0]), 64)
-        self.assertEqual(int(components["words"][0]), 5224)
+        self.assertEqual(int(components["words"][0]), 5236)
 
     def test_slot_run_count_matches_packed_order(self) -> None:
         self.assertEqual(count_slot_runs([]), 0)

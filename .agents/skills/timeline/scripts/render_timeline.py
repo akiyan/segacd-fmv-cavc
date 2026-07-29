@@ -47,7 +47,7 @@ R2V_HEIGHT = 32
 DIC_HEIGHT = 32
 BAND_HEIGHT = 32
 R2V_WORDS_PER_PATTERN = r2v_model.PATTERN_WORDS
-R2V_CPU_WORD_COST = 1
+R2V_PATTERN_WORD_COST = 1
 R2V_DMA_REPAIR_WORDS = r2v_model.DMA_REPAIR_WORDS
 P125_H40_NAME_TABLE_WORDS = (
     r2v_model.H40_STAGE_PITCH * r2v_model.H40_STAGE_ROWS)
@@ -168,12 +168,17 @@ def calculate_r2v_words(
 ) -> dict[str, np.ndarray]:
     """Return VDP-memory words from an external packed-stream workload."""
     words = np.asarray(pass2_words, np.int64)
+    runs = np.asarray(run_count, np.int64)
+    short = np.asarray(short_run_count, np.int64)
     if np.any(words % R2V_WORDS_PER_PATTERN):
         raise ValueError("R2V pattern words must be whole 16-word patterns")
+    if words.shape != runs.shape or words.shape != short.shape:
+        raise ValueError("R2V workload columns must have matching shapes")
+    if np.any(short < 0) or np.any(short > runs):
+        raise ValueError("R2V short-run count exceeds total run count")
     return r2v_model.calculate_words(
         words // R2V_WORDS_PER_PATTERN,
-        run_count,
-        short_run_count,
+        runs,
         palette_switch,
         name_table_word_count,
     )
@@ -966,8 +971,7 @@ def main() -> None:
     tsv = args.tsv.resolve()
     config_path = args.config.resolve() if args.config else None
     sim_out = args.sim_out.resolve() if args.sim_out else None
-    requested_output = (args.output or (
-        REPO / "videos" / (tsv.stem + "_timeline.png"))).absolute()
+    requested_output = args.output or Path(tsv.stem + "_timeline.png")
     rows, data = load_tsv(tsv)
     n = len(rows)
     ppf = args.pixels_per_frame or max(1, min(4, math.ceil(4200 / n)))
@@ -1024,7 +1028,7 @@ def main() -> None:
         draw.text(
             (24, 126),
             (
-                f"R2V = pattern x{R2V_CPU_WORD_COST} + DMA repair + "
+                f"R2V = pattern DMA x{R2V_PATTERN_WORD_COST} + repair + "
                 f"NT up to {name_table_max} + CRAM {P125_CRAM_WORDS}"
                 f"@switch; timed max={fmt_int(r2v_max_words)} words"
             ),
@@ -1053,15 +1057,12 @@ def main() -> None:
     png_lease = None
     actual_output = requested_output
     try:
-        if tmpfs_workspace.is_disposable_path(requested_output):
-            actual_output, png_lease = tmpfs_workspace.allocate_file(
-                requested_output,
-                kind="timeline-png",
-                key=f"{tsv.stem}-{hashlib.sha256(tsv.read_bytes()).hexdigest()[:10]}",
-                required_bytes=max(width * height * 4, 128 * 1024 ** 2),
-            )
-        else:
-            actual_output.parent.mkdir(parents=True, exist_ok=True)
+        actual_output, png_lease = tmpfs_workspace.allocate_file(
+            requested_output,
+            kind="timeline-png",
+            key=f"{tsv.stem}-{hashlib.sha256(tsv.read_bytes()).hexdigest()[:10]}",
+            required_bytes=max(width * height * 4, 128 * 1024 ** 2),
+        )
         image.convert("RGB").save(actual_output, optimize=True)
         print(actual_output)
     finally:
@@ -1102,7 +1103,7 @@ def main() -> None:
             ),
             "height": R2V_HEIGHT,
             "unit": (
-                "VDP-memory words: pattern CPU-x1 + DMA repair + NT + CRAM"
+                "VDP-memory words: pattern DMA + repair + NT + CRAM"
             ),
         })
     receipt_rows.extend([
@@ -1133,7 +1134,7 @@ def main() -> None:
         },
     ])
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "kind": "timeline",
         "label": title,
         "image": str(actual_output),
@@ -1166,7 +1167,9 @@ def main() -> None:
             hashlib.sha256(r2v_path.read_bytes()).hexdigest()
             if r2v_path else None
         ),
-        "r2v_cpu_word_cost": R2V_CPU_WORD_COST if r2v is not None else None,
+        "r2v_pattern_word_cost": (
+            R2V_PATTERN_WORD_COST if r2v is not None else None
+        ),
         "r2v_dma_repair_words_per_run": (
             R2V_DMA_REPAIR_WORDS if r2v is not None else None
         ),

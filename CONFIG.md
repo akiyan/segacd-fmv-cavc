@@ -30,7 +30,7 @@ The “Where” column uses these short names:
 
 Concurrency controls change workstation scheduling, not encoded decisions.
 `tools/resource_tokens.py` implements cross-process `flock` tokens and one
-exclusive lock per `videos/<stem>`.
+exclusive lock per media `<stem>`.
 
 | Name | Default | Meaning |
 |---|---:|---|
@@ -210,12 +210,11 @@ slot order while name updates remain in cell order.
 | `RUN_TABLE` | 488 records | ip / pack | Maximum source-aware physical cold runs in one frame. |
 | run record size | 22 bytes | ip | Pre-swizzled VDP length/source words, command, and fallback fields. |
 
-A one- or two-tile run uses direct CPU writes. Longer runs use Word-RAM DMA,
-with the required first-word repair. An ordinary run that does not fit the
-current residual waits whole for a fresh VBlank as an overload fallback. Only
-a run longer than one complete budget is split into chunks.
-Prg/WordBuf/DicBuf source boundaries split runs. The 488-record limit is a
-fragmentation limit, not the cold-tile cap.
+Every pattern run uses DMA. A Word-RAM DMA performs the required CPU
+first-word repair. Any run that crosses the current residual budget is split
+at that boundary and continues at the next fresh VBlank head.
+Prg/WordBuf/DicBuf source boundaries also split runs. The 488-record limit is
+a fragmentation limit, not the cold-tile cap.
 
 ## Physical delivery allowance
 
@@ -393,8 +392,6 @@ the four physical supplies are fixed behavior.
 | Name | Default | Meaning |
 |---|---:|---|
 | `MAIN_CODEGEN` | 1 | Generate specialized bitmap handlers and name-table blitters. Zero selects the reference bit loop. |
-| `DMA_RUN_FASTPATH` | 1 | CPU-copy one/two-tile runs and DMA longer runs. Zero selects all-DMA diagnosis. |
-| `VBLANK_RUN_SPLIT` | 1 | Split a DMA run at the remaining VBlank budget boundary. Zero is an intentionally unsafe A/B mode that keeps every run whole; a run longer than one complete budget can enter active display. |
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
 
@@ -462,7 +459,7 @@ buildがplayer assembly constantとの一致を確認します。導出値を別
 
 concurrency controlはworkstation上のscheduleだけを変え、encode decisionは変えません。
 `tools/resource_tokens.py` はprocess間 `flock` tokenと
-`videos/<stem>` ごとのexclusive lockを実装します。
+media `<stem>` ごとのexclusive lockを実装します。
 
 | Name | default | 意味 |
 |---|---:|---|
@@ -632,11 +629,10 @@ pattern loadはslot昇順、name updateはcell順です。
 | `RUN_TABLE` | 488 records | ip / pack | 1 frameのsource-aware physical cold run上限。 |
 | run record size | 22 bytes | ip | 事前変換済みVDP length/source word、command、fallback field。 |
 
-1〜2 tileのrunはCPUで直接copyします。長いrunはWord-RAM DMAを使い、必須の
-first-word repairを行います。Current残budgetに収まらない通常runは、overload
-fallbackとしてwholeのままfresh VBlankを待ちます。1回のfull budgetより長いrun
-だけをchunk分割します。Prg/WordBuf/DicBufのsource境界はrunを分けます。
-488-record上限はfragmentation上限であり、cold tile capではありません。
+全pattern runがDMAを使います。Word-RAM DMAは必須のCPU first-word repairを
+行います。Current残budget境界を越えるrunはそこで分割し、次のfresh VBlank headから
+続きを行います。Prg/WordBuf/DicBufのsource境界もrunを分けます。488-record上限は
+fragmentation上限であり、cold tile capではありません。
 
 ## 物理delivery allowance
 
@@ -803,8 +799,6 @@ segmented palette、Near、boot prefetch、4つの物理供給は固定behavior�
 | Name | Default | 意味 |
 |---|---:|---|
 | `MAIN_CODEGEN` | 1 | specialized bitmap handlerとname-table blitterを生成する。zeroはreference bit loop。 |
-| `DMA_RUN_FASTPATH` | 1 | 1〜2 tile runをCPU、長いrunをDMAで転送する。zeroは診断用all-DMA。 |
-| `VBLANK_RUN_SPLIT` | 1 | DMA runを残りVBlank予算の境界で分割する。zeroは全runをwholeのまま転送する意図的にunsafeなA/B modeで、1 complete budgetより長いrunはactive displayへはみ出し得る。 |
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
 

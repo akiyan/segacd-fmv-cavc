@@ -35,8 +35,8 @@ grouped by the number of `666` pixels:
 
 ```sh
 tools/python.sh harness/palette_audit/near_white.py \
-  videos/BadApple_H32_256x224_adpcm22/decisions.pkl \
-  videos/BadApple_H32_256x224_adpcm22/master
+  "$SIM_OUT/decisions.pkl" \
+  "$SIM_OUT/master"
 ```
 
 The digital RGB labels use the encoder/emulator levels

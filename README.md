@@ -144,10 +144,10 @@ field. [`HUD.md`](HUD.md) defines the values-only hardware/emulator DEBUG HUD.
 
 Completed sim artifacts are reusable only when source bytes, effective
 settings, and the output-affecting encoder fingerprint match. Sim work and
-derived videos use direct managed tmpfs paths; native lossless emulator
-captures remain ordinary files under `videos/`. Per-frame codec timeline and
-playback HUD TSVs plus their gate/layout/Gist metadata remain under `logs/`,
-with encoder and player versions in every TSV filename.
+all generated media, including native lossless emulator captures, use direct
+managed tmpfs paths. Per-frame codec timeline and playback HUD TSVs plus their
+gate/layout/Gist metadata remain under `logs/`, with encoder and player
+versions in every TSV filename.
 
 Heavy stages share CPU, GPU, and emulator tokens. Different profile stems may
 overlap, while the same stem is rejected immediately. Xvfb displays, RetroArch
@@ -293,7 +293,7 @@ Use emulator-synchronized A/V:
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
+  --seconds 180 --tag STEM_emu --out STEM_emu_preview.mp4
 ```
 
 The recorder defaults to fixed-Replay, faster-than-realtime, native-size
@@ -473,10 +473,10 @@ timed-work valueとgraph maximumから除外します。
 - `boot/movieplay_ip.s`: Main-CPUのVRAM、CRAM、name table、DMA、DEBUG HUD runtime。
 
 completed sim artifactはsource byte、effective setting、outputに影響するencoder fingerprintが
-一致するときだけ再利用します。sim workとderived videoはmanaged tmpfs実体pathを直接使い、
-native lossless emulator captureは`videos/`の通常fileとして保持します。Frame別codec
-timeline TSVとplayback HUD TSV、およびgate/layout/Gist metadataは`logs/`へ保持し、
-TSV filenameにはencoder/player versionを入れます。
+一致するときだけ再利用します。sim workとnative lossless emulator captureを含む全生成mediaは
+managed tmpfs実体pathを直接使います。Frame別codec timeline TSVとplayback HUD TSV、
+およびgate/layout/Gist metadataは`logs/`へ保持し、TSV filenameにはencoder/player
+versionを入れます。
 
 heavy stageはCPU、GPU、emulator tokenを共有します。異なるprofile stemは重ねられますが、
 同じstemは即時拒否します。Xvfb display、RetroArch system directory、
@@ -618,7 +618,7 @@ emulator-synchronized A/Vを使います。
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 180 --tag STEM_emu --out videos/STEM_emu_preview.mp4
+  --seconds 180 --tag STEM_emu --out STEM_emu_preview.mp4
 ```
 
 recorderのdefaultはfixed-Replay、faster-than-realtime、native-size FFV1/FLACです。

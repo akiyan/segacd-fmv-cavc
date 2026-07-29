@@ -80,7 +80,7 @@ class TmpfsWorkspaceTests(unittest.TestCase):
 
     def test_file_is_returned_as_direct_path(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            requested = Path(tmp) / "videos" / "movie_analysis.mp4"
+            requested = Path("movie_analysis.mp4")
             actual, lease = workspace.allocate_file(
                 requested, kind="analysis", key="profile-abc")
             actual.write_bytes(b"video")
@@ -91,17 +91,48 @@ class TmpfsWorkspaceTests(unittest.TestCase):
 
     def test_file_command_returns_direct_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            source = Path(tmp) / "source.bin"
+            source_lease = workspace.activate_directory(
+                kind="record", key="source-recording")
+            source = source_lease.entry / "data" / "source.bin"
             source.write_bytes(b"rendered")
-            alias = Path(tmp) / "videos" / "rendered.mp4"
+            source_lease.release()
+            requested = Path("rendered.mp4")
             actual = workspace.run_file_command(
-                alias,
+                requested,
                 kind="test-render",
                 required_bytes=0,
-                command=["cp", str(source), "{output}"],
+                input_paths=[source],
+                command=[
+                    "sh", "-c",
+                    "test \"$(find \"$1\" -name '*.json' | wc -l)\" -eq 2 "
+                    "&& cp \"$2\" \"$3\"",
+                    "sh",
+                    str(workspace.ensure_root() / "leases"),
+                    str(source),
+                    "{output}",
+                ],
             )
-            self.assertFalse(alias.exists())
+            self.assertFalse(requested.exists())
             self.assertEqual(actual.read_bytes(), b"rendered")
+            self.assertFalse(workspace._active_entries(workspace.ensure_root()))
+
+    def test_directory_command_holds_one_direct_workspace(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
+            actual = workspace.run_directory_command(
+                kind="record",
+                key="profile-abc",
+                required_bytes=0,
+                command=[
+                    "sh", "-c",
+                    "test -n \"$1\" && printf recorded > \"$1/capture.mkv\"",
+                    "sh", "{output}",
+                ],
+            )
+            self.assertEqual(
+                (actual / "capture.mkv").read_text(encoding="utf-8"),
+                "recorded",
+            )
+            self.assertFalse(workspace._active_entries(workspace.ensure_root()))
 
     def test_stale_lease_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
@@ -192,13 +223,13 @@ class TmpfsWorkspaceTests(unittest.TestCase):
 
     def test_replacing_same_file_key_replaces_managed_entry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            alias = Path(tmp) / "videos" / "movie_analysis.mp4"
+            requested = Path("movie_analysis.mp4")
             first, first_lease = workspace.allocate_file(
-                alias, kind="analysis", key="first")
+                requested, kind="analysis", key="first")
             first.write_bytes(b"first")
             first_lease.release()
             second, second_lease = workspace.allocate_file(
-                alias, kind="analysis", key="second")
+                requested, kind="analysis", key="second")
             second.write_bytes(b"second")
             self.assertNotEqual(first, second)
             self.assertEqual(second.read_bytes(), b"second")

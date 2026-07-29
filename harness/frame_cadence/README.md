@@ -21,7 +21,7 @@ the matching packed `HEADER.DAT`:
 
 ```sh
 tools/python.sh harness/frame_cadence/verify.py \
-  videos/BadApple_H40_320x224_pcm_emu_lossless.mkv \
+  "$LOSSLESS" \
   --header out/bad-apple/HEADER.DAT
 ```
 

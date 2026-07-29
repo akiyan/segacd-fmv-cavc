@@ -10,7 +10,7 @@ import numpy as np
 import av_config
 
 PATTERN_WORDS = 16
-DIRECT_RUN_MAX_PATTERNS = 2
+SHORT_RUN_MAX_PATTERNS = 2
 DMA_REPAIR_WORDS = 1
 CRAM_WORDS = 64
 H40_STAGE_PITCH = 64
@@ -48,31 +48,29 @@ def name_table_words(
 def calculate_words(
     pattern_count: Sequence[int] | np.ndarray,
     run_count: Sequence[int] | np.ndarray,
-    short_run_count: Sequence[int] | np.ndarray,
     palette_switch: Sequence[int] | np.ndarray,
     name_table_word_count: int | Sequence[int] | np.ndarray,
 ) -> dict[str, np.ndarray]:
     """Calculate physical VDP-memory words by transfer component."""
     patterns = np.asarray(pattern_count, np.int64)
     runs = np.asarray(run_count, np.int64)
-    short = np.asarray(short_run_count, np.int64)
     palette = np.asarray(palette_switch, np.int64)
     name_table = np.broadcast_to(
         np.asarray(name_table_word_count, np.int64), patterns.shape,
     ).copy()
     if not (
-        patterns.shape == runs.shape == short.shape == palette.shape
-        == name_table.shape
+        patterns.shape == runs.shape == palette.shape == name_table.shape
     ):
         raise ValueError("R2V workload columns must have matching shapes")
     if any(np.any(values < 0) for values in (
-        patterns, runs, short, palette, name_table
+        patterns, runs, palette, name_table
     )):
         raise ValueError("R2V workload values must be non-negative")
-    if np.any(short > runs):
-        raise ValueError("R2V short-run count exceeds total run count")
     pattern_words = patterns * PATTERN_WORDS
-    repair_words = (runs - short) * DMA_REPAIR_WORDS
+    # Every pattern run is DMA-backed. Word-RAM transfers need the mandatory
+    # first-word CPU repair; the ordinary whole-run path also performs the
+    # same harmless repair for DicBuf runs.
+    repair_words = runs * DMA_REPAIR_WORDS
     cram_words = (palette != 0).astype(np.int64) * CRAM_WORDS
     return {
         "words": pattern_words + repair_words + name_table + cram_words,

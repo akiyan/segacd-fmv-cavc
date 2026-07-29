@@ -26,7 +26,7 @@ height = 224
 fit = "pad"
 
 [output]
-directory = "videos/{Path(source).stem}_{mode}_{width}x224_adpcm22/tmp"
+directory = "tmpfs/{Path(source).stem}_{mode}_{width}x224_adpcm22/sim"
 emit_decisions = true
 
 [palette]

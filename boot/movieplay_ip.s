@@ -104,13 +104,11 @@
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
 .equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
 /* 1VBLANKで安全に使えるDMA相当word budgetはモード別(md_vbudget)。
-   CPUによるVDP word writeはDMAの4倍でchargeし、run境界で次VBLANKへ分ける。 */
+   Word-RAM DMAの先頭word補修など、CPUによるVDP word writeはDMAの4倍で
+   chargeし、runは残budget境界で次VBLANKへ分ける。 */
 .equ VB_WORDS_H32, 2800		/* H32 V28 NTSC */
 .equ VB_WORDS_H40, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
-.equ CPU_DIRECT_MAX_WORDS, 32	/* 1-2 tiles: CPU writes beat per-run DMA setup
-				   (128 was measured no better: transfer time is
-				   VRAM-slot bound, not issue-mechanism bound) */
 .equ FEATURE_FIXED_N_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
@@ -1109,42 +1107,15 @@ bf_dma:
 .endif
 bf_run_lp:
 	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port. VBLANK_RUN_SPLIT fills the current
-	   budget and continues a boundary-crossing DMA run in the next one. The
-	   diagnostic whole-run mode instead waits for a fresh budget whenever a
-	   run does not fit the residual, then issues it without splitting. A run
-	   larger than a complete budget can therefore enter active display in
-	   that diagnostic mode. The cadence-final budget has already withheld
-	   NT/HUD/CRAM/flip capacity. */
+	   straight into the control port. Fill the current budget and continue a
+	   boundary-crossing DMA run at the next fresh VBlank head. The
+	   cadence-final budget has already withheld NT/HUD/CRAM/flip capacity. */
 	move.w	(a2)+, d1			/* +0 len(語) */
-.ifdef DMA_RUN_FASTPATH
-	/* A one-time run branch is much cheaper than programming a DMA for one or
-	   two tiles. Test the original run length here. */
-	cmpi.w	#CPU_DIRECT_MAX_WORDS, d1
-	bls	bf_short_run
-.endif
 	move.w	d1, d6
 	addq.w	#CPU_VDP_WORD_COST, d6		/* full DMA + one CPU repair word */
 	cmp.w	d7, d6				/* whole run fits the remaining budget? */
 	bls.s	1f
-.ifdef VBLANK_RUN_SPLIT
 	bra	bf_split_run			/* fill this budget before continuing the run */
-.else
-	/* OFF means no run splitting at all. A cadence-final budget can be smaller
-	   because it reserves NT/HUD/CRAM/flip work, so bounded runs continue to a
-	   later fresh budget until they fit. An individually oversized run starts
-	   at one fresh head and deliberately overruns it for this A/B diagnostic. */
-	PC_MOVE_W md_vbudget, PC_VBUDGET, d0
-	cmp.w	d0, d6
-	bhi.s	3f
-2:
-	bsr	bf_next_vbudget
-	cmp.w	d7, d6
-	bhi.s	2b
-	bra.s	1f
-3:
-	bsr	bf_next_vbudget			/* intentionally unsafe whole-run overflow */
-.endif
 1:
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
 	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
@@ -1213,36 +1184,6 @@ bf_chunk_refill:
 	bsr	bf_next_vbudget
 	bra	bf_chunk
 
-.ifdef DMA_RUN_FASTPATH
-bf_short_run:
-	/* Keep a one-/two-tile CPU run whole and charge four DMA-word units for
-	   every logical word written through the VDP data port. */
-	move.w	d1, d6
-	lsl.w	#2, d6
-	cmp.w	d7, d6
-	bls.s	1f
-	bsr	bf_next_vbudget
-	move.w	d1, d6
-	lsl.w	#2, d6
-1:
-	addq.l	#4, a2				/* skip reg93/94 */
-	move.l	(a2)+, d0			/* +6 cmd = ordinary VRAM write address */
-	addq.l	#8, a2				/* skip dst + reg95/96/97 */
-	move.l	d0, (VDP_CTRL).l
-	movea.l	(a2)+, a3			/* +18 src */
-	move.w	d1, d0
-	lsr.w	#4, d0				/* run length is always count*16 words */
-	subq.w	#1, d0
-2:
-	.rept 8					/* one 32-byte pattern per iteration */
-	move.l	(a3)+, (VDP_DATA).l
-	.endr
-	dbra	d0, 2b
-.ifdef DEBUG
-	adda.w	d1, a1
-.endif
-	sub.w	d6, d7
-.endif
 bf_run_done:
 	subq.w	#1, d4
 	bne	bf_run_lp
@@ -1727,7 +1668,6 @@ dma_chunk_wr:
 	move.w	#0x9700, d0
 	or.b	d2, d0
 	move.w	d0, (VDP_CTRL).l
-.ifdef DMA_RUN_FASTPATH
 	/* Build the normal VRAM-write command once.  CD5 in its low word starts
 	   DMA; the preserved command then restores the same destination for the
 	   one-word CPU repair without recomputing set_vram_write. */
@@ -1748,24 +1688,6 @@ dma_chunk_wr:
 	/* 先頭1ワードはDMA開始ラッチの古い値(ゴミ)が書かれるため、CPUで上書き修復。
 	   (src+2補正で2ワード目以降は正しい。ゴミはチャンク先頭の1ワードのみ) */
 	move.l	d2, (VDP_CTRL).l
-.else
-	move.l	d3, d0				/* dst コマンド(VRAM書込+CD5起動) */
-	and.l	#0x0000FFFF, d0
-	move.l	d0, d2
-	andi.w	#0x3FFF, d2
-	ori.w	#0x4000, d2
-	move.w	d2, (VDP_CTRL).l
-	move.l	d0, d2
-	lsr.l	#8, d2
-	lsr.l	#6, d2
-	andi.w	#0x0003, d2
-	ori.w	#0x0080, d2
-	move.w	d2, (VDP_CTRL).l
-	bsr	wait_dma_done
-	/* Restore the ordinary destination command before repairing dst[0]. */
-	move.w	d3, d0
-	bsr	set_vram_write
-.endif
 	move.w	(a3), (VDP_DATA).l
 	rts
 

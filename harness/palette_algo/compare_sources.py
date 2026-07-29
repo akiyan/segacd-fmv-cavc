@@ -89,14 +89,11 @@ def main() -> int:
     parser.add_argument("--frames", type=int, default=60)
     parser.add_argument(
         "--case", action="append", nargs=2, metavar=("LABEL", "MASTER_DIR"),
+        required=True,
         help="case label and master-frame directory; may be repeated",
     )
     args = parser.parse_args()
-    cases = args.case or [
-        ("Bad Apple H32", "videos/BadApple_H32_256x224_adpcm22/master"),
-        ("Sonic H32", "videos/sonic_H32_256x224_adpcm22_geometry_pad_4by3/master"),
-    ]
-    for label, path in cases:
+    for label, path in args.case:
         compare(label, Path(path), args.frames)
     return 0
 

@@ -42,6 +42,18 @@ def groups(count: int, capture_interval: int = 2, **peaks: int):
     return result
 
 
+def add_display_hold(rows, frame: int, vblanks: int = 1):
+    """Keep ``frame`` visible longer by shifting every later capture start."""
+    rows[frame + 1:] = [
+        replace(
+            row,
+            capture_first=row.capture_first + vblanks,
+            capture_last=row.capture_last + vblanks,
+        )
+        for row in rows[frame + 1:]
+    ]
+
+
 class HudUploadGateTests(unittest.TestCase):
     def evaluate(self, rows, expected, content_fps=30):
         with tempfile.NamedTemporaryFile() as recording:
@@ -60,9 +72,14 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["evaluated_timed_frames"], 3)
         self.assertEqual(result["display_vblank_expected"], 2)
         self.assertEqual(result["display_vblank_evaluated_frames"], 2)
+        self.assertEqual(result["display_vblank_alert_evaluated_frames"], 0)
+        self.assertEqual(result["display_vblank_edge_exempt_frames"], 4)
         self.assertEqual(result["display_vblank_histogram"], {"2": 2})
         self.assertEqual(result["display_vblank_violation_count"], 0)
         self.assertEqual(result["display_vblank_violations"], [])
+        self.assertEqual(
+            result["display_vblank_exempted_violation_count"], 0)
+        self.assertEqual(result["display_vblank_exempted_violations"], [])
 
     def test_frame_zero_is_excluded_from_every_gate_metric(self):
         rows = groups(4, capture_interval=4)
@@ -234,28 +251,82 @@ class HudUploadGateTests(unittest.TestCase):
                     text.startswith("prgbuf_jitter_peak_kib") for text in result["failures"]))
 
     def test_fixed_n_display_hold_warns_without_blocking_upload(self):
-        rows = groups(5)
-        rows[2:] = [
-            replace(
-                row,
-                capture_first=row.capture_first + 1,
-                capture_last=row.capture_last + 1,
-            )
-            for row in rows[2:]
-        ]
-        result = self.evaluate(rows, 5)
+        rows = groups(12)
+        add_display_hold(rows, 5)
+        result = self.evaluate(rows, 12)
         self.assertTrue(result["pass"])
         self.assertEqual(result["gate"], "PASS")
         self.assertEqual(result["alert"], "WARNING")
         self.assertEqual(result["display_vblank_expected"], 2)
-        self.assertEqual(result["display_vblank_histogram"], {"2": 2, "3": 1})
+        self.assertEqual(
+            result["display_vblank_histogram"], {"2": 9, "3": 1})
         self.assertEqual(result["display_vblank_violation_count"], 1)
         self.assertEqual(
-            result["display_vblank_violations"][0]["frame"], 1)
+            result["display_vblank_violations"][0]["frame"], 5)
         self.assertTrue(any(
-            "fixed_n2 display cadence missed 1 deadline" in text
+            "fixed_n2 display cadence missed 1 deadline(s) outside the "
+            "4-frame edge exception" in text
             for text in result["warnings"]
         ))
+
+    def test_30fps_edge_holds_remain_diagnostic_but_do_not_alert(self):
+        rows = groups(12)
+        for frame in (1, 5, 10):
+            add_display_hold(rows, frame)
+        result = self.evaluate(rows, 12, 30)
+        self.assertEqual(result["display_vblank_evaluated_frames"], 10)
+        self.assertEqual(result["display_vblank_alert_evaluated_frames"], 4)
+        self.assertEqual(result["display_vblank_edge_exempt_frames"], 4)
+        self.assertEqual(result["display_vblank_violation_count"], 1)
+        self.assertEqual(
+            [row["frame"] for row in result["display_vblank_violations"]],
+            [5],
+        )
+        self.assertEqual(
+            result["display_vblank_exempted_violation_count"], 2)
+        self.assertEqual(
+            [
+                row["frame"]
+                for row in result["display_vblank_exempted_violations"]
+            ],
+            [1, 10],
+        )
+        self.assertEqual(result["alert"], "WARNING")
+
+    def test_15fps_edge_holds_remain_diagnostic_but_do_not_alert(self):
+        rows = groups(10, capture_interval=4)
+        for frame in (1, 4, 8):
+            add_display_hold(rows, frame)
+        result = self.evaluate(rows, 10, 15)
+        self.assertEqual(result["display_vblank_evaluated_frames"], 8)
+        self.assertEqual(result["display_vblank_alert_evaluated_frames"], 6)
+        self.assertEqual(result["display_vblank_edge_exempt_frames"], 2)
+        self.assertEqual(result["display_vblank_violation_count"], 1)
+        self.assertEqual(
+            [row["frame"] for row in result["display_vblank_violations"]],
+            [4],
+        )
+        self.assertEqual(
+            result["display_vblank_exempted_violation_count"], 2)
+        self.assertEqual(
+            [
+                row["frame"]
+                for row in result["display_vblank_exempted_violations"]
+            ],
+            [1, 8],
+        )
+        self.assertEqual(result["alert"], "WARNING")
+
+    def test_edge_holds_alone_leave_the_alert_clear(self):
+        rows = groups(12)
+        for frame in (1, 10):
+            add_display_hold(rows, frame)
+        result = self.evaluate(rows, 12, 30)
+        self.assertEqual(result["display_vblank_violation_count"], 0)
+        self.assertEqual(
+            result["display_vblank_exempted_violation_count"], 2)
+        self.assertEqual(result["warnings"], [])
+        self.assertEqual(result["alert"], "NONE")
 
     def test_frame_zero_and_terminal_hold_are_not_cadence_gated(self):
         rows = groups(4)
