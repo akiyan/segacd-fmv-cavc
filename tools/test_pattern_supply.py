@@ -350,6 +350,31 @@ class PatternSupplyPlannerTests(unittest.TestCase):
         self.assertEqual(plan.wr1_patterns, (patterns[1],))
         self.assertEqual(plan.dic_patterns, (patterns[2],))
 
+    def test_frozen_source_reader_accepts_schema_five(self):
+        per = [
+            ([0], [1], [True]),
+            ([0, 1], [1, 2], [True, True]),
+        ]
+        log = {
+            "pattern_supply": {
+                "schema_version": 5,
+                "sources": [
+                    np.array([supply.SOURCE_PRG], np.uint8),
+                    np.array(
+                        [supply.SOURCE_WR, supply.SOURCE_DIC],
+                        np.uint8,
+                    ),
+                ],
+            },
+        }
+        self.assertEqual(
+            supply._frozen_sources(log, per),
+            [
+                [supply.SOURCE_PRG],
+                [supply.SOURCE_WR, supply.SOURCE_DIC],
+            ],
+        )
+
     def test_disabled_plan_keeps_every_pattern_in_prg(self):
         per = [([0], [1], [True]), ([0], [2], [True])]
         patterns = [b"a" * 32, b"b" * 32]

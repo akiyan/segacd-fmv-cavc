@@ -796,7 +796,7 @@ def _frozen_sources(
     frozen = log.get("pattern_supply")
     if frozen is None:
         return None
-    if int(frozen.get("schema_version", 0)) not in (1, 2, 3, 4):
+    if int(frozen.get("schema_version", 0)) not in (1, 2, 3, 4, 5):
         raise ValueError(
             f"unsupported frozen pattern-supply schema: "
             f"{frozen.get('schema_version')!r}")
