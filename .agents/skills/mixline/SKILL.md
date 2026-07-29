@@ -26,9 +26,10 @@ tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
    failed incomplete HUD uses the full expected frame axis and records its
    shorter observed prefix separately. Never resize, stretch, or shift one
    graph to force a match.
-4. Inspect the PNG with `view_image`. The codec timeline must be directly
-   above the HUD timeline, and the same frame/time gridline must have the same
-   x coordinate in both panels.
+4. Inspect the PNG with `view_image`. The section order must be `/timeline`,
+   optional `/logvdpline`, then `/hudline`; each boundary bar must carry its
+   left-aligned heading. The same frame/time gridline must have the same x
+   coordinate in every panel.
 5. Always publish the combined PNG to a public Gist and show it inline:
 
 ```sh
@@ -56,8 +57,11 @@ Report the Gist page, raw PNG URL, and clickable local image path.
   headers. Also crop `/timeline` immediately after its final data row so its
   horizontal ticks and lower explanation are omitted; `/hudline` owns the one
   shared horizontal scale and footer.
-- Put the `/timeline` graph immediately above the `/hudline` graph with no
-  gap or separator.
+- Put a thin boundary bar with a left-aligned heading before each graph
+  section. When the HUD receipt contains the complete contiguous LOGVDP row
+  block, extract those rows into a middle `/logvdpline` section. Concatenate
+  the remaining pre- and post-LOGVDP HUD source ranges, in that order, under
+  `/hudline`. Without LOGVDP rows, render only `/timeline` and `/hudline`.
 - Consume current source images and layout receipts on every render; never
   duplicate timeline or hudline row geometry, scales, labels, or colours in
   the compositor. Source presentation changes must flow through automatically.

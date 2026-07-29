@@ -27,7 +27,23 @@ DIM = (158, 160, 169)
 WARN = (246, 190, 72)
 FAIL = (244, 87, 87)
 SEPARATOR = (62, 64, 72)
+SECTION_BG = (18, 18, 22)
 HEADER_HEIGHT = 220
+SECTION_HEADER_HEIGHT = 38
+LOGVDPLINE_KEYS = (
+    "pattern_dma_blank_words",
+    "pattern_dma_active_words",
+    "pattern_cpu_blank_words",
+    "pattern_cpu_active_edge_words",
+    "name_table_dma_blank_words",
+    "name_table_dma_active_words",
+    "pattern_dma_commands",
+)
+SECTION_LABELS = {
+    "timeline": "/timeline",
+    "logvdpline": "/logvdpline",
+    "hudline": "/hudline",
+}
 
 
 def font(size: int) -> ImageFont.FreeTypeFont:
@@ -88,6 +104,91 @@ def validate_image(path: Path, receipt: dict, kind: str) -> None:
         raise SystemExit(f"{kind} image hash does not match its layout receipt")
 
 
+def hudline_row_geometry(receipt: dict, image_height: int) -> list[dict]:
+    rows = receipt.get("rows") or ()
+    if not rows:
+        raise SystemExit("hudline receipt lacks row geometry")
+    cursor = int(receipt["plot_top"])
+    geometry = []
+    for row in rows:
+        height = int(row["height"])
+        if height <= 0:
+            raise SystemExit(f"invalid hudline row height for {row.get('key')}")
+        top_value = row.get("top")
+        top = cursor if top_value is None else int(top_value)
+        if top < cursor:
+            raise SystemExit("hudline rows overlap or are out of order")
+        bottom = top + height
+        if bottom > image_height:
+            raise SystemExit("hudline row geometry exceeds the source image")
+        geometry.append({
+            "key": str(row["key"]),
+            "top": top,
+            "bottom": bottom,
+            "height": height,
+        })
+        cursor = bottom
+    return geometry
+
+
+def split_hudline_ranges(
+    receipt: dict,
+    image_height: int,
+) -> tuple[tuple[int, int] | None, list[tuple[int, int]]]:
+    """Separate the optional LOGVDP rows from the ordinary HUDline body."""
+    geometry = hudline_row_geometry(receipt, image_height)
+    positions = {row["key"]: index for index, row in enumerate(geometry)}
+    present = [key in positions for key in LOGVDPLINE_KEYS]
+    plot_top = int(receipt["plot_top"])
+    if not any(present):
+        return None, [(plot_top, image_height)]
+    if not all(present):
+        missing = [
+            key for key, exists in zip(LOGVDPLINE_KEYS, present, strict=True)
+            if not exists
+        ]
+        raise SystemExit(
+            f"hudline has an incomplete LOGVDP row block: {missing}"
+        )
+
+    indices = [positions[key] for key in LOGVDPLINE_KEYS]
+    if indices != list(range(indices[0], indices[0] + len(indices))):
+        raise SystemExit("hudline LOGVDP rows are not one contiguous block")
+    log_top = geometry[indices[0]]["top"]
+    log_bottom = geometry[indices[-1]]["bottom"]
+    hud_ranges = [
+        (top, bottom)
+        for top, bottom in (
+            (plot_top, log_top),
+            (log_bottom, image_height),
+        )
+        if bottom > top
+    ]
+    if not hud_ranges:
+        raise SystemExit("hudline contains no ordinary rows outside LOGVDP")
+    return (log_top, log_bottom), hud_ranges
+
+
+def crop_vertical_segments(
+    image: Image.Image,
+    segments: list[tuple[int, int]],
+) -> Image.Image:
+    if not segments:
+        raise SystemExit("cannot compose an empty source segment list")
+    height = 0
+    for top, bottom in segments:
+        if not 0 <= top < bottom <= image.height:
+            raise SystemExit(f"invalid source segment {top}:{bottom}")
+        height += bottom - top
+    result = Image.new("RGB", (image.width, height), BG)
+    cursor = 0
+    for top, bottom in segments:
+        piece = image.crop((0, top, image.width, bottom))
+        result.paste(piece, (0, cursor))
+        cursor += piece.height
+    return result
+
+
 def main() -> None:
     args = parse_args()
     if args.gap < 0:
@@ -141,16 +242,48 @@ def main() -> None:
     )
     if not timeline_plot_top < timeline_plot_bottom <= timeline_image.height:
         raise SystemExit("invalid timeline row geometry")
-    # The HUD panel owns the one shared horizontal scale and footer.  Crop the
+    # The HUD panel owns the one shared horizontal scale and footer. Crop the
     # codec panel at its final data row so its duplicate scale and explanation
-    # disappear, then join the HUD panel directly below on the same x axis.
+    # disappear. When present, extract the exact LOGVDP row block into a middle
+    # panel; concatenate the remaining HUD source ranges without changing any
+    # row pixels.
     upper = timeline_image.crop(
         (0, timeline_plot_top, timeline_image.width, timeline_plot_bottom))
-    lower = hudline_image.crop(
-        (0, hudline_plot_top, hudline_image.width, hudline_image.height))
+    logvdpline_range, hudline_ranges = split_hudline_ranges(
+        hudline,
+        hudline_image.height,
+    )
+    hudline_body = crop_vertical_segments(hudline_image, hudline_ranges)
+    sections = [{
+        "kind": "timeline",
+        "image": upper,
+        "source": "timeline",
+        "source_segments": [(timeline_plot_top, timeline_plot_bottom)],
+    }]
+    if logvdpline_range is not None:
+        sections.append({
+            "kind": "logvdpline",
+            "image": crop_vertical_segments(
+                hudline_image, [logvdpline_range]),
+            "source": "hudline",
+            "source_segments": [logvdpline_range],
+        })
+    sections.append({
+        "kind": "hudline",
+        "image": hudline_body,
+        "source": "hudline",
+        "source_segments": hudline_ranges,
+    })
 
     width = timeline_image.width
-    height = HEADER_HEIGHT + upper.height + args.gap + lower.height
+    height = (
+        HEADER_HEIGHT
+        + sum(
+            SECTION_HEADER_HEIGHT + section["image"].height
+            for section in sections
+        )
+        + args.gap * max(0, len(sections) - 1)
+    )
     combined = Image.new("RGB", (width, height), BG)
     draw = ImageDraw.Draw(combined)
     title = timeline.get("label") or timeline_path.stem
@@ -282,14 +415,57 @@ def main() -> None:
         width=2,
     )
 
-    upper_top = HEADER_HEIGHT
-    combined.paste(upper, (0, upper_top))
-    lower_top = upper_top + upper.height + args.gap
-    combined.paste(lower, (0, lower_top))
-    if args.gap:
-        draw = ImageDraw.Draw(combined)
-        y = upper_top + upper.height + args.gap // 2
-        draw.line((0, y, width - 1, y), fill=SEPARATOR, width=2)
+    panel_receipts = []
+    cursor = HEADER_HEIGHT
+    for index, section in enumerate(sections):
+        if index:
+            cursor += args.gap
+        label_top = cursor
+        label_bottom = label_top + SECTION_HEADER_HEIGHT
+        draw.rectangle(
+            (0, label_top, width - 1, label_bottom - 1),
+            fill=SECTION_BG,
+        )
+        draw.line(
+            (0, label_top, width - 1, label_top),
+            fill=SEPARATOR,
+            width=2,
+        )
+        draw.line(
+            (0, label_bottom - 1, width - 1, label_bottom - 1),
+            fill=SEPARATOR,
+            width=2,
+        )
+        draw.text(
+            (18, label_top + SECTION_HEADER_HEIGHT // 2),
+            SECTION_LABELS[section["kind"]],
+            fill=TEXT,
+            font=font(19),
+            anchor="lm",
+        )
+        cursor = label_bottom
+        panel_top = cursor
+        panel_image = section["image"]
+        combined.paste(panel_image, (0, panel_top))
+        cursor += panel_image.height
+        source_segments = [
+            {
+                "top": int(top),
+                "bottom": int(bottom),
+                "height": int(bottom - top),
+            }
+            for top, bottom in section["source_segments"]
+        ]
+        panel_receipts.append({
+            "kind": section["kind"],
+            "label": SECTION_LABELS[section["kind"]],
+            "label_top": label_top,
+            "label_height": SECTION_HEADER_HEIGHT,
+            "top": panel_top,
+            "height": panel_image.height,
+            "source": section["source"],
+            "source_segments": source_segments,
+        })
 
     output = (
         args.output
@@ -319,7 +495,7 @@ def main() -> None:
             lease.release()
 
     receipt = {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": "mixline",
         "image": str(output),
         "image_sha256": digest(output.resolve()),
@@ -347,20 +523,15 @@ def main() -> None:
         "frame_x": timeline["frame_x"],
         "gap": args.gap,
         "header_height": HEADER_HEIGHT,
+        "section_header_height": SECTION_HEADER_HEIGHT,
+        "logvdpline_present": logvdpline_range is not None,
         "panels": [
             {
                 "kind": "header",
                 "top": 0,
                 "height": HEADER_HEIGHT,
             },
-            {
-                "kind": "timeline",
-                "top": upper_top,
-                "height": upper.height,
-                "source_crop_top": timeline_plot_top,
-                "source_crop_bottom": timeline_plot_bottom,
-            },
-            {"kind": "hudline", "top": lower_top, "height": lower.height},
+            *panel_receipts,
         ],
     }
     receipt_path = Path(str(output) + ".json")

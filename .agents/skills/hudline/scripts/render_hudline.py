@@ -1327,8 +1327,27 @@ def main() -> None:
         if lease is not None:
             lease.release()
 
+    receipt_rows = []
+    receipt_row_top = timeline_top
+    for spec in specs:
+        receipt_rows.append({
+            "key": spec.key,
+            "label": spec.label,
+            "unit": spec.unit,
+            "maximum": spec.maximum,
+            "color": list(spec.color),
+            "gate_key": spec.gate_key,
+            "eight_bit_scale": spec.eight_bit_scale,
+            "normal_value": spec.normal_value,
+            "top": receipt_row_top,
+            "height": spec.height,
+            "show_unit": spec.show_unit,
+            "show_zero": spec.show_zero,
+        })
+        receipt_row_top += spec.height
+
     receipt = {
-        "schema_version": 5,
+        "schema_version": 6,
         "kind": "hudline",
         "label": title,
         "image": str(output),
@@ -1438,22 +1457,7 @@ def main() -> None:
         "frame_zero_excluded_from_all_metrics": True,
         "ocr_confidence_min": float(confidence.min()),
         "ocr_sample_count": int(sample_count.sum()),
-        "rows": [
-            {
-                "key": spec.key,
-                "label": spec.label,
-                "unit": spec.unit,
-                "maximum": spec.maximum,
-                "color": list(spec.color),
-                "gate_key": spec.gate_key,
-                "eight_bit_scale": spec.eight_bit_scale,
-                "normal_value": spec.normal_value,
-                "height": spec.height,
-                "show_unit": spec.show_unit,
-                "show_zero": spec.show_zero,
-            }
-            for spec in specs
-        ],
+        "rows": receipt_rows,
     }
     receipt_path = Path(str(output) + ".json")
     receipt_path.write_text(
