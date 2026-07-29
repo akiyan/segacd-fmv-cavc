@@ -13,6 +13,11 @@ timing model, including:
 - calculated cycles until DMA completion; and
 - 68000 bus-freeze duration.
 
+This removes the runtime dependency on a distribution Genesis Plus GX package;
+the generated binary links only the host C and math libraries. RetroArch and
+standard build tools (`git`, `make`, and a C compiler) remain host
+prerequisites.
+
 The stable local install path is:
 
 ```text
@@ -95,3 +100,27 @@ gzip -cd <OUTDIR>/gpgx_logvdp_<tag>.log.gz | rg 'VDP register'
 
 Set `CORE=/absolute/path/to/another_libretro_core.so` only for an explicit A/B.
 There is no automatic fallback to a system Genesis Plus GX package.
+
+## Qualification
+
+On 2026-07-29, the managed core was compared with the previously used Ubuntu
+core by playing one 3000-frame input Replay through both. Each side recorded
+the same 2880 emulator frames, including Mega-CD startup and an eight-second
+H40 DEBUG movie:
+
+- managed core SHA-256:
+  `51cfd71f338865288e274b271b8ce0d9a1d3dc415688f14db963a29555d9b4ac`;
+- Ubuntu core SHA-256:
+  `40791618c03ea3f1fa04d925835b10671c8429c5ff9919ef58401303c57df920`;
+- all 2880 decoded video frames equal, hash-sequence SHA-256
+  `190c8bae28f16284fe6f7cb56de71799dd139606735e463bae06b4eb92baafe8`;
+- all 2,119,529 decoded stereo PCM sample frames equal, PCM SHA-256
+  `d3ee380194dc63492f44b790186e7a63e6e6353eb61b85c8506f5e551d345c2e`;
+- video/audio metadata, packet counts, PTS, DTS, and durations equal; and
+- managed LOGVDP recording ran at 7.90x versus 15.82x for the package core.
+
+The managed run's 702,005,465-byte complete log became a 57,731,453-byte gzip
+sidecar and a 724,875-byte compact log. DMA update, completion, and CPU-freeze
+counts were unchanged by compaction. This qualification establishes equivalent
+output for the active CUE/BIN FMV path; it does not claim equivalence for CHD or
+external Ogg CD-audio inputs.

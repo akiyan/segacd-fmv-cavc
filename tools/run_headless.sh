@@ -60,7 +60,8 @@
 #               (default: a private per-run temporary directory)
 #   OUTDIR       capture output dir (default: <repo>/tmp/<disc-stem>/record)
 #
-# Outputs: $OUTDIR/<tag>_NN.png, $OUTDIR/<tag>_sheet.jpg, plus retroarch/xvfb logs.
+# Outputs: $OUTDIR/<tag>_NN.png, $OUTDIR/<tag>_sheet.jpg, compact RetroArch
+# logs, the complete managed-core LOGVDP trace as gzip, and Xvfb logs.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
