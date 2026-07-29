@@ -1,0 +1,32 @@
+schema_version = 4
+
+[source]
+path = "assets/SonicJamEdGood.avi"
+fps = "30"
+duration = "104.933333"
+sar = "32:35"
+
+[video]
+mode = "H40"
+width = 288
+height = 200
+fit = "pad"
+master_denoise = false
+# Preserve the qualified Sonic Jam source-dither removal. The codec's normal
+# position-fixed Bayer output dither remains enabled.
+master_filter = "setsar=1,guided=radius=1:eps=0.002:planes=15"
+raw_filter = "setsar=1"
+
+[output]
+directory = "tmpfs/SonicJamEdGood_H40_288x200_adpcm22_cold210/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+cold_cap = 210
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 224]
