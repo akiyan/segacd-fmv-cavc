@@ -21,7 +21,8 @@ Encode any video with the Sega CD delta stream codec and produce the usual
 The analysis frame contains:
 
 - left: Sega CD output
-- right column: Source, category map, Miss + MissCarry map
+- right column: Source, category map, whole-clip category totals, and
+  60 fps audio waveform/spectrum
 - bottom: status bar and palette state
 
 Argument: source MP4 path, optionally plus display name or upload instruction.
@@ -139,11 +140,11 @@ Rules:
 
 This can take about 10-13 minutes for 2700-3100 frames.
 
-Create one strict `schema_version = 3` profile under `profiles/` for each
+Create one strict `schema_version = 4` profile under `profiles/` for each
 source/mode combination. Use the schema in `CONFIG.md`; the checked-in Bad
 Apple H32/H40 profiles are complete examples. The profile must name the source,
 native fps, exact duration, full mode raster, HAR-aware `fit`, the selected
-output directory, optional timed `raw_prefetch`, optional qualified `cold_cap`,
+output directory, required qualified `cold_cap`, optional timed `raw_prefetch`,
 and palette algorithm. Do not add fixed GPU, VRAM, dither, segmented-palette,
 Near, boot-prefetch, forward-fill, or startup-audio keys.
 
@@ -250,7 +251,7 @@ When only the persistent timeline TSV is needed, run
 `tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml
 --tsv-only`; this skips all analysis-frame rendering and MP4 muxing.
 
-Every invocation first writes the complete per-frame numeric sidecar to a
+Every invocation first writes the complete per-content-frame numeric sidecar to a
 unique persistent file below `logs/`. Its filename includes local date/time,
 the profile name, the first 10 profile-SHA characters, encoder version, player
 version, and the `timeline` kind:
@@ -258,9 +259,11 @@ version, and the `timeline` kind:
 No latest-run symlink is created. `ANALYSIS_TSV`, when explicitly set, is a
 real output file rather than an alias. Use the printed `logs/` file for maxima,
 totals, and frame-to-frame comparisons instead of OCR. The full render then
-generates all PNG frames in parallel (`nproc-2`) and calls FFmpeg, usually with
-`h264_nvenc`, `-r 60`, and audio. Disposable PNG/MP4 bytes live directly in the
-managed tmpfs workspace; use the printed real path.
+generates content PNGs and independent 60 fps audio-panel PNGs in parallel
+(`nproc-2`). FFmpeg holds the content panels to their next content timestamp
+and overlays a new waveform/spectrum pair at every exact 1/60-second output
+timestamp. Disposable PNG/MP4 bytes live directly in the managed tmpfs
+workspace; use the printed real path.
 
 Frame-range check only:
 
@@ -292,7 +295,9 @@ Important rendering notes:
   - Raw uses a thin black/white dashed border in both legend and category map
   - Dic/Prg/Wr use a thin colour-and-black dashed border; both Wr banks
     use the Wr1 cyan display colour
-  - scrolling audio waveform with +/-2 seconds and now centered
+  - signed waveform covering one exact 60 fps analysis-video interval, paired
+    with the spectrum centred on that interval; both change at every analysis
+    output frame, and the `Audio` subheading shows the sim audio specification
   - status uses Req / Cold / Band / R2V / Run / Prg / Wrd / Pre
   - Pre is the number of future patterns actually written to VRAM in the frame;
     a prefetched pattern used later is displayed as Same
@@ -347,8 +352,11 @@ export ANALYSIS_DESCRIPTION
 tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
 ```
 
-Shorten optional explanatory prose first; preserve the mandatory CRAM
-chapters, specs/layout/technique sections, both project links, and current
+State the encode's CRAM palette switch count from `tools/cram_switches.py
+<sim_out>` in the spec section of both language halves, and add no YouTube
+chapters or description timestamp links.
+Shorten optional explanatory prose first; preserve that switch count, the
+specs/layout/technique sections, both project links, and current
 timeline links. Upload as unlisted, category 20. See
 `[[youtube-upload-convention]]`.
 
@@ -365,8 +373,9 @@ language sections. Never use the binary magic as a codec or format name.
 - Never kill another session's process. Kill only jobs you started.
 - Keep every profile on its deterministic managed tmpfs sim path. Do not use a
   shared `tmp/sim` for player decision output.
-- The analysis layout is consolidated into:
+- The analysis specification lives beside its implementation:
   - `tools/layout_preview.py`: canonical layout
+  - `tools/analysis_style.py`: category semantics and colours
   - `tools/render_analysis.py`: render real data using that layout
 - Change the layout in `layout_preview.py`; `render_analysis.py` imports it.
 - Keep `tools/sim.py` as the simulation core.

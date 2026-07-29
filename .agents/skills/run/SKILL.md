@@ -35,8 +35,8 @@ Include all of the following unless the user explicitly excludes a stage:
 4. DEBUG disc build, synchronized native lossless emulator capture, and upload-capable HUD gate
 5. Complete-recording HUD timeline PNG, inline review, and public Gist
 6. Matching codec/HUD mixed timeline PNG, inline review, and public Gist
-7. Analysis render, metadata, CRAM chapters, verification, and upload
-8. Square-pixel playback compilation, boot-aware CRAM chapters, verification, and upload
+7. Analysis render, metadata, CRAM switch count, verification, and upload
+8. Square-pixel playback compilation, CRAM switch count, verification, and upload
 
 Treat both uploads as part of `$run`, not as optional follow-up work. Upload
 analysis and playback videos as unlisted, category 20.
@@ -118,9 +118,9 @@ Follow `sim` source inspection exactly:
 - preserve the displayed aspect with the mode's HAR-aware fit/pad conversion;
 - allow starvation instead of shrinking the raster.
 
-Create or update one strict `schema_version = 3` profile under `profiles/`. Put
+Create or update one strict `schema_version = 4` profile under `profiles/`. Put
 the exact full duration, source timing and aspect, mode raster, output path,
-optional timed `raw_prefetch`, optional qualified `cold_cap`, and palette
+required qualified `cold_cap`, optional timed `raw_prefetch`, and palette
 algorithm in the profile. ADPCM22, the 1,535-tile VRAM pool, GPU, Bayer
 dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
 pattern supply, forward fill, and startup-audio policy are fixed pipeline
@@ -285,7 +285,7 @@ human listening occurred only if it actually occurred. Call this an emulator
 recording, not a physical hardware recording.
 
 Use full HUD OCR only for requested diagnostics or to investigate a failure.
-Never use HUD OCR to choose a publication head cue or chapter offset.
+Never use HUD OCR to choose a publication head cue or a description timestamp.
 
 Do not enter Stage 5 when the HUD result is missing or gate is `FAIL`, or when the
 matching hudline or mixline image/Gist receipt is absent. Never waive or edit
@@ -317,7 +317,9 @@ accepted hudline, then inspect, publish, and show the final combined image.
 This keeps the published mixed evidence tied to the exact TSV used by the
 analysis upload rather than the pre-recording TSV.
 
-Generate CRAM chapters with `tools/youtube_chapters.py`. Build the title and
+Read the CRAM palette switch count with `tools/cram_switches.py` and state it in
+the spec section of both language halves. Do not generate YouTube chapters or
+description timestamp links. Build the title and
 English-then-Japanese description from the current `AGENTS.md` convention,
 including the repository URL in both language sections and never adding source
 bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
@@ -325,7 +327,7 @@ public codec name; never expose the binary magic as a codec or format name.
 Save the exact description to a UTF-8 text file and
 measure it before upload. YouTube's description limit is 5,000 characters:
 target 4,800 or fewer and hard-fail above 5,000. If it is too long, shorten
-explanatory prose without removing CRAM chapters, required specs/layout/
+explanatory prose without removing the CRAM switch count, required specs/layout/
 technique sections, both project links, or the current timeline links.
 
 ```sh
@@ -350,9 +352,8 @@ validated H32/H40 pixel aspect into 2048x1568 square pixels using nearest-neighb
 scaling, H.264 CRF 10 slow, yuv420p, AAC 192 kbps, and faststart. Do not add
 `-ss`, `-t`, an fps filter, or `-r`.
 
-Use the matching complete HUD gate's verified `frame=FFFF` to `frame=0000` transition
-as the CRAM chapter offset. Pass that gate through
-`tools/youtube_chapters.py --hud-gate-json`; do not trim the video.
+Keep the recording whole: do not trim it, and do not convert any HUD or gate
+timestamp into a description timestamp.
 
 Verify the final MP4 has:
 
@@ -365,8 +366,9 @@ Extract startup/movie/tail stills with `tools/extract_verification_frames.sh`, u
 `$(dirname "$COMPILATION_MP4")/compilation_check` as the base. Inspect only that invocation's printed
 `CHECK_DIR`; do not mix files from an older compilation.
 
-Generate boot-aware CRAM chapters and current bilingual metadata according to
-`AGENTS.md`. Use **Sega CD Constraint-Aware Video Codec** as the public codec
+Build the current bilingual metadata according to `AGENTS.md`, including the
+same CRAM palette switch count as the analysis upload and no chapters. Use
+**Sega CD Constraint-Aware Video Codec** as the public codec
 name and never use the binary magic as a codec or format name. Save and measure
 the exact UTF-8 description before upload using
 the same 5,000-character hard gate as Stage 5 (target 4,800 or fewer). Never

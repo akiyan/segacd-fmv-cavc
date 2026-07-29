@@ -9,7 +9,7 @@ reader frame/sector lead from their shared byte.
 Frames are decoded sequentially through ffmpeg. High-confidence OCR samples
 with the same frame value are combined before audio_resync transitions are
 reported. This is a diagnostic tool only; its HUD timing must not be used to
-trim a publication recording or to place YouTube chapters.
+trim a publication recording or to write a timestamp into an upload description.
 
 Current players expose their black pre-roll state as frame=FFFF. The extractor
 anchors content at the immediately following frame=0000.

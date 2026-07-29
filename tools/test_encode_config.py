@@ -21,7 +21,7 @@ from encode_config import (
 
 
 PROFILE = """\
-schema_version = 3
+schema_version = 4
 
 [source]
 path = "assets/source.mp4"
@@ -38,18 +38,21 @@ fit = "pad"
 directory = "tmpfs/test/sim"
 emit_decisions = true
 
+[encoder]
+cold_cap = 200
+
 [palette]
 algorithm = "mosaic-gm"
 """
 
 
 class EncodeProfileArtifactTests(unittest.TestCase):
-    def test_removed_schema_v2_is_rejected(self) -> None:
+    def test_removed_schema_v3_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old-schema.toml"
             path.write_text(PROFILE.replace(
-                "schema_version = 3", "schema_version = 2"))
-            with self.assertRaisesRegex(ValueError, "schema_version must be 3"):
+                "schema_version = 4", "schema_version = 3"))
+            with self.assertRaisesRegex(ValueError, "schema_version must be 4"):
                 load_profile(path)
 
     def test_required_profile_is_consumed_as_first_positional_argument(self) -> None:
@@ -107,7 +110,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 required=True,
             )
 
-    def test_all_repository_profiles_have_measured_cold_cap_coverage(self) -> None:
+    def test_all_repository_profiles_have_explicit_cold_caps(self) -> None:
         root = Path(__file__).resolve().parents[1]
         for path in sorted((root / "profiles").glob("*.toml")):
             with self.subTest(profile=path.name):
@@ -125,6 +128,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 "machi-op.toml",
                 "ps2-sakura-op-h32.toml",
                 "ps2-sakura-op-h40.toml",
+                "sonic-jam-ed-good.toml",
                 "sonic-jam-op.toml",
                 "tears-of-steel-h32.toml",
             },
@@ -149,10 +153,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
         self.assertTrue(
             env["CBRSIM_OUT"].endswith(
-                "tmpfs/BadApple_H40_320x224_adpcm22_cold200/sim"))
+                "tmpfs/BadApple_H40_320x224_adpcm22_cold210/sim"))
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
         self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
         self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)
@@ -203,9 +207,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env["CBRSIM_MASTER_VF"], "setsar=1,crop=320:152:0:34")
         self.assertEqual(
             env["CBRSIM_RAW_VF"], "setsar=1,crop=320:152:0:34")
-        # The hardware baseline remains 360; this qualified profile explicitly
-        # raises the encoder ceiling to the cap-480 result.
-        self.assertEqual(av_config.baseline_cold_cap_for_fps(15), 360)
+        # The source-qualified encoder ceiling is recorded directly.
         self.assertEqual(env["CBRSIM_COLD_CAP"], "480")
 
     def test_machi_ed_uses_full_h40_grid_and_profile_cap_380(self) -> None:
@@ -232,7 +234,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN"], "256")
         self.assertEqual(env["CBRSIM_RESIZE_FILTER"], "lanczos")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "1")
-        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "0")
+        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
         self.assertEqual(
             env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"],
             str(av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES))
@@ -246,32 +248,62 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_NEAR"], "1")
         self.assertEqual(env["CBRSIM_BOOT_VRAM_PREFETCH"], "1")
 
-    def test_profile_cold_cap_may_raise_baseline(self) -> None:
+    def test_profile_may_disable_raw_prefetch(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "raised-cold-cap.toml"
+            path = Path(tmp) / "raw-prefetch-off.toml"
             path.write_text(PROFILE.replace(
-                "[palette]", "[encoder]\ncold_cap = 210\n\n[palette]"))
+                "cold_cap = 200",
+                "cold_cap = 200\nraw_prefetch = false"))
+            env = apply_profile_env(
+                load_profile(path), {"CBRSIM_RAW_PREFETCH": "1"})
+        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "0")
+
+    def test_profile_cold_cap_replaces_inherited_environment(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "explicit-cold-cap.toml"
+            path.write_text(PROFILE.replace(
+                "cold_cap = 200", "cold_cap = 210"))
             env = apply_profile_env(
                 load_profile(path), {"CBRSIM_COLD_CAP": "999"})
         self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
 
-    def test_profile_cold_cap_below_baseline_is_rejected(self) -> None:
+    def test_profile_cold_cap_may_be_lowered(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "lowered-cold-cap.toml"
             path.write_text(PROFILE.replace(
-                "[palette]", "[encoder]\ncold_cap = 199\n\n[palette]"))
+                "cold_cap = 200", "cold_cap = 180"))
+            env = apply_profile_env(
+                load_profile(path), {"CBRSIM_COLD_CAP": "999"})
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "180")
+
+    def test_profile_cold_cap_is_required(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "missing-cold-cap.toml"
+            path.write_text(PROFILE.replace(
+                "[encoder]\ncold_cap = 200\n\n", ""))
             with self.assertRaisesRegex(
-                    ValueError, "cold_cap 199 is below baseline 200"):
+                    ValueError, r"missing \[encoder\] keys: cold_cap"):
                 load_profile(path)
 
     def test_profile_cold_cap_must_be_an_integer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "invalid-cold-cap.toml"
             path.write_text(PROFILE.replace(
-                "[palette]", "[encoder]\ncold_cap = 180.5\n\n[palette]"))
+                "cold_cap = 200", "cold_cap = 180.5"))
             with self.assertRaisesRegex(
                     ValueError, "cold_cap must be an integer"):
                 load_profile(path)
+
+    def test_profile_cold_cap_must_be_positive_and_fit_the_grid(self) -> None:
+        for value, message in (
+                ("0", "cold_cap must be positive"),
+                ("1536", "exceeds the 1535-tile resident pool")):
+            with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "invalid-cold-cap.toml"
+                path.write_text(PROFILE.replace(
+                    "cold_cap = 200", f"cold_cap = {value}"))
+                with self.assertRaisesRegex(ValueError, message):
+                    load_profile(path)
 
     def test_profile_may_override_cram_quality_priority_search_frames(
         self,
@@ -279,9 +311,9 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "cram-priority.toml"
             path.write_text(PROFILE.replace(
-                "[palette]",
-                "[encoder]\n"
-                "cram_quality_priority_search_frames = 0\n\n[palette]"))
+                "cold_cap = 200",
+                "cold_cap = 200\n"
+                "cram_quality_priority_search_frames = 0"))
             env = apply_profile_env(load_profile(path), {})
         self.assertEqual(
             env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"], "0")
@@ -293,10 +325,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "invalid-cram-priority.toml"
                 path.write_text(PROFILE.replace(
-                    "[palette]",
-                    "[encoder]\n"
+                    "cold_cap = 200",
+                    "cold_cap = 200\n"
                     "cram_quality_priority_search_frames = "
-                    f"{value}\n\n[palette]"))
+                    f"{value}"))
                 with self.assertRaisesRegex(
                         ValueError, "cram_quality_priority_search_frames"):
                     load_profile(path)
@@ -341,13 +373,13 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile-vram.toml"
             path.write_text(PROFILE.replace(
-                "[palette]",
-                f"[encoder]\nvram_tiles = {MAX_RESIDENT_VRAM_TILES}\n\n[palette]"))
+                "cold_cap = 200",
+                f"cold_cap = 200\nvram_tiles = {MAX_RESIDENT_VRAM_TILES}"))
             with self.assertRaisesRegex(
                     ValueError, "unknown \\[encoder\\] keys.*vram_tiles"):
                 load_profile(path)
 
-    def test_profile_baseline_depends_only_on_fps(self) -> None:
+    def test_profile_cold_cap_is_independent_of_fps_and_grid(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "h40-15-900.toml"
             path.write_text(
@@ -356,7 +388,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 .replace('width = 256', 'width = 320')
                 .replace('fit = "pad"', 'fit = "pad"\nactive_tiles = 900'))
             env = apply_profile_env(load_profile(path), {})
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "360")
+        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
 
     def test_removed_audio_section_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

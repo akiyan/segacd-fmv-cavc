@@ -22,15 +22,13 @@ encoder cannot spend it as ordinary future Supply. The reserve scales with the
 time represented by one content frame: 20 KiB at 30 fps, 40 KiB at 15 fps,
 and 25 KiB at 24 fps. The player's ``RING_SIZE`` is asserted equal to
 ``RING_SIZE_KB`` at build time (``tools/check_player_ring.py``, run by the
-Makefile). This module also owns the fps-derived cold-cap baseline used by the
-encoder, packer, profile validator, and analysis renderer. The packer refuses
-to re-cap an already encoded stream.
+Makefile). Cold cap is supplied explicitly by the encode profile and passed
+unchanged through the encoder, packer, and analysis renderer. The packer
+refuses to re-cap an already encoded stream.
 """
 
 import math
 import os
-import sys
-from dataclasses import dataclass
 
 # The outer boot image occupies the first 32 KiB of the data track. The BIOS
 # supports a multi-sector Sub program; this project reserves its final 8 KiB at
@@ -396,112 +394,37 @@ def audio_frame_layout(fps):
 # per-source `CBRSIM_COLD_CAP_REALIZED` env override. The pack still asserts
 # realized <= cap as a guard. frame0 (the full-load header) is exempt.
 
-# --- Per-frame cold cap as an fps-derived physical draw/delivery limit ---
-# The general baseline scales with one content frame as round(5400 / fps).
-# Full-path qualification raises the nominal 30 fps baseline from that formula's
-# 180 patterns to 200. Keep this cadence-specific: the qualified 15/24/60 fps
-# baselines remain 360/225/90. Display mode and active-tile count do not
-# participate in this limit.
-COLD_CAP_PATTERNS_PER_SECOND = 5400
-COLD_CAP_NOMINAL_BASELINES = {
-    30: 200,
-}
+# --- Per-frame cold cap supplied by the encode profile ---
+def cold_cap(requested_cap=None):
+    """Return one explicit positive cold cap.
 
-
-@dataclass(frozen=True)
-class ColdCapQualification:
-    fps: float
-    cap: int
-    baseline_cap: int | None = None
-    source: str = "baseline"
-
-
-def _normalize_cold_cap_fps(fps):
-    """Validate and normalize one cold-cap frame rate."""
-    fps_value = float(fps)
-    if fps_value <= 0:
-        raise ValueError(f"fps must be positive, got {fps!r}")
-    return fps_value
-
-
-def baseline_cold_cap_qualification(fps):
-    """Return the fps-derived baseline without a profile override."""
-    fps_value = _normalize_cold_cap_fps(fps)
-    nominal_fps = _nominal_content_fps(fps_value)
-    nominal_key = int(nominal_fps) if nominal_fps.is_integer() else None
-    cap = COLD_CAP_NOMINAL_BASELINES.get(
-        nominal_key,
-        max(1, round(COLD_CAP_PATTERNS_PER_SECOND / fps_value)),
-    )
-    return ColdCapQualification(
-        fps_value, cap, baseline_cap=cap, source="baseline")
-
-
-def baseline_cold_cap_for_fps(fps):
-    """Return only the fps-derived baseline cap."""
-    return baseline_cold_cap_qualification(fps).cap
-
-
-def cold_cap_qualification(fps, *, requested_cap=None):
-    """Return the effective cap for one content frame rate.
-
-    ``requested_cap`` is the optional per-profile cap. It may raise the
-    baseline after a source-specific qualification, but may never lower it.
-    When omitted, ``CBRSIM_COLD_CAP`` is the internal TOML handoff. If neither
-    is present, the fps-derived baseline is returned.
-
-    CBRSIM_COLD_CAP_DIAG replaces the baseline with an UNQUALIFIED value
-    for cap-raise measurement streams only (harness/cold_cap_model).  It is
-    deliberately loud, never a production fallback, and the resulting stream
-    must not be published without a full-length hardware qualification of its
-    own.
+    ``requested_cap`` is used by frozen-log consumers such as the packer.
+    Otherwise ``CBRSIM_COLD_CAP`` is the internal handoff populated from the
+    required ``[encoder].cold_cap`` profile key.
     """
-    fps_value = _normalize_cold_cap_fps(fps)
-
-    diag = os.environ.get("CBRSIM_COLD_CAP_DIAG", "").strip()
-    if diag:
-        diag_cap = int(diag)
-        if diag_cap <= 0:
-            raise ValueError(f"CBRSIM_COLD_CAP_DIAG must be positive: {diag!r}")
-        print(
-            f"[cold-cap] DIAGNOSTIC OVERRIDE: cap={diag_cap} for "
-            f"fps={fps_value:g} (UNQUALIFIED - measurement stream only)",
-            file=sys.stderr)
-        return ColdCapQualification(
-            fps_value, diag_cap,
-            baseline_cap=None, source="diagnostic")
-
-    baseline = baseline_cold_cap_qualification(fps_value)
-    if requested_cap is None:
-        raw_cap = os.environ.get("CBRSIM_COLD_CAP", "").strip()
-    else:
-        raw_cap = requested_cap
+    raw_cap = (
+        os.environ.get("CBRSIM_COLD_CAP", "").strip()
+        if requested_cap is None
+        else requested_cap
+    )
     if raw_cap in (None, ""):
-        return baseline
+        raise ValueError(
+            "cold cap is required; set [encoder].cold_cap in the profile")
+    if isinstance(raw_cap, bool):
+        raise ValueError(f"profile cold cap must be an integer: {raw_cap!r}")
     try:
         effective_cap = int(raw_cap)
     except (TypeError, ValueError) as exc:
         raise ValueError(
             f"profile cold cap must be an integer: {raw_cap!r}") from exc
-    if effective_cap < baseline.cap:
+    if effective_cap <= 0:
         raise ValueError(
-            f"profile cold cap {effective_cap} is below baseline "
-            f"{baseline.cap} for fps={fps_value:g}")
-    return ColdCapQualification(
-        fps_value, effective_cap,
-        baseline_cap=baseline.cap, source="profile")
+            f"profile cold cap must be positive: {effective_cap}")
+    return effective_cap
 
 
-def cold_cap_for_fps(fps):
-    """Per-frame cold cap derived only from content fps.
-
-    Frame 0 is exempt because the header loads it before timed playback.
-    """
-    return cold_cap_qualification(fps).cap
-
-
-def cold_realized_ceiling_for_fps(fps):
+def cold_realized_ceiling(requested_cap=None):
     """Pack-time realized-cold ceiling. Now == the cap: the shared two-pass allocator
     makes the pack's realized cold equal the sim's cap exactly, so the ceiling is the
     cap itself (the assert `realized <= ceiling` holds by construction)."""
-    return cold_cap_for_fps(fps)
+    return cold_cap(requested_cap)

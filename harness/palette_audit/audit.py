@@ -140,21 +140,6 @@ def segment_ranges(frame_seg):
     return list(zip(starts, ends))
 
 
-def youtube_chapter_map(ranges, fps: float, upload_offset: float):
-    separate = {}
-    last = 0.0 if upload_offset > 0 else -10.0
-    last_segment = None
-    for segment, (start, _end) in enumerate(ranges):
-        timestamp = upload_offset + start / fps
-        if timestamp - last >= 10.0:
-            separate[segment] = segment
-            last = timestamp
-            last_segment = segment
-        else:
-            separate[segment] = last_segment
-    return separate
-
-
 def collect_global(palettes, usage, source_hist):
     slot_count = defaultdict(int)
     pixel_count = defaultdict(int)
@@ -180,7 +165,6 @@ def collect_global(palettes, usage, source_hist):
 
 def draw_segment_chart(path, palettes, usage, frame_seg, fps, upload_offset):
     ranges = segment_ranges(frame_seg)
-    chapter_map = youtube_chapter_map(ranges, fps, upload_offset)
     width = 2048
     top = 132
     block_h = 354
@@ -203,7 +187,8 @@ def draw_segment_chart(path, palettes, usage, frame_seg, fps, upload_offset):
     draw.text(
         (24, 94),
         f"RGB333 777 is hardware maximum: CRAM 0x0EEE, digital #FCFCFC. "
-        f"Upload chapter times include the {upload_offset:g} s startup offset.",
+        f"Upload times include the {upload_offset:g} s startup offset. "
+        f"{max(0, len(ranges) - 1)} CRAM switches.",
         font=body,
         fill=(186, 191, 204),
     )
@@ -217,16 +202,10 @@ def draw_segment_chart(path, palettes, usage, frame_seg, fps, upload_offset):
         draw.rectangle((12, y, width - 12, y + block_h - 8), fill=bg)
         content_time = start / fps
         upload_time = upload_offset + content_time
-        kept = chapter_map[segment]
-        chapter_note = (
-            "YouTube chapter"
-            if kept == segment
-            else f"merged into S{kept + 1:02d} chapter"
-        )
         draw.text(
             (24, y + 12),
             f"CRAM segment {segment + 1:02d}   F{start:04X}-F{end - 1:04X}   "
-            f"content {fmt_time(content_time)}   upload {fmt_time(upload_time)}   {chapter_note}",
+            f"content {fmt_time(content_time)}   upload {fmt_time(upload_time)}",
             font=header,
             fill=(234, 236, 242),
         )
@@ -433,7 +412,8 @@ def main() -> int:
     )
 
     keys, slot_count, _pixel_count, _locations, _segments, source_hist = global_data
-    print(f"segments={len(palettes)} displayed_unique={len(keys)} "
+    print(f"segments={len(palettes)} switches={max(0, len(palettes) - 1)} "
+          f"displayed_unique={len(keys)} "
           f"paltab_unique={len(slot_count)} source_unique={np.count_nonzero(source_hist)}")
     for name in (
         "palette_by_segment.png", "palette_global.png", "palette_slots.tsv",

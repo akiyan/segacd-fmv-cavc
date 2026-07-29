@@ -110,34 +110,43 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
      Name the codec **Sega CD Constraint-Aware Video Codec**. Do not use the
      current binary magic as a public codec or format name.
   2. Output and source specs — the SEGA-CD output (mode, grid WxH, tile count,
-     fps, audio, Prg/Wr0/Wr1/Dic capacities) and the Source
-     (resolution, fps, audio).
+     fps, audio, Prg/Wr0/Wr1/Dic capacities, CRAM palette switch count) and the
+     Source (resolution, fps, audio).
   3. How to read the analysis layout — what each panel, meter, and timeline
      shows and how to interpret it (left = SEGA-CD sim output; right = Source /
-     category map / audio waveform; bottom status = Req / Cold / Band /
-     Prg / Wr0 / Wr1 / DMA / Run plus the stacked timelines, and Dic in the category legend). Define Band as useful
+     category map / 60 fps audio waveform and spectrum; bottom status =
+     Req with its Miss count, Cold, Band, R2V, Run, Prg, Wrd, and Pre, then the
+     palette strip and the stacked Req / supply / Run / Band timelines; the
+     category legend is Raw, Same, Near, Flbk, Miss, Prg, Wrd, Dic). Define Band
+     as useful
      `BODY.DAT` payload + control bytes in the physical delivery slot, excluding
      all pad and the untimed `HEADER.DAT` / BODY-arm / frame-0 regions, divided
      by that slot's actual physical CD read time. Its range is 0 to CD 1x
-     (150 KiB/s); pad is unused bandwidth.
+     (150 KiB/s); pad is unused bandwidth. Define R2V as the words the Main CPU
+     moves into VRAM for that frame: pattern data, the Word-RAM DMA first-word
+     repair, name-table/HUD words, and palette words. Wrd is the two Word-RAM
+     banks shown as one meter; Pre is prefetched cold work that is not displayed
+     yet.
   4. What the encoder does — first a short list of the techniques applied, then
      the details for each.
   5. Project link — always include the source repository URL:
      `https://github.com/akiyan/segacd-fmv-ttrc` . Put it in every description
      (both the English and the Japanese section).
-- **CRAM chapters (permanent).** Every codec video (analysis and real-playback)
-  MUST carry YouTube chapters at the CRAM (palette-segment) switch points, so the
-  switches are navigable. Generate analysis chapters with
-  `tools/youtube_chapters.py <sim_out>` and prepend the block to the description
-  (a blank line after it), before the Overview. For a playback recording that
-  retains the Mega-CD startup, pass its matching complete gate as
-  `--hud-gate-json logs/<run>_hud_gate.json --intro-label "Mega-CD startup"`.
-  The gate must record the first valid `frame=0000` immediately after the
-  player-only `frame=FFFF` sentinel; that exact HUD transition supplies the content
-  offset. It shifts chapter metadata only: do not trim or seek the recording.
-  The tool reads the sim's `frame_seg` and enforces YouTube's rules (first at
-  0:00, 10 s minimum spacing, ascending). This is not optional or per-video —
-  it is the standing convention for these uploads.
+- **Describe only what the current build renders.** Take every panel, meter,
+  and category name from `tools/layout_preview.py` and `tools/analysis_style.py`
+  and spell them the same way. Describe an encoder technique only when
+  `tools/sim.py` still implements it. Do not carry wording forward from an
+  earlier description without checking it against the current code; a term that
+  no longer exists in the build must not appear in a new description.
+- **CRAM switch count (permanent).** Every codec video (analysis and
+  real-playback) MUST state how many times the palette (CRAM) switches, as part
+  of the output spec section in both languages. Read the count with
+  `tools/cram_switches.py <sim_out>`, which prints `cram_segments=<N>
+  cram_switches=<N-1>` from the sim's `frame_seg`. The count belongs to the
+  encode, so the analysis render and its playback recording report the same
+  numbers. Do not add YouTube chapters and do not put timestamp links in the
+  description: these uploads carry no chapter list at all, at CRAM switch points
+  or anywhere else.
 - Do not show bitrate in the Source spec line.
 - Uploads are unlisted, category 20 (Gaming). Descriptive titles, not vNNN.
 - **"Upload" always means the latest version.** Before uploading, rebuild the
@@ -170,8 +179,6 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   the sanctioned place for build-your-own-detector work; keep each topic's doc
   next to its code so the harness stays reproducible.
 - These dedicated reference docs are sanctioned and must be kept current:
-  - [`ANALYSIS.md`](ANALYSIS.md) - the analysis-overlay reference (every meter/category/metric).
-    Updated via the `/analysis` skill together with the layout code.
   - [`MOVIE.md`](MOVIE.md) - the `HEADER.DAT` + `BODY.DAT` on-disc stream
     format. Keep in sync with
     `tools/pack_stream.py` and the `boot/movieplay_*.s` player.
@@ -195,6 +202,11 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   - [`ENCODE.md`](ENCODE.md) - the current simulation-encoding flow and a
     versioned full-encode timing example. Keep its short stage names aligned
     with the timers and comments in `tools/sim.py`.
+- Keep the analysis-overlay specification beside its implementation:
+  `tools/layout_preview.py` owns layout and reading rules,
+  `tools/analysis_style.py` owns category semantics and colours, and
+  `tools/render_analysis.py` owns real-data, TSV, and mux timing. Do not create
+  a separate `ANALYSIS.md`.
 - Claude skill files under `.claude/skills/**/SKILL.md` are allowed and should
   remain in place.
 - Do not reintroduce game-specific extraction notes or copyrighted sample

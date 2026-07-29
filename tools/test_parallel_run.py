@@ -12,7 +12,7 @@ from encode_config import load_profile
 def write_profile(path: Path, *, source: str, mode: str = "H32") -> None:
     width = 256 if mode == "H32" else 320
     path.write_text(f"""\
-schema_version = 3
+schema_version = 4
 
 [source]
 path = "{source}"
@@ -28,6 +28,9 @@ fit = "pad"
 [output]
 directory = "tmpfs/{Path(source).stem}_{mode}_{width}x224_adpcm22/sim"
 emit_decisions = true
+
+[encoder]
+cold_cap = 200
 
 [palette]
 algorithm = "mosaic-gm"

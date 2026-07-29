@@ -180,7 +180,7 @@ source-qualified cap is recorded as `[encoder].cold_cap`. Historical ladder
 artifacts retain their cap-suffixed output names, but no separate Sonic H40
 profile is needed for each specimen.
 
-## Phase 2 ladder (diagnostic caps via CBRSIM_COLD_CAP_DIAG, player p75)
+## Phase 2 ladder (temporary profiles with explicit cold caps, player p75)
 
 Full-length emulator runs, one per realized cap, all with
 `sector_slip=control_desync=audio_resync=cd_wait_count=0` and

@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 
 [source]
 path = "assets/TOS.mp4"
@@ -16,6 +16,9 @@ fit = "pad"
 directory = "tmpfs/TOS_H32_256x224_adpcm22/sim"
 reuse = false
 emit_decisions = true
+
+[encoder]
+cold_cap = 225
 
 [palette]
 algorithm = "mosaic-gm"

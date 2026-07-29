@@ -24,7 +24,7 @@ PER_SOURCE_ENV = {
     "CBRSIM_ACTIVE_TILES",
     "CBRSIM_MASTER_VF", "CBRSIM_RAW_VF", "CBRSIM_OUT",
     "CBRSIM_VRAM_TILES", "CBRSIM_QUALITY_BUDGET_KB", "CBRSIM_RING_CAP_KB",
-    "CBRSIM_MAX_COLD", "CBRSIM_COLD_CAP", "CBRSIM_COLD_CAP_DIAG",
+    "CBRSIM_MAX_COLD", "CBRSIM_COLD_CAP",
 }
 POLLUTED = {
     "CBRSIM_SRC": "wrong.mp4", "CBRSIM_FPS": "15", "CBRSIM_MODE": "H40",
@@ -76,49 +76,31 @@ def check_profiles() -> None:
         encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="cold-cap-profile-") as td:
         temp = Path(td)
+        lower_path = temp / "sonic-h40-lower.toml"
+        lower_path.write_text(
+            source.replace("cold_cap = 210", "cold_cap = 180"),
+            encoding="utf-8")
+        lower_env = {"CBRSIM_COLD_CAP": "999"}
+        apply_profile_env(load_profile(lower_path), lower_env)
+        assert lower_env["CBRSIM_COLD_CAP"] == "180"
+
         omitted_path = temp / "sonic-h40-omitted.toml"
         omitted_path.write_text(
             source.replace("cold_cap = 210\n", ""), encoding="utf-8")
-        omitted = load_profile(omitted_path)
-        omitted_env = {"CBRSIM_COLD_CAP": "999"}
-        apply_profile_env(omitted, omitted_env)
-        assert omitted_env["CBRSIM_COLD_CAP"] == "200"
-
-        lower_path = temp / "sonic-h40-lower.toml"
-        lower_path.write_text(
-            source.replace("cold_cap = 210", "cold_cap = 199"),
-            encoding="utf-8")
         try:
-            load_profile(lower_path)
+            load_profile(omitted_path)
         except ValueError as exc:
-            assert "below baseline 200" in str(exc)
+            assert "missing [encoder] keys: cold_cap" in str(exc)
         else:
-            raise AssertionError("below-baseline TOML cold cap was accepted")
+            raise AssertionError("profile without cold cap was accepted")
     print("TOML mapping: OK (profile values replace polluted environment)")
 
 
 def check_cold_caps() -> None:
-    expected = (
-        (15, 360),
-        (24, 225),
-        (30, 200),
-    )
-    for fps, cap in expected:
-        assert av_config.cold_cap_for_fps(fps) == cap
-        assert av_config.cold_realized_ceiling_for_fps(fps) == cap
-        raised = av_config.cold_cap_qualification(
-            fps, requested_cap=cap + 10)
-        assert raised.cap == cap + 10
-        assert raised.baseline_cap == cap
-        assert raised.source == "profile"
-        try:
-            av_config.cold_cap_qualification(
-                fps, requested_cap=cap - 1)
-        except ValueError as exc:
-            assert "below baseline" in str(exc)
-        else:
-            raise AssertionError(f"below-baseline profile cap accepted: {fps}")
-    print("Cold caps: OK (fps-derived sim and pack limits agree)")
+    for cap in (180, 200, 225, 480):
+        assert av_config.cold_cap(cap) == cap
+        assert av_config.cold_realized_ceiling(cap) == cap
+    print("Cold caps: OK (explicit sim and pack limits agree)")
 
 
 def main() -> None:

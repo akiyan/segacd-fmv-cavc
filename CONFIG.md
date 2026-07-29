@@ -106,21 +106,16 @@ palette lines.
 ## Cold cap
 
 Cold means a 32-byte pattern written to VRAM in the current timed frame,
-regardless of whether its source is Prg, WordBuf, or DicBuf. The shared baseline
-is:
+regardless of whether its source is Prg, WordBuf, or DicBuf. Every profile must
+set the positive integer `[encoder].cold_cap`; there is no fps-derived fallback
+or diagnostic override. The value must not exceed the 1,535-tile resident pool.
 
-The general baseline is `max(1, round(5400 / fps))`. The fully qualified
-nominal-30-fps baseline is 200 instead of the formula's 180.
-
-| Content fps | Baseline |
-|---:|---:|
-| 15 | 360 |
-| 24 | 225 |
-| 30 | 200 |
-
-Display mode, grid size, and `active_tiles` do not change the baseline.
-`[encoder].cold_cap` may raise it after full-length source qualification.
-Omission selects the baseline; a lower value is rejected.
+The checked-in profile records the source's qualified playback ceiling.
+Temporary comparison profiles use the same key, so artifact identity, tmpfs
+handoff, sim, pack, and analysis all receive one value. Lowering a qualified
+profile is conservative; raising it requires a new full-length playback
+qualification with the complete encoder, stream, Sub-CPU, Main-CPU, audio, and
+CD-pump path.
 
 The sim and packer share `tools/tile_alloc.py`. The packer replays the frozen
 allocation and requires realized cold to remain within the cold cap.
@@ -276,7 +271,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior. |
-| timed `raw_prefetch` | off | Optional `[encoder]` setting. |
+| timed `raw_prefetch` | on | Optional `[encoder]` setting; set `raw_prefetch = false` to disable it. |
 | `encoder.cram_quality_priority_search_frames` | 4 | Frames inspected from each CRAM switch. At most one positive-risk frame is selected, and its reserve is reduced only by the predicted protected-demand shortage. Zero disables this priority. |
 
 The allocator commits free/Same/Near results, selects cold exact loads while
@@ -338,7 +333,7 @@ materialized by `tools/stream_schedule.py`.
 
 ## Per-source TOML profiles
 
-Use one `schema_version = 3` file per source/mode combination.
+Use one `schema_version = 4` file per source/mode combination.
 
 ```sh
 tools/python.sh tools/sim.py profiles/<profile>.toml
@@ -367,7 +362,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | Human-readable requested sim identity, decoded-input reuse, and decision-log output. Sim bytes use a deterministic direct tmpfs path. |
-| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | Timed raw prefetch, qualified cold cap, and the non-negative CRAM-risk search length. |
+| `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
@@ -378,11 +373,12 @@ to true. H32 pixel aspect is 8:7 and H40 is 32:35.
 
 `active_tiles` is the number of tiles ever non-black after conversion. Omission
 uses the full grid. A smaller value is verified against every master frame.
-It affects accounting, not the cold-cap baseline.
+It affects accounting, not the profile's cold cap.
 
 The loader rejects unknown keys, unsupported modes, non-tile-aligned
-dimensions, unsafe profile names, a non-integer `cold_cap` or one below the
-baseline, and a negative or non-integer CRAM-risk search length.
+dimensions, unsafe profile names, a missing/non-positive/non-integer cold cap,
+a cold cap above the resident-pool size, and a negative or non-integer CRAM-risk
+search length.
 GPU, the
 1,535-tile resident pool, dither, segmented palettes, Near, boot prefetch, and
 the four physical supplies are fixed behavior.
@@ -531,20 +527,14 @@ palette lineでtransparent index 0をzeroのままにします。
 ## Cold cap
 
 Coldは、sourceがPrg、WordBuf、DicBufのどれでも、現在のtimed frameでVRAMへ書く
-32-byte patternです。共通baselineは次の通りです。
+32-byte patternです。すべてのprofileが正のinteger `[encoder].cold_cap` を必ず指定し、
+fps由来fallbackや診断overrideは使いません。値は1,535-tile resident pool以下にします。
 
-一般baselineは`max(1, round(5400 / fps))`です。全経路でqualification済みの
-nominal 30 fps baselineは、式から得る180ではなく200です。
-
-| Content fps | Baseline |
-|---:|---:|
-| 15 | 360 |
-| 24 | 225 |
-| 30 | 200 |
-
-display mode、grid size、`active_tiles` はbaselineを変えません。
-`[encoder].cold_cap` はsource固有の全編認定後にbaselineを引き上げられます。省略時は
-baselineを使い、baseline未満は拒否します。
+checked-in profileは、そのsourceでqualificationした再生上限を記録します。一時的な比較
+profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、pack、analysisへ
+1つの値がそのまま流れます。Qualification済みprofileから値を下げるのは保守的な変更
+です。引き上げる場合はencoder、stream、Sub CPU、Main CPU、audio、CD pumpを含む
+完全な経路で新しい全編再生qualificationが必要です。
 
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
 realized coldがcold cap内にあることを要求します。frame 0はtimed playback前に
@@ -692,7 +682,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。 |
-| timed `raw_prefetch` | off | optional `[encoder]` setting。 |
+| timed `raw_prefetch` | on | optional `[encoder]` setting。`raw_prefetch = false`で無効化。 |
 | `encoder.cram_quality_priority_search_frames` | 4 | 各CRAM switchから調べるframe数。positive riskが最大の1 frameだけを選び、予測protected-demand不足分だけreserveを減らします。0で無効です。 |
 
 allocatorはfree/Same/Near結果を確定し、全deferred cellの2-byte name entryを予約しながら
@@ -747,7 +737,7 @@ scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py`
 
 ## SourceごとのTOML profile
 
-source/modeの組み合わせごとに `schema_version = 3` のfileを1つ使います。
+source/modeの組み合わせごとに `schema_version = 4` のfileを1つ使います。
 
 ```sh
 tools/python.sh tools/sim.py profiles/<profile>.toml
@@ -775,7 +765,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | human-readableなsim要求identity、decoded-input reuse、decision-log output。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
-| `[encoder]` | optional `raw_prefetch`, `cold_cap`, `cram_quality_priority_search_frames` | timed raw prefetch、認定済みcold cap、非負のCRAM-risk search長。 |
+| `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 
@@ -785,12 +775,12 @@ tmp/<profile>/
 aspectは8:7、H40は32:35です。
 
 `active_tiles` は変換後に一度でもnon-blackになるtile数です。省略時はfull gridを使い、
-小さい値は全master frameに対して検証します。accountingには影響しますがcold-cap
-baselineには影響しません。
+小さい値は全master frameに対して検証します。accountingには影響しますがprofileの
+cold capには影響しません。
 
 loaderは未知key、未対応mode、tile境界に揃わないdimension、安全でないprofile名、
-baseline未満または整数でない `cold_cap`、負または整数でない
-CRAM-risk search長を拒否します。
+未指定・非positive・非integerのcold cap、resident-pool sizeを超えるcold cap、負または
+非integerのCRAM-risk search長を拒否します。
 GPU、1,535-tile resident pool、dither、
 segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 

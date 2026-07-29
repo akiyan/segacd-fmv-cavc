@@ -1,6 +1,6 @@
 ---
 name: compilation
-description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, anchor boot-aware CRAM chapters to the verified frame=FFFF to frame=0000 HUD transition, add project metadata, verify the result, and upload without recording or trimming. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
+description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, state the encode's CRAM palette switch count, add project metadata, verify the result, and upload without recording, trimming, or chapters. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
 ---
 
 # compilation — 録画済み再生映像をYouTubeへ
@@ -14,7 +14,7 @@ description: Prepare and upload an existing, verified record lossless playback c
 
 - 最新ビルドを収録した検証済みロスレスMKVの選択
 - 表示モードに対応するPARのsquare-pixel高解像度化、nearest拡大、配信用エンコード
-- 起動画面を考慮したCRAMチャプターとYouTubeメタデータ
+- CRAM切り替え回数を含むYouTubeメタデータ
 - 最終ファイルの検証とアップロード
 
 このスキルでは行わないもの:
@@ -22,6 +22,7 @@ description: Prepare and upload an existing, verified record lossless playback c
 - discのビルド、RetroArch起動、START入力、録画、同期検証
 - DEBUGビルドの要求やHUD OCRの実行（検証済みgate JSONを入力として使う）
 - `-ss` / `-t`による頭出しや映画部分だけの切り出し
+- YouTubeチャプターの生成、説明文へのタイムスタンプリンクの追加
 
 録画が無い、またはコード・データより古い場合は、ここへ録画手順を複製せず
 `record` を先に実行してから戻る。アップロードは常に最新成果物を使う。
@@ -33,9 +34,11 @@ description: Prepare and upload an existing, verified record lossless playback c
   `WARNING`のdescriptive schema-12 HUD result JSON
   （`cd_wait_count`と`adpcm_decode_units`はdiagnostic）
 - 同gateの`ocr_start_anchor`。`method=frame_minus_one`、
-  `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須
+  `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須。これは録画が
+  起動画面から映画先頭まで欠落なく揃っている証跡であり、頭出しや
+  タイムスタンプの生成には使わない
 - 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
-- 対応するsim出力ディレクトリ（CRAMチャプター用）
+- 対応するsim出力ディレクトリ（CRAM切り替え回数用）
 - `tools/av_version.txt` の現行ビルド版
 
 アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
@@ -44,7 +47,7 @@ description: Prepare and upload an existing, verified record lossless playback c
 `record`へ戻る。Gateが`PASS`でも、そのJSONの5つのdescriptive gate maximum、
 diagnostic `cd_wait_count` maximum、`cd_wait_count`と`adpcm_decode_units`の
 minimum/mean/median/maximumを提示した後のユーザーの明示承認が
-無ければ停止する。HUD時刻を頭出しやチャプターには使わない。
+無ければ停止する。HUD時刻を頭出しや説明文の時刻表記には使わない。
 
 ## YouTube用square-pixel raster
 
@@ -95,20 +98,15 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    追加しない。録画開始からのMega-CD起動画面、CD player、START遷移、映画、
    末尾をそのまま残す。
 
-3. **起動画面込みのCRAMチャプターを作る**
-
-   matching HUD gate JSONの`frame=FFFF`直後にある最初のvalidな`frame=0000`時刻を使う。
-   `youtube_chapters.py`がsentinel anchorを検証してoffsetを読みます。この時刻は
-   チャプターだけをずらす値であり、映像は切らない。
+3. **CRAM切り替え回数を求める**
 
    ```sh
-   tools/python.sh tools/youtube_chapters.py SIM_OUT CONTENT_FPS \
-     --hud-gate-json logs/RUN_hud_gate.json \
-     --intro-label "Mega-CD startup"
+   tools/python.sh tools/cram_switches.py SIM_OUT
    ```
 
-   出力を説明文の先頭へ置く。`00:00 Mega-CD startup`の後に、映画開始時刻を
-   加えたCRAM区間が並ぶ。
+   `cram_segments=<N> cram_switches=<N-1>`を出力する。回数はencodeの性質なので、
+   同じstreamのanalysis動画と同じ値になる。説明文のspec節へ英日とも記載する。
+   YouTubeチャプターは作らず、説明文にタイムスタンプのリンク行も置かない。
 
 4. **最終ファイルを確認する**
 
@@ -125,7 +123,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
 
 5. **YouTubeへアップロードする**
 
-   タイトル、英語→日本語の説明、CRAMチャプター、公開範囲、カテゴリ、再アップロード
+   タイトル、英語→日本語の説明、CRAM切り替え回数、公開範囲、カテゴリ、再アップロード
    の扱いは `AGENTS.md` の「YouTube Upload Style」を唯一の規約として使う。ここへ
    同じ規約を複製しない。アップロードはunlisted、category 20とし、説明文の英日
    両方に `https://github.com/akiyan/segacd-fmv-ttrc` を含める。
@@ -133,7 +131,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    binary magicをcodec名やformat名として使わない。
    送信する説明文はUTF-8 text fileへ保存し、YouTubeの上限である5,000文字以下を
    事前にPythonの文字数で確認する。運用目標は4,800文字以下。超えた場合は説明部分を
-   短くし、CRAM chapters、必須spec/layout/technique節、英日両方のproject linkを
+   短くし、CRAM切り替え回数、必須spec/layout/technique節、英日両方のproject linkを
    削ってはならない。上限超過のままuploadを試してAPIのrejectを待たない。
 
    ```sh

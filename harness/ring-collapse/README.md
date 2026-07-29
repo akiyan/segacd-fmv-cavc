@@ -68,12 +68,10 @@ behavior was once added to the sim), not a finer occupancy metric.
 - `under=0` from the pack is necessary but NOT sufficient; it does not model
   jitter. Always confirm on hardware.
 
-> Historical note (e9): `CBRSIM_PACK_MAXCOLD` was later removed. The temporary
-> encoder override and separate realized ceiling were subsequently removed as
-> well; current sim and pack share the cadence baseline from
-> `tools/av_config.py`: generally `round(5400/fps)`, with a qualified
-> nominal-30-fps value of 200 and optional higher profile qualifications. The
-> ring capacity is also derived there.
+> Historical note (e9): `CBRSIM_PACK_MAXCOLD` and the separate realized ceiling
+> are not part of the active pipeline. Current sim and pack use the one
+> `[encoder].cold_cap` value required by the profile. Ring capacity is derived
+> in `tools/av_config.py`.
 
 ## Scripts
 

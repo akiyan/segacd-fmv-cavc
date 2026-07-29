@@ -1,4 +1,4 @@
-schema_version = 3
+schema_version = 4
 
 [source]
 path = "assets/machi_op.mp4"
@@ -22,7 +22,6 @@ emit_decisions = true
 
 [encoder]
 cold_cap = 480
-raw_prefetch = true
 
 [palette]
 algorithm = "mosaic-gm"

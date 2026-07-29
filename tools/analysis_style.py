@@ -13,7 +13,11 @@ from dataclasses import dataclass
 
 RGB = tuple[int, int, int]
 
-# Display categories.
+# Display categories.  Raw is a same-frame CD load used immediately.  Same is
+# an already resident exact pattern.  Near and Flbk are comparison-based
+# resident reuse; Miss has no selected pattern and is filled red.  Prg, Wr0,
+# Wr1, and Dic identify the exact physical source of a cold pattern.  Prefetch
+# is not visible yet and becomes Same if used later.
 CAT_RAW: RGB = (205, 205, 205)
 CAT_SAME: RGB = (150, 150, 158)
 CAT_NEAR: RGB = (128, 134, 144)
