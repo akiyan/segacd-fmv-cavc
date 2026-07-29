@@ -290,10 +290,10 @@ MAX_RUN_CONTROL_BYTES = stream_schedule.max_run_control_reservation(
     MAX_COLD, ACTIVE_TILES)
 # Boot VRAM prefetch uses otherwise-unused frame-0 HEADER/staging capacity and
 # free resident slots.  It is default-on because it adds no timed BODY work.
-# Optional runtime prefetch remains profile-gated: only spare cold/BODY
+# Runtime prefetch is default-on and profile-overridable: only spare cold/BODY
 # capacity may move next-frame work earlier, and visible work always wins.
 BOOT_VRAM_PREFETCH_ON = True
-RAW_PREFETCH_ON = os.environ.get("CBRSIM_RAW_PREFETCH", "0") != "0"
+RAW_PREFETCH_ON = os.environ.get("CBRSIM_RAW_PREFETCH", "1") != "0"
 RAW_PREFETCH_LOOKAHEAD = 1
 RAW_PREFETCH_MAX_REQUESTS_PER_FRAME = 32
 RAW_PREFETCH_MIN_BATCH = 4

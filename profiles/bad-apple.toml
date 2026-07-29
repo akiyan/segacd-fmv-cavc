@@ -25,7 +25,6 @@ reuse = false
 emit_decisions = true
 
 [encoder]
-raw_prefetch = true
 cold_cap = 200
 
 [palette]

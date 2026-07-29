@@ -233,7 +233,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN"], "256")
         self.assertEqual(env["CBRSIM_RESIZE_FILTER"], "lanczos")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "1")
-        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "0")
+        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
         self.assertEqual(
             env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"],
             str(av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES))
@@ -246,6 +246,16 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_SEGPAL"], "1")
         self.assertEqual(env["CBRSIM_NEAR"], "1")
         self.assertEqual(env["CBRSIM_BOOT_VRAM_PREFETCH"], "1")
+
+    def test_profile_may_disable_raw_prefetch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "raw-prefetch-off.toml"
+            path.write_text(PROFILE.replace(
+                "cold_cap = 200",
+                "cold_cap = 200\nraw_prefetch = false"))
+            env = apply_profile_env(
+                load_profile(path), {"CBRSIM_RAW_PREFETCH": "1"})
+        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "0")
 
     def test_profile_cold_cap_replaces_inherited_environment(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

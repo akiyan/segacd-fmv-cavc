@@ -271,7 +271,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior. |
-| timed `raw_prefetch` | off | Optional `[encoder]` setting. |
+| timed `raw_prefetch` | on | Optional `[encoder]` setting; set `raw_prefetch = false` to disable it. |
 | `encoder.cram_quality_priority_search_frames` | 4 | Frames inspected from each CRAM switch. At most one positive-risk frame is selected, and its reserve is reduced only by the predicted protected-demand shortage. Zero disables this priority. |
 
 The allocator commits free/Same/Near results, selects cold exact loads while
@@ -682,7 +682,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。 |
-| timed `raw_prefetch` | off | optional `[encoder]` setting。 |
+| timed `raw_prefetch` | on | optional `[encoder]` setting。`raw_prefetch = false`で無効化。 |
 | `encoder.cram_quality_priority_search_frames` | 4 | 各CRAM switchから調べるframe数。positive riskが最大の1 frameだけを選び、予測protected-demand不足分だけreserveを減らします。0で無効です。 |
 
 allocatorはfree/Same/Near結果を確定し、全deferred cellの2-byte name entryを予約しながら

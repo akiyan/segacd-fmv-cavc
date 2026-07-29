@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e158: Enable one-frame timed Raw VRAM prefetch by default. Profiles may
+#         explicitly opt out with raw_prefetch=false; remove redundant true
+#         settings from the canonical Bad Apple, Lunar H32, and Machi OP
+#         profiles.
 #   p129: Make residual-boundary VBlank splitting and all-DMA pattern transfer
 #         unconditional. Remove both build switches and the split-off and
 #         one/two-pattern CPU-transfer player paths; retain the mandatory
@@ -1103,5 +1107,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260729
-e=157
+e=158
 p=129
