@@ -140,6 +140,43 @@ ares `dmabench` value before raising them.
 The mode4 player path uses true SMS Mode 4 for display with VBlank-only Mode 5
 DMA. Re-prove it on ares or hardware before raising player limits.
 
+## Empirical measurement — `cpuvrambench`
+
+Reusable measurement build for the CPU side of the same budget:
+`make cpuvrambench CPUVRAMBENCH_MODE=0|1` (0=H32, 1=H40) builds
+`out/CPUVRAMBENCH.iso`. It binary-searches the largest CPU data-port write
+burst that finishes inside one VBlank, using the player's transfer form
+(`move.l (a0)+,(VDP_DATA).l` in 8-word blocks plus a `move.w` tail, the
+`bf_bw` / `bf_bword` shape), and prints the same top-left rows as `dmabench`:
+
+- `W xxxx` = max CPU-written words per VBlank (hex)
+- `F xxxx` = derived tiles/frame ≈ `(W/16) * 3`
+
+Active-display writes are deliberately not measured: the VDP FIFO is only
+4 words deep, so active-scan CPU writes stall on FIFO slots almost
+immediately and are not a budget path.
+
+Source: `boot/cpuvrambench_ip.s` (+ `cpuvrambench_boot.s`, stub SP =
+`cdcbench_sp`). **Run it on ares / real hardware for authoritative numbers.**
+
+### Measured (Genesis Plus GX)
+
+| Mode | CPU words/VBlank | `dmabench` DMA words/VBlank | DMA/CPU ratio | note |
+|------|-----------------:|----------------------------:|--------------:|------|
+| H32  | 1,168            | 2,982                       | 2.55          | `W 0490`; `out/CPUVRAMBENCH_mode0.cue`, screenshot `tmp/cpuvrambench_h32_result.png` |
+| H40  | 1,160            | 3,664                       | 3.16          | `W 0488`; `out/CPUVRAMBENCH_mode1.cue`, screenshot `tmp/cpuvrambench_h40_result.png` |
+| *ares* | TBD            |                             |               | run the ISO to fill in |
+
+Both modes measure the same within the 8-word search granularity: the limiter
+is 68000 instruction time (measured ≈ 16 cycles/word against the move.l
+loop's theoretical ≈ 14.5 plus poll and command-setup overhead), not VDP
+slot supply, which is far above the CPU's demand during blanking.
+
+`CPU_VDP_WORD_COST = 4` in `boot/movieplay_ip.s` charges one CPU-written VDP
+word as four DMA words inside the VBlank budget. The measured GPGX ratios are
+2.6-3.2, so the constant over-charges CPU words and stays on the safe side in
+both modes. Re-measure the ratio on ares / real hardware before lowering it.
+
 ---
 
 <a id="jp"></a>
@@ -276,3 +313,37 @@ aresの`dmabench`値と照合してください。
 
 Mode4 playerでは、上記実測経路、つまり表示に真のSMS Mode 4を使い、VBlank中だけ
 Mode 5 DMAを行います。Player limitを引き上げる前に、aresまたは実機で再証明してください。
+
+## 実測 — `cpuvrambench`
+
+同じ予算のCPU側を測る再利用可能なmeasurement buildです。
+`make cpuvrambench CPUVRAMBENCH_MODE=0|1`（0=H32、1=H40）が
+`out/CPUVRAMBENCH.iso`をbuildします。1VBLANKに収まる最大のCPU data port書き込みを
+二分探索します。転送形はplayerの実経路（`move.l (a0)+,(VDP_DATA).l`の8語ブロック +
+`move.w`端数、`bf_bw` / `bf_bword`と同形）で、`dmabench`と同じ左上表示を出します:
+
+- `W xxxx` = VBlankあたりの最大CPU書き込み語数（hex）
+- `F xxxx` = 換算タイル/コマ ≈ `(W/16) * 3`
+
+Active中は意図的に測りません: VDP FIFOは4語深しかなく、active scan中のCPU書きは
+ほぼ即座にFIFO slot待ちになるため、予算経路ではありません。
+
+Sourceは`boot/cpuvrambench_ip.s`です（`cpuvrambench_boot.s`と、stub SP =
+`cdcbench_sp`）。**Authoritativeな値はares / 実機で測り直してください。**
+
+### 実測値（Genesis Plus GX）
+
+| Mode | CPU語/VBlank | `dmabench` DMA語/VBlank | DMA/CPU比 | note |
+|------|-------------:|------------------------:|----------:|------|
+| H32  | 1,168        | 2,982                   | 2.55      | `W 0490`、`out/CPUVRAMBENCH_mode0.cue`、screenshot `tmp/cpuvrambench_h32_result.png` |
+| H40  | 1,160        | 3,664                   | 3.16      | `W 0488`、`out/CPUVRAMBENCH_mode1.cue`、screenshot `tmp/cpuvrambench_h40_result.png` |
+| *ares* | TBD        |                         |           | ISOを実行して記入 |
+
+両modeは探索粒度（8語）の範囲で同値です。律速はVDP slot供給ではなく68000の命令時間
+（実測 ≈ 16 cycle/語。move.lループの理論値 ≈ 14.5にpollとcommand設定のoverheadが
+乗った値）で、blanking中のslot供給はCPUの需要を大きく上回ります。
+
+`boot/movieplay_ip.s`の`CPU_VDP_WORD_COST = 4`は、CPUで書く1 VDP語をVBlank予算上
+DMA 4語としてchargeします。GPGX実測の比は2.6〜3.2なので、この定数は両modeで
+CPU語を多めにchargeする安全側です。引き下げる前にares / 実機で比を測り直して
+ください。
