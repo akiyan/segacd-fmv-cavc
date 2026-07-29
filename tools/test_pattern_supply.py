@@ -41,6 +41,14 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             supply.OutputLoadPeak(parity=1, frame=1, bytes=206),
         )
 
+    def test_output_load_v2_accepts_numpy_traces_used_by_sim(self):
+        wr0, wr1 = supply.output_load_peaks(
+            prg_patterns=np.asarray([10, 3, 9, 2], np.int64),
+            runs=np.asarray([1, 5, 4, 6], np.int64),
+        )
+        self.assertEqual(wr0.bytes, 376)
+        self.assertEqual(wr1.bytes, 206)
+
     def test_output_load_v2_one_frame_has_empty_odd_parity(self):
         wr0, wr1 = supply.output_load_peaks(
             prg_patterns=(1120,),

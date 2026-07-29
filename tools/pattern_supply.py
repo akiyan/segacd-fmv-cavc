@@ -139,7 +139,7 @@ def output_load_peaks(
     """Return independently recomputed Wr0/even and Wr1/odd O_LOADS peaks."""
     if len(prg_patterns) != len(runs):
         raise ValueError("O_LOADS Prg/run traces have different frame counts")
-    if not prg_patterns:
+    if len(prg_patterns) == 0:
         raise ValueError("O_LOADS peak trace is empty")
     peaks: list[OutputLoadPeak] = []
     for parity in (0, 1):
