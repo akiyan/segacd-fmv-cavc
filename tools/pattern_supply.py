@@ -53,7 +53,11 @@ DIC_RUN_BLOCK = 256
 WORD_RAM_BANK_BYTES = 0x20000
 SECTOR_BYTES = 2048
 OUTPUT_HEADER_BYTES = 4  # O_PALW + O_NLOAD; O_LOADS starts immediately after.
-RUN_DESCRIPTOR_BYTES = 4
+# BODY control blocks retain their compact four-byte source-run descriptors.
+# O_LOADS v2 is a different, expanded handoff object: the Sub CPU writes one
+# VDP-ready record per physical transfer run directly into Word RAM.
+PACKED_RUN_DESCRIPTOR_BYTES = 4
+OUTPUT_RUN_RECORD_BYTES = 22
 STATUS_BYTES = 0x100
 CTRL_SCR_BYTES = 0x2000
 PAD_SCR_BYTES = 0x0800
@@ -105,6 +109,67 @@ class WordRamLayout:
         return self.routing_bytes // 4
 
 
+@dataclass(frozen=True)
+class OutputLoadPeak:
+    """Largest O_LOADS v2 body for one physical Word-RAM parity."""
+
+    parity: int
+    frame: int
+    bytes: int
+
+
+def output_load_bytes(prg_patterns: int, runs: int) -> int:
+    """Return one frame's O_LOADS v2 bytes after the four-byte output header.
+
+    Every transfer run contributes one 22-byte pre-swizzled record. Only Prg
+    runs carry inline 32-byte pattern payloads; Wr and Dic records point at
+    persistent storage.
+    """
+    prg_patterns = int(prg_patterns)
+    runs = int(runs)
+    if prg_patterns < 0 or runs < 0:
+        raise ValueError(
+            "O_LOADS counts must be non-negative: "
+            f"Prg={prg_patterns} runs={runs}")
+    if bool(prg_patterns) and not runs:
+        raise ValueError("O_LOADS cannot carry Prg patterns without a run")
+    return (
+        prg_patterns * PATTERN_BYTES
+        + runs * OUTPUT_RUN_RECORD_BYTES
+    )
+
+
+def output_load_peaks(
+    prg_patterns: Sequence[int],
+    runs: Sequence[int],
+) -> tuple[OutputLoadPeak, OutputLoadPeak]:
+    """Return independently recomputed Wr0/even and Wr1/odd O_LOADS peaks."""
+    if len(prg_patterns) != len(runs):
+        raise ValueError("O_LOADS Prg/run traces have different frame counts")
+    if not prg_patterns:
+        raise ValueError("O_LOADS peak trace is empty")
+    peaks: list[OutputLoadPeak] = []
+    for parity in (0, 1):
+        candidates = [
+            (output_load_bytes(prg_patterns[frame], runs[frame]), frame)
+            for frame in range(parity, len(prg_patterns), 2)
+        ]
+        if not candidates:
+            # A one-frame movie has no timed odd-parity output. Keep its Wr1
+            # reservation explicit and empty rather than borrowing Wr0's peak.
+            peaks.append(OutputLoadPeak(parity=parity, frame=-1, bytes=0))
+            continue
+        peak_bytes, peak_frame = max(candidates, key=lambda item: (item[0], -item[1]))
+        peaks.append(
+            OutputLoadPeak(
+                parity=parity,
+                frame=peak_frame,
+                bytes=peak_bytes,
+            )
+        )
+    return peaks[0], peaks[1]
+
+
 def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
     """Pack the common tail and parity-specific output/WordBuf spans.
 
@@ -131,10 +196,10 @@ def word_ram_layout(frames: int, cells: int, cold_cap: int) -> WordRamLayout:
     ctrl_scr_offset = pad_scr_offset - CTRL_SCR_BYTES
     status_offset = ctrl_scr_offset - STATUS_BYTES
 
-    wr0_load_bytes = RUN_DESCRIPTOR_BYTES + cells * PATTERN_BYTES
+    wr0_load_bytes = PACKED_RUN_DESCRIPTOR_BYTES + cells * PATTERN_BYTES
     timed_patterns = cold_cap if cold_cap else cells
     wr1_load_bytes = timed_patterns * (
-        PATTERN_BYTES + RUN_DESCRIPTOR_BYTES)
+        PATTERN_BYTES + PACKED_RUN_DESCRIPTOR_BYTES)
     wr0_offset = _align_up(
         OUTPUT_HEADER_BYTES + wr0_load_bytes, PATTERN_BYTES)
     wr1_offset = _align_up(

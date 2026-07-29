@@ -11,6 +11,48 @@ from upgrade_planner import DemandPrediction
 
 
 class PatternSupplyEncodingTests(unittest.TestCase):
+    def test_output_load_v2_counts_records_and_only_inline_prg_payload(self):
+        self.assertEqual(
+            supply.output_load_bytes(prg_patterns=17, runs=5),
+            17 * 32 + 5 * 22,
+        )
+        self.assertEqual(
+            supply.output_load_bytes(prg_patterns=0, runs=3),
+            3 * 22,
+        )
+        with self.assertRaises(ValueError):
+            supply.output_load_bytes(prg_patterns=1, runs=0)
+
+    def test_output_load_v2_recomputes_each_parity_peak(self):
+        # The old 4-byte layout peaks at frame 0 (10*32+1*4=324), but the
+        # expanded record cost moves the even-parity peak to frame 2
+        # (9*32+4*22=376). This guards against merely adding 18 bytes to the
+        # run count of the old peak frame.
+        wr0, wr1 = supply.output_load_peaks(
+            prg_patterns=(10, 3, 9, 2),
+            runs=(1, 5, 4, 6),
+        )
+        self.assertEqual(
+            wr0,
+            supply.OutputLoadPeak(parity=0, frame=2, bytes=376),
+        )
+        self.assertEqual(
+            wr1,
+            supply.OutputLoadPeak(parity=1, frame=1, bytes=206),
+        )
+
+    def test_output_load_v2_one_frame_has_empty_odd_parity(self):
+        wr0, wr1 = supply.output_load_peaks(
+            prg_patterns=(1120,),
+            runs=(1,),
+        )
+        self.assertEqual(wr0.frame, 0)
+        self.assertEqual(wr0.bytes, 1120 * 32 + 22)
+        self.assertEqual(
+            wr1,
+            supply.OutputLoadPeak(parity=1, frame=-1, bytes=0),
+        )
+
     def test_word_ram_layout_is_sector_routed_and_parity_specific(self):
         layout = supply.word_ram_layout(
             frames=6576, cells=40 * 28, cold_cap=180)
