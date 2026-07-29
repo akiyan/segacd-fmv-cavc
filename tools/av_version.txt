@@ -11,6 +11,100 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p126: Use a conservative 3,200 DMA-word-equivalent H40 VBlank budget.
+#         Charge every CPU-written VDP word four units, including short direct
+#         runs, DMA first-word repair, and CRAM. Split DMA runs at residual
+#         boundaries and withhold NT/HUD/CRAM/flip capacity from cadence budget
+#         N before pattern work. Keep HUD shares as separate logical words.
+#         Move the Main codegen/state boundary by 0x100 while preserving the
+#         17.5 KiB codegen capacity and its 128-byte worst-case guard.
+#   p125: Keep ordinary DMA runs whole. A run that does not fit the residual
+#         word budget spills intact to a fresh VBlank as an overload fallback;
+#         only a run longer than one complete budget uses chunk splitting.
+#         Preserve the v22 controls and exact VB1--VB4/T diagnostics.
+#   p124: Consume TTRC v22 controls without the removed encoder VBlank plan,
+#         restore the compact O_PALW/O_NLOAD/O_LOADS Word-RAM header, and keep
+#         p112's runtime residual-budget splitting as the sole transfer policy.
+#   e155: TTRC v22 removes the unused 18-byte fixed-width encoder VBlank plan
+#         from every control block. The stream now stores n_runs immediately
+#         followed by source-aware run descriptors; cadence splitting is live.
+#   p123: Restore p112's runtime residual-budget run splitting on the current
+#         TTRC v21 stream. Preserve the first VBlank tail, share the guarded
+#         fixed-N deadline with the final name-table/HUD/CRAM/flip work, derive
+#         the cadence limit from N=2/N=4, and expose exact runtime VB1--VB4
+#         pattern words plus transfer-window overrun warnings in the DEBUG HUD.
+#   p122: Preserve the hidden name-table base across each compact final DEBUG
+#         HUD address command. The VDP command helper clobbers d2, so keep the
+#         base in d3 and restore accurate M/U/O/Y/Z/T/I values after group 2.
+#   p121: Move the fixed-N H40 hidden name-table copy into active display time
+#         between encoder-authored pattern groups 1 and 2. Keep both pattern
+#         shares at fresh VBlank heads, patch only final HUD values in group 2,
+#         and leave CRAM plus the atomic display flip in that final blank.
+#   e154: Balance fixed-N H40 pattern runs across exactly the nominal VBlank
+#         group count using a measured usable-work ceiling. Remove the hidden
+#         full-name-table transfer from final-group accounting while retaining
+#         the ideal raw capacity as a separate diagnostic bound.
+#   p120: Read the TTRC v21 fixed-width per-frame VBlank pattern plan from
+#         Word RAM and execute every encoded group at a fresh VBlank head.
+#         Split long runs exactly at group boundaries, preserve empty final
+#         groups for their planned cadence, and perform name-table/HUD/CRAM/
+#         flip work only in the final encoded group.
+#   e153: TTRC v21: encode eight per-VBlank pattern-count words in every
+#         control block. Plan each frame with explicit payload, run/chunk,
+#         HUD/name-table/CRAM, and flip work so cold quality remains unchanged
+#         while physically unsafe work gains a warning-level extra VBlank.
+#   p119: Replace HUD O's redundant flip-interval estimate with the exact
+#         V-counter immediately after pattern-transfer VBlank 1. Keep V for
+#         the accepted flip and I for the final pattern exit, so Y/O and Z/I
+#         directly expose whether either scheduled share ran into active
+#         display without changing release playback decisions.
+#   p118: Use the specialized HUD tile-pair table for every deadline-side
+#         P/M/U/Y/Z/I stage patch. Keep the staged-HUD design from p117 while
+#         reducing the remaining second-VBlank patch work.
+#   p117: Move fixed-N H40 DEBUG HUD formatting out of the second pattern
+#         VBlank, merge its final values into the Main-RAM name-table stage,
+#         and carry picture plus HUD through the existing one NT DMA. Remove
+#         the post-DMA 63-cell VDP republish from the flip deadline while
+#         preserving the Y/Z/T/I split diagnostics.
+#   p116: Add DEBUG Y/Z/T/I diagnostics for exact pattern words transferred in
+#         the first and second transfer VBlanks, the number of transfer
+#         VBlanks, and the V-counter at pattern exit. Extend H32/H40 OCR,
+#         gate evidence, and hudline so cold280 split behavior can be measured
+#         without changing release transfer decisions.
+#   e152: Remove the separate Main-transfer cold ceiling so encoder quality
+#         decisions and physical Main-to-VRAM cold work are one value again.
+#         Keep the issue-74 Bad Apple qualification point fixed at cold280;
+#         deadline stability must come from the player path, not hidden work
+#         reduction.
+#   e151: Diagnostic trial, not retained: round the separate Main-transfer
+#         ceiling from 239 to 230. The trial was stopped before completion
+#         because its effective quality was cold230 rather than cold280.
+#   e150: Diagnostic trial, not retained: add a separate per-source
+#         Main-to-VRAM construction ceiling. The split made a cold280 target
+#         select only cold239 physical work, so it did not qualify cold280.
+#   p115: Restore the single 64x28 name-table DMA after the p114 row-DMA A/B.
+#         Repeating DMA setup for all 28 rows slowed every displayed frame,
+#         drove the reader 25 slots ahead, and reached S2F/R0E by frame 218.
+#         The measured result rejects compact row DMA as a deadline fix.
+#   p114: Replace the fixed-N H40 flip's 1,792-word 64x28 name-table DMA and
+#         active-time staging copy with direct compact row DMAs from shadow.
+#         The shared-deadline reserve now covers only the encoded grid plus a
+#         per-row setup allowance, HUD, CRAM, and the existing timing guard.
+#   p113: Add persistent H/X DEBUG diagnostics for the exact per-frame
+#         physical PrgBuf peak and CD reader lead. Extend the common H32/H40
+#         values-only HUD, OCR, gate evidence, and hudline without changing
+#         release playback or the encoded stream.
+#   p112: Split every DMA run at the residual VBlank word-budget boundary
+#         instead of deferring the whole crossing run. This preserves enough
+#         of the fixed-N target blank for the guarded name-table DMA and flip.
+#   p111: Preserve the n_runs zero flag while clearing the shared-VBlank budget
+#         origin. The p110 instruction order made the empty-frame branch
+#         unconditional and skipped every timed cold transfer.
+#   p110: Let fixed-N H40 share its display-deadline VBlank between the final
+#         cold-transfer tail and the complete name-table DMA, optional CRAM
+#         replacement, DEBUG HUD republish, and flip. Start each 3,400-word
+#         budget only at a proven VBlank head, require a guarded residual
+#         reserve before sharing, and retain a fresh-VBlank fallback.
 #   e149: TTRC v20: move the full segment-palette table (PALTAB) and the
 #         switch table (PALIDX) off the disc into player build inputs
 #         (paltab.bin / palidx.bin). Drop the header seg0 field (offset 64
@@ -991,5 +1085,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260728
-e=149
-p=109
+e=155
+p=126

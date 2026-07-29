@@ -41,8 +41,15 @@ TIMELINE_TOP = 185
 REQ_HEIGHT = 347
 SUPPLY_HEIGHT = 60
 RUN_HEIGHT = 32
+R2V_HEIGHT = 32
 DIC_HEIGHT = 32
 BAND_HEIGHT = 32
+R2V_WORDS_PER_PATTERN = 16
+R2V_CPU_WORD_COST = 1
+R2V_DMA_REPAIR_WORDS = 1
+P125_H40_NAME_TABLE_WORDS = 64 * 28
+P125_CRAM_WORDS = 64
+P125_RUN_SPLIT_WORDS = 3400
 
 REQ_ORDER = tuple(style.REQ_TIMELINE_CATS)
 REQ_COLORS = {name: style.CATEGORY_COLORS[name] for name in REQ_ORDER}
@@ -77,6 +84,15 @@ def parse_args() -> argparse.Namespace:
         help=("first excluded frame; defaults to the terminal suffix after "
               "the final Prg payload delivery"))
     parser.add_argument("--pixels-per-frame", type=int)
+    parser.add_argument(
+        "--r2v-workload-tsv", type=Path,
+        help=(
+            "packed-stream workload TSV from "
+            "harness/cold_cap_model/extract_frames.py; adds an R2V row "
+            "for pattern words at CPU 1x, DMA repairs, name-table words, "
+            "and palette-switch CRAM words"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -115,6 +131,131 @@ def run_scale_max(values: np.ndarray) -> float:
     timed = np.asarray(values, dtype=np.float64)[1:]
     timed = timed[np.isfinite(timed)]
     return max(float(timed.max(initial=0)), 1.0)
+
+
+def r2v_scale_max(values: np.ndarray) -> int:
+    """Return the exact calculated timed-frame maximum for the R2V axis."""
+
+    timed = np.asarray(values, dtype=np.int64)[1:]
+    return max(int(timed.max(initial=0)), 1)
+
+
+def calculate_r2v_words(
+    pass2_words: np.ndarray,
+    run_count: np.ndarray,
+    short_run_count: np.ndarray,
+    palette_switch: np.ndarray,
+) -> dict[str, np.ndarray]:
+    """Return all p125 H40 VDP-memory payload words by component.
+
+    The packed workload marks one- and two-pattern runs as short.  p125 writes
+    those runs directly on the CPU, so their data words stay in ``pass2_words``
+    at 1x and add no DMA repair.  Every other ordinary run issues one DMA and
+    repairs its first destination word with one CPU write.  The fixed H40
+    64x28 name-table DMA includes the DEBUG HUD.  CRAM contributes 64 CPU words
+    only on palette-switch frames.
+    """
+
+    words = np.asarray(pass2_words, np.int64)
+    runs = np.asarray(run_count, np.int64)
+    short = np.asarray(short_run_count, np.int64)
+    palette = np.asarray(palette_switch, np.int64)
+    if (
+        words.shape != runs.shape
+        or words.shape != short.shape
+        or words.shape != palette.shape
+    ):
+        raise ValueError("R2V workload columns must have matching shapes")
+    if (
+        np.any(words < 0)
+        or np.any(runs < 0)
+        or np.any(short < 0)
+        or np.any(palette < 0)
+    ):
+        raise ValueError("R2V workload values must be non-negative")
+    if np.any(short > runs):
+        raise ValueError("R2V short-run count exceeds total run count")
+    repairs = (runs - short) * R2V_DMA_REPAIR_WORDS
+    pattern = words * R2V_CPU_WORD_COST
+    name_table = np.full(words.shape, P125_H40_NAME_TABLE_WORDS, np.int64)
+    cram = (palette != 0).astype(np.int64) * P125_CRAM_WORDS
+    return {
+        "words": pattern + repairs + name_table + cram,
+        "pattern_words": pattern,
+        "repair_words": repairs,
+        "name_table_words": name_table,
+        "cram_words": cram,
+    }
+
+
+def load_r2v_workload(
+    path: Path,
+    *,
+    frames: int,
+    data: dict[str, np.ndarray],
+) -> dict[str, np.ndarray]:
+    """Load and cross-check the exact packed p125 transfer workload."""
+
+    required = {
+        "frame", "n_runs", "loads_total", "pass2_words", "short_runs",
+        "max_run_words", "pal_switch",
+    }
+    with path.open("r", encoding="utf-8", newline="") as source:
+        reader = csv.DictReader(source, delimiter="\t")
+        missing = required - set(reader.fieldnames or ())
+        if missing:
+            raise SystemExit(
+                f"R2V workload TSV lacks columns: {sorted(missing)}")
+        rows = list(reader)
+    if len(rows) != frames:
+        raise SystemExit(
+            f"R2V workload has {len(rows)} frames, expected {frames}")
+    frame_trace = np.asarray([int(row["frame"]) for row in rows], np.int64)
+    if not np.array_equal(frame_trace, np.arange(frames)):
+        raise SystemExit(
+            "R2V workload frames must be contiguous and start at zero")
+    values = {
+        key: np.asarray([int(row[key]) for row in rows], np.int64)
+        for key in required - {"frame"}
+    }
+    expected_words = (
+        np.rint(np.asarray(data["status_dma"], np.float64)).astype(np.int64)
+        * R2V_WORDS_PER_PATTERN
+    )
+    if not np.array_equal(values["pass2_words"][1:], expected_words[1:]):
+        mismatch = int(np.flatnonzero(
+            values["pass2_words"][1:] != expected_words[1:])[0]) + 1
+        raise SystemExit(
+            f"R2V workload/timeline cold mismatch at frame {mismatch}: "
+            f"{values['pass2_words'][mismatch]} != "
+            f"{expected_words[mismatch]} words")
+    expected_runs = np.rint(
+        np.asarray(data["status_run"], np.float64)).astype(np.int64)
+    if not np.array_equal(values["n_runs"][1:], expected_runs[1:]):
+        mismatch = int(np.flatnonzero(
+            values["n_runs"][1:] != expected_runs[1:])[0]) + 1
+        raise SystemExit(
+            f"R2V workload/timeline run mismatch at frame {mismatch}: "
+            f"{values['n_runs'][mismatch]} != "
+            f"{expected_runs[mismatch]} runs")
+    oversized = np.flatnonzero(
+        values["max_run_words"][1:] > P125_RUN_SPLIT_WORDS)
+    if oversized.size:
+        frame = int(oversized[0]) + 1
+        raise SystemExit(
+            f"R2V p125 model cannot count split-DMA repairs: frame {frame} "
+            f"has a {values['max_run_words'][frame]}-word run above "
+            f"{P125_RUN_SPLIT_WORDS}")
+    components = calculate_r2v_words(
+        values["pass2_words"], values["n_runs"], values["short_runs"],
+        values["pal_switch"])
+    # Frame 0 is boot construction and is excluded from every timed row.
+    for component in components.values():
+        component[0] = 0
+    return {
+        **values,
+        **components,
+    }
 
 
 def load_toml(path: Path | None) -> dict:
@@ -552,6 +693,7 @@ def draw_legend(
 def draw_timeline(
     image: Image.Image, data: dict[str, np.ndarray], left: int, top: int,
     ppf: int, evaluation_end: int | None,
+    r2v: dict[str, np.ndarray] | None = None,
 ) -> tuple[int, int]:
     draw = ImageDraw.Draw(image)
     n = len(data["frame"])
@@ -559,21 +701,26 @@ def draw_timeline(
     req_h = REQ_HEIGHT
     supply_h = SUPPLY_HEIGHT
     run_h = RUN_HEIGHT
+    r2v_h = R2V_HEIGHT if r2v is not None else 0
     dic_h = DIC_HEIGHT
     band_h = BAND_HEIGHT
     req_top = top
     supply_top = req_top + req_h
     run_top = supply_top + supply_h
-    dic_top = run_top + run_h
+    r2v_top = run_top + run_h
+    dic_top = r2v_top + r2v_h
     band_top = dic_top + dic_h
     bottom = band_top + band_h
-    for y0, height in (
+    panel_rows = [
         (req_top, req_h),
         (supply_top, supply_h),
         (run_top, run_h),
         (dic_top, dic_h),
         (band_top, band_h),
-    ):
+    ]
+    if r2v is not None:
+        panel_rows.insert(3, (r2v_top, r2v_h))
+    for y0, height in panel_rows:
         draw.rectangle((left, y0, left + width - 1, y0 + height - 1), fill=PANEL, outline=GRID)
 
     cells = max(float(data["cells"][0]), 1.0)
@@ -583,6 +730,9 @@ def draw_timeline(
     }
     total_capacity = sum(capacities.values())
     run_capacity = run_scale_max(data["status_run"])
+    r2v_capacity = (
+        r2v_scale_max(r2v["words"]) if r2v is not None else 1
+    )
     dic_capacity = run_scale_max(data["legend_dic"])
     for frame_index in range(n):
         x0 = left + frame_index * ppf
@@ -619,6 +769,22 @@ def draw_timeline(
                 (x0, run_top + run_h - run_height, x1, run_top + run_h - 1),
                 fill=style.COL_RUN,
             )
+
+        if r2v is not None:
+            r2v_value = int(r2v["words"][frame_index])
+            r2v_height = int(
+                r2v_h * min(r2v_value, r2v_capacity) / r2v_capacity
+            )
+            if r2v_height:
+                draw.rectangle(
+                    (
+                        x0,
+                        r2v_top + r2v_h - r2v_height,
+                        x1,
+                        r2v_top + r2v_h - 1,
+                    ),
+                    fill=style.COL_DMA,
+                )
 
         dic_value = min(float(data["legend_dic"][frame_index]), dic_capacity)
         dic_height = int(dic_h * dic_value / dic_capacity)
@@ -690,6 +856,8 @@ def draw_timeline(
     draw_scale(req_top, req_h, cells)
     draw_scale(supply_top, supply_h, total_capacity)
     draw_scale(run_top, run_h, run_capacity, show_midpoint=False)
+    if r2v is not None:
+        draw_scale(r2v_top, r2v_h, r2v_capacity, show_midpoint=False)
     draw_scale(dic_top, dic_h, dic_capacity, show_midpoint=False)
     draw_scale(
         band_top,
@@ -744,6 +912,8 @@ def draw_timeline(
     draw.text((18, supply_top + 8), "SUPPLY", fill=TEXT, font=label_font)
     draw.text((18, supply_top + 37), "patterns", fill=DIM, font=small)
     draw.text((18, run_top + 3), "RUN", fill=TEXT, font=label_font)
+    if r2v is not None:
+        draw.text((18, r2v_top + 3), "R2V", fill=TEXT, font=label_font)
     draw.text((18, dic_top + 3), "DIC", fill=TEXT, font=label_font)
     draw.text((18, band_top + 3), "BAND", fill=TEXT, font=label_font)
     return width, bottom
@@ -763,6 +933,14 @@ def main() -> None:
         raise SystemExit("pixels per frame must be positive")
     if args.evaluation_end_frame is not None and args.evaluation_end_frame <= 1:
         raise SystemExit("evaluation end frame must be greater than frame 1")
+    r2v_path = (
+        args.r2v_workload_tsv.resolve()
+        if args.r2v_workload_tsv else None
+    )
+    r2v = (
+        load_r2v_workload(r2v_path, frames=n, data=data)
+        if r2v_path is not None else None
+    )
     buffer = load_npz(sim_out / "buffer_remaining.npz") if sim_out else {}
     measured_cold_cap = int(round(float(data["cold_cap_tiles"][0])))
     evaluation_end = args.evaluation_end_frame
@@ -770,7 +948,7 @@ def main() -> None:
         evaluation_end = infer_evaluation_end(buffer, n)
 
     left = PLOT_LEFT
-    timeline_top = TIMELINE_TOP
+    timeline_top = TIMELINE_TOP + (25 if r2v is not None else 0)
     timeline_width = n * ppf
     width = left + timeline_width + 45
     height = (
@@ -778,6 +956,7 @@ def main() -> None:
         + REQ_HEIGHT
         + SUPPLY_HEIGHT
         + RUN_HEIGHT
+        + (R2V_HEIGHT if r2v is not None else 0)
         + DIC_HEIGHT
         + BAND_HEIGHT
         + 105
@@ -796,6 +975,18 @@ def main() -> None:
         prg_cap_summary(measured_cold_cap),
         fill=style.COL_PRG_CAP, font=font(18),
     )
+    if r2v is not None:
+        r2v_max_words = r2v_scale_max(r2v["words"])
+        draw.text(
+            (24, 126),
+            (
+                f"R2V = pattern x{R2V_CPU_WORD_COST} + DMA repair + "
+                f"NT {P125_H40_NAME_TABLE_WORDS} + CRAM {P125_CRAM_WORDS}"
+                f"@switch; timed max={fmt_int(r2v_max_words)} words"
+            ),
+            fill=style.COL_DMA,
+            font=font(18),
+        )
     eval_last = (n if evaluation_end is None else min(evaluation_end, n)) - 1
     eval_selection = np.arange(1, eval_last + 1, dtype=np.int64)
     totals = compute_legend_totals(data, eval_selection)
@@ -804,7 +995,8 @@ def main() -> None:
     )
     draw_legend(draw, left, timeline_top - 42, totals, legend_scope)
     _, bottom = draw_timeline(
-        image, data, left, timeline_top, ppf, evaluation_end)
+        image, data, left, timeline_top, ppf, evaluation_end,
+        r2v=r2v)
     draw = ImageDraw.Draw(image)
     draw.text(
         (left, bottom + 69),
@@ -844,6 +1036,64 @@ def main() -> None:
         1.0 / (data["time_seconds"][1] - data["time_seconds"][0])
         if n > 1 else 0.0
     )
+    receipt_rows = [
+        {
+            "key": "req",
+            "top": timeline_top,
+            "height": REQ_HEIGHT,
+            "unit": "cells",
+        },
+        {
+            "key": "supply",
+            "top": timeline_top + REQ_HEIGHT,
+            "height": SUPPLY_HEIGHT,
+            "unit": "patterns",
+        },
+        {
+            "key": "run",
+            "top": timeline_top + REQ_HEIGHT + SUPPLY_HEIGHT,
+            "height": RUN_HEIGHT,
+            "unit": "runs",
+        },
+    ]
+    if r2v is not None:
+        receipt_rows.append({
+            "key": "r2v",
+            "top": (
+                timeline_top + REQ_HEIGHT + SUPPLY_HEIGHT + RUN_HEIGHT
+            ),
+            "height": R2V_HEIGHT,
+            "unit": (
+                "VDP-memory words: pattern CPU-x1 + DMA repair + NT + CRAM"
+            ),
+        })
+    receipt_rows.extend([
+        {
+            "key": "dic",
+            "top": (
+                timeline_top
+                + REQ_HEIGHT
+                + SUPPLY_HEIGHT
+                + RUN_HEIGHT
+                + (R2V_HEIGHT if r2v is not None else 0)
+            ),
+            "height": DIC_HEIGHT,
+            "unit": "tiles served from DicBuf",
+        },
+        {
+            "key": "band",
+            "top": (
+                timeline_top
+                + REQ_HEIGHT
+                + SUPPLY_HEIGHT
+                + RUN_HEIGHT
+                + (R2V_HEIGHT if r2v is not None else 0)
+                + DIC_HEIGHT
+            ),
+            "height": BAND_HEIGHT,
+            "unit": "percent of physical slot",
+        },
+    ])
     receipt = {
         "schema_version": 1,
         "kind": "timeline",
@@ -869,51 +1119,57 @@ def main() -> None:
         "evaluation_end_frame": evaluation_end,
         "cold_cap_tiles": measured_cold_cap,
         "run_max": run_scale_max(data["status_run"]),
+        "r2v_model": (
+            "p125-h40-debug-vdp-memory-payload"
+            if r2v is not None else None
+        ),
+        "r2v_workload_tsv": str(r2v_path) if r2v_path else None,
+        "r2v_workload_tsv_sha256": (
+            hashlib.sha256(r2v_path.read_bytes()).hexdigest()
+            if r2v_path else None
+        ),
+        "r2v_cpu_word_cost": R2V_CPU_WORD_COST if r2v is not None else None,
+        "r2v_dma_repair_words_per_run": (
+            R2V_DMA_REPAIR_WORDS if r2v is not None else None
+        ),
+        "r2v_scale_mode": (
+            "timed-calculated-maximum" if r2v is not None else None
+        ),
+        "r2v_axis_max_words": (
+            r2v_scale_max(r2v["words"]) if r2v is not None else None
+        ),
+        "r2v_max_words": (
+            r2v_scale_max(r2v["words"])
+            if r2v is not None else None
+        ),
+        "r2v_pattern_words_total": (
+            int(r2v["pattern_words"][1:].sum())
+            if r2v is not None else None
+        ),
+        "r2v_dma_repair_words_total": (
+            int(r2v["repair_words"][1:].sum())
+            if r2v is not None else None
+        ),
+        "r2v_name_table_words_per_frame": (
+            P125_H40_NAME_TABLE_WORDS if r2v is not None else None
+        ),
+        "r2v_name_table_words_total": (
+            int(r2v["name_table_words"][1:].sum())
+            if r2v is not None else None
+        ),
+        "r2v_cram_words_per_switch": (
+            P125_CRAM_WORDS if r2v is not None else None
+        ),
+        "r2v_cram_words_total": (
+            int(r2v["cram_words"][1:].sum())
+            if r2v is not None else None
+        ),
         "dic_max": run_scale_max(data["legend_dic"]),
         "legend_totals": totals,
         "legend_totals_order": list(LEGEND_TOTAL_ORDER),
         "legend_totals_scope": legend_scope,
         "prg_cap_summary": prg_cap_summary(measured_cold_cap),
-        "rows": [
-            {
-                "key": "req",
-                "top": timeline_top,
-                "height": REQ_HEIGHT,
-                "unit": "cells",
-            },
-            {
-                "key": "supply",
-                "top": timeline_top + REQ_HEIGHT,
-                "height": SUPPLY_HEIGHT,
-                "unit": "patterns",
-            },
-            {
-                "key": "run",
-                "top": timeline_top + REQ_HEIGHT + SUPPLY_HEIGHT,
-                "height": RUN_HEIGHT,
-                "unit": "runs",
-            },
-            {
-                "key": "dic",
-                "top": (
-                    timeline_top + REQ_HEIGHT + SUPPLY_HEIGHT + RUN_HEIGHT
-                ),
-                "height": DIC_HEIGHT,
-                "unit": "tiles served from DicBuf",
-            },
-            {
-                "key": "band",
-                "top": (
-                    timeline_top
-                    + REQ_HEIGHT
-                    + SUPPLY_HEIGHT
-                    + RUN_HEIGHT
-                    + DIC_HEIGHT
-                ),
-                "height": BAND_HEIGHT,
-                "unit": "percent of physical slot",
-            },
-        ],
+        "rows": receipt_rows,
     }
     receipt_path = Path(str(output) + ".json")
     receipt_path.write_text(

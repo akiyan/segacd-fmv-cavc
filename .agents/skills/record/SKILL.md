@@ -280,18 +280,27 @@ Check the raw MKV and reports before trusting a capture:
    remains upload-capable; alert `FAIL` makes gate `FAIL` and exits nonzero.
    The first loop must contain every frame. Thresholds are:
 
-   - fixed-N2: `S/D/R=00`, `M<=01`;
-   - fixed-N4: `S/D/R=00`, `M<=03`;
-   - delivery-paced 24 fps: `S/D/R=00`, `M<=03`;
+   - fixed-N2: `S/D/R=00`; `M>01` raises a cadence warning;
+   - fixed-N4: `S/D/R=00`; `M>03` raises a cadence warning;
+   - delivery-paced 24 fps: `S/D/R=00`; `M>03` raises a cadence warning;
    - every cadence: `S/D/R=00`; `J<=2D` at 15fps, `J<=1E` at 24fps,
      or `J<=19` at 30fps.
 
-   `C`, `Q`, `G`, `B`, and `K` are diagnostic only. They have no limits and
-   never change the gate status. Report the C distribution and Q minimum when
-   available. For the pump layout, report the G distribution, B frame count,
-   and `(S-K) & 0xFF` CDC_TRN retry-exhaustion count, and correlate them with actual
-   playback failures.
-   The M limit permits all display fields available to one content frame. The
+   For fixed-N playback, compare consecutive first-capture positions for every
+   timed, nonterminal `F`. A visible duration other than N VBlanks raises alert
+   `WARNING` while retaining gate `PASS`. Preserve the complete duration
+   histogram and affected frames in the gate JSON. Delivery-paced playback
+   records the histogram without an exact-duration warning.
+
+   `C`, `Q`, `G`, `B`, `K`, `H`, `X`, `Y`, `Z`, `Y3`, `Y4`, `T`, and `I`
+   preserve diagnostics. At fixed cadence, `T>N` raises alert `WARNING` while
+   retaining gate `PASS`; the word shares and phases have no limits. Report the C
+   distribution and Q minimum when available. For the pump layout, report the G distribution, B
+   frame count, H physical peak, X reader lead, Y/Z/Y3/Y4 VBlank word shares, T
+   transfer-VBlank count, I pattern-exit phase, and `(S-K) & 0xFF` CDC_TRN
+   retry-exhaustion count, and correlate them with actual playback failures.
+   The M warning limit marks the display fields available to one content frame;
+   exceeding it does not by itself fail the upload gate. The
    `J` limit is derived from the stream's generated
    normal PrgBuf ceiling: normal/jitter is 378/40 KiB at 15fps,
    393/25 KiB at 24fps, and 398/20 KiB at 30fps. A value above `28`, `19`, or
@@ -331,8 +340,8 @@ sound is clean or free of audible clicks only after listening to the final file.
 
 The standard capture already builds DEBUG. The HUD omits category glyphs and
 uses the same 30-cell `F/P/S/D/R/L/C/W/M/A/U/N/J` prefix in H32 and H40.
-Both modes append `Q/V/O/E/G/K` and wrap the same 46-cell logical stream at
-their native 32- or 40-cell width. The profile selects the matching combined
+Both modes append `Q/V/O/E/G/K/H/X/Y/Z/T/I/Y3/Y4` and wrap the same 69-cell
+logical stream into three H32 rows or two H40 rows. The profile selects the matching combined
 OCR layout automatically. Parse the complete first loop
 whenever the capture can be uploaded; for a local-only recording, full OCR
 remains optional unless diagnostics were requested. Keep
@@ -356,8 +365,10 @@ byte, and `J` is the sticky ceil-KiB streamed PrgBuf excess above the
 fps-derived normal ceiling. `Q` is a signed exact-pattern balance: values with
 the high bit set are negative underflow, not a large positive occupancy. A
 Gate `PASS` in the `S/D/R/M/J` result JSON is the required handoff condition;
-alert may be `NONE` or `WARNING`;
-`C/A/Q` remain recorded diagnostics. When the
+alert may be `NONE` or `WARNING`. A fixed-N visible-duration mismatch is one
+source of `WARNING` and does not block upload. A fixed-N `T>N` is another
+warning. `C/A/Q/G/B/K/H/X` remain recorded diagnostics, as do the Main
+pattern-split fields `Y/Z/Y3/Y4/T/I`. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a
 separate approval pause. Its HUD timing must never be reused as a publication
 trim or chapter point. The matching timeline, `hudline`, and `mixline` PNGs and
@@ -407,5 +418,5 @@ the fast path, additionally report the exact-comparison JSON/pass state and
 repeat-run result. For an upload-capable capture, report the HUD gate JSON,
 complete-loop frame count, `S/D/R/M/J` gate maxima, the diagnostic C maximum,
 `C/A` minimum, mean, median, and maximum, plus G statistics and B/K cause
-counts when present, gate state, hudline and mixline PNGs,
-and both public Gist/raw image URLs.
+counts, H/X maxima, and Y/Z/Y3/Y4/T/I split maxima when present, gate state, hudline
+and mixline PNGs, and both public Gist/raw image URLs.

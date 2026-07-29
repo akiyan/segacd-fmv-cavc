@@ -71,13 +71,32 @@ MAXIMUM_COLUMN = {
 
 HEX_COLUMNS = {
     "flip_vcounter",
+    "pattern_vblank1_exit_vcounter",
+    "pattern_exit_vcounter",
 }
+
+GPGX_VDP_COLUMNS = (
+    "pattern_dma_commands",
+    "pattern_dma_updates",
+    "pattern_dma_blank_words",
+    "pattern_dma_active_words",
+    "pattern_cpu_blank_words",
+    "pattern_cpu_active_words",
+    "pattern_cpu_boundary_words",
+    "name_table_dma_blank_words",
+    "name_table_dma_active_words",
+)
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("tsv", type=Path)
     parser.add_argument("--gate-json", type=Path, required=True)
+    parser.add_argument(
+        "--gpgx-vdp-tsv",
+        type=Path,
+        help="optional frame TSV from harness/gpgx_logvdp/extract_frame_tsv.py",
+    )
     parser.add_argument("--config", type=Path)
     parser.add_argument("--output", type=Path)
     parser.add_argument("--label", default="")
@@ -94,6 +113,79 @@ def font(size: int) -> ImageFont.FreeTypeFont:
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_gpgx_vdp_tsv(
+    path: Path,
+    hud_path: Path,
+    hud_data: dict[str, np.ndarray],
+) -> tuple[dict[str, np.ndarray], dict, Path]:
+    with path.open("r", encoding="utf-8", newline="") as source:
+        reader = csv.DictReader(source, delimiter="\t")
+        fields = set(reader.fieldnames or ())
+        missing = {"frame", *GPGX_VDP_COLUMNS} - fields
+        if missing:
+            raise SystemExit(f"GPGX VDP TSV lacks columns: {sorted(missing)}")
+        rows = list(reader)
+    frames = np.asarray([int(row["frame"]) for row in rows], np.int64)
+    if not np.array_equal(frames, hud_data["frame"]):
+        raise SystemExit("GPGX VDP TSV frame axis does not match the HUD TSV")
+    arrays = {
+        key: np.asarray([int(row[key]) for row in rows], np.float64)
+        for key in GPGX_VDP_COLUMNS
+    }
+    arrays["pattern_cpu_active_edge_words"] = (
+        arrays["pattern_cpu_active_words"]
+        + arrays["pattern_cpu_boundary_words"]
+    )
+
+    receipt_path = Path(str(path) + ".json")
+    if not receipt_path.is_file():
+        raise SystemExit(f"GPGX VDP TSV receipt is missing: {receipt_path}")
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if receipt.get("kind") != "gpgx-logvdp-frame-transfer":
+        raise SystemExit("GPGX VDP TSV receipt has the wrong kind")
+    if int(receipt.get("frames", -1)) != len(rows):
+        raise SystemExit("GPGX VDP TSV receipt frame count does not match")
+    if str(receipt.get("output_tsv_sha256")) != digest(path):
+        raise SystemExit("GPGX VDP TSV hash does not match its receipt")
+    if str(receipt.get("hud_tsv_sha256")) != digest(hud_path):
+        raise SystemExit("GPGX VDP TSV was extracted against another HUD TSV")
+
+    logical = np.zeros(len(rows), dtype=np.int64)
+    for key in (
+        "pattern_vblank1_words",
+        "pattern_vblank2_words",
+        "pattern_vblank3_words",
+        "pattern_vblank4_words",
+    ):
+        if key in hud_data:
+            logical += hud_data[key].astype(np.int64)
+    physical = sum(
+        arrays[key].astype(np.int64)
+        for key in (
+            "pattern_dma_blank_words",
+            "pattern_dma_active_words",
+            "pattern_cpu_blank_words",
+            "pattern_cpu_active_words",
+            "pattern_cpu_boundary_words",
+        )
+    )
+    transfer_budgets = hud_data.get(
+        "pattern_transfer_vblanks",
+        np.zeros(len(rows), dtype=np.float64),
+    )
+    checked = np.flatnonzero(
+        (frames > 0) & (transfer_budgets <= 4)
+    )
+    mismatched = checked[physical[checked] != logical[checked]]
+    if mismatched.size:
+        frame = int(mismatched[0])
+        raise SystemExit(
+            f"GPGX VDP frame {frame} physical pattern words "
+            f"{physical[frame]} != HUD logical words {logical[frame]}"
+        )
+    return arrays, receipt, receipt_path
 
 
 def parse_value(key: str, text: str) -> float:
@@ -159,6 +251,9 @@ def load_gate(path: Path) -> dict:
             raise SystemExit("schema-5+ gate must not define a C limit")
         if list(gate.get("gate_fields", ())) != list(GATE_COLUMN):
             raise SystemExit("schema-5+ gate_fields do not match the HUD gate")
+    if int(gate.get("schema_version", 0)) >= 10:
+        if list(gate.get("warning_fields", ())) != ["M"]:
+            raise SystemExit("schema-10+ warning_fields must contain only M")
     return gate
 
 
@@ -310,6 +405,36 @@ def validate(
             raise SystemExit("gate diagnostic_fields omit available B")
     elif gate_has_b:
         raise SystemExit("gate declares B but HUD TSV has no B column")
+    for field, column, gate_key in (
+        ("H", "prgbuf_physical_peak_patterns",
+         "prgbuf_physical_peak_patterns"),
+        ("X", "reader_ahead_raw16", "reader_ahead_max_raw16"),
+        ("Y", "pattern_vblank1_words", "pattern_vblank1_max_words"),
+        ("O", "pattern_vblank1_exit_vcounter",
+         "pattern_vblank1_exit_vcounter_max"),
+        ("Z", "pattern_vblank2_words", "pattern_vblank2_max_words"),
+        ("Y3", "pattern_vblank3_words", "pattern_vblank3_max_words"),
+        ("Y4", "pattern_vblank4_words", "pattern_vblank4_max_words"),
+        ("T", "pattern_transfer_vblanks", "pattern_transfer_vblank_max"),
+        ("I", "pattern_exit_vcounter", "pattern_exit_vcounter_max"),
+    ):
+        values = data.get(column)
+        declared = field in gate.get("diagnostic_fields", ())
+        if values is not None:
+            expected = int(values[1:].max(initial=0))
+            if gate_key not in gate:
+                raise SystemExit(f"gate JSON lacks {gate_key}")
+            if int(gate[gate_key]) != expected:
+                raise SystemExit(
+                    f"gate {field} maximum {gate[gate_key]} != "
+                    f"TSV value {expected}"
+                )
+            if not declared:
+                raise SystemExit(
+                    f"gate diagnostic_fields omit available {field}")
+        elif declared:
+            raise SystemExit(
+                f"gate declares {field} but HUD TSV has no {column} column")
     if config_path is not None:
         if digest(config_path) != str(gate["profile_sha256"]):
             raise SystemExit("profile SHA does not match gate JSON")
@@ -423,12 +548,86 @@ def row_specs(
                     float(gate.get("jitter_headroom_kib", 0))),
                 style.COL_PRG, "J"),
     ]
+    if "pattern_dma_blank_words" in data:
+        pattern_phase_max = max(
+            1,
+            *(
+                timed_max(key)
+                for key in (
+                    "pattern_dma_blank_words",
+                    "pattern_dma_active_words",
+                    "pattern_cpu_blank_words",
+                    "pattern_cpu_active_edge_words",
+                )
+            ),
+        )
+        rows.extend([
+            RowSpec(
+                "pattern_dma_blank_words",
+                "PD DMA BLANK",
+                "pattern words/frame",
+                pattern_phase_max,
+                (94, 174, 224),
+            ),
+            RowSpec(
+                "pattern_dma_active_words",
+                "PA DMA ACTIVE",
+                "pattern words/frame",
+                pattern_phase_max,
+                WARN,
+            ),
+            RowSpec(
+                "pattern_cpu_blank_words",
+                "CB CPU BLANK",
+                "direct + repair words/frame",
+                pattern_phase_max,
+                (102, 193, 169),
+            ),
+            RowSpec(
+                "pattern_cpu_active_edge_words",
+                "CA CPU ACTIVE*",
+                "active + V-edge words/frame",
+                pattern_phase_max,
+                (238, 135, 73),
+            ),
+            RowSpec(
+                "name_table_dma_blank_words",
+                "NB NT DMA BLANK",
+                "name-table words/frame",
+                max(1, timed_max("name_table_dma_blank_words")),
+                (132, 160, 220),
+            ),
+            RowSpec(
+                "name_table_dma_active_words",
+                "NA NT DMA ACTIVE",
+                "name-table words/frame",
+                max(1, timed_max("name_table_dma_active_words")),
+                FAIL,
+            ),
+            RowSpec(
+                "pattern_dma_commands",
+                "DR PATTERN DMA",
+                "commands/frame",
+                max(1, timed_max("pattern_dma_commands")),
+                style.COL_RUN,
+            ),
+        ])
     if "prgbuf_min_patterns_signed" in data:
         rows.append(
             RowSpec(
                 "prgbuf_min_patterns_signed",
                 "Q  PRG MIN",
                 "signed 32-byte patterns/frame",
+                av_config.RING_SIZE_KB * 1024 / 32,
+                style.COL_PRG,
+            )
+        )
+    if "prgbuf_physical_peak_patterns" in data:
+        rows.append(
+            RowSpec(
+                "prgbuf_physical_peak_patterns",
+                "H  PRG PHYSICAL",
+                "peak 32-byte patterns/frame",
                 av_config.RING_SIZE_KB * 1024 / 32,
                 style.COL_PRG,
             )
@@ -477,6 +676,87 @@ def row_specs(
                 show_zero=False,
             )
         )
+    if "reader_ahead_frames" in data:
+        rows.append(
+            RowSpec(
+                "reader_ahead_frames",
+                "XH READER AHEAD",
+                "complete frame slots",
+                max(1, timed_max("reader_ahead_frames")),
+                (103, 181, 220),
+            )
+        )
+    if "reader_slot_sector" in data:
+        rows.append(
+            RowSpec(
+                "reader_slot_sector",
+                "XL READER SLOT",
+                "sector index in slot",
+                max(1, timed_max("reader_slot_sector")),
+                (94, 158, 205),
+            )
+        )
+    if "pattern_vblank1_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank1_words",
+                "Y  PATTERN VB1",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank1_words")),
+                (114, 192, 233),
+            )
+        )
+    if "pattern_vblank2_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank2_words",
+                "Z  PATTERN VB2",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank2_words")),
+                (78, 159, 217),
+            )
+        )
+    if "pattern_vblank3_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank3_words",
+                "Y3 PATTERN VB3",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank3_words")),
+                (63, 133, 198),
+            )
+        )
+    if "pattern_vblank4_words" in data:
+        rows.append(
+            RowSpec(
+                "pattern_vblank4_words",
+                "Y4 PATTERN VB4",
+                "words/frame (16 = 1 pattern)",
+                max(1, timed_max("pattern_vblank4_words")),
+                (48, 111, 176),
+            )
+        )
+    if "pattern_transfer_vblanks" in data:
+        rows.append(
+            RowSpec(
+                "pattern_transfer_vblanks",
+                "T  VBLANK BUDGETS",
+                "fresh pattern budgets opened/frame",
+                max(2, timed_max("pattern_transfer_vblanks")),
+                (238, 157, 82),
+            )
+        )
+    if "pattern_exit_vcounter" in data:
+        rows.append(
+            RowSpec(
+                "pattern_exit_vcounter",
+                "I  PATTERN EXIT",
+                "VDP V-counter",
+                0xFF,
+                (198, 137, 226),
+                eight_bit_scale=True,
+            )
+        )
     rows.extend([
         RowSpec("cd_wait", "C  CD WAIT", "sectors/frame",
                 max(1, timed_max("cd_wait")), WARN),
@@ -500,7 +780,7 @@ def row_specs(
     optional = (
         ("flip_vcounter", "V  FLIP", "VDP line, frame F-1",
          (124, 193, 113)),
-        ("flip_interval_excess_ticks", "O  INTERVAL", "30.72 us ticks, F-1",
+        ("pattern_vblank1_exit_vcounter", "O  FIRST EXIT", "VDP line",
          (112, 178, 216)),
         ("pass2_entry_q4", "E  PASS2 ENTRY", "4 ticks",
          (223, 182, 91)),
@@ -532,7 +812,11 @@ def value_color(value: float, spec: RowSpec, gate: dict) -> tuple[int, int, int]
         return spec.color
     limit = float(gate["limits"][spec.gate_key])
     if value > limit:
-        return FAIL
+        return (
+            WARN
+            if spec.gate_key in gate.get("warning_fields", ())
+            else FAIL
+        )
     return spec.color
 
 
@@ -658,6 +942,24 @@ def draw_rows(
                     anchor="rb",
                 )
 
+        if spec.key == "prgbuf_physical_peak_patterns":
+            backpressure = float(av_config.BACKPRESSURE_KB * 1024 / 32)
+            guide_y = y1 - int(round(
+                (row_height - 1) * min(backpressure, spec.maximum)
+                / max(spec.maximum, 1e-9)))
+            draw.line(
+                (left, guide_y, right, guide_y),
+                fill=NORMAL_LIMIT,
+                width=1,
+            )
+            draw.text(
+                (right - 4, guide_y - 2),
+                f"back-pressure {fmt_hex(backpressure)}",
+                fill=NORMAL_LIMIT,
+                font=font(13),
+                anchor="rb",
+            )
+
         if spec.normal_value is not None:
             normal = float(spec.normal_value)
             normal_y = y1 - int(round(
@@ -720,6 +1022,14 @@ def main() -> None:
     rows, data, _fields = load_tsv(tsv_path)
     gate = load_gate(gate_path)
     validate(tsv_path, gate_path, config_path, rows, data, gate)
+    gpgx_vdp_path = args.gpgx_vdp_tsv.resolve() if args.gpgx_vdp_tsv else None
+    gpgx_vdp_receipt = None
+    gpgx_vdp_receipt_path = None
+    if gpgx_vdp_path is not None:
+        gpgx_data, gpgx_vdp_receipt, gpgx_vdp_receipt_path = (
+            load_gpgx_vdp_tsv(gpgx_vdp_path, tsv_path, data)
+        )
+        data.update(gpgx_data)
     display_vblanks, display_vblank_expected = derive_display_vblanks(
         data,
         float(gate["content_fps"]),
@@ -794,6 +1104,31 @@ def main() -> None:
         if q_values is not None and len(q_values) > 1 else None
     )
     q_underflow_peak = max(0, -q_minimum) if q_minimum is not None else None
+    h_values = data.get("prgbuf_physical_peak_patterns")
+    h_maximum = (
+        int(h_values[1:].max())
+        if h_values is not None and len(h_values) > 1 else None
+    )
+    x_values = data.get("reader_ahead_raw16")
+    x_maximum = (
+        int(x_values[1:].max())
+        if x_values is not None and len(x_values) > 1 else None
+    )
+    split_maxima = {
+        key: (
+            int(data[column][1:].max())
+            if column in data and len(data[column]) > 1 else None
+        )
+        for key, column in (
+            ("Y", "pattern_vblank1_words"),
+            ("O", "pattern_vblank1_exit_vcounter"),
+            ("Z", "pattern_vblank2_words"),
+            ("Y3", "pattern_vblank3_words"),
+            ("Y4", "pattern_vblank4_words"),
+            ("T", "pattern_transfer_vblanks"),
+            ("I", "pattern_exit_vcounter"),
+        )
+    }
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -810,11 +1145,66 @@ def main() -> None:
         f"B APPLY block {apply_guard_frames} frames; "
         if apply_guard_frames is not None else ""
     )
+    physical_buffer_text = (
+        f"H max {h_maximum} patterns; "
+        if h_maximum is not None else ""
+    )
+    reader_ahead_text = (
+        f"X max {x_maximum >> 8} frames + sector {x_maximum & 0xFF}; "
+        if x_maximum is not None else ""
+    )
+    later_split_text = (
+        f"; VB3/VB4 {split_maxima['Y3']}/{split_maxima['Y4']} words"
+        if split_maxima["Y3"] is not None and split_maxima["Y4"] is not None
+        else ""
+    )
+    transfer_split_text = (
+        "VB1/VB2 words max "
+        f"{split_maxima['Y']}/{split_maxima['Z']} words "
+        f"({split_maxima['Y'] / 16:g}/{split_maxima['Z'] / 16:g} patterns)"
+        f"{later_split_text}; "
+        f"O first-exit max {split_maxima['O']:02X}; "
+        f"T max {split_maxima['T']}; I max {split_maxima['I']:02X}; "
+        if all(
+            split_maxima[key] is not None for key in ("Y", "O", "Z", "T", "I")
+        )
+        else ""
+    )
+    gpgx_vdp_maxima = (
+        {
+            key: int(data[key][1:].max(initial=0))
+            for key in (
+                "pattern_dma_commands",
+                "pattern_dma_blank_words",
+                "pattern_dma_active_words",
+                "pattern_cpu_blank_words",
+                "pattern_cpu_active_words",
+                "pattern_cpu_boundary_words",
+                "pattern_cpu_active_edge_words",
+                "name_table_dma_blank_words",
+                "name_table_dma_active_words",
+            )
+        }
+        if gpgx_vdp_path is not None else None
+    )
+    gpgx_vdp_text = (
+        "LOGVDP max "
+        f"PD blank/active "
+        f"{gpgx_vdp_maxima['pattern_dma_blank_words']}/"
+        f"{gpgx_vdp_maxima['pattern_dma_active_words']}; "
+        f"CPU blank/active+edge "
+        f"{gpgx_vdp_maxima['pattern_cpu_blank_words']}/"
+        f"{gpgx_vdp_maxima['pattern_cpu_active_edge_words']}; "
+        f"NT blank/active "
+        f"{gpgx_vdp_maxima['name_table_dma_blank_words']}/"
+        f"{gpgx_vdp_maxima['name_table_dma_active_words']} words; "
+        if gpgx_vdp_maxima is not None else ""
+    )
     phase_note = (
         "G is the maximum Sub pump-opportunity interval; "
-        "O on frame F describes the flip for F-1; "
+        "O/I are this frame's first/final pattern exits; "
         if g_stats is not None
-        else "V/O on frame F describe the flip for F-1; "
+        else "V is the preceding flip; O/I are this frame's pattern exits; "
     )
     coverage_text = (
         f"Complete DEBUG HUD timeline | {axis_frames} frames | "
@@ -854,6 +1244,8 @@ def main() -> None:
             f"A min/mean/median/max "
             f"{int(a_stats['minimum'])}/{float(a_stats['mean']):.3f}/"
             f"{float(a_stats['median']):g}/{int(a_stats['maximum'])}; "
+            f"{physical_buffer_text}{reader_ahead_text}{transfer_split_text}"
+            f"{gpgx_vdp_text}"
             f"{g_stats_text}{apply_guard_text}"
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
@@ -905,7 +1297,8 @@ def main() -> None:
             "Frame 0 is untimed boot staging: every metric, scale and gate excludes it. "
             "VBLANK is derived from consecutive F capture starts; the terminal hold is also excluded. "
             f"F is the x-axis. {phase_note}"
-            "E belongs to F. Orange lines are gate limits; J also shows the yellow normal jitter interval."
+            "E belongs to F. LOGVDP CA includes CPU writes on the two V-counter edge "
+            "representations. Orange lines are gate limits; J also shows the yellow normal jitter interval."
         ),
         fill=DIM,
         font=font(16),
@@ -934,14 +1327,47 @@ def main() -> None:
         if lease is not None:
             lease.release()
 
+    receipt_rows = []
+    receipt_row_top = timeline_top
+    for spec in specs:
+        receipt_rows.append({
+            "key": spec.key,
+            "label": spec.label,
+            "unit": spec.unit,
+            "maximum": spec.maximum,
+            "color": list(spec.color),
+            "gate_key": spec.gate_key,
+            "eight_bit_scale": spec.eight_bit_scale,
+            "normal_value": spec.normal_value,
+            "top": receipt_row_top,
+            "height": spec.height,
+            "show_unit": spec.show_unit,
+            "show_zero": spec.show_zero,
+        })
+        receipt_row_top += spec.height
+
     receipt = {
-        "schema_version": 4,
+        "schema_version": 6,
         "kind": "hudline",
         "label": title,
         "image": str(output),
         "image_sha256": digest(output.resolve()),
         "tsv": str(tsv_path),
         "tsv_sha256": digest(tsv_path),
+        "gpgx_vdp_tsv": (
+            str(gpgx_vdp_path) if gpgx_vdp_path is not None else None
+        ),
+        "gpgx_vdp_tsv_sha256": (
+            digest(gpgx_vdp_path) if gpgx_vdp_path is not None else None
+        ),
+        "gpgx_vdp_receipt": (
+            str(gpgx_vdp_receipt_path)
+            if gpgx_vdp_receipt_path is not None else None
+        ),
+        "gpgx_vdp_receipt_sha256": (
+            digest(gpgx_vdp_receipt_path)
+            if gpgx_vdp_receipt_path is not None else None
+        ),
         "gate_json": str(gate_path),
         "gate_json_sha256": digest(gate_path),
         "recording": gate["recording"],
@@ -982,6 +1408,16 @@ def main() -> None:
                 {"B": int(data["apply_guard_blocked"][1:].max(initial=0))}
                 if "apply_guard_blocked" in data else {}
             ),
+            **({"H": h_maximum} if h_maximum is not None else {}),
+            **({"X": x_maximum} if x_maximum is not None else {}),
+            **({
+                key: value for key, value in split_maxima.items()
+                if value is not None
+            }),
+            **(
+                {"LOGVDP": gpgx_vdp_maxima}
+                if gpgx_vdp_maxima is not None else {}
+            ),
         },
         "c_statistics": c_stats,
         "a_statistics": a_stats,
@@ -989,6 +1425,23 @@ def main() -> None:
         "apply_guard_blocked_frames": apply_guard_frames,
         "prgbuf_minimum_patterns": q_minimum,
         "prgbuf_underflow_peak_patterns": q_underflow_peak,
+        "prgbuf_physical_peak_patterns": h_maximum,
+        "reader_ahead_max_raw16": x_maximum,
+        "reader_ahead_max_frames": (
+            x_maximum >> 8 if x_maximum is not None else None
+        ),
+        "reader_ahead_max_slot_sector": (
+            x_maximum & 0xFF if x_maximum is not None else None
+        ),
+        "pattern_vblank1_max_words": split_maxima["Y"],
+        "pattern_vblank1_exit_vcounter_max": split_maxima["O"],
+        "pattern_vblank2_max_words": split_maxima["Z"],
+        "pattern_vblank3_max_words": split_maxima["Y3"],
+        "pattern_vblank4_max_words": split_maxima["Y4"],
+        "pattern_transfer_vblank_max": split_maxima["T"],
+        "pattern_exit_vcounter_max": split_maxima["I"],
+        "gpgx_vdp_maxima": gpgx_vdp_maxima,
+        "gpgx_vdp_extraction": gpgx_vdp_receipt,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,
@@ -1004,22 +1457,7 @@ def main() -> None:
         "frame_zero_excluded_from_all_metrics": True,
         "ocr_confidence_min": float(confidence.min()),
         "ocr_sample_count": int(sample_count.sum()),
-        "rows": [
-            {
-                "key": spec.key,
-                "label": spec.label,
-                "unit": spec.unit,
-                "maximum": spec.maximum,
-                "color": list(spec.color),
-                "gate_key": spec.gate_key,
-                "eight_bit_scale": spec.eight_bit_scale,
-                "normal_value": spec.normal_value,
-                "height": spec.height,
-                "show_unit": spec.show_unit,
-                "show_zero": spec.show_zero,
-            }
-            for spec in specs
-        ],
+        "rows": receipt_rows,
     }
     receipt_path = Path(str(output) + ".json")
     receipt_path.write_text(

@@ -87,7 +87,7 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.STARTUP_AUDIO_PREFETCH_FRAMES, 30)
 
     def test_boot_sidecar_capacity_preserves_fixed_word_ram_holes(self) -> None:
-        # v20: palettes ride the player image, so the three preserved stage
+        # v22: palettes ride the player image, so the three preserved stage
         # holes are fixed and the capacity is segment-independent:
         # 0x0F00//34 + 0x2000//34 + 0x1000//34 = 112 + 240 + 120 records.
         self.assertEqual(av_config.boot_vram_sidecar_capacity(), 472)

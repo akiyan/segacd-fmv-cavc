@@ -14,8 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-CODEGEN_START = 0x00FF4900
-CODEGEN_LIMIT = 0x00FF6600
+CODEGEN_START = 0x00FF4A00
+CODEGEN_LIMIT = 0x00FF6700
 SHADOW_ADDRESS = 0x00FF1000
 NT0 = 0x0000C000
 NT1 = 0x0000E000
@@ -183,7 +183,7 @@ def parse_one(image: bytes, blitter: Blitter) -> list[tuple[int, int]]:
 
 
 def verify_semantics(image: bytes, blitters: tuple[Blitter, Blitter]) -> int:
-    rng = random.Random(0xFF4900)
+    rng = random.Random(0xFF4A00)
     checked = 0
     for blitter in blitters:
         generated_writes = parse_one(image, blitter)
@@ -291,7 +291,7 @@ def main() -> None:
     verify_invalid_geometry()
 
     h40_image, _ = emit_pair(40, 40, 28, 0, 0)
-    if len(h40_image) != 7296 or CODEGEN_START + len(h40_image) != 0x00FF6580:
+    if len(h40_image) != 7296 or CODEGEN_START + len(h40_image) != 0x00FF6680:
         raise AssertionError("unexpected maximum H40 generated size")
     if CODEGEN_LIMIT - (CODEGEN_START + len(h40_image)) != 128:
         raise AssertionError("unexpected M-STATE guard margin after maximum H40 codegen")

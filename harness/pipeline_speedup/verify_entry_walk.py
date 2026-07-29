@@ -6,7 +6,7 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For current v20 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+For current v22 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
 that each frame's control block and cold patterns are ready before that frame
 can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
@@ -35,6 +35,8 @@ SOURCE_WR = 1
 SOURCE_DIC = 2
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
+VERSION = 22
+CONTROL_SUFFIX_HEADER_BYTES = 2
 
 
 def frame_sectors(
@@ -181,10 +183,10 @@ def verify_block(
         # proof below retains its exact Prg demand.
         suffix = list_end + audio_bytes
         suffix = (suffix + 1) & ~1
-        if suffix + 2 > len(block):
+        if suffix + CONTROL_SUFFIX_HEADER_BYTES > len(block):
             raise AssertionError(f"frame {seq}: missing run suffix")
         n_runs = struct.unpack_from(">H", block, suffix)[0]
-        suffix += 2
+        suffix += CONTROL_SUFFIX_HEADER_BYTES
         if suffix + n_runs * 4 != len(block):
             raise AssertionError(f"frame {seq}: invalid run suffix length")
         cold = 0
@@ -291,8 +293,9 @@ def main() -> None:
     magic, version, nfr, _cols, _rows, cells, pool = struct.unpack_from(
         ">4sHHHHHH", data, 0
     )
-    if magic != b"TTRC" or version != 20:
-        raise SystemExit(f"expected TTRC v20, got {magic!r} v{version}")
+    if magic != b"TTRC" or version != VERSION:
+        raise SystemExit(
+            f"expected TTRC v{VERSION}, got {magic!r} v{version}")
     prebuf_pat = struct.unpack_from(">L", data, 22)[0]
     routing_sec = struct.unpack_from(">L", data, 26)[0]
     prebuf_sec = struct.unpack_from(">L", data, 30)[0]

@@ -19,9 +19,21 @@ For every case it requires:
 - Main's specialized flip branches stay inside their local regions, and the
   final guard performs status, V-counter tail, second-status, fresh-wait, then
   the Plane A reg2 write in that order;
-- fixed-N2 H40 name-table DMA stages only the encoded row width at the
+- fixed-N H40 name-table DMA stages only the encoded row width at the
   generated center offset and transfers the complete zero-bordered 40x28
   visible aperture;
+- fixed-N H40 starts each 3,200-unit weighted transfer budget only at a proven
+  VBlank head, withholds the cadence-final name-table/CRAM/flip reserve before
+  pattern work, and retains status, terminal-line, and fresh-VBlank fallback
+  guards;
+- CPU-written VDP words cost four DMA-word units, including one-/two-tile
+  direct runs and Word-RAM DMA first-word repairs, while boundary-crossing DMA
+  runs keep the bounded chunk fallback;
+- the fixed cadence is generated as N2 at 30 fps and N4 at 15 fps, and the
+  DEBUG snapshot preserves contiguous runtime word counters for transfer
+  VBlanks 1 through 4;
+- the fixed-N H40 DEBUG reserve includes the complete 69-cell HUD staging
+  allowance;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;
 - all geometry/timing/audio/supply combinations assemble and link

@@ -41,35 +41,36 @@ PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 | `ADP-IDX` | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table |
 | `ADP-OUT` | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table |
 | `HOT-TAIL` | `0x0CC20..0x0CFFF` | 992 B | unused tail of the reserved hot-table page |
-| `PRG-BUF` | fps split, see next table | 378 / 398 KiB | streamed PrgBuf normal ceiling |
+| `PRG-BUF` | fps split, see next table | 376 / 396 KiB | streamed PrgBuf normal ceiling |
 | `JITTER` | fps split, see next table | 40 / 20 KiB | live delivery-jitter reserve above the scheduled ceiling |
-| `OBS-GUARD` | `0x75800..0x75FFF` | 2.00 KiB | observation guard below pump back-pressure |
-| `OVF-GUARD` | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard; the boot-only ADPCM entry executes at `0x76800..0x76857`, longer-route builds also use the 216-byte extension through `0x768D7` |
+| `OBS-GUARD` | `0x75000..0x757FF` | 2.00 KiB | observation guard below pump back-pressure |
+| `OVF-GUARD` | `0x75800..0x767FF` | 4.00 KiB | physical PrgBuf overflow guard |
+| `WORD-PENDING3` | `0x76800..0x76FFF` | 2.00 KiB | fourth pending Word sector during playback; the boot-only extension executes here before this range assumes its live role |
 | `APPLY` | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue |
 | `SUB-STACK` | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve |
 | `STACK-TOP` | `0x7FF00..0x7FFFF` | 256 B | area above the configured stack top |
 
 ### `PRG-BUF` / `JITTER` fps split
 
-The physical bounds are fixed at every fps: the PrgBuf ring is 424 KiB at
-`0x0D000..0x76FFF`, pump back-pressure begins at 420 KiB, and the delivery
-observation boundary is 418 KiB (`..0x757FF`). Inside that fixed region the
+The physical bounds are fixed at every fps: the PrgBuf ring is 422 KiB at
+`0x0D000..0x767FF`, pump back-pressure begins at 418 KiB, and the delivery
+observation boundary is 416 KiB (`..0x74FFF`). Inside that fixed region the
 normal/scheduled ceiling and the jitter reserve move with content cadence:
 
 ```text
-normal PrgBuf KiB = 418 - cadence reserve KiB
+normal PrgBuf KiB = 416 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
 | Item | 15 fps | 30 fps |
 |---|---|---|
 | cadence reserve | 40 KiB | 20 KiB |
-| `PRG-BUF` normal / scheduled ceiling | 378 KiB | 398 KiB |
-| `PRG-BUF` address | `0x0D000..0x6B7FF` | `0x0D000..0x707FF` |
-| `JITTER` address | `0x6B800..0x757FF` | `0x70800..0x757FF` |
+| `PRG-BUF` normal / scheduled ceiling | 376 KiB | 396 KiB |
+| `PRG-BUF` address | `0x0D000..0x6AFFF` | `0x0D000..0x6FFFF` |
+| `JITTER` address | `0x6B000..0x74FFF` | `0x70000..0x74FFF` |
 
-Other rates follow the same formula (24 fps: reserve 25 KiB, ceiling 393 KiB,
-`PRG-BUF` = `0x0D000..0x6F3FF`). The values come from
+Other rates follow the same formula (24 fps: reserve 25 KiB, ceiling 391 KiB,
+`PRG-BUF` = `0x0D000..0x6EBFF`). The values come from
 `cadence_jitter_reserve_kb()`, `prg_buf_cap_kb()`, and
 `scheduled_delivery_cap_kb()` in `tools/av_config.py`; this document defines
 no independent capacity. The `JITTER` reserve is kept for live sector-arrival
@@ -180,8 +181,8 @@ build-time checked against the `M-STATE` base.
 
 | Name | Address | Size | Contents |
 |---|---|---:|---|
-| `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player, transient boot UI, generated handlers and guard |
-| `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
+| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated handlers and guard |
+| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
 | `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table, 15 switches + sentinel (player-embedded palidx.bin) |
@@ -280,6 +281,51 @@ sequenceDiagram
     M->>S: Next CMD_SWAP
 ```
 
+TTRC v22 controls store `n_runs` immediately followed by source-aware run
+descriptors. Main schedules them against the runtime residual budget. Fixed N
+is the healthy fresh-budget count: N2 permits two and N4 permits four; opening
+another budget remains bounded but raises a HUD warning. A light N4 frame may
+open only one or two budgets and leave the remaining cadence windows empty.
+These counters record explicit budget openings.
+
+For specialized fixed-N H40 playback, one transfer deadline can serve both
+the final cold-run tail and the display flip. The Main CPU uses a conservative
+3,200 DMA-word-equivalent budget for each H40 VBlank. A DMA word costs one
+unit. Every CPU-written VDP data word costs four units: a one- or two-tile
+direct run therefore costs four times its logical word count, and a Word-RAM
+DMA also pays four units for its required first-word repair. Main grants a
+budget only after waiting for a new VBlank or while the V counter is still on
+its first blank line (`E0`). Entering an already-running blank later never
+creates a full budget; Main waits for the next head.
+
+Budgets 1 through N-1 are available to patterns. Before pattern work enters
+budget N, Main withholds the complete display reserve: the 1,792-word
+64-by-28 name-table DMA, a 128-unit timing guard, the 69-unit DEBUG HUD
+staging allowance when present, and an optional CRAM replacement. CRAM is
+written by the CPU, so its 64 words reserve 256 units. The normal reserves are
+1,920 units in release and 1,989 in DEBUG; a palette switch raises them to
+2,176 and 2,245. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
+1,211 pattern units in VBlank 2, or 955 on a palette switch.
+
+A DMA run crossing a residual boundary is split exactly there and continued
+at the next fresh VBlank head. A one- or two-tile CPU run remains whole and
+moves to the next budget when it does not fit. After the pattern tail, Main
+restores the withheld reserve and admits the shared name-table/CRAM/flip path
+only if the current phase is still inside that same VBlank. VBlank status is
+checked before and after the V counter, and terminal lines `FC..FF` are
+rejected. If any condition fails, Main waits for a fresh VBlank.
+
+For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
+after the first transfer budget and before waiting for the next fresh VBlank.
+After the final pattern word, it patches only the transfer-final fields and
+the resolved palette segment into the Main-RAM name-table stage. The existing
+single 1,792-word name-table DMA therefore carries both picture and HUD; there
+is no separate 69-cell VDP-port republish after that DMA. Exact logical pattern
+word counters cover runtime VBlank budgets 1 through 4; they remain separate
+from the weighted capacity charge. `T` exposes a fifth or later budget. The staging allowance
+keeps the shared admission check conservative even though those HUD words are
+already part of the name-table DMA.
+
 Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
 payload work cannot delay an already-pending handoff.
@@ -349,35 +395,36 @@ PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 | `ADP-IDX` | `0x0C000..0x0CB1F` | 2.781 KiB | persistent ADPCM next-index table |
 | `ADP-OUT` | `0x0CB20..0x0CC1F` | 256 B | persistent ADPCM output lookup table |
 | `HOT-TAIL` | `0x0CC20..0x0CFFF` | 992 B | hot-table予約pageの未使用tail |
-| `PRG-BUF` | fps分割、次表参照 | 378 / 398 KiB | streamed PrgBufのnormal上限 |
+| `PRG-BUF` | fps分割、次表参照 | 376 / 396 KiB | streamed PrgBufのnormal上限 |
 | `JITTER` | fps分割、次表参照 | 40 / 20 KiB | scheduled上限より上のlive delivery-jitter予約 |
-| `OBS-GUARD` | `0x75800..0x75FFF` | 2.00 KiB | pump back-pressure前の観測guard |
-| `OVF-GUARD` | `0x76000..0x76FFF` | 4.00 KiB | physical PrgBuf overflow guard。boot-onlyのADPCM入口を`0x76800..0x76857`で実行し、長いroutingのbuildは216-byte extensionを`0x768D7`まで使用 |
+| `OBS-GUARD` | `0x75000..0x757FF` | 2.00 KiB | pump back-pressure前の観測guard |
+| `OVF-GUARD` | `0x75800..0x767FF` | 4.00 KiB | physical PrgBuf overflow guard |
+| `WORD-PENDING3` | `0x76800..0x76FFF` | 2.00 KiB | playback中の4本目pending Word sector。boot-only extensionはlive用途へ移る前にこの範囲で実行 |
 | `APPLY` | `0x77000..0x7F7FF` | 34.00 KiB | APPLY circular queue |
 | `SUB-STACK` | `0x7F800..0x7FEFF` | 1.75 KiB | Sub stack reserve |
 | `STACK-TOP` | `0x7FF00..0x7FFFF` | 256 B | configured stack topより上 |
 
 ### `PRG-BUF` / `JITTER`のfps分割
 
-物理境界はすべてのfpsで固定です。PrgBuf ringは`0x0D000..0x76FFF`の424 KiB、
-pump back-pressureは420 KiBで始まり、delivery観測境界は418 KiB
-（`..0x757FF`）です。この固定領域の内部で、normal/scheduled上限とjitter予約
+物理境界はすべてのfpsで固定です。PrgBuf ringは`0x0D000..0x767FF`の422 KiB、
+pump back-pressureは418 KiBで始まり、delivery観測境界は416 KiB
+（`..0x74FFF`）です。この固定領域の内部で、normal/scheduled上限とjitter予約
 がcontent cadenceに応じて動きます。
 
 ```text
-normal PrgBuf KiB = 418 - cadence reserve KiB
+normal PrgBuf KiB = 416 - cadence reserve KiB
 cadence reserve KiB = ceil(20 * 30 / fps)
 ```
 
 | 項目 | 15 fps | 30 fps |
 |---|---|---|
 | cadence reserve | 40 KiB | 20 KiB |
-| `PRG-BUF` normal / scheduled上限 | 378 KiB | 398 KiB |
-| `PRG-BUF` address | `0x0D000..0x6B7FF` | `0x0D000..0x707FF` |
-| `JITTER` address | `0x6B800..0x757FF` | `0x70800..0x757FF` |
+| `PRG-BUF` normal / scheduled上限 | 376 KiB | 396 KiB |
+| `PRG-BUF` address | `0x0D000..0x6AFFF` | `0x0D000..0x6FFFF` |
+| `JITTER` address | `0x6B000..0x74FFF` | `0x70000..0x74FFF` |
 
-他のrateも同じ式に従います（24 fps: reserve 25 KiB、上限393 KiB、
-`PRG-BUF` = `0x0D000..0x6F3FF`）。数値は`tools/av_config.py`の
+他のrateも同じ式に従います（24 fps: reserve 25 KiB、上限391 KiB、
+`PRG-BUF` = `0x0D000..0x6EBFF`）。数値は`tools/av_config.py`の
 `cadence_jitter_reserve_kb()`、`prg_buf_cap_kb()`、
 `scheduled_delivery_cap_kb()`から得ます。この文書では独立した容量を定義
 しません。`JITTER`予約はliveのsector到着変動のために保持され、encoder
@@ -479,8 +526,8 @@ build-time checkされます。
 
 | Name | Address | Size | 内容 |
 |---|---|---:|---|
-| `M-CODE` | `0xFF0000..0xFF65FF` | 25.50 KiB | permanent player、transient boot UI、generated handler、guard |
-| `M-STATE` | `0xFF6600..0xFF87FF` | 8.50 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
+| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated handler、guard |
+| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
 | `M-RUNTBL` | `0xFF8800..0xFFB1FF` | 10.50 KiB | 488-entry pre-swizzled RUN_TABLE |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表、15切替+番兵（player内蔵palidx.bin） |
@@ -578,6 +625,43 @@ sequenceDiagram
 
     M->>S: 次のCMD_SWAP
 ```
+
+TTRC v22 controlは`n_runs`の直後にsource-aware run descriptorを置きます。
+Mainはruntime残budgetに対してrunをscheduleします。Fixed Nはhealthyなfresh
+budget数で、N2は2本、N4は4本です。さらにbudgetを開く処理はboundedのままですがHUD
+warningになります。軽いN4 frameは1〜2 budgetだけを開き、残るcadence windowを
+空きにできます。このcounterはexplicitなbudget openingを記録します。
+
+Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
+display flipで共有できます。Main CPUはH40の各VBlankに、安全側の3,200
+DMA-word相当budgetを使います。DMA wordは1 unit、CPUがVDP dataへ書くwordは
+1つ4 unitです。このため1〜2 tileのCPU direct runはlogical word数の4倍、
+Word-RAM DMAは必須の先頭word補修に4 unitを追加します。新しいVBlankを待った直後、
+またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
+すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを待ちます。
+
+Budget 1からN-1まではpatternに使えます。Pattern workがbudget Nへ入る前に、
+Mainはdisplay work全体を先に取り置きします。内訳は64-by-28 name-table DMAの
+1,792 word、128-unit timing guard、存在する場合の69-unit DEBUG HUD staging
+allowance、任意のCRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを
+予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,989 unit、palette switch時は
+2,176と2,245です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
+VBlank 2にpattern用1,211 unit、palette switch時は955 unitを持ちます。
+
+DMA runが残budget境界を越える場合はそこで正確に分割し、次のfresh VBlank headから
+続きを行います。1〜2 tileのCPU runはwholeのまま、収まらなければ次のbudgetへ送ります。
+Pattern tail後に取り置いたreserveを戻し、同じVBlank内にまだいる場合だけ
+name-table/CRAM/flip shared pathを許可します。VBlank statusはV counterの前後で確認し、
+terminalの`FC..FF` lineは拒否します。どれかを満たさなければfresh VBlankを待ちます。
+
+multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
+VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
+transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
+patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
+DMA後に別の69-cell VDP-port republishは行いません。Runtime VBlank budget
+1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、
+`T`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
+含まれますが、staging allowanceはshared admission checkを保守的に維持します。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が

@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 20
+VERSION        = 22
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 20. Bitmap controls insert one zero byte after an
+The player accepts version 22. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -406,6 +406,13 @@ payload.
 at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
 
+The run descriptors immediately follow `n_runs`. Main schedules them at
+runtime with the guarded residual VBlank budget. An ordinary run that does not
+fit the current residual waits whole for a fresh VBlank as an overload
+fallback. Only a run longer than one complete budget may be chunked, while
+one- and two-pattern CPU-copy runs remain whole. The stream carries no encoded
+VBlank boundary.
+
 Bitmap updates use `ceil(cells / 8)` bytes, followed by a zero byte when that
 size is odd. One 16-bit entry follows for each set bit in ascending cell order:
 
@@ -479,13 +486,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 20
+VERSION        = 22
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は20です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は22です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -841,6 +848,12 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 `frame_seq` はcontrol streamのずれを検出します。readerはsector MSFの連続性を確認し、
 gapがあればre-seekして正確に読み直します。それでもsequenceが一致しない場合は
 前frameを保持し、desync counterを増やします。
+
+Run descriptorは`n_runs`の直後に続きます。Mainはguard付き残余VBlank budgetで
+runtime scheduleします。Current残budgetに収まらない通常runは、overload fallback
+としてwholeのままfresh VBlankを待ちます。1回のfull budgetより長いrunだけを
+chunk分割でき、1〜2 patternのCPU-copy runもwholeのままです。Streamはencoded
+VBlank boundaryを持ちません。
 
 bitmap updateは `ceil(cells / 8)` byteで、そのサイズが奇数ならzero byteを続けます。
 set bitごとにcell昇順で16-bit entryを1個置きます。

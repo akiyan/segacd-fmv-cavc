@@ -20,7 +20,8 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 20
+VERSION = 22
+CONTROL_SUFFIX_HEADER_BYTES = 2
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
@@ -152,7 +153,7 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
         entries_end = entries_start + n_upd * 4
     audio_end = entries_end + audio_bytes
     suffix_start = (audio_end + 1) & ~1
-    if suffix_start + 2 > len(raw):
+    if suffix_start + CONTROL_SUFFIX_HEADER_BYTES > len(raw):
         raise AssertionError(f"frame {seq}: descriptor suffix is truncated")
     if raw[audio_end:suffix_start] != (b"\0" if audio_end & 1 else b""):
         raise AssertionError(f"frame {seq}: invalid audio alignment byte")
@@ -184,13 +185,15 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
     if sum(value.bit_count() for value in bitmap) != n_upd:
         raise AssertionError(f"frame {seq}: update cell population differs from n_upd")
     n_runs = struct.unpack_from(">H", raw, suffix_start)[0]
-    suffix_end = suffix_start + 2 + n_runs * 4
+    descriptor_start = suffix_start + CONTROL_SUFFIX_HEADER_BYTES
+    suffix_end = descriptor_start + n_runs * 4
     if suffix_end != len(raw):
         raise AssertionError(
             f"frame {seq}: descriptor suffix ends at {suffix_end}, total={len(raw)}")
     runs = []
     for index in range(n_runs):
-        word0, encoded = struct.unpack_from(">HH", raw, suffix_start + 2 + index * 4)
+        word0, encoded = struct.unpack_from(
+            ">HH", raw, descriptor_start + index * 4)
         slot = word0 & 0x07FF
         count = encoded & RUN_COUNT_MASK
         raw_source = encoded >> RUN_SOURCE_SHIFT
@@ -331,7 +334,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v20 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v22 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -363,7 +366,7 @@ def main() -> None:
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]
     if len(boot_stage) != paltab_sectors * SECTOR:
         raise AssertionError("boot stage is truncated")
-    # v20: no palette rides the boot stage; the sidecar regions are fixed.
+    # v22: no palette rides the boot stage; the sidecar regions are fixed.
     sidecar_vram = {}
     if boot_stage[0x0FC0:0x0FC4] == b"BVRM":
         region_counts = struct.unpack_from(">3H", boot_stage, 0x0FC4)

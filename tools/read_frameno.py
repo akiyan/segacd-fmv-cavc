@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""実機/エミュ録画のデバッグHUD（左上端、H32/H40とも最大2行）から各値を読む。
+"""実機/エミュ録画のデバッグHUD（左上端、H32最大3行/H40最大2行）から各値を読む。
 
 HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値だけを描く:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
@@ -10,10 +10,12 @@ HUD はカテゴリ文字を描かず、boot/movieplay_ip.s の固定順で値�
 streamed PrgBuf占有量の再生中最大値（1 KiB単位、端数切り上げ）。
 標準H32/H40 DEBUGは Q/V/O/E を追加する。Q はそのframe中の符号付き論理PrgBuf
 最小残量を32-byte pattern単位で示す4桁値。0000は真のempty、FFFFは1 pattern不足。
-さらにG/Kを追加し、同じ46桁の論理列をH32は32 cell、H40は40 cellで折り返す。
+さらにG/K/H/Xを追加し、同じ54桁の論理列をH32は32 cell、H40は40 cellで折り返す。
 Gはframe内でSub CDC pump外にいた最大時間を30.72 us stopwatch tick単位で示し、
 KはMSF連番gapから再seekした累積回数を示す。Gのbit 15はAPPLY back-pressureが
-control sector pumpを拒否したframeを示すB markerである。
+control sector pumpを拒否したframeを示すB markerである。Hはframe内の物理PrgBuf
+最大占有量を32-byte pattern単位で示す。Xは上位byteに完了済みframe slotの先行数、
+下位byteに現在slot内のsector位置を格納する。
 再生開始前のplayer-only frame -1はF=FFFFで表す。これはOCR頭出し用の
 センチネルであり、sim frameでもHUD TSV rowでもない。
 各8x8セルの上段バーコードを直接4-bitとして読み、下段の小型hex字形とのNCCで
@@ -64,10 +66,9 @@ HUD_H40_FIELD_DIGITS = HUD_FIELD_DIGITS
 # diagnostic, then three flip-phase fields:
 # Q = per-frame minimum logical PrgBuf balance in 32-byte patterns. It is a
 #     four-digit signed 16-bit value (0000 empty, FFFF one-pattern underflow).
-# V = V-counter at the previous accepted flip, O = that flip's interval
-# excess over 1024 stopwatch ticks (nominal N2 interval ~1086; clamped FF),
-# E = this frame's Pass2 entry delay since the previous flip in 4-tick
-# units (clamped FF).
+# V = V-counter at the previous accepted flip, O = V-counter immediately after
+# this frame's first pattern-transfer share, and E = this frame's Pass2 entry
+# delay since the previous flip in 4-tick units (clamped FF).
 HUD_H40_FLIP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
     ("Q", 4),
     ("V", 2),
@@ -83,6 +84,14 @@ HUD_H40_POLL_GAP_FIELD_DIGITS = HUD_FIELD_DIGITS + (
 HUD_COMBINED_FIELD_DIGITS = HUD_H40_FLIP_FIELD_DIGITS + (
     ("G", 4),
     ("K", 2),
+    ("H", 4),
+    ("X", 4),
+    ("Y", 3),
+    ("Z", 3),
+    ("T", 1),
+    ("I", 2),
+    ("Y3", 3),
+    ("Y4", 3),
 )
 
 
@@ -265,7 +274,7 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Current native H32/H40 frames default to their 46-cell combined layouts.
+    Current native H32/H40 frames default to their 69-cell combined layouts.
     Pass an explicit legacy layout when reading an older recording.
     """
     gray = _gray(img)

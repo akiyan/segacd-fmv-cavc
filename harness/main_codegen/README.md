@@ -8,12 +8,12 @@ stream-header setup.
 The reserved Main RAM layout is:
 
 ```text
-0xFF2000  256-entry table of signed word offsets (512 bytes)
-0xFF2200  generated bitmap handlers
-0xFF4900  expected Phase 1 end
-0xFF6580  maximum H40 NT blitter end
-0xFF6600  hard code-generation limit and DicBuf start
-0xFF8600  DicBuf end and RUN_TABLE start
+0xFF2100  256-entry table of signed word offsets (512 bytes)
+0xFF2300  generated bitmap handlers
+0xFF4A00  expected Phase 1 end
+0xFF6680  maximum H40 NT blitter end
+0xFF6700  hard code-generation limit and M-STATE start
+0xFF8800  RUN_TABLE start
 ```
 
 Each set bit emits exactly one entry read, register-mask cold/source-bit strip, and shadow write.
@@ -34,7 +34,7 @@ tools/python.sh harness/main_codegen/verify_handlers.py
 
 The proof covers all 256 masks with deterministic entry/shadow data, parses
 every emitted opcode, verifies every table offset and branch target, checks the
-DicBuf boundary, and asks the project 68000 objdump to decode representative
+M-STATE boundary, and asks the project 68000 objdump to decode representative
 handlers. To retain the complete generated image for manual disassembly:
 
 ```sh
@@ -42,7 +42,7 @@ tools/python.sh harness/main_codegen/verify_handlers.py \
   --output tmp/main_codegen/bitmap_handlers.bin
 
 ~/toolchains/mars/m68k-elf/bin/m68k-elf-objdump \
-  -b binary -m 68000 --adjust-vma=0xFF2000 -D \
+  -b binary -m 68000 --adjust-vma=0xFF2100 -D \
   tmp/main_codegen/bitmap_handlers.bin
 ```
 
@@ -60,8 +60,8 @@ offset layouts, odd widths, generated size, semantics, and disassembly with:
 tools/python.sh harness/main_codegen/verify_blitters.py
 ```
 
-The maximum H40 pair occupies 7,296 bytes (`0xFF4900..0xFF657F`), leaving a
-128-byte guard before `DicBuf` at `0xFF6600`. Invalid or oversized geometry is
+The maximum H40 pair occupies 7,296 bytes (`0xFF4A00..0xFF667F`), leaving a
+128-byte guard before `M-STATE` at `0xFF6700`. Invalid or oversized geometry is
 rejected so the player can retain the existing generic blitter as fallback.
 
 Measure the per-frame instruction cost against a real packed stream with:

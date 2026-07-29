@@ -234,7 +234,7 @@ print(
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
 
 
-# TTRC v20 has one startup command. HEADER contains only static boot state;
+# TTRC v22 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # F=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
@@ -296,7 +296,7 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v20 BODY arm and one-command "
+    "check_player_ring: OK  v22 BODY arm and one-command "
     "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
     "and PCM begins on its first control sector")
 
@@ -346,7 +346,11 @@ if any(symbol in sp_text for symbol in (".equ O_CRAM,", ".equ O_NUPD,", ".equ O_
     sys.exit("check_player_ring: removed O_CRAM/O_NUPD/O_UPDS allocation returned")
 for token, description in (
         (".equ O_PRGMIN, O_STATUS+0x24", "signed PrgBuf HUD status word"),
-        (".equ O_PUMPGAP,O_STATUS+0x26", "Sub pump-gap HUD status word")):
+        (".equ O_PUMPGAP,O_STATUS+0x26", "Sub pump-gap HUD status word"),
+        (".equ O_PRGPEAK,O_STATUS+0x28",
+         "physical PrgBuf peak HUD status word"),
+        (".equ O_READAHEAD,O_STATUS+0x2A",
+         "CD reader-lead HUD status word")):
     if token not in sp_text:
         sys.exit(
             f"check_player_ring: missing {description} at its fixed offset")
@@ -354,6 +358,16 @@ require(
     ip_text,
     r"^\s*move\.w\s+\(PROBE_BANK\+STATUS_OFF\+0x26\)\.l,\s*d4\s*$",
     "separate Main-side Sub pump-gap HUD read",
+)
+require(
+    ip_text,
+    r"^\s*move\.w\s+\(PROBE_BANK\+STATUS_OFF\+0x28\)\.l,\s*d4\s*$",
+    "separate Main-side physical PrgBuf peak HUD read",
+)
+require(
+    ip_text,
+    r"^\s*move\.w\s+\(PROBE_BANK\+STATUS_OFF\+0x2A\)\.l,\s*d4\s*$",
+    "separate Main-side CD reader-lead HUD read",
 )
 require(
     sp_text,

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -22,17 +23,19 @@ sys.modules[SPEC.name] = analyze
 SPEC.loader.exec_module(analyze)
 
 
-def groups(count: int, **peaks: int):
+def groups(count: int, capture_interval: int = 2, **peaks: int):
     result = []
     for frame in range(count):
         values = {field: 0 for field in "SDRCMJ"}
         if frame == count - 1:
             values.update(peaks)
         values["F"] = frame
+        capture_first = frame * capture_interval
         result.append(analyze.FrameGroup(
-            loop=0, capture_first=frame * 2, capture_last=frame * 2 + 1,
+            loop=0, capture_first=capture_first,
+            capture_last=capture_first + capture_interval - 1,
             time_first=frame / 30, time_last=(frame + 0.5) / 30,
-            sample_count=2, confidence=1.0, values=values,
+            sample_count=capture_interval, confidence=1.0, values=values,
         ))
     return result
 
@@ -73,9 +76,14 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertFalse(result["requires_explicit_upload_approval"])
         self.assertEqual(result["evaluation_first_frame"], 1)
         self.assertEqual(result["evaluated_timed_frames"], 3)
+        self.assertEqual(result["display_vblank_expected"], 2)
+        self.assertEqual(result["display_vblank_evaluated_frames"], 2)
+        self.assertEqual(result["display_vblank_histogram"], {"2": 2})
+        self.assertEqual(result["display_vblank_violation_count"], 0)
+        self.assertEqual(result["display_vblank_violations"], [])
 
     def test_frame_zero_is_excluded_from_every_gate_metric(self):
-        rows = groups(4)
+        rows = groups(4, capture_interval=4)
         rows[0].values.update({
             "S": 255,
             "D": 255,
@@ -90,6 +98,7 @@ class HudUploadGateTests(unittest.TestCase):
             result["maxima"],
             {field: 0 for field in "SDRCMJ"},
         )
+        self.assertEqual(result["display_vblank_histogram"], {"4": 2})
 
     def test_c_and_a_statistics_exclude_frame_zero_and_later_loops(self):
         rows = groups(4)
@@ -145,15 +154,15 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 6)
+        self.assertEqual(result["schema_version"], 11)
         self.assertEqual(result["gate_fields"], ["S", "D", "R", "M", "J"])
+        self.assertEqual(result["warning_fields"], ["M"])
         self.assertEqual(result["diagnostic_fields"], ["C", "A"])
         self.assertEqual(result["c_statistics"], c_stats)
         self.assertEqual(result["a_statistics"], a_stats)
 
     def test_each_unsafe_metric_blocks_upload(self):
-        for field, value in {"S": 1, "D": 1, "R": 1,
-                             "M": 2, "J": 26}.items():
+        for field, value in {"S": 1, "D": 1, "R": 1, "J": 26}.items():
             with self.subTest(field=field):
                 result = self.evaluate(groups(4, **{field: value}), 4)
                 self.assertFalse(result["pass"])
@@ -161,6 +170,16 @@ class HudUploadGateTests(unittest.TestCase):
                 self.assertEqual(result["alert"], "FAIL")
                 self.assertEqual(result["status"], "FAIL")
                 self.assertTrue(any(text.startswith(field) for text in result["failures"]))
+
+    def test_m_overage_warns_without_blocking_upload(self):
+        result = self.evaluate(groups(4, M=2), 4)
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["gate"], "PASS")
+        self.assertEqual(result["alert"], "WARNING")
+        self.assertEqual(result["status"], "WARNING")
+        self.assertEqual(result["failures"], [])
+        self.assertTrue(any(
+            text.startswith("M") for text in result["warnings"]))
 
     def test_c_is_diagnostic_and_never_changes_gate_status(self):
         result = self.evaluate(groups(4, C=255), 4)
@@ -172,7 +191,8 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertNotIn("C", result["limits"])
 
     def test_fixed_n4_15fps_uses_three_work_fields(self):
-        result = self.evaluate(groups(4, C=255, M=3, J=45), 4, 15)
+        result = self.evaluate(
+            groups(4, capture_interval=4, C=255, M=3, J=45), 4, 15)
         self.assertTrue(result["pass"], result["failures"])
         self.assertEqual(result["cadence"], "fixed_n4")
         self.assertNotIn("C", result["limits"])
@@ -181,11 +201,12 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["prg_buf_cap_kib"], 376)
         self.assertEqual(result["jitter_headroom_kib"], 40)
         self.assertEqual(result["delivery_limit_kib"], 376)
-        result = self.evaluate(groups(4, M=4), 4, 15)
-        self.assertFalse(result["pass"])
-        self.assertEqual(result["status"], "FAIL")
+        result = self.evaluate(
+            groups(4, capture_interval=4, M=4), 4, 15)
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["status"], "WARNING")
         self.assertTrue(any(
-            text.startswith("M") for text in result["failures"]))
+            text.startswith("M") for text in result["warnings"]))
 
     def test_delivery_paced_24fps_uses_variable_slot_and_field_budget(self):
         result = self.evaluate(groups(4, C=255, M=3, J=30), 4, 24)
@@ -199,11 +220,70 @@ class HudUploadGateTests(unittest.TestCase):
     def test_each_cadence_rejects_a_full_physical_ring(self):
         for fps, first_failing_j in ((15, 46), (24, 31), (30, 26)):
             with self.subTest(fps=fps):
+                capture_interval = 4 if fps == 15 else 2
                 result = self.evaluate(
-                    groups(4, J=first_failing_j), 4, fps)
+                    groups(
+                        4,
+                        capture_interval=capture_interval,
+                        J=first_failing_j,
+                    ),
+                    4,
+                    fps,
+                )
                 self.assertFalse(result["pass"])
                 self.assertTrue(any(
                     text.startswith("J") for text in result["failures"]))
+
+    def test_fixed_n_display_hold_warns_without_blocking_upload(self):
+        rows = groups(5)
+        rows[2:] = [
+            replace(
+                row,
+                capture_first=row.capture_first + 1,
+                capture_last=row.capture_last + 1,
+            )
+            for row in rows[2:]
+        ]
+        result = self.evaluate(rows, 5)
+        self.assertTrue(result["pass"])
+        self.assertEqual(result["gate"], "PASS")
+        self.assertEqual(result["alert"], "WARNING")
+        self.assertEqual(result["display_vblank_expected"], 2)
+        self.assertEqual(result["display_vblank_histogram"], {"2": 2, "3": 1})
+        self.assertEqual(result["display_vblank_violation_count"], 1)
+        self.assertEqual(
+            result["display_vblank_violations"][0]["frame"], 1)
+        self.assertTrue(any(
+            "fixed_n2 display cadence missed 1 deadline" in text
+            for text in result["warnings"]
+        ))
+
+    def test_frame_zero_and_terminal_hold_are_not_cadence_gated(self):
+        rows = groups(4)
+        rows[0] = replace(
+            rows[0], capture_first=-20, capture_last=-1)
+        rows[-1] = replace(rows[-1], capture_last=999)
+        result = self.evaluate(rows, 4)
+        self.assertTrue(result["pass"], result["failures"])
+        self.assertEqual(result["display_vblank_histogram"], {"2": 2})
+        self.assertEqual(result["display_vblank_violation_count"], 0)
+
+    def test_delivery_paced_cadence_is_recorded_but_not_exact_gated(self):
+        rows = groups(5)
+        starts = (0, 2, 5, 7, 10)
+        rows = [
+            replace(
+                row,
+                capture_first=start,
+                capture_last=start + 1,
+            )
+            for row, start in zip(rows, starts, strict=True)
+        ]
+        result = self.evaluate(rows, 5, 24)
+        self.assertTrue(result["pass"], result["failures"])
+        self.assertIsNone(result["display_vblank_expected"])
+        self.assertEqual(result["display_vblank_histogram"], {"2": 1, "3": 2})
+        self.assertEqual(result["display_vblank_violation_count"], 0)
 
     def test_missing_movie_frame_blocks_upload(self):
         rows = groups(4)
@@ -261,14 +341,24 @@ class HudUploadGateTests(unittest.TestCase):
             {field: 0 for field in "SDRCMJ"},
         )
 
-    def test_h40_combined_diagnostics_preserve_q_g_b_k(self):
+    def test_h40_combined_diagnostics_preserve_q_g_b_k_h_x_y_o_z_t_i(self):
         rows = groups(3)
-        for row, gap, slip, msf_gap, prg_min in zip(
+        for (
+            row, gap, slip, msf_gap, prg_min, physical_peak, reader_ahead,
+            first_words, first_exit, second_words, transfer_vblanks, exit_vcounter,
+        ) in zip(
             rows,
             (0x0FFF, 0x8000 | 120, 240),
             (0, 3, 5),
             (0, 2, 4),
             (64, 32, 16),
+            (1, 13376, 12000),
+            (0, 0x0203, 0x0108),
+            (0, 3392, 3200),
+            (0, 0xE8, 0xF1),
+            (0, 1088, 800),
+            (0, 2, 2),
+            (0, 0xE9, 0xF2),
             strict=True,
         ):
             row.values.update({
@@ -280,6 +370,15 @@ class HudUploadGateTests(unittest.TestCase):
                 "Q": prg_min,
                 "G": gap,
                 "K": msf_gap,
+                "H": physical_peak,
+                "X": reader_ahead,
+                "Y": first_words,
+                "O": first_exit,
+                "Z": second_words,
+                "T": transfer_vblanks,
+                "I": exit_vcounter,
+                "Y3": 0,
+                "Y4": 0,
             })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hud.tsv"
@@ -292,6 +391,19 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(parsed[1]["apply_guard_blocked"], "1")
         self.assertEqual(parsed[1]["slip_msf_gap_count"], "2")
         self.assertEqual(parsed[1]["slip_trn_retry_count"], "1")
+        self.assertEqual(parsed[1]["prgbuf_physical_peak_patterns"], "13376")
+        self.assertEqual(parsed[1]["reader_ahead_raw16"], str(0x0203))
+        self.assertEqual(parsed[1]["reader_ahead_frames"], "2")
+        self.assertEqual(parsed[1]["reader_slot_sector"], "3")
+        self.assertEqual(parsed[1]["pattern_vblank1_words"], "3392")
+        self.assertEqual(parsed[1]["pattern_vblank1_patterns"], "212.0000")
+        self.assertEqual(parsed[1]["pattern_vblank1_exit_vcounter"], "E8")
+        self.assertEqual(parsed[1]["pattern_vblank2_words"], "1088")
+        self.assertEqual(parsed[1]["pattern_vblank2_patterns"], "68.0000")
+        self.assertEqual(parsed[1]["pattern_vblank3_words"], "0")
+        self.assertEqual(parsed[1]["pattern_vblank4_words"], "0")
+        self.assertEqual(parsed[1]["pattern_transfer_vblanks"], "2")
+        self.assertEqual(parsed[1]["pattern_exit_vcounter"], "E9")
         rows[1].values["S"] = 1
         rows[1].values["K"] = 255
         with tempfile.TemporaryDirectory() as directory:
@@ -305,7 +417,9 @@ class HudUploadGateTests(unittest.TestCase):
             row.values["K"] = 0
         result = self.evaluate(rows, 3)
         self.assertEqual(
-            result["diagnostic_fields"], ["C", "A", "Q", "G", "B", "K"]
+            result["diagnostic_fields"],
+            ["C", "A", "Q", "G", "B", "K", "H", "X",
+             "Y", "O", "Z", "T", "I", "Y3", "Y4"],
         )
         self.assertEqual(result["prgbuf_minimum_patterns"], 16)
         self.assertEqual(result["apply_guard_blocked_frames"], 1)
@@ -319,7 +433,30 @@ class HudUploadGateTests(unittest.TestCase):
                 "sample_count": 2,
             },
         )
+        self.assertEqual(result["prgbuf_physical_peak_patterns"], 13376)
+        self.assertEqual(result["reader_ahead_max_raw16"], 0x0203)
+        self.assertEqual(result["reader_ahead_max_frames"], 2)
+        self.assertEqual(result["reader_ahead_max_slot_sector"], 3)
+        self.assertEqual(result["pattern_vblank1_max_words"], 3392)
+        self.assertEqual(result["pattern_vblank1_exit_vcounter_max"], 0xF1)
+        self.assertEqual(result["pattern_vblank2_max_words"], 1088)
+        self.assertEqual(result["pattern_vblank3_max_words"], 0)
+        self.assertEqual(result["pattern_vblank4_max_words"], 0)
+        self.assertEqual(result["pattern_transfer_vblank_max"], 2)
+        self.assertEqual(result["pattern_exit_vcounter_max"], 0xF2)
         self.assertEqual(result["status"], "PASS")
+
+    def test_transfer_vblank_count_over_fixed_n_is_warning(self):
+        rows = groups(4)
+        for row in rows:
+            row.values["T"] = 3
+        result = self.evaluate(rows, 4, 30)
+        self.assertEqual(result["gate"], "PASS")
+        self.assertEqual(result["alert"], "WARNING")
+        self.assertTrue(any(
+            "T peak 3 exceeds fixed-N transfer window count 2" in text
+            for text in result["warnings"]
+        ))
 
 
 if __name__ == "__main__":

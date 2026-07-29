@@ -63,7 +63,7 @@ ASFLAGS := -m68000 --register-prefix-optional --bitwise-or
 CFLAGS_M68K := -m68000 -ffreestanding -fno-builtin -fomit-frame-pointer -O2 -Wall -Wextra
 LDFLAGS := -nostdlib --oformat binary
 
-.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench still256 movieplay movieplay-internal moviepack dmabench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
+.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench fontbench still256 movieplay movieplay-internal moviepack dmabench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
 
 all: disc
 
@@ -158,6 +158,39 @@ $(OUT_DIR)/CDCBENCH.iso: $(OUT_DIR)/cdcbench_boot.bin
 $(OUT_DIR)/CDCBENCH.cue: $(OUT_DIR)/CDCBENCH.iso
 	@rm -f $@
 	@printf 'FILE "CDCBENCH.iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
+
+# --- fontbench: gate-array Font bit vs CPU LUT の 1bpp->4bpp 展開ベンチ ---
+# 使い方: make fontbench && tools/run_headless.sh out/FONTBENCH.cue
+# 表示行と手順は harness/fontbench/README.md 参照。CD読み無し(起動後は自走)。
+FONTBENCH_DISC := $(OUT_DIR)/disc_fontbench
+
+fontbench: check-tools $(OUT_DIR)/FONTBENCH.iso $(OUT_DIR)/FONTBENCH.cue
+
+$(OUT_DIR)/fontbench_ip.o: $(BOOT_DIR)/fontbench_ip.s $(BOOT_DIR)/security.bin $(BOOT_DIR)/hexfont.bin | setup
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $< -o $@
+
+$(OUT_DIR)/fontbench_ip.bin: $(OUT_DIR)/fontbench_ip.o
+	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
+
+$(OUT_DIR)/fontbench_sp.o: $(BOOT_DIR)/fontbench_sp.s | setup
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $< -o $@
+
+$(OUT_DIR)/fontbench_sp.bin: $(OUT_DIR)/fontbench_sp.o
+	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $<
+
+$(OUT_DIR)/fontbench_boot.bin: $(OUT_DIR)/fontbench_ip.bin $(OUT_DIR)/fontbench_sp.bin $(BOOT_DIR)/fontbench_boot.s
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $(BOOT_DIR)/fontbench_boot.s -o $(OUT_DIR)/fontbench_boot.out
+	$(OBJCOPY) -O binary $(OUT_DIR)/fontbench_boot.out $@
+
+$(OUT_DIR)/FONTBENCH.iso: $(OUT_DIR)/fontbench_boot.bin
+	@mkdir -p $(FONTBENCH_DISC)
+	@printf "font bit expansion bench\n" > $(FONTBENCH_DISC)/README.TXT
+	@rm -f $@ $(OUT_DIR)/FONTBENCH.cue
+	$(MKISOFS) -iso-level 1 -G $< -pad -V "SCFMV_FNTB" -o $@ $(FONTBENCH_DISC)
+
+$(OUT_DIR)/FONTBENCH.cue: $(OUT_DIR)/FONTBENCH.iso
+	@rm -f $@
+	@printf 'FILE "FONTBENCH.iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
 # --- Phase A: H32 256x144 静止画レンダラ(描画土台検証, CD読み無し/CPU書き込みのみ) ---
 STILL256_DISC := $(OUT_DIR)/disc_still256
@@ -277,8 +310,8 @@ $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
 $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
 	@bytes=$$(wc -c < $@); \
-		if [ "$$bytes" -gt 18688 ]; then \
-			echo "ERROR: $@ is $$bytes bytes; transient Main IP data must end before 0xFF4900" >&2; \
+		if [ "$$bytes" -gt 18944 ]; then \
+			echo "ERROR: $@ is $$bytes bytes; transient Main IP data must end before 0xFF4A00" >&2; \
 			rm -f $@; \
 			exit 1; \
 		fi

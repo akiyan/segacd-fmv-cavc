@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v20 files and reconstructs every current control and payload byte. The
+TTRC v22 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -50,6 +50,8 @@ RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
+VERSION = 22
+CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 DEFAULT_DECISIONS = Path(
@@ -258,9 +260,9 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, version, nfr, cols, rows, cells, pool, base = struct.unpack_from(
         ">4sHHHHHHH", header
     )
-    if magic != b"TTRC" or version != 20:
+    if magic != b"TTRC" or version != VERSION:
         raise AssertionError(
-            f"expected split TTRC v20, got {magic!r} v{version}")
+            f"expected split TTRC v{VERSION}, got {magic!r} v{version}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
@@ -639,16 +641,17 @@ def encode_descriptors(
 def decode_descriptors(
     raw: bytes, source_aware: bool,
 ) -> tuple[tuple[int, int, int, int], ...]:
-    if len(raw) < 2:
+    if len(raw) < CONTROL_SUFFIX_HEADER_BYTES:
         raise AssertionError("descriptor suffix is truncated")
     n_runs = struct.unpack_from(">H", raw)[0]
-    if len(raw) != 2 + 4 * n_runs:
+    if len(raw) != CONTROL_SUFFIX_HEADER_BYTES + 4 * n_runs:
         raise AssertionError(
             f"descriptor suffix is {len(raw)} bytes for {n_runs} runs"
         )
     result = []
     for index in range(n_runs):
-        word0, source_count = struct.unpack_from(">HH", raw, 2 + 4 * index)
+        word0, source_count = struct.unpack_from(
+            ">HH", raw, CONTROL_SUFFIX_HEADER_BYTES + 4 * index)
         slot = word0 & 0x07FF
         if source_aware:
             count = source_count & RUN_COUNT_MASK
@@ -689,7 +692,9 @@ def verify_dic512_descriptor_codec() -> None:
     if decode_descriptors(raw, True) != runs:
         raise AssertionError("Dic512 descriptor round trip differs")
     encoded_sources = tuple(
-        struct.unpack_from(">H", raw, 4 + index * 4)[0] >> RUN_SOURCE_SHIFT
+        struct.unpack_from(
+            ">H", raw, 4 + index * 4,
+        )[0] >> RUN_SOURCE_SHIFT
         for index in range(len(runs))
     )
     if encoded_sources != (2, 3, 0):
@@ -743,7 +748,8 @@ def print_range_stats(
     runs = [run_counts[index] for index in frame_indices]
     cold_total = sum(colds)
     run_total = sum(runs)
-    descriptor_bytes = sum(2 + 4 * count for count in runs)
+    descriptor_bytes = sum(
+        CONTROL_SUFFIX_HEADER_BYTES + 4 * count for count in runs)
     average = cold_total / run_total if run_total else 0.0
     print(
         f"{label}: frames={len(frame_indices)} cold={cold_total} runs={run_total} "

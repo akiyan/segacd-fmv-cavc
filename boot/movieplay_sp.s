@@ -121,8 +121,8 @@
 
 .equ SUB_BANK_1M, 0x000C0000
 
-/* --- TTRC v20 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       20
+/* --- TTRC v22 BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
+.equ ROUTING_VERSION,       22
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -281,9 +281,9 @@
 /* --- Word-RAM 出力(MDが読む) ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
    starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
-.equ O_PALW,   SUB_BANK_1M+0x0000	/* reserved word; palette switches are M-PALIDX driven */
-.equ O_NLOAD,  SUB_BANK_1M+0x0002
-.equ O_LOADS,  SUB_BANK_1M+0x0004
+.equ O_PALW,    SUB_BANK_1M+0x0000	/* reserved word; palette switches are M-PALIDX driven */
+.equ O_NLOAD,   SUB_BANK_1M+0x0002
+.equ O_LOADS,   SUB_BANK_1M+0x0004
 .equ O_SLIP,   O_STATUS+0x00
 .equ O_DSY,    O_STATUS+0x7E
 .equ O_CTRLWAIT,O_STATUS+0x18
@@ -296,6 +296,8 @@
 .endif
 .ifdef DEBUG_SUB_POLL_GAP
 .equ O_PUMPGAP,O_STATUS+0x26
+.equ O_PRGPEAK,O_STATUS+0x28
+.equ O_READAHEAD,O_STATUS+0x2A
 .endif
 .equ O_HDR,    O_STATUS+0x80
 /* Boot stage: BVRM sidecar records only (palette tables ride the Main-IP
@@ -335,7 +337,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v20ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v22ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -427,6 +429,10 @@ stream_start:
 .ifdef INCLUDE_WORDBUF_RING
 	clr.w	word_pending_count
 .endif
+.ifdef DEBUG_SUB_POLL_GAP
+	clr.w	(O_PRGPEAK).l
+	clr.w	(O_READAHEAD).l
+.endif
 	bsr	init_pcm
 	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
 	clr.l	base_msf
@@ -483,11 +489,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v20: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v22: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v20: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v22: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -517,9 +523,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v20 optional stream features */
+	move.w	62(a0), h_features		/* v22 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v20 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v22 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -1384,6 +1390,15 @@ p1_ring:
 	bls.s	3f
 	move.w	d0, (COMSTAT2).l
 3:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* H is the exact per-frame physical peak, unlike sticky whole-run J.
+	   Keep updating the handed-off status bank while Main has not yet asked
+	   for its swap, so payload received during the wait remains visible. */
+	cmp.w	(O_PRGPEAK).l, d0
+	bls.s	4f
+	move.w	d0, (O_PRGPEAK).l
+4:
+.endif
 .endif
 	bra.s	p1_adv
 p1_apply:
@@ -1404,6 +1419,27 @@ p1_adv:
 	clr.w	drain_k
 	addq.w	#1, drain_frame
 p1_ret:
+.ifdef DEBUG_SUB_POLL_GAP
+	/* X packs the reader position relative to the next frame to expand:
+	   high byte = complete frame slots ahead, low byte = sector index in the
+	   current slot. Retain the largest lexicographic position this frame. */
+	moveq	#0, d0
+	move.w	drain_frame, d0
+	sub.w	frame_idx, d0
+	bpl.s	1f
+	moveq	#0, d0
+1:
+	cmpi.w	#0x00FF, d0
+	bls.s	2f
+	move.w	#0x00FF, d0
+2:
+	lsl.w	#8, d0
+	move.b	drain_k+1, d0
+	cmp.w	(O_READAHEAD).l, d0
+	bls.s	3f
+	move.w	d0, (O_READAHEAD).l
+3:
+.endif
 .ifdef DEBUG_SUB_POLL_GAP
 	/* Exclude all time spent in CDC_STAT/READ/TRN, stage copy, and slip
 	   recovery from the next outside-pump interval. */
@@ -1687,6 +1723,28 @@ process_frame:
 	clr.w	pf_ctrl_wait
 	clr.w	pf_body_wait
 .ifdef DEBUG_SUB_POLL_GAP
+	/* Start H/X from the exact state left by pumps that ran after the prior
+	   bank swap. Subsequent payload appends update these same output words. */
+	move.l	ring_tail, d0
+	sub.l	ring_head, d0
+	bpl.s	8f
+	add.l	#RING_SIZE, d0
+8:
+	lsr.l	#5, d0
+	move.w	d0, (O_PRGPEAK).l
+	moveq	#0, d0
+	move.w	drain_frame, d0
+	sub.w	frame_idx, d0
+	bpl.s	8f
+	moveq	#0, d0
+8:
+	cmpi.w	#0x00FF, d0
+	bls.s	8f
+	move.w	#0x00FF, d0
+8:
+	lsl.w	#8, d0
+	move.b	drain_k+1, d0
+	move.w	d0, (O_READAHEAD).l
 	move.w	(GA_STOPWATCH_ABS_W).w, d0
 	move.w	d0, (poll_last_tick).w
 	clr.w	(poll_max_gap).w
@@ -1770,6 +1828,7 @@ dsd_w:
 	bra	dsd_lp
 1:
 .endif
+	clr.w	(O_PALW).l
 	move.w	#0, (O_NLOAD).l			/* このコマは更新破棄=前コマ維持 */
 	bsr	pump_poll_core
 	rts
@@ -1864,7 +1923,7 @@ ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v20 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v22 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2144,7 +2203,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v20 streams use run descriptors above. Retain a final-balance
+	/* Canonical v22 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2696,7 +2755,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v20: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v22: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:

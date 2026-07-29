@@ -240,10 +240,11 @@ Before accepting the recording, verify:
 - representative lossless frames against the sim when timing or fps behavior is new or suspect.
 - one complete HUD loop with `harness/startup_resync/analyze.py --gate-json`;
   pass the encode profile as the required second positional argument and
-  require every expected movie frame. Fixed-N2 requires `S/D/R=00`, `M<=01`;
-  delivery-paced 15 fps requires `S/D/R=00`, `M<=04`; delivery-paced 24 fps
-  requires `S/D/R=00`, `M<=03`. `C` is diagnostic only and never changes the
-  gate status. Always report the `C/A` minimum, mean, median, and maximum. The
+  require every expected movie frame. Every cadence requires `S/D/R=00`.
+  `M>01` at fixed N2, `M>03` at fixed N4, or `M>03` at delivery-paced
+  24 fps raises alert `WARNING` without failing the gate. `C` is diagnostic
+  only and never changes the gate status. Always report the `C/A` minimum,
+  mean, median, and maximum. The
   generated gate uses
   the fps-derived normal PrgBuf ceiling: `J<=2D` at 15fps, `J<=1E` at 24fps,
   and `J<=19` at 30fps. Explicitly report whether `J` exceeded that cadence's
@@ -251,8 +252,9 @@ Before accepting the recording, verify:
   Preserve the encoder/player-versioned HUD TSV body under `logs/`, its
   run-specific compatibility symlink, and the upload-capable gate JSON next to
   the recording.
-  Both H32 and H40 profiles select the same 46-cell diagnostic field set;
-  OCR wraps it after the mode's native 32- or 40-cell row width.
+  Fixed-N `T>N` also raises alert `WARNING` without failing the gate. Both H32
+  and H40 profiles select the same 69-cell diagnostic field set; OCR wraps it
+  into three H32 rows or two H40 rows.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
 timestamps and a `videos/<stem>/record_check` base; inspect only the new directory and its

@@ -6,15 +6,22 @@ The player renders values only in one fixed 30-cell order in both modes:
     H32/H40: xxxx xx xx xx xx xx xx xx xx xx xxxx xx xx
 
 The corresponding common keys are F/P/S/D/R/L/C/W/M/A/U/N/J. Standard H32 and
-H40 DEBUG builds append Q/V/O/E/G/K as one 46-cell logical sequence, wrapped
-after 32 or 40 cells respectively. Q is the signed minimum logical PrgBuf
-balance observed during that frame, in exact 32-byte patterns.
+H40 DEBUG builds append Q/V/O/E/G/K/H/X/Y/Z/T/I/Y3/Y4 as one 69-cell logical
+sequence, wrapped after 32 or 40 cells respectively. Q is the signed minimum logical
+PrgBuf balance observed during that frame, in exact 32-byte patterns.
 G is the maximum time spent outside the Sub CDC pump between service
 opportunities in 30.72 us stopwatch ticks, and K is the cumulative MSF
 sequence-gap recovery count. G bit 15 is a packed per-frame B marker showing
-that APPLY back-pressure rejected a control-sector pump. A supplied H32 or H40
-profile selects its combined layout automatically. Legacy one-row recordings
-remain readable through their explicit layout options.
+that APPLY back-pressure rejected a control-sector pump. H is the per-frame
+physical PrgBuf peak in exact patterns. X packs complete reader frame slots
+ahead in its high byte and the current slot's sector index in its low byte.
+Y/Z/Y3/Y4 are the exact pattern words charged to fresh runtime VBlank budgets
+1--4, O/I are the V-counters after the first/last actual pattern share, and T
+is the number of budgets opened. A whole run can physically cross active
+display without opening another budget. A supplied H32 or H40 profile selects
+its combined layout
+automatically. Legacy one-row recordings remain readable through their
+explicit layout options.
 
 Frames are decoded sequentially through ffmpeg.  High-confidence OCR samples
 with the same F value are combined before R transitions are reported.  This is
@@ -475,13 +482,19 @@ def _fmt(group: FrameGroup) -> str:
         if "G" in v else ""
     )
     msf_gap = f" K{v['K']:02X}" if "K" in v else ""
+    physical_peak = f" H{v['H']:04X}" if "H" in v else ""
+    reader_ahead = f" X{v['X']:04X}" if "X" in v else ""
+    transfer_split = (
+        f" Y{v['Y']:03X} Z{v['Z']:03X} T{v['T']:01X} I{v['I']:02X}"
+        if all(field in v for field in "YZTI") else ""
+    )
     return (
         f"loop={group.loop} t={group.time_first:8.3f}s "
         f"cap={group.capture_first:5d}-{group.capture_last:<5d} "
         f"F{v['F']:04X} P{v['P']:02X} S{v['S']:02X} D{v['D']:02X} "
         f"R{v['R']:02X} L{v['L']:02X} C{v['C']:02X} W{v['W']:02X} "
         f"M{v['M']:02X} A{v['A']:02X}{transfer}{jitter}{prgbuf}"
-        f"{poll_gap}{msf_gap} "
+        f"{poll_gap}{msf_gap}{physical_peak}{reader_ahead}{transfer_split} "
         f"n={group.sample_count} "
         f"conf={group.confidence:.3f}"
     )
@@ -520,6 +533,20 @@ def print_report(groups: list[FrameGroup], context: int) -> list[int]:
             f"({minimum * 32} bytes); "
             f"underflow peak={max(0, -minimum)} patterns"
         )
+    if "H" in groups[0].values:
+        peak_group = max(groups, key=lambda group: group.values["H"])
+        peak = peak_group.values["H"]
+        print(
+            f"H physical peak: {peak} patterns ({peak * 32} bytes) at "
+            f"F{peak_group.values['F']:04X}"
+        )
+    if "X" in groups[0].values:
+        lead_group = max(groups, key=lambda group: group.values["X"])
+        raw = lead_group.values["X"]
+        print(
+            f"X reader lead: {raw >> 8} complete frame slots + "
+            f"sector {raw & 0xFF} at F{lead_group.values['F']:04X}"
+        )
     for number, index in enumerate(transitions, 1):
         previous = groups[index - 1]
         current = groups[index]
@@ -550,10 +577,17 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "main_pattern_ms", "cold_runs_low8", "prgbuf_jitter_peak_kib",
         "prgbuf_min_patterns_raw16", "prgbuf_min_patterns_signed",
         "prgbuf_underflow_patterns",
+        "prgbuf_physical_peak_patterns",
+        "reader_ahead_raw16", "reader_ahead_frames", "reader_slot_sector",
+        "pattern_vblank1_words", "pattern_vblank1_patterns",
+        "pattern_vblank2_words", "pattern_vblank2_patterns",
+        "pattern_vblank3_words", "pattern_vblank3_patterns",
+        "pattern_vblank4_words", "pattern_vblank4_patterns",
+        "pattern_transfer_vblanks", "pattern_exit_vcounter",
         "sub_poll_gap_raw16", "sub_poll_gap_ticks", "sub_poll_gap_ms",
         "apply_guard_blocked",
         "slip_msf_gap_count", "slip_trn_retry_count",
-        "flip_vcounter", "flip_interval_excess_ticks", "pass2_entry_q4",
+        "flip_vcounter", "pattern_vblank1_exit_vcounter", "pass2_entry_q4",
         "r_transition", "prev_frame",
         "prev_lead_256b", "next_frame", "next_lead_256b",
     ]
@@ -614,6 +648,34 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                     max(0, -prg_min_signed)
                     if prg_min_signed is not None else ""
                 ),
+                "prgbuf_physical_peak_patterns": values.get("H", ""),
+                "reader_ahead_raw16": values.get("X", ""),
+                "reader_ahead_frames": (
+                    values["X"] >> 8 if "X" in values else ""
+                ),
+                "reader_slot_sector": (
+                    values["X"] & 0xFF if "X" in values else ""
+                ),
+                "pattern_vblank1_words": values.get("Y", ""),
+                "pattern_vblank1_patterns": (
+                    f"{values['Y'] / 16:.4f}" if "Y" in values else ""
+                ),
+                "pattern_vblank2_words": values.get("Z", ""),
+                "pattern_vblank2_patterns": (
+                    f"{values['Z'] / 16:.4f}" if "Z" in values else ""
+                ),
+                "pattern_vblank3_words": values.get("Y3", ""),
+                "pattern_vblank3_patterns": (
+                    f"{values['Y3'] / 16:.4f}" if "Y3" in values else ""
+                ),
+                "pattern_vblank4_words": values.get("Y4", ""),
+                "pattern_vblank4_patterns": (
+                    f"{values['Y4'] / 16:.4f}" if "Y4" in values else ""
+                ),
+                "pattern_transfer_vblanks": values.get("T", ""),
+                "pattern_exit_vcounter": (
+                    f"{values['I']:02X}" if "I" in values else ""
+                ),
                 "sub_poll_gap_raw16": (
                     poll_gap_raw if poll_gap_raw is not None else ""
                 ),
@@ -636,7 +698,9 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "flip_vcounter": (
                     f"{values['V']:02X}" if "V" in values else ""
                 ),
-                "flip_interval_excess_ticks": values.get("O", ""),
+                "pattern_vblank1_exit_vcounter": (
+                    f"{values['O']:02X}" if "O" in values else ""
+                ),
                 "pass2_entry_q4": values.get("E", ""),
                 "r_transition": (
                     f"{previous.values['R']:02X}->{values['R']:02X}" if previous else ""
@@ -681,6 +745,50 @@ def upload_gate_limits(content_fps: float) -> tuple[dict[str, int], str]:
             - 1
         ),
     }, cadence
+
+
+def display_vblank_cadence(
+    groups: list[FrameGroup],
+    content_fps: float,
+) -> dict:
+    """Measure how many captured VBlanks each timed frame stayed visible."""
+    first_loop = [group for group in groups if group.loop == 0]
+    expected = av_config.fixed_vblank_interval(float(content_fps))
+    histogram: Counter[int] = Counter()
+    observations: list[dict[str, int]] = []
+    for current, following in zip(first_loop, first_loop[1:]):
+        frame = current.values["F"]
+        next_frame = following.values["F"]
+        # Frame 0 is untimed boot staging. The last movie frame has no
+        # following transition and is excluded naturally by zip().
+        if frame == 0 or next_frame != frame + 1:
+            continue
+        actual = following.capture_first - current.capture_first
+        histogram[actual] += 1
+        observations.append({
+            "frame": frame,
+            "next_frame": next_frame,
+            "capture_first": current.capture_first,
+            "next_capture_first": following.capture_first,
+            "display_vblanks": actual,
+        })
+    violations = (
+        [
+            observation for observation in observations
+            if observation["display_vblanks"] != expected
+        ]
+        if expected is not None else []
+    )
+    return {
+        "expected": expected,
+        "evaluated_frames": len(observations),
+        "histogram": {
+            str(display_vblanks): count
+            for display_vblanks, count in sorted(histogram.items())
+        },
+        "violation_count": len(violations),
+        "violations": violations,
+    }
 
 
 def evaluate_upload_gate(
@@ -733,16 +841,49 @@ def evaluate_upload_gate(
     limits, cadence = upload_gate_limits(content_fps)
     for field, limit in limits.items():
         if maxima[field] > limit:
-            failures.append(
-                f"{field} peak {maxima[field]:02X} exceeds upload limit {limit:02X}"
+            message = (
+                f"{field} peak {maxima[field]:02X} exceeds "
+                f"{'cadence warning' if field == 'M' else 'upload'} "
+                f"limit {limit:02X}"
             )
+            (warnings if field == "M" else failures).append(message)
+    fixed_n = av_config.fixed_vblank_interval(float(content_fps))
+    transfer_vblank_max = (
+        max(
+            (group.values.get("T", 0) for group in timed_loop),
+            default=0,
+        )
+        if first_loop and "T" in first_loop[0].values else None
+    )
+    if (
+        fixed_n is not None
+        and transfer_vblank_max is not None
+        and transfer_vblank_max > fixed_n
+    ):
+        warnings.append(
+            f"T peak {transfer_vblank_max:X} exceeds fixed-N transfer "
+            f"window count {fixed_n:X}"
+        )
+    display_cadence = display_vblank_cadence(groups, content_fps)
+    if display_cadence["violation_count"]:
+        examples = ", ".join(
+            f"F{row['frame']:04d}={row['display_vblanks']}"
+            for row in display_cadence["violations"][:8]
+        )
+        remaining = display_cadence["violation_count"] - 8
+        suffix = f", +{remaining} more" if remaining > 0 else ""
+        warnings.append(
+            f"{cadence} display cadence missed "
+            f"{display_cadence['violation_count']} deadline(s): "
+            f"{examples}{suffix}"
+        )
 
     stat = recording.stat()
     alert = hud_gate.classify_alert(failures, warnings)
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 6,
+        "schema_version": 11,
         "gate": gate,
         "alert": alert,
         # Keep the old fields while stored schema-5 results and external
@@ -758,13 +899,33 @@ def evaluate_upload_gate(
         "evaluated_timed_frames": len(timed_loop),
         "content_fps": float(content_fps),
         "cadence": cadence,
+        "display_vblank_expected": display_cadence["expected"],
+        "display_vblank_evaluated_frames": (
+            display_cadence["evaluated_frames"]),
+        "display_vblank_histogram": display_cadence["histogram"],
+        "display_vblank_violation_count": (
+            display_cadence["violation_count"]),
+        "display_vblank_violations": display_cadence["violations"],
         "gate_fields": list(gate_fields),
+        "warning_fields": ["M"],
         "diagnostic_fields": [
             "C", "A",
             *(["Q"] if "Q" in first_loop[0].values else []),
             *(["G"] if "G" in first_loop[0].values else []),
             *(["B"] if "G" in first_loop[0].values else []),
             *(["K"] if "K" in first_loop[0].values else []),
+            *(["H"] if "H" in first_loop[0].values else []),
+            *(["X"] if "X" in first_loop[0].values else []),
+            *([
+                "Y", "O", "Z", "T", "I"
+            ] if all(
+                field in first_loop[0].values for field in "YOZTI"
+            ) else []),
+            *([
+                "Y3", "Y4"
+            ] if all(
+                field in first_loop[0].values for field in ("Y3", "Y4")
+            ) else []),
         ],
         "maxima": maxima,
         "c_statistics": c_statistics(groups),
@@ -788,6 +949,52 @@ def evaluate_upload_gate(
     if "G" in first_loop[0].values:
         result["sub_poll_gap_statistics"] = g_statistics(groups)
         result["apply_guard_blocked_frames"] = apply_guard_blocked_frames(groups)
+    if "H" in first_loop[0].values:
+        result["prgbuf_physical_peak_patterns"] = max(
+            (group.values["H"] for group in timed_loop),
+            default=0,
+        )
+    if "X" in first_loop[0].values:
+        reader_ahead = max(
+            (group.values["X"] for group in timed_loop),
+            default=0,
+        )
+        result["reader_ahead_max_raw16"] = reader_ahead
+        result["reader_ahead_max_frames"] = reader_ahead >> 8
+        result["reader_ahead_max_slot_sector"] = reader_ahead & 0xFF
+    if all(field in first_loop[0].values for field in "YZTI"):
+        result["pattern_vblank1_max_words"] = max(
+            (group.values["Y"] for group in timed_loop),
+            default=0,
+        )
+        result["pattern_vblank2_max_words"] = max(
+            (group.values["Z"] for group in timed_loop),
+            default=0,
+        )
+        if all(
+            field in first_loop[0].values for field in ("Y3", "Y4")
+        ):
+            result["pattern_vblank3_max_words"] = max(
+                (group.values["Y3"] for group in timed_loop),
+                default=0,
+            )
+            result["pattern_vblank4_max_words"] = max(
+                (group.values["Y4"] for group in timed_loop),
+                default=0,
+            )
+        result["pattern_transfer_vblank_max"] = max(
+            (group.values["T"] for group in timed_loop),
+            default=0,
+        )
+        result["pattern_exit_vcounter_max"] = max(
+            (group.values["I"] for group in timed_loop),
+            default=0,
+        )
+    if "O" in first_loop[0].values:
+        result["pattern_vblank1_exit_vcounter_max"] = max(
+            (group.values["O"] for group in timed_loop),
+            default=0,
+        )
     if profile is not None:
         result["profile"] = str(profile.path.resolve())
         result["profile_sha256"] = profile.sha256
@@ -801,7 +1008,7 @@ def standard_combined_fields(
     poll_gap_fields: bool,
     combined_fields: bool,
 ) -> bool:
-    """Select the standard two-row layout for an H32 or H40 profile."""
+    """Select the standard wrapped layout for an H32 or H40 profile."""
     if combined_fields:
         return True
     if flip_fields or poll_gap_fields or profile is None:
@@ -823,10 +1030,50 @@ def write_gate_json(path: Path, result: dict) -> None:
         f"{result['expected_frames']}  cadence={result['cadence']} "
         f"fps={result['content_fps']:g}"
     )
+    expected_vblanks = result["display_vblank_expected"]
+    cadence_rule = (
+        f"expected={expected_vblanks}"
+        if expected_vblanks is not None else "variable delivery-paced"
+    )
+    print(
+        "  display VBlanks/frame "
+        f"{cadence_rule} histogram={result['display_vblank_histogram']} "
+        f"violations={result['display_vblank_violation_count']}/"
+        f"{result['display_vblank_evaluated_frames']}"
+    )
     if "prgbuf_minimum_patterns" in result:
         print(
             f"  Q diagnostic min={result['prgbuf_minimum_patterns']} patterns "
             f"underflow_peak={result['prgbuf_underflow_peak_patterns']} patterns"
+        )
+    if "prgbuf_physical_peak_patterns" in result:
+        peak = result["prgbuf_physical_peak_patterns"]
+        print(
+            f"  H diagnostic max={peak} patterns ({peak * 32} bytes)"
+        )
+    if "reader_ahead_max_raw16" in result:
+        print(
+            "  X diagnostic max="
+            f"{result['reader_ahead_max_frames']} complete frame slots + "
+            f"sector {result['reader_ahead_max_slot_sector']}"
+        )
+    if "pattern_transfer_vblank_max" in result:
+        later = (
+            f"third/fourth max={result['pattern_vblank3_max_words']}/"
+            f"{result['pattern_vblank4_max_words']} words, "
+            if "pattern_vblank3_max_words" in result else ""
+        )
+        print(
+            "  Y/O/Z/T/I/Y3/Y4 diagnostics: first max="
+            f"{result['pattern_vblank1_max_words']} words "
+            f"({result['pattern_vblank1_max_words'] / 16:g} patterns), "
+            f"first exit max="
+            f"{result.get('pattern_vblank1_exit_vcounter_max', 0):02X}, "
+            f"second max={result['pattern_vblank2_max_words']} words "
+            f"({result['pattern_vblank2_max_words'] / 16:g} patterns), "
+            + later
+            + f"opened VBlank budgets max={result['pattern_transfer_vblank_max']}, "
+            f"exit V-counter max={result['pattern_exit_vcounter_max']:02X}"
         )
     if "sub_poll_gap_statistics" in result:
         print(
@@ -892,7 +1139,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--combined-fields", action="store_true",
-        help="force the standard two-row H32/H40 layout when no profile is "
+        help="force the standard wrapped H32/H40 layout when no profile is "
              "supplied; H32/H40 profiles select it automatically",
     )
     parser.add_argument(

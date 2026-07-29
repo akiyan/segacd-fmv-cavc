@@ -90,6 +90,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(
             {path.name for path in (root / "profiles").glob("*.toml")},
             {
+                "bad-apple-cold200.toml",
                 "bad-apple.toml",
                 "lunar-sss-op-h32.toml",
                 "lunar-sss-op-h40.toml",

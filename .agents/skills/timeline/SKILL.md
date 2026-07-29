@@ -26,6 +26,7 @@ tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
   logs/YYYYMMDD-HHMMSS-ffffff_PROFILE_SHA10_eNN_pNN_timeline.tsv \
   --config profiles/PROFILE.toml \
   --sim-out videos/STEM/ADJUSTMENT \
+  --r2v-workload-tsv logs/PROFILE_eNN_pNN_r2v_workload.tsv \
   --label "short adjustment label" \
   --evaluation-end-frame FRAME \
   --output videos/STEM_ADJUSTMENT_timeline.png
@@ -92,12 +93,26 @@ Keep these parts in every image:
   height used by `/mixline`.
   Keep Supply at 60 px and RUN, DIC and Band at 32 px so these secondary rows
   do not dominate the image.
+- When `--r2v-workload-tsv` is supplied, insert a 32 px `R2V` row immediately
+  below `RUN`. The workload TSV must come from
+  `harness/cold_cap_model/extract_frames.py` for the matching packed stream.
+  Count every pattern-transfer word once, including CPU-direct words at 1x,
+  add one first-word repair for every DMA-backed run, the complete 64x28 H40
+  name-table DMA (which already contains the DEBUG HUD), and 64 CRAM words on
+  palette-switch frames. Frame 0 remains untimed. Set the row maximum to the
+  largest calculated total among timed frames so the full vertical range
+  represents the observed workload. VDP setup-register writes and the reg2
+  flip are control operations rather than VDP-memory payload, so they are not
+  R2V words. This row is an analysis-only derived workload trace; it must not
+  steer encoder or player work.
 - Show explicit vertical-axis ticks and horizontal guides at zero, half-scale,
   and full-scale on Req and Supply. Show only zero and full-scale on the
-  compact RUN, DIC and Band rows. Put the unit below the Req and Supply
-  headings; the compact RUN, DIC and Band headings have no unit subheading.
-  Req uses cells and Supply uses patterns. Band's axis remains a percentage of
-  each frame's physical slot.
+  compact RUN, R2V, DIC and Band rows. Put the unit below the Req and Supply
+  headings; the compact RUN, R2V, DIC and Band headings have no unit
+  subheading.
+  Req uses cells and Supply uses patterns. R2V uses calculated VDP-memory
+  transfer words.
+  Band's axis remains a percentage of each frame's physical slot.
 - The header legend lists every analysis legend category
   (`analysis_style.LEGEND_ORDER`) with its whole-movie EVAL-scope displayed
   tile total, mirroring the analysis overlay's category legend as one
