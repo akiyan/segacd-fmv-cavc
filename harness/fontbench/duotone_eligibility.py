@@ -79,11 +79,11 @@ def main() -> None:
     if zlib.crc32(header[:64]) & 0xFFFFFFFF != struct.unpack_from(
             ">L", header, 192)[0]:
         raise SystemExit("header signature mismatch")
-    supply = struct.unpack_from(">4s9H", header, 196)
-    if supply[0] != b"PSUP" or supply[1] != 3:
+    supply = struct.unpack_from(">4s11H", header, 196)
+    if supply[0] != b"PSUP" or supply[1] != 4:
         raise SystemExit(f"invalid pattern-supply extension: {supply!r}")
     wr0_count, wr1_count, dic_count, wr0_sec, wr1_sec, dic_sec, _cold_cap = (
-        supply[3:])
+        supply[3:10])
 
     cursor = SECTOR
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]

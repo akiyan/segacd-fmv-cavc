@@ -30,7 +30,7 @@
 .equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72 us/tick, Main read-only */
 
 .equ PROBE_BANK, 0x00200000
-.equ O_NLOAD_OFF, 0x0002
+.equ O_NRUN_OFF, 0x0000
 .equ O_LOADS_OFF, 0x0004
 
 .equ CMD_STREAM, 0x50
@@ -44,11 +44,12 @@
 
 /* 0xFF2100..0xFF66FF is no longer a tile staging buffer: streamed pattern DMA
    reads Word RAM directly and repairs the first destination word on the CPU.
-   Keep this range for boot-time Main-CPU code generation.  The complete fixed
-   Main-RAM map (identical in every build and profile) is:
+   Keep this range for boot-time Main-CPU code generation. O_LOADS v2 also
+   removes the former 0xFF8800 run table; that interval is unallocated. The
+   complete fixed Main-RAM map is:
      M-CODE   0xFF0000..0xFF66FF  resident IP + generated handlers/blitters
      M-STATE  0xFF6700..0xFF87FF  runtime .bss (8.25 KiB worst-case reserve)
-     M-RUNTBL 0xFF8800..0xFFB1FF  pre-swizzled 22B cold-run records
+     free      0xFF8800..0xFFB1FF
      M-PALTAB 0xFFB200..0xFFB9FF  16 x 128B palette segments
      M-PALIDX 0xFFBA00..0xFFBA3F  16 x 4B palette-switch entries
      M-DIC    0xFFBA40..0xFFFA3F  512-pattern persistent dictionary
@@ -56,7 +57,6 @@
      M-STACK  0xFFFB00..0xFFFCFF  / M-TOP 0xFFFD00.. BIOS reserve */
 .equ MAIN_CODEGEN_BASE,  0x00FF2100
 .equ MAIN_CODEGEN_LIMIT, 0x00FF6700	/* M-STATE base = end of M-CODE */
-.equ RUN_TABLE,          0x00FF8800	/* pre-swizzled 22B cold-run records; 0x2A00B capacity */
 .equ DIC_BUF,            0x00FFBA40	/* persistent dictionary; direct Main-RAM VDP DMA */
 .equ DIC_BUF_END,        0x00FFFA40
 .equ DIC_BUF_PATTERNS,   512
@@ -436,7 +436,7 @@ ip_entry:
 2:
 	swap	d3				/* exact quotient */
 3:
-	move.w	#416, d2
+	move.w	#414, d2
 	sub.w	d3, d2
 	lsl.w	#5, d2				/* 1 KiB = 32 patterns */
 	move.w	d2, md_prg_buf_cap_patterns
@@ -445,11 +445,6 @@ ip_entry:
 	/* Generate once, before playback. A failed range/size proof leaves
 	   md_codegen=0 and the per-bit reference path remains active. */
 	bsr	init_main_codegen
-.endif
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0008)
-	bsr	reset_pattern_supply
-.endif
 .endif
 	/* Generic DEBUG builds have no preload counter, so upload the shared font
 	   here. Specialized DEBUG/release builds already uploaded it at startup. */
@@ -527,22 +522,8 @@ movie_end_md:
 	clr.w	started
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0008)
-	bsr	reset_pattern_supply
-.endif
-.endif
 	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
 	bra	play_loop
-
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0008)
-reset_pattern_supply:
-	move.l	#PROBE_BANK+WR0_OFF, wr_ptr0
-	move.l	#PROBE_BANK+WR1_OFF, wr_ptr1
-	rts
-.endif
-.endif
 
 .ifdef MAIN_CODEGEN
 /* Emit the 256 straight-line bitmap handlers once into Main RAM.
@@ -562,8 +543,8 @@ init_main_codegen:
 	moveq	#0, d7				/* mask 0..255 */
 1:
 	/* Refuse before writing this handler if even the largest template could
-	   cross into RUN_TABLE.  Partial generated data is harmless while the
-	   success flag remains clear. */
+	   cross the fixed M-CODE boundary. Partial generated data is harmless
+	   while the success flag remains clear. */
 	move.l	a0, d0
 	addi.l	#MAIN_CODEGEN_HANDLER_MAX, d0
 	cmpi.l	#MAIN_CODEGEN_LIMIT, d0
@@ -669,8 +650,8 @@ init_main_codegen:
 	movem.l	(sp)+, d0-d7/a0-a2
 	rts
 
-/* Emit one fixed-geometry name-table blitter at a0.  d6 is NT0 or NT1.
-   The caller has already proved the H40 maximum pair fits below RUN_TABLE. */
+/* Emit one fixed-geometry name-table blitter at a0. d6 is NT0 or NT1; the
+   caller has already proved the H40 maximum pair fits below M-CODE's end. */
 emit_main_blitter:
 	move.w	#CG_OP_LEA_SHADOW_A1, (a0)+
 	move.l	#shadow, (a0)+
@@ -719,10 +700,9 @@ emit_main_blitter:
 	rts
 .endif
 
-/* ---- 1フレーム分をデコードし裏へ描画してflip ----
-   タイル転送はWord-RAM直DMA(VDPが自走=CPUを空ける)。手順を2パスに分離:
-     Pass1(active可): 全ランの(dst,len,src)表だけを作る
-     Pass2(vblank内): 表を順にDMAし、Word-RAM DMAの欠落先頭wordをCPUで修復する */
+/* Build and flip one frame. The Sub has already expanded every physical run
+   into a VDP-ready 22-byte O_LOADS v2 record, so Main performs no staging pass.
+   The same Word-RAM cursor first drives name updates, then the VBlank DMA pass. */
 build_frame:
 	movem.l	d0-d7/a0-a3, -(sp)
 .ifdef DEBUG
@@ -730,160 +710,7 @@ build_frame:
 	clr.w	frame_vblank_waits
 	clr.w	dma_elapsed_ticks		/* H40 Uxxxx: Main pattern-transfer stopwatch ticks */
 .endif
-	/* Pass1: パターンコピー無し。(dst.w, len.w, src.l)のラン表だけ作る。
-	   src は Word-RAM 内のパターン先頭。Pass2は長runをDMA+先頭補修、短runをCPU直書きする。 */
-	lea	(PROBE_BANK+O_NLOAD_OFF), a0
-	move.w	(a0), d7			/* n_load 合計タイル数 */
-	lea	(PROBE_BANK+O_LOADS_OFF), a0
-	lea	RUN_TABLE, a2
-	moveq	#0, d4				/* run count */
-	tst.w	d7
-	beq	bf_none
-bf_stage:
-	move.w	(a0)+, d0			/* Dic index high5 + slot_start low11 */
-	move.w	(a0)+, d6			/* source2 + Dic index low3 + count low11 */
-	move.w	d0, d5
-	lsr.w	#8, d5
-	lsr.w	#3, d5				/* Dic index high5 */
-	lsl.w	#3, d5
-	move.w	d6, d1
-	lsr.w	#8, d1
-	lsr.w	#3, d1
-	andi.w	#7, d1				/* Dic index low3 */
-	or.w	d1, d5
-	move.w	d6, d3
-	andi.w	#0xC000, d3			/* 0=Prg inline, 1=Wr current bank, 2/3=Dic */
-	andi.w	#0x07FF, d6
-	beq	bf_stage_done			/* count=0 打切り */
-	cmp.w	d7, d6				/* count>残り 切詰め */
-	bls	1f
-	move.w	d7, d6
-1:
-	andi.w	#0x07FF, d0			/* discard Dic index high bits */
-	addq.w	#1, d0				/* tile index=1+slot */
-	lsl.w	#5, d0				/* dst=(1+slot)*0x20 */
-	/* Pre-swizzled record: every VDP register value and the VRAM command
-	   are computed here in active-display time, so Pass2 only pops words
-	   into the control port.  Layout (22 bytes):
-	     +0 len.w  +2 reg93.w  +4 reg94.w  +6 cmd.l  +10 dst.w
-	     +12 reg95.w  +14 reg96.w  +16 reg97.w  +18 src.l */
-	move.w	d6, d1
-	lsl.w	#4, d1				/* len words = count*16 */
-	move.w	d1, (a2)+			/* +0 len */
-	move.w	#0x9300, d2
-	move.b	d1, d2
-	move.w	d2, (a2)+			/* +2 reg93 = 0x9300|len.lo */
-	move.w	d1, d2
-	lsr.w	#8, d2
-	ori.w	#0x9400, d2
-	move.w	d2, (a2)+			/* +4 reg94 = 0x9400|len.hi */
-	move.l	d0, d2				/* ordinary VRAM-write command for dst */
-	andi.l	#0x0000FFFF, d2
-	move.l	d2, d1
-	andi.l	#0x00003FFF, d2
-	swap	d2
-	ori.l	#0x40000000, d2
-	lsr.w	#7, d1
-	lsr.w	#7, d1
-	andi.w	#0x0003, d1
-	or.w	d1, d2
-	move.l	d2, (a2)+			/* +6 cmd (no CD5) */
-	move.w	d0, (a2)+			/* +10 dst (split fallback) */
-	moveq	#0, d2				/* source bytes = count*32 */
-	move.w	d6, d2
-	lsl.l	#5, d2
-	tst.w	d3
-	bne	bf_stage_preload
-	movea.l	a0, a3				/* Prg: Sub copied inline bytes into O_LOADS */
-	adda.l	d2, a0
-	bsr	bf_emit_src_wr
-	bra	bf_stage_recorded
-bf_stage_preload:
-	cmpi.w	#0x4000, d3
-	bne	bf_stage_dic
-	move.w	frame_no, d3			/* Wr0 on even frames, Wr1 on odd frames */
-	andi.w	#1, d3
-	lsl.w	#2, d3
-	lea	wr_ptr0, a1
-	movea.l	(a1,d3.w), a3
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0100)
-	/* The source run never crosses a ring end. Normalize the next run's
-	   cursor only after the previous run ended exactly at that boundary. */
-	tst.w	d3
-	bne.s	1f
-	cmpa.l	#PROBE_BANK+WR0_END, a3
-	bne.s	2f
-	movea.l	#PROBE_BANK+WR0_OFF, a3
-	bra.s	2f
-1:
-	cmpa.l	#PROBE_BANK+WR1_END, a3
-	bne.s	2f
-	movea.l	#PROBE_BANK+WR1_OFF, a3
-2:
-.endif
-.endif
-	move.l	a3, d5
-	add.l	d2, d5
-	tst.w	d3
-	bne.s	1f
-	cmpi.l	#PROBE_BANK+WR0_END, d5
-	bra.s	2f
-1:
-	cmpi.l	#PROBE_BANK+WR1_END, d5
-2:
-	bhi	bf_stage_done			/* corrupt cache count: do not walk into routing */
-	move.l	d5, (a1,d3.w)
-	bsr	bf_emit_src_wr
-	bra	bf_stage_recorded
-bf_stage_dic:
-	/* source 2 = Dic index 0..255, source 3 = Dic index 256..511 (bit 8). */
-	cmpi.w	#0x8000, d3
-	beq.s	1f
-	ori.w	#0x0100, d5			/* Dic index bit 8 */
-1:
-	lsl.w	#5, d5				/* DicBuf index * 32 (max 511*32=16352) */
-	lea	DIC_BUF, a3
-	adda.w	d5, a3
-	move.l	a3, d3
-	add.l	d2, d3
-	cmpi.l	#DIC_BUF_END, d3
-	bhi	bf_stage_done
-	bsr	bf_emit_src_dic
-bf_stage_recorded:
-	addq.w	#1, d4
-	sub.w	d6, d7
-	bne	bf_stage
-bf_stage_done:
-bf_none:
-	move.w	d4, n_runs			/* cold-run record数(0可、物理DMA発行数ではない) */
-	bra	bf_upd
-
-/* Emit the source-derived record half: +12 reg95/96/97 (DMA source words,
-   +2-adjusted for Word-RAM sources per the measured first-word rule, plain
-   for Main-RAM DicBuf) and +18 the raw source for repair/short/split.
-   a3 = src.  Trashes d2, d3. */
-bf_emit_src_wr:
-	move.l	a3, d2
-	addq.l	#2, d2				/* Word-RAM fetch is one word late */
-	bra.s	bf_emit_src
-bf_emit_src_dic:
-	move.l	a3, d2
-bf_emit_src:
-	lsr.l	#1, d2
-	move.w	#0x9500, d3
-	move.b	d2, d3
-	move.w	d3, (a2)+			/* +12 reg95 */
-	lsr.l	#8, d2
-	move.w	#0x9600, d3
-	move.b	d2, d3
-	move.w	d3, (a2)+			/* +14 reg96 */
-	lsr.l	#8, d2
-	move.w	#0x9700, d3
-	move.b	d2, d3
-	move.w	d3, (a2)+			/* +16 reg97 */
-	move.l	a3, (a2)+			/* +18 src */
-	rts
+	move.w	(PROBE_BANK+O_NRUN_OFF).l, n_runs
 bf_upd:
 	/* Read bitmap+entries directly from the linear control block in the swapped
 	   Word-RAM bank.  The Sub already walks them to build cold runs; rewriting
@@ -1097,7 +924,7 @@ bf_dma:
 	move.w	n_runs, d4
 	beq	bf_flip
 	move.w	#1, pattern_transfer_vblanks
-	lea	RUN_TABLE, a2
+	lea	(PROBE_BANK+O_LOADS_OFF), a2
 	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
 	moveq	#0, d0
@@ -1106,10 +933,8 @@ bf_dma:
 	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
 .endif
 bf_run_lp:
-	/* Pre-swizzled record (see bf_stage): pop the ready register values
-	   straight into the control port. Fill the current budget and continue a
-	   boundary-crossing DMA run at the next fresh VBlank head. The
-	   cadence-final budget has already withheld NT/HUD/CRAM/flip capacity. */
+	/* Pop the Sub-built record straight into the control port. Inline Prg
+	   payload follows its own record; Wr/Dic records are adjacent. */
 	move.w	(a2)+, d1			/* +0 len(語) */
 	move.w	d1, d6
 	addq.w	#CPU_VDP_WORD_COST, d6		/* full DMA + one CPU repair word */
@@ -1131,6 +956,12 @@ bf_run_lp:
 	bsr	wait_dma_done
 	move.l	d2, (VDP_CTRL).l		/* restore ordinary destination */
 	movea.l	(a2)+, a3			/* +18 src */
+	cmpa.l	a2, a3				/* Prg raw source equals the inline payload cursor */
+	bne.s	1f
+	move.w	d1, d0
+	add.w	d0, d0				/* DMA words -> inline bytes */
+	adda.w	d0, a2
+1:
 	move.w	(a3), (VDP_DATA).l		/* repair dst[0] (redundant-correct for DicBuf) */
 .ifdef DEBUG
 	adda.w	d1, a1
@@ -1143,6 +974,12 @@ bf_split_run:
 	move.w	8(a2), d3			/* +10 dst (a2 is at +2) */
 	movea.l	16(a2), a3			/* +18 src */
 	adda.w	#20, a2				/* advance to the next record */
+	cmpa.l	a2, a3
+	bne.s	1f
+	move.w	d1, d0
+	add.w	d0, d0				/* skip this Prg run's inline payload */
+	adda.w	d0, a2
+1:
 bf_chunk:
 	tst.w	d7
 	ble	bf_chunk_refill
@@ -2466,10 +2303,6 @@ pattern_transfer_vblanks:
 	.space 2				/* runtime budget index; DEBUG transfer_vblanks */
 pattern_exit_v:
 	.space 2				/* DEBUG transfer_end_vcounter */
-wr_ptr0:
-	.space 4				/* next Wr0 preload address in the currently mapped bank */
-wr_ptr1:
-	.space 4				/* next Wr1 preload address in the currently mapped bank */
 .ifdef MAIN_CODEGEN
 md_codegen:
 	.space 2				/* 1 only after the complete runtime proof succeeds */

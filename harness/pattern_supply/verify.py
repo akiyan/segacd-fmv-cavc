@@ -20,7 +20,7 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 22
+VERSION = 23
 CONTROL_SUFFIX_HEADER_BYTES = 2
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_FIXED_N2 = 0x0002
@@ -41,6 +41,14 @@ DIC_CAPACITY = 512
 ENTRY_DISPLAY_MASK = 0x67FF
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
+WORD_RAM_BANK_BYTES = 0x20000
+OUTPUT_HEADER_BYTES = 4
+OUTPUT_RUN_RECORD_BYTES = 22
+OUTPUT_MAIN_BASE = 0x200000
+DIC_MAIN_BASE = 0xFFBA40
+STATUS_BYTES = 0x0100
+CTRL_SCR_BYTES = 0x2000
+PAD_SCR_BYTES = 0x0800
 
 
 @dataclass(frozen=True)
@@ -243,6 +251,184 @@ def expected_runs(entries: tuple[int, ...], base: int) -> tuple[tuple[int, int, 
     return tuple(frozen)
 
 
+def align_up(value: int, alignment: int) -> int:
+    return (value + alignment - 1) // alignment * alignment
+
+
+def vdp_destination_command(destination: int) -> int:
+    """Return the exact 68000 VDP write command emitted by Sub."""
+    return (
+        0x40000000
+        | ((destination & 0x3FFF) << 16)
+        | ((destination >> 14) & 0x0003)
+    )
+
+
+def vdp_source_registers(raw_source: int, source: int) -> tuple[int, int, int]:
+    """Return registers 95-97, including the measured Word-RAM +2 fix."""
+    corrected = raw_source if source == SOURCE_DIC else raw_source + 2
+    word_source = corrected >> 1
+    return (
+        0x9500 | (word_source & 0xFF),
+        0x9600 | ((word_source >> 8) & 0xFF),
+        0x9700 | ((word_source >> 16) & 0xFF),
+    )
+
+
+def encode_loads_v2(
+    transfers: list[tuple[int, int, int, tuple[bytes, ...]]],
+    *,
+    parity: int,
+    base: int,
+    word_ptrs: list[int],
+    word_starts: tuple[int, int],
+    word_ends: tuple[int, int],
+) -> tuple[bytes, dict[int, bytes]]:
+    """Model Sub's source resolution and exact interleaved O_LOADS v2 bytes."""
+    loads = bytearray()
+    external: dict[int, bytes] = {}
+    n_load = 0
+    for slot, source, dic_index, patterns in transfers:
+        count = len(patterns)
+        if count <= 0:
+            raise AssertionError("O_LOADS v2 cannot encode an empty run")
+        record_start = OUTPUT_HEADER_BYTES + len(loads)
+        if source == SOURCE_PRG:
+            raw_source = OUTPUT_MAIN_BASE + record_start + OUTPUT_RUN_RECORD_BYTES
+        elif source == SOURCE_WR:
+            pointer = word_ptrs[parity]
+            if pointer == word_ends[parity]:
+                pointer = word_starts[parity]
+            end = pointer + count * PATTERN_BYTES
+            if end > word_ends[parity]:
+                raise AssertionError(
+                    f"Wr{parity} run crosses its generated ring end: "
+                    f"{pointer:#x}+{count} patterns > {word_ends[parity]:#x}")
+            raw_source = OUTPUT_MAIN_BASE + pointer
+            word_ptrs[parity] = end
+        elif source == SOURCE_DIC:
+            raw_source = DIC_MAIN_BASE + dic_index * PATTERN_BYTES
+        else:
+            raise AssertionError(f"invalid O_LOADS v2 source {source}")
+
+        destination = (base + slot) * PATTERN_BYTES
+        length_words = count * PATTERN_BYTES // 2
+        reg93 = 0x9300 | (length_words & 0xFF)
+        reg94 = 0x9400 | ((length_words >> 8) & 0xFF)
+        reg95, reg96, reg97 = vdp_source_registers(raw_source, source)
+        loads += struct.pack(
+            ">HHHLHHHHL",
+            length_words,
+            reg93,
+            reg94,
+            vdp_destination_command(destination),
+            destination,
+            reg95,
+            reg96,
+            reg97,
+            raw_source,
+        )
+        if source == SOURCE_PRG:
+            loads += b"".join(patterns)
+        else:
+            for index, pattern in enumerate(patterns):
+                address = raw_source + index * PATTERN_BYTES
+                previous = external.setdefault(address, pattern)
+                if previous != pattern:
+                    raise AssertionError(
+                        f"two O_LOADS sources disagree at {address:#x}")
+        n_load += count
+    return struct.pack(">HH", len(transfers), n_load) + loads, external
+
+
+def decode_loads_v2(
+    output: bytes,
+    external: dict[int, bytes],
+    *,
+    base: int,
+) -> tuple[tuple[int, int, int, tuple[bytes, ...]], ...]:
+    """Model Main's single-cursor in-place consumption of O_LOADS v2."""
+    if len(output) < OUTPUT_HEADER_BYTES:
+        raise AssertionError("O_LOADS v2 output is truncated")
+    n_runs, n_load = struct.unpack_from(">HH", output)
+    cursor = OUTPUT_HEADER_BYTES
+    decoded = []
+    decoded_loads = 0
+    for run_index in range(n_runs):
+        if cursor + OUTPUT_RUN_RECORD_BYTES > len(output):
+            raise AssertionError(f"O_LOADS v2 run {run_index} is truncated")
+        (
+            length_words,
+            reg93,
+            reg94,
+            command,
+            destination,
+            reg95,
+            reg96,
+            reg97,
+            raw_source,
+        ) = struct.unpack_from(">HHHLHHHHL", output, cursor)
+        cursor += OUTPUT_RUN_RECORD_BYTES
+        if length_words == 0 or length_words & 15:
+            raise AssertionError(
+                f"O_LOADS v2 run {run_index} has invalid length {length_words}")
+        count = length_words // 16
+        if (reg93, reg94) != (
+                0x9300 | (length_words & 0xFF),
+                0x9400 | ((length_words >> 8) & 0xFF)):
+            raise AssertionError(
+                f"O_LOADS v2 run {run_index} has invalid length registers")
+        if destination % PATTERN_BYTES:
+            raise AssertionError(
+                f"O_LOADS v2 run {run_index} has unaligned destination")
+        slot = destination // PATTERN_BYTES - base
+        if command != vdp_destination_command(destination):
+            raise AssertionError(
+                f"O_LOADS v2 run {run_index} has invalid VDP command")
+
+        inline_source = OUTPUT_MAIN_BASE + cursor
+        if raw_source == inline_source:
+            source = SOURCE_PRG
+            byte_count = count * PATTERN_BYTES
+            payload = output[cursor:cursor + byte_count]
+            if len(payload) != byte_count:
+                raise AssertionError(
+                    f"O_LOADS v2 run {run_index} inline Prg is truncated")
+            patterns = tuple(
+                payload[pos:pos + PATTERN_BYTES]
+                for pos in range(0, byte_count, PATTERN_BYTES)
+            )
+            cursor += byte_count
+            dic_index = 0
+        else:
+            source = SOURCE_DIC if raw_source >= DIC_MAIN_BASE else SOURCE_WR
+            dic_index = (
+                (raw_source - DIC_MAIN_BASE) // PATTERN_BYTES
+                if source == SOURCE_DIC else 0
+            )
+            try:
+                patterns = tuple(
+                    external[raw_source + index * PATTERN_BYTES]
+                    for index in range(count)
+                )
+            except KeyError as exc:
+                raise AssertionError(
+                    f"O_LOADS v2 run {run_index} points outside resolved storage"
+                ) from exc
+        if (reg95, reg96, reg97) != vdp_source_registers(raw_source, source):
+            raise AssertionError(
+                f"O_LOADS v2 run {run_index} has invalid source registers")
+        decoded.append((slot, source, dic_index, patterns))
+        decoded_loads += count
+    if cursor != len(output):
+        raise AssertionError(
+            f"O_LOADS v2 leaves {len(output) - cursor} unconsumed bytes")
+    if decoded_loads != n_load:
+        raise AssertionError(
+            f"O_NLOAD {n_load} differs from records {decoded_loads}")
+    return tuple(decoded)
+
+
 def take_region(
     header: bytes, cursor: int, sectors: int, useful_bytes: int, label: str,
 ) -> tuple[bytes, int]:
@@ -334,7 +520,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v22 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v23 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -347,15 +533,34 @@ def main() -> None:
         raise AssertionError(
             f"header signature 0x{signature:08X} != 0x{expected_signature:08X}")
 
-    supply = struct.unpack_from(">4s9H", header, 196)
+    supply = struct.unpack_from(">4s11H", header, 196)
     magic_supply, supply_version, reserved = supply[:3]
     (wr0_count, wr1_count, dic_count, wr0_sec, wr1_sec, dic_sec,
-     _cold_cap) = supply[3:]
-    if magic_supply != b"PSUP" or supply_version != 3 or reserved:
+     _cold_cap, wr0_load_bytes, wr1_load_bytes) = supply[3:]
+    if magic_supply != b"PSUP" or supply_version != 4 or reserved:
         raise AssertionError(f"invalid pattern-supply extension: {supply!r}")
+    status_offset = (
+        WORD_RAM_BANK_BYTES
+        - routing_sectors * SECTOR
+        - PAD_SCR_BYTES
+        - CTRL_SCR_BYTES
+        - STATUS_BYTES
+    )
+    word_starts = (
+        align_up(OUTPUT_HEADER_BYTES + wr0_load_bytes, PATTERN_BYTES),
+        align_up(OUTPUT_HEADER_BYTES + wr1_load_bytes, PATTERN_BYTES),
+    )
+    word_ends = tuple(
+        start + ((status_offset - start) // SECTOR) * SECTOR
+        for start in word_starts
+    )
+    word_capacities = tuple(
+        (end - start) // PATTERN_BYTES
+        for start, end in zip(word_starts, word_ends, strict=True)
+    )
     for label, count, sectors, capacity in (
-        ("Wr0", wr0_count, wr0_sec, 0xFFFF),
-        ("Wr1", wr1_count, wr1_sec, 0xFFFF),
+        ("Wr0", wr0_count, wr0_sec, word_capacities[0]),
+        ("Wr1", wr1_count, wr1_sec, word_capacities[1]),
         ("Dic", dic_count, dic_sec, DIC_CAPACITY),
     ):
         if count > capacity or sectors != (count + 63) // 64:
@@ -366,7 +571,7 @@ def main() -> None:
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]
     if len(boot_stage) != paltab_sectors * SECTOR:
         raise AssertionError("boot stage is truncated")
-    # v22: no palette rides the boot stage; the sidecar regions are fixed.
+    # v23: no palette rides the boot stage; the sidecar regions are fixed.
     sidecar_vram = {}
     if boot_stage[0x0FC0:0x0FC4] == b"BVRM":
         region_counts = struct.unpack_from(">3H", boot_stage, 0x0FC4)
@@ -497,6 +702,9 @@ def main() -> None:
     }
     consumed = {name: 0 for name in sources}
     vram: dict[int, bytes] = dict(sidecar_vram)
+    vram_v2: dict[int, bytes] = dict(sidecar_vram)
+    word_ptrs = list(word_starts)
+    loads_peaks = [0, 0]
     total_updates = 0
     total_cold = len(sidecar_vram)
 
@@ -561,6 +769,7 @@ def main() -> None:
             expected_by_slot[slot] = pattern
 
         armed_slots = set()
+        frame_transfers = []
         for run_slot, run_count, source_id, dic_index in control.runs:
             source_name = (
                 "F0" if frame == 0 and source_id == SOURCE_PRG else
@@ -568,6 +777,7 @@ def main() -> None:
                 ("Wr1" if frame & 1 else "Wr0") if source_id == SOURCE_WR else
                 "Dic" if source_id == SOURCE_DIC else "reserved"
             )
+            run_patterns = []
             for slot in range(run_slot, run_slot + run_count):
                 if slot in armed_slots or slot not in expected_by_slot:
                     raise AssertionError(
@@ -588,8 +798,45 @@ def main() -> None:
                     raise AssertionError(
                         f"frame {frame}: {source_name} pattern differs at slot {slot}")
                 vram[slot] = actual
+                run_patterns.append(actual)
                 armed_slots.add(slot)
                 total_cold += 1
+            frame_transfers.append(
+                (run_slot, source_id, dic_index, tuple(run_patterns)))
+
+        try:
+            output_v2, external_v2 = encode_loads_v2(
+                frame_transfers,
+                parity=frame & 1,
+                base=base,
+                word_ptrs=word_ptrs,
+                word_starts=word_starts,
+                word_ends=word_ends,
+            )
+        except AssertionError as exc:
+            raise AssertionError(f"frame {frame}: {exc}") from exc
+        decoded_v2 = decode_loads_v2(
+            output_v2,
+            external_v2,
+            base=base,
+        )
+        if decoded_v2 != tuple(frame_transfers):
+            raise AssertionError(
+                f"frame {frame}: O_LOADS v2 differs from descriptor replay")
+        output_bytes = len(output_v2) - OUTPUT_HEADER_BYTES
+        parity = frame & 1
+        loads_peaks[parity] = max(loads_peaks[parity], output_bytes)
+        declared_peak = (wr0_load_bytes, wr1_load_bytes)[parity]
+        if output_bytes > declared_peak:
+            raise AssertionError(
+                f"frame {frame}: O_LOADS v2 uses {output_bytes} bytes, "
+                f"declared parity peak is {declared_peak}")
+        for run_slot, _source_id, _dic_index, patterns in decoded_v2:
+            for offset, pattern in enumerate(patterns):
+                vram_v2[run_slot + offset] = pattern
+        if vram_v2 != vram:
+            raise AssertionError(
+                f"frame {frame}: descriptor and O_LOADS v2 VRAM states differ")
 
         for item, entry in zip(ordered, control.entries, strict=True):
             expected = packed_pattern(bytes(item[2]))
@@ -610,6 +857,11 @@ def main() -> None:
     }
     if leftovers:
         raise AssertionError(f"unconsumed pattern supplies: {leftovers}")
+    declared_peaks = (wr0_load_bytes, wr1_load_bytes)
+    if tuple(loads_peaks) != declared_peaks:
+        raise AssertionError(
+            f"O_LOADS v2 peaks {tuple(loads_peaks)} differ from "
+            f"PSUP {declared_peaks}")
     print(
         "pattern supply replay: OK "
         f"({frames} frames, {total_updates} updates, {total_cold} cold; "
@@ -617,6 +869,10 @@ def main() -> None:
         f"Wr1={consumed['Wr1']} Dic hits={consumed['Dic']} "
         f"Sidecar={len(sidecar_vram)})")
     print("VRAM resident/reuse equivalence: OK (every updated cell, every frame)")
+    print(
+        "O_LOADS v2 equivalence: OK "
+        f"(descriptor replay == in-place records; peaks "
+        f"Wr0={wr0_load_bytes} B, Wr1={wr1_load_bytes} B)")
 
 
 if __name__ == "__main__":

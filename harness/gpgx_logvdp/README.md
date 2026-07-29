@@ -122,11 +122,12 @@ The output separates:
 - name-table DMA words transferred in blanking and active display; and
 - pattern DMA command and update counts.
 
-The extractor identifies the ordinary pattern-DMA and fixed 1792-word
-name-table-DMA call sites from the trace instead of depending on fixed program
-counter values. DMA-generated VRAM writes carry those call-site PCs and are
-excluded from the CPU totals. In the fixed H40 player, the remaining per-frame
-VRAM writes are the one-word DMA repairs.
+The extractor identifies every timed pattern-DMA wait site (whole-run, split
+Word-RAM, and split DicBuf) and the fixed 1792-word name-table-DMA site from
+the trace instead of depending on fixed program-counter values. DMA-generated
+VRAM writes carry those site PCs and are excluded from the CPU totals. In the
+fixed H40 player, the remaining per-frame VRAM writes are the one-word DMA
+repairs.
 If the safety recording continues into another movie loop, extraction stops
 after the complete first loop named by the HUD TSV; the later trace remains in
 the compressed sidecar but does not extend the frame axis.

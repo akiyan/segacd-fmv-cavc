@@ -213,8 +213,11 @@ Full-length emulator runs, one per realized cap, all with
 
 Full-length A/B recordings falsified two mechanisms and confirmed one:
 
-- **RUN_TABLE pre-swizzle** (kept): moves the per-run register arithmetic
-  into Pass1. Helpful but small — plateau `transfer_ticks` barely moved.
+- **Main RUN_TABLE pre-swizzle** (superseded): moving per-run register
+  arithmetic into Main Pass1 was helpful but small — plateau
+  `transfer_ticks` barely moved. The current player has Sub emit `O_LOADS v2`
+  records and Main consumes them in place, so neither Pass1 nor RUN_TABLE
+  remains.
 - **CPU_DIRECT_MAX_WORDS 32 -> 128** (rejected): no improvement at all.
   Together these prove the transfer is **VRAM-access-slot bound, not
   issue-mechanism bound**: past the VBlank, both DMA and CPU writes crawl

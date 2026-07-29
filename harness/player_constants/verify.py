@@ -99,6 +99,8 @@ def make_header(case: Case) -> bytes:
             (layout.wr1_patterns + 63) // 64,
             (pattern_supply.DIC_BUF_PATTERNS + 63) // 64,
             cold_cap,
+            layout.wr0_load_bytes,
+            layout.wr1_load_bytes,
         )
     return player_constants.stamp_header_sector(sector)
 

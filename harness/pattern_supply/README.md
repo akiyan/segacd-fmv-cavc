@@ -1,6 +1,7 @@
 # Pattern supply replay
 
-This harness independently verifies the v19 boot-preloaded pattern supplies.
+This harness independently verifies the version-23 boot-preloaded pattern
+supplies and the O_LOADS v2 handoff.
 It does not import the production packer, scheduler, or planner.
 
 The player has four pattern sources:
@@ -41,4 +42,4 @@ pattern against the decision log. It also requires every consumptive preload
 and every useful Prg pattern to be consumed exactly once, while DicBuf entries
 may be reused by index.
 
-Run this proof again after a current v19 full encode.
+Run this proof again after every current full encode.

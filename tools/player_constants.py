@@ -29,8 +29,8 @@ HEADER_SIGNATURE_OFFSET = FIXED_HEADER_BYTES + SEG0_BYTES
 HEADER_STRUCT = struct.Struct(">4s9H4LBB3L6H")
 PATTERN_SUPPLY_OFFSET = HEADER_SIGNATURE_OFFSET + 4
 PATTERN_SUPPLY_MAGIC = b"PSUP"
-PATTERN_SUPPLY_VERSION = 3
-PATTERN_SUPPLY_STRUCT = struct.Struct(">4s9H")
+PATTERN_SUPPLY_VERSION = 4
+PATTERN_SUPPLY_STRUCT = struct.Struct(">4s11H")
 
 MODE_SPECS = {
     0: ("H32", 32, 2800),
@@ -110,14 +110,14 @@ class PlayerConstants:
     wr1_sectors: int
     dic_sectors: int
     cold_cap: int
+    wr0_load_bytes: int
+    wr1_load_bytes: int
     routing_bytes: int
     routing_offset: int
     routing_copy_longs: int
     status_offset: int
     ctrl_scr_offset: int
     pad_scr_offset: int
-    adpcm_table_offset: int
-    pcm_dec_buf_offset: int
     wr0_offset: int
     wr0_end: int
     wr0_capacity: int
@@ -234,6 +234,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         wr0_patterns, wr1_patterns, dic_patterns,
         wr0_sectors, wr1_sectors, dic_sectors,
         cold_cap,
+        wr0_load_bytes, wr1_load_bytes,
     ) = supply_values
     if pattern_supply_enabled:
         if not indexed_dicbuf:
@@ -246,7 +247,13 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
                 f"reserved={supply_reserved}")
         if cold_cap <= 0:
             raise ValueError(f"invalid pattern-supply cold cap: {cold_cap}")
-        wordram = pattern_supply.word_ram_layout(frames, cells, cold_cap)
+        wordram = pattern_supply.word_ram_layout(
+            frames,
+            cells,
+            cold_cap,
+            wr0_load_bytes=wr0_load_bytes,
+            wr1_load_bytes=wr1_load_bytes,
+        )
         capacities = (
             ("Wr0", wr0_patterns, wordram.wr0_patterns, wr0_sectors),
             ("Wr1", wr1_patterns, wordram.wr1_patterns, wr1_sectors),
@@ -265,6 +272,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             raise ValueError("pattern-supply extension is present while feature bit 3 is clear")
         wr0_patterns = wr1_patterns = dic_patterns = 0
         wr0_sectors = wr1_sectors = dic_sectors = 0
+        wr0_load_bytes = wr1_load_bytes = 0
         # A header without pattern supply carries no cold-cap field. Its empty
         # WordBuf layout uses the full grid only as a conservative size input.
         cold_cap = cells
@@ -324,14 +332,14 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         wr1_sectors=wr1_sectors,
         dic_sectors=dic_sectors,
         cold_cap=cold_cap,
+        wr0_load_bytes=wordram.wr0_load_bytes,
+        wr1_load_bytes=wordram.wr1_load_bytes,
         routing_bytes=wordram.routing_bytes,
         routing_offset=wordram.routing_offset,
         routing_copy_longs=wordram.routing_copy_longs,
         status_offset=wordram.status_offset,
         ctrl_scr_offset=wordram.ctrl_scr_offset,
         pad_scr_offset=wordram.pad_scr_offset,
-        adpcm_table_offset=wordram.adpcm_table_offset,
-        pcm_dec_buf_offset=wordram.pcm_dec_buf_offset,
         wr0_offset=wordram.wr0_offset,
         wr0_end=wordram.wr0_end,
         wr0_capacity=wordram.wr0_patterns,
@@ -354,9 +362,9 @@ INCLUDE_ORDER = (
     "jitter_headroom_kb",
     "wr0_patterns", "wr1_patterns", "dic_patterns",
     "wr0_sectors", "wr1_sectors", "dic_sectors",
-    "cold_cap", "routing_bytes", "routing_offset", "routing_copy_longs",
+    "cold_cap", "wr0_load_bytes", "wr1_load_bytes",
+    "routing_bytes", "routing_offset", "routing_copy_longs",
     "status_offset", "ctrl_scr_offset", "pad_scr_offset",
-    "adpcm_table_offset", "pcm_dec_buf_offset",
     "wr0_offset", "wr0_end", "wr0_capacity",
     "wr1_offset", "wr1_end", "wr1_capacity",
 )

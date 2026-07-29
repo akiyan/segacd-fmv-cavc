@@ -11,6 +11,56 @@ from upgrade_planner import DemandPrediction
 
 
 class PatternSupplyEncodingTests(unittest.TestCase):
+    def test_output_load_v2_counts_records_and_only_inline_prg_payload(self):
+        self.assertEqual(
+            supply.output_load_bytes(prg_patterns=17, runs=5),
+            17 * 32 + 5 * 22,
+        )
+        self.assertEqual(
+            supply.output_load_bytes(prg_patterns=0, runs=3),
+            3 * 22,
+        )
+        with self.assertRaises(ValueError):
+            supply.output_load_bytes(prg_patterns=1, runs=0)
+
+    def test_output_load_v2_recomputes_each_parity_peak(self):
+        # The old 4-byte layout peaks at frame 0 (10*32+1*4=324), but the
+        # expanded record cost moves the even-parity peak to frame 2
+        # (9*32+4*22=376). This guards against merely adding 18 bytes to the
+        # run count of the old peak frame.
+        wr0, wr1 = supply.output_load_peaks(
+            prg_patterns=(10, 3, 9, 2),
+            runs=(1, 5, 4, 6),
+        )
+        self.assertEqual(
+            wr0,
+            supply.OutputLoadPeak(parity=0, frame=2, bytes=376),
+        )
+        self.assertEqual(
+            wr1,
+            supply.OutputLoadPeak(parity=1, frame=1, bytes=206),
+        )
+
+    def test_output_load_v2_accepts_numpy_traces_used_by_sim(self):
+        wr0, wr1 = supply.output_load_peaks(
+            prg_patterns=np.asarray([10, 3, 9, 2], np.int64),
+            runs=np.asarray([1, 5, 4, 6], np.int64),
+        )
+        self.assertEqual(wr0.bytes, 376)
+        self.assertEqual(wr1.bytes, 206)
+
+    def test_output_load_v2_one_frame_has_empty_odd_parity(self):
+        wr0, wr1 = supply.output_load_peaks(
+            prg_patterns=(1120,),
+            runs=(1,),
+        )
+        self.assertEqual(wr0.frame, 0)
+        self.assertEqual(wr0.bytes, 1120 * 32 + 22)
+        self.assertEqual(
+            wr1,
+            supply.OutputLoadPeak(parity=1, frame=-1, bytes=0),
+        )
+
     def test_word_ram_layout_is_sector_routed_and_parity_specific(self):
         layout = supply.word_ram_layout(
             frames=6576, cells=40 * 28, cold_cap=180)
@@ -20,10 +70,10 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             layout.routing_offset + layout.routing_bytes,
             supply.WORD_RAM_BANK_BYTES,
         )
-        self.assertEqual(layout.wr0_load_bytes, 4 + 1120 * 32)
-        self.assertEqual(layout.wr1_load_bytes, 180 * 36)
-        self.assertEqual(layout.wr0_patterns, 2048)
-        self.assertEqual(layout.wr1_patterns, 2944)
+        self.assertEqual(layout.wr0_load_bytes, 1120 * 32 + 22)
+        self.assertEqual(layout.wr1_load_bytes, 180 * (32 + 22))
+        self.assertEqual(layout.wr0_patterns, 2368)
+        self.assertEqual(layout.wr1_patterns, 3200)
         self.assertLess(layout.status_offset - layout.wr0_end, 2048)
         self.assertLess(layout.status_offset - layout.wr1_end, 2048)
         self.assertEqual(
@@ -35,9 +85,25 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             layout.pad_scr_offset,
         )
         self.assertEqual(
-            layout.pcm_dec_buf_offset + supply.PCM_DEC_BUF_BYTES,
+            layout.pad_scr_offset + supply.PAD_SCR_BYTES,
             layout.routing_offset,
         )
+
+    def test_exact_output_peaks_reclaim_sector_rounded_wordbuf_space(self):
+        layout = supply.word_ram_layout(
+            frames=6576,
+            cells=40 * 28,
+            cold_cap=180,
+            wr0_load_bytes=376,
+            wr1_load_bytes=206,
+        )
+
+        self.assertEqual(layout.wr0_offset, 384)
+        self.assertEqual(layout.wr1_offset, 224)
+        self.assertEqual(layout.wr0_patterns, 3456)
+        self.assertEqual(layout.wr1_patterns, 3456)
+        self.assertEqual(layout.wr0_load_bytes, 376)
+        self.assertEqual(layout.wr1_load_bytes, 206)
 
     def test_shorter_movie_reclaims_routing_sectors(self):
         short = supply.word_ram_layout(
@@ -111,6 +177,38 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             supply.source_run_lengths(slots, sources),
             (2, 4, 1),
         )
+
+    def test_word_run_splits_at_ring_end_without_reordering_slots(self):
+        runs = (
+            (100, 48, supply.SOURCE_WR, 0),
+            (200, 4, supply.SOURCE_DIC, 17),
+        )
+        split, cursor = supply.split_word_ring_runs(
+            runs,
+            capacity=2688,
+            cursor=2643,
+        )
+        self.assertEqual(
+            split,
+            (
+                (100, 45, supply.SOURCE_WR, 0),
+                (145, 3, supply.SOURCE_WR, 0),
+                (200, 4, supply.SOURCE_DIC, 17),
+            ),
+        )
+        self.assertEqual(cursor, 3)
+
+    def test_word_run_ending_exactly_at_ring_end_needs_no_extra_record(self):
+        split, cursor = supply.split_word_ring_runs(
+            ((7, 45, supply.SOURCE_WR, 0),),
+            capacity=2688,
+            cursor=2643,
+        )
+        self.assertEqual(
+            split,
+            ((7, 45, supply.SOURCE_WR, 0),),
+        )
+        self.assertEqual(cursor, 0)
 
 
 class PatternSupplyPlannerTests(unittest.TestCase):
@@ -283,6 +381,31 @@ class PatternSupplyPlannerTests(unittest.TestCase):
         self.assertEqual(plan.prg_patterns, (patterns[0], patterns[3]))
         self.assertEqual(plan.wr1_patterns, (patterns[1],))
         self.assertEqual(plan.dic_patterns, (patterns[2],))
+
+    def test_frozen_source_reader_accepts_schema_five(self):
+        per = [
+            ([0], [1], [True]),
+            ([0, 1], [1, 2], [True, True]),
+        ]
+        log = {
+            "pattern_supply": {
+                "schema_version": 5,
+                "sources": [
+                    np.array([supply.SOURCE_PRG], np.uint8),
+                    np.array(
+                        [supply.SOURCE_WR, supply.SOURCE_DIC],
+                        np.uint8,
+                    ),
+                ],
+            },
+        }
+        self.assertEqual(
+            supply._frozen_sources(log, per),
+            [
+                [supply.SOURCE_PRG],
+                [supply.SOURCE_WR, supply.SOURCE_DIC],
+            ],
+        )
 
     def test_disabled_plan_keeps_every_pattern_in_prg(self):
         per = [([0], [1], [True]), ([0], [2], [True])]

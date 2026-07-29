@@ -7,7 +7,7 @@ has an fps-derived normal prebuffer ceiling plus a physical delivery ceiling,
 and the player holds the real sectors. Historically each side had its own
 capacity knob:
 
-* player  ``.equ RING_SIZE``       = 422 KB   (the physical buffer)
+* player  ``.equ RING_SIZE``       = 420 KB   (the physical buffer)
 * pack    normal prebuffer ceiling  = fps-derived
 * sim     quality budget             = 440 KB   (*larger than PrgBuf!*)
 
@@ -31,49 +31,59 @@ import math
 import os
 
 # The outer boot image occupies the first 32 KiB of the data track. The BIOS
-# supports a multi-sector Sub program; this project reserves its final 8 KiB at
+# supports a multi-sector Sub program; this project reserves its final 5 KiB at
 # disc offset 0x6000 and loads it contiguously at Sub PRG 0x6000. Boot-only ISO
 # directory scratch lives in the inactive timed-ring tail rather than directly
 # after the program, so the resident image is not artificially capped at 4 KiB.
 BOOT_IMAGE_BYTES = 0x00008000
 SUB_BOOT_SOURCE_BASE = 0x00006000
-SUB_BOOT_IMAGE_MAX_BYTES = 0x00002000
+SUB_BOOT_IMAGE_MAX_BYTES = 0x00001400
 SUB_BOOT_EXTENSION_LOAD_BASE = 0x0007D260
 SUB_BOOT_ISO_BUF_BASE = 0x00067000
 SUB_BOOT_ISO_BUF_BYTES = 0x00010000
 SUB_BOOT_ISO_BUF_END = SUB_BOOT_ISO_BUF_BASE + SUB_BOOT_ISO_BUF_BYTES
 
-# Marker tests prove this PRG-RAM interval remains writable by the Sub program
-# during continuous CD reads. It holds per-frame decoded-PCM scratch; persistent
-# hot ADPCM tables instead reserve the first 4 KiB of the proven timed ring.
-SUB_PRG_SAFE_BASE = 0x00008000
+# Marker tests prove 0x7400..0x7FFF remains readable throughout continuous CD
+# service. The live map combines that reclaimed resident tail with the existing
+# 0x8000..0x97FF scratch: index/PCM/pending/LUT data stay below the BIOS-touched
+# 0x9800 boundary, while the larger signed-delta table starts at 0xC000.
+SUB_PRG_SAFE_BASE = 0x00007400
 SUB_PRG_SAFE_END = 0x00009800
-PCM_DEC_BUF_BASE = SUB_PRG_SAFE_BASE
-PCM_DEC_BUF_BYTES = 0x00000600
-PCM_DEC_BUF_END = PCM_DEC_BUF_BASE + PCM_DEC_BUF_BYTES
-ADPCM_INDEX_TABLE_BASE = 0x0000C000
+ADPCM_INDEX_TABLE_BASE = SUB_PRG_SAFE_BASE
 ADPCM_INDEX_TABLE_BYTES = 0x00000B20
 ADPCM_INDEX_TABLE_END = ADPCM_INDEX_TABLE_BASE + ADPCM_INDEX_TABLE_BYTES
-ADPCM_OUTPUT_LUT_BASE = ADPCM_INDEX_TABLE_END
+PCM_DEC_BUF_BASE = 0x00008000
+PCM_DEC_BUF_BYTES = 0x00000600
+PCM_DEC_BUF_END = PCM_DEC_BUF_BASE + PCM_DEC_BUF_BYTES
+ADPCM_OUTPUT_LUT_BASE = 0x00009600
 ADPCM_OUTPUT_LUT_BYTES = 0x00000100
 ADPCM_OUTPUT_LUT_END = ADPCM_OUTPUT_LUT_BASE + ADPCM_OUTPUT_LUT_BYTES
+ADPCM_DELTA_TABLE_BASE = 0x0000C000
+ADPCM_DELTA_TABLE_BYTES = 0x00001640
+ADPCM_DELTA_TABLE_END = ADPCM_DELTA_TABLE_BASE + ADPCM_DELTA_TABLE_BYTES
 SUB_BOOT_EXTENSION_EXEC_BASE = 0x00076800
 SUB_BOOT_EXTENSION_MAX_BYTES = 0x000005A0
-PRG_BUF_BASE = 0x0000D000
+PRG_BUF_BASE = 0x0000D800
 
 assert SUB_PRG_SAFE_BASE <= PCM_DEC_BUF_BASE
 assert PCM_DEC_BUF_END <= SUB_PRG_SAFE_END
-assert ADPCM_INDEX_TABLE_END == ADPCM_OUTPUT_LUT_BASE
-assert ADPCM_OUTPUT_LUT_END <= PRG_BUF_BASE
+assert ADPCM_INDEX_TABLE_END <= PCM_DEC_BUF_BASE
+assert ADPCM_OUTPUT_LUT_END <= SUB_PRG_SAFE_END
+assert ADPCM_DELTA_TABLE_END <= PRG_BUF_BASE
 assert (
     SUB_BOOT_SOURCE_BASE + SUB_BOOT_IMAGE_MAX_BYTES
     <= BOOT_IMAGE_BYTES)
 assert SUB_BOOT_ISO_BUF_END <= 0x00077000
 
 # Physical PRG-RAM ring in the player. MUST equal boot/movieplay_sp.s
-# `.equ RING_SIZE` (0x69800 = 422 KB). Build-time assertion enforces it.
-# The first 4 KiB of the former ring holds persistent hot ADPCM tables.
-RING_SIZE_KB = 422
+# `.equ RING_SIZE` (0x69000 = 420 KB). Build-time assertion enforces it.
+# The 2 KiB reduction gives the signed ADPCM delta table a checked gap before
+# the ring without consuming either pending-sector scratch or APPLY space.
+RING_SIZE_KB = 420
+
+# The route format can represent four Word sectors for compatibility, but the
+# live PRG-RAM map intentionally has three pending destinations.
+WORD_PENDING_SECTORS = 3
 
 # Keep the physical overflow guard distinct from delivery-jitter headroom. The
 # player throttles its CD pump at RING_SIZE-4KB (back-pressure). The encoder's

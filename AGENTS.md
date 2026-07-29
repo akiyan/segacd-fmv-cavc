@@ -249,8 +249,8 @@ within Sega CD limits, not fixed presets:
   per-frame DMA budget.
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
-  CPU through full lookup tables duplicated in both physical 1M Word-RAM
-  banks. It is the only audio format in on-disc format version 22. Physical
+  CPU through full lookup tables installed once in Sub PRG-RAM. It is the only
+  audio format in on-disc format version 23. Physical
   hardware and additional modes/cadences are broader compatibility checks
   rather than implementation blockers (see [ADPCM.md](ADPCM.md)). Z80 offload
   remains shelved because BUSREQ-based feeding contends with Main CPU video
@@ -321,17 +321,16 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 - RF5C164 wave RAM writes use the odd byte window and correct PCM bank select.
 - Keep three Sub-program domains separate: the SP source inside the disc system
   area, the BIOS-loaded resident destination in Sub PRG-RAM, and boot-only
-  scratch in Sub PRG-RAM. The BIOS can load a multi-sector SP; the former 4 KiB
-  limit was a project layout caused by placing its disc source at `0x7000` in a
-  32 KiB boot image and reusing PRG `0x7000` as ISO scratch. The active layout
-  places the source at `0x6000`, reserves up to 8 KiB at resident PRG `0x6000`,
-  and moves the 64 KiB ISO scratch to the inactive timed-ring tail
-  `0x67000..0x76FFF`.
-- Do not infer generic live scratch from unused bytes inside the 8 KiB SP
-  reservation. Only the exact linked resident prefix is playback-qualified.
-  Marker tests qualify rewritten scratch at `0x08000..0x097FF`;
-  `0x09800..0x0BFFF` is BIOS-touched during continuous reads. Prefer checked
-  high PRG allocations for routing and queues.
+  scratch in Sub PRG-RAM. The BIOS can load a multi-sector SP. The active
+  layout places the source at `0x6000`, reserves 5 KiB at resident PRG
+  `0x6000..0x73FF`, and places the 64 KiB ISO scratch in the inactive
+  timed-ring tail `0x67000..0x76FFF`.
+- Do not infer generic live scratch from an address gap. Marker tests qualify
+  continuous-read stability at `0x7400..0x7FFF` and rewritten scratch at
+  `0x08000..0x097FF`; the active map assigns most of those ranges to ADPCM,
+  PCM, and pending-sector state. `0x09800..0x0BFFF` is BIOS-touched during
+  continuous reads. Prefer checked high PRG allocations for routing and
+  queues.
 - Long CDC drain gaps can silently drop sectors. Streaming code must keep
   pumping while Main CPU work is happening.
 - In Sub-CPU wait loops, service an already-arrived or already-cleared

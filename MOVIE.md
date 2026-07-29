@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 22
+VERSION        = 23
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 22. Bitmap controls insert one zero byte after an
+The player accepts version 23. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -109,7 +109,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | exactly `20` |
+| 4 | 2 | version | exactly `23` |
 | 6 | 2 | frames | total frame count (`nfr`) |
 | 8 | 2 | tcols | tile-grid columns |
 | 10 | 2 | trows | tile-grid rows |
@@ -145,8 +145,8 @@ The remaining fields are:
 | 62 | 2 | features | feature bits described below |
 | 64 | 128 | pad | zero |
 | 192 | 4 | player_signature | CRC-32 of bytes 0 through 63 |
-| 196 | 20 | PSUP | pattern-supply extension when feature bit 3 is set |
-| 216 | 1832 | pad | zero |
+| 196 | 26 | PSUP | pattern-supply extension when feature bit 3 is set |
+| 222 | 1826 | pad | zero |
 
 `vsync_n` is authoritative when `FEATURE_FIXED_N` is set. Otherwise it is a
 display hint and delivery follows `75 / fps_int`. `audio_bytes` is normally
@@ -175,12 +175,12 @@ Unknown feature bits are rejected.
 
 ### PSUP extension
 
-PSUP is `struct ">4s9H"`.
+PSUP is `struct ">4s11H"`.
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 196 | 4 | magic | `"PSUP"` |
-| 200 | 2 | version | exactly `3` |
+| 200 | 2 | version | exactly `4` |
 | 202 | 2 | reserved | zero |
 | 204 | 2 | wr0_patterns | WordBuf0 count, at most the generated Wr0 capacity |
 | 206 | 2 | wr1_patterns | WordBuf1 count, at most the generated Wr1 capacity |
@@ -189,10 +189,14 @@ PSUP is `struct ">4s9H"`.
 | 212 | 2 | wr1_sectors | WR1_PRELOAD sectors |
 | 214 | 2 | dic_sectors | DIC_PRELOAD sectors |
 | 216 | 2 | cold_cap | timed cold-pattern limit used to derive the Word-RAM map |
+| 218 | 2 | wr0_load_bytes | exact even-frame `O_LOADS v2` peak, excluding the four-byte output header |
+| 220 | 2 | wr1_load_bytes | exact odd-frame `O_LOADS v2` peak, excluding the four-byte output header |
 
 Each sector count must equal `ceil(patterns * 32 / 2048)`. Generated player
 constants freeze the preload values, routing allocation, compact-tail offsets,
-and parity-specific WordBuf starts, ends, and capacities.
+and parity-specific WordBuf starts, ends, and capacities. The packer
+independently recomputes both `O_LOADS v2` peaks from the materialized runs and
+rejects a mismatch with the decision log.
 
 ## Player-embedded palette tables
 
@@ -240,30 +244,30 @@ runs on movie restart.
 ## ADPCM table
 
 Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup
-data. The current 216-byte position-fixed Sub boot extension follows in
-existing padding, and the remaining 1,224 bytes are zero.
+data. The 940-byte position-fixed Sub boot extension follows in existing
+padding, and the remaining 500 bytes are zero.
 
 | Offset | Size | Contents |
 |---:|---:|---|
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
-| 8,800 | 216 B | boot-only Sub ADPCM-install, routing-prepare, and queue-initialization extension |
-| 9,016 | 1,224 B | zero padding |
+| 8,800 | 940 B | boot-only Sub table install, PCM initialization, routing preparation, and queue initialization extension |
+| 9,740 | 500 B | zero padding |
 
 The first 88 extension bytes are copied to `0x76800` and run before routing is
 staged. With a routing preload of at most 8 KiB, the second entry remains
 outside the routing bytes and runs in place at staged address `0x7D2B8` after
-prebuffer completes. Longer-route builds copy all 216 bytes first and run that
-entry at `0x76858`.
+prebuffer completes. Longer-route builds copy all 940 bytes first and run that
+entry at `0x76858`. The fixed third entry at extension offset `+0x300` runs in
+place at `0x7D560` to clear and initialize wave RAM before routing can reuse
+the staged area.
 
 Sub keeps the disc bytes unchanged. It copies the 2,848-byte next-index table
-to PRG-RAM `0x0C000`, the 256-byte output table to `0x0CB20`, and the
-5,696-byte signed-delta table to its generated fixed-tail offset in both
-physical banks. The decoded PCM buffer is Sub-owned PRG-RAM at
-`0x08000..0x085FF`. The generated Word-RAM tail retains the complete table and
-PCM reservations, including the unused index/output holes, so player-only A/B
-builds retain identical preload capacities and stream bytes.
+to PRG-RAM `0x07400`, the 256-byte output table to `0x09600`, and the
+5,696-byte signed-delta table to PRG-RAM `0x0C000`. Each table is installed
+once; no ADPCM lookup or PCM reservation remains in either Word-RAM bank. The
+decoded PCM buffer is Sub-owned PRG-RAM at `0x08000..0x085FF`.
 
 ## Pattern preload regions
 
@@ -273,20 +277,49 @@ Each preload contains 32-byte patterns and zero padding to its declared sector
 boundary.
 
 WordBuf0 and WordBuf1 have generated, parity-specific starts and capacities.
-Wr0 starts after the frame-0 `O_LOADS` envelope; Wr1 starts after the timed
-cold/run envelope. Both capacities are rounded down to complete preload
-sectors. Even timed frames consume WordBuf0 and odd timed frames consume
-WordBuf1. Each preload is the initial content of that parity's WordBuf ring.
+Each start first reserves that parity's exact `O_LOADS v2` peak:
+`32 * inline Prg patterns + 22 * runs`, recomputed over every even or odd
+frame. Only the residual space becomes WordBuf, rounded down to complete
+preload sectors. Even timed frames consume WordBuf0 and odd timed frames
+consume WordBuf1. Each preload is the initial content of that parity's WordBuf
+ring.
 When the stream carries the WordBuf-ring feature, a slot's leading
 `n_word_sec` payload sectors append 64 patterns each to the arriving frame's
 parity ring; write and read cursors both advance forward and wrap at the
 declared capacity, and the packer's replay proves every refill sector commits
-before its frame begins expanding.
+before its frame begins expanding. A compact Wr source run that reaches the
+declared physical ring end is split there into adjacent descriptors before the
+control block is written. The VRAM destination remains contiguous, while the
+extra descriptor, `O_LOADS v2` record, DMA first-word repair, and control bytes
+are included in every capacity and work model. No linear Word-RAM DMA source
+range crosses the ring end.
 
 DicBuf holds at most 512 reusable patterns. It is staged at Word RAM
 `+0x6000..+0x9FFF` and copied once to Main RAM `0xFFBA40..0xFFFA3F`. Run
 descriptors address entries by a 9-bit index whose top bit rides the run
 source field.
+
+### Player `O_LOADS v2` handoff
+
+The four-byte cold-run descriptors in `BODY.DAT` remain compact transport
+data. They are not the Main-facing run plan. While expanding a frame, Sub
+writes `O_NRUN` and `O_NLOAD` at bank offsets `+0` and `+2`, then writes
+interleaved 22-byte records from `O_LOADS` at `+4`:
+
+| Record offset | Size | Meaning |
+|---:|---:|---|
+| `+0` | 2 | DMA length in words |
+| `+2`, `+4` | 2 each | VDP registers 93 and 94 |
+| `+6` | 4 | destination VDP command |
+| `+10` | 2 | raw destination byte address |
+| `+12`, `+14`, `+16` | 2 each | VDP source registers 95, 96, and 97 |
+| `+18` | 4 | resolved raw source address |
+
+A Prg record is followed immediately by `count * 32` inline pattern bytes,
+and its raw source points to those bytes in Main's Word-RAM view. Wr and Dic
+records carry no inline payload and point directly at WordBuf or DicBuf.
+Main consumes this single cursor in place, including split DMA continuation;
+it does not construct a Main-RAM run table.
 
 ## BODY arm audio
 
@@ -367,8 +400,8 @@ before the current frame consumes its patterns.
 
 PREBUFFER contains the first `prebuf_pat` Prg patterns for frames 1 onward.
 It is loaded before playback. Both PREBUFFER and the exact scheduled-delivery
-ceiling use 378 KiB at 15 fps, 393 KiB at 24 fps, and 398 KiB at 30 fps. The
-remaining 40/25/20 KiB to the 418 KiB observation boundary is reserved for
+ceiling use 374 KiB at 15 fps, 389 KiB at 24 fps, and 394 KiB at 30 fps. The
+remaining 40/25/20 KiB to the 414 KiB observation boundary is reserved for
 live sector-arrival variation.
 
 ## BODY frame slot
@@ -406,10 +439,12 @@ payload.
 at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
 
-The run descriptors immediately follow `n_runs`. Main schedules them at
-runtime with the guarded residual VBlank budget. Every pattern run uses DMA.
-Any run crossing the current residual is split at that boundary and continues
-at the next fresh VBlank head. The stream carries no encoded VBlank boundary.
+The run descriptors immediately follow `n_runs`. Sub resolves them into
+`O_LOADS v2` while preserving its CDC polling cadence. Main schedules those
+expanded records at runtime with the guarded residual VBlank budget. Every
+pattern run uses DMA. Any run crossing the current residual is split at that
+boundary and continues at the next fresh VBlank head. The stream carries no
+encoded VBlank boundary.
 
 Bitmap updates use `ceil(cells / 8)` bytes, followed by a zero byte when that
 size is odd. One 16-bit entry follows for each set bit in ascending cell order:
@@ -484,13 +519,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 22
+VERSION        = 23
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は22です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は23です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -569,7 +604,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | 必ず `20` |
+| 4 | 2 | version | 必ず `23` |
 | 6 | 2 | frames | 総frame数（`nfr`） |
 | 8 | 2 | tcols | tile gridの列数 |
 | 10 | 2 | trows | tile gridの行数 |
@@ -605,8 +640,8 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 62 | 2 | features | 下記のfeature bit |
 | 64 | 128 | pad | zero |
 | 192 | 4 | player_signature | byte 0〜63のCRC-32 |
-| 196 | 20 | PSUP | feature bit 3がsetのときのpattern-supply extension |
-| 216 | 1832 | pad | zero |
+| 196 | 26 | PSUP | feature bit 3がsetのときのpattern-supply extension |
+| 222 | 1826 | pad | zero |
 
 `FEATURE_FIXED_N` がsetなら `vsync_n` が正式なcadenceです。clearならdisplay
 hintとして使い、deliveryは `75 / fps_int` に従います。`audio_bytes` は通常、
@@ -634,12 +669,12 @@ player signatureは同じheader sectorから生成する `player_constants.inc` 
 
 ### PSUP extension
 
-PSUPは `struct ">4s9H"` です。
+PSUPは `struct ">4s11H"` です。
 
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 196 | 4 | magic | `"PSUP"` |
-| 200 | 2 | version | 必ず `3` |
+| 200 | 2 | version | 必ず `4` |
 | 202 | 2 | reserved | zero |
 | 204 | 2 | wr0_patterns | WordBuf0数、generated Wr0 capacity以下 |
 | 206 | 2 | wr1_patterns | WordBuf1数、generated Wr1 capacity以下 |
@@ -648,10 +683,13 @@ PSUPは `struct ">4s9H"` です。
 | 212 | 2 | wr1_sectors | WR1_PRELOAD sector数 |
 | 214 | 2 | dic_sectors | DIC_PRELOAD sector数 |
 | 216 | 2 | cold_cap | Word-RAM map導出に使うtimed cold-pattern上限 |
+| 218 | 2 | wr0_load_bytes | 4-byte output headerを除く、偶数frameの正確な`O_LOADS v2`ピーク |
+| 220 | 2 | wr1_load_bytes | 4-byte output headerを除く、奇数frameの正確な`O_LOADS v2`ピーク |
 
 各sector数は `ceil(patterns * 32 / 2048)` と一致する必要があります。生成する
 player constantsがpreload値、routing allocation、compact-tail offset、parity別WordBufの
-開始・終了・容量を固定します。
+開始・終了・容量を固定します。Packerはmaterialize済みrunから2つの
+`O_LOADS v2`ピークを独立再計算し、decision logとの不一致を拒否します。
 
 ## Player内蔵palette table
 
@@ -694,7 +732,7 @@ copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemp
 ## ADPCM table
 
 DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup dataです。
-現在216-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り1,224 byteは
+940-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り500 byteは
 zeroです。
 
 | Offset | Size | 内容 |
@@ -702,20 +740,21 @@ zeroです。
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
-| 8,800 | 216 B | boot-only Sub ADPCM-install・routing-prepare・queue-initialization extension |
-| 9,016 | 1,224 B | zero padding |
+| 8,800 | 940 B | boot-only Sub table install・PCM initialization・routing preparation・queue initialization extension |
+| 9,740 | 500 B | zero padding |
 
 extensionの先頭88 byteを`0x76800`へcopyし、routingをstageする前に実行します。
 routing preloadが8 KiB以下なら、第2入口はrouting byteの外側に残るため、prebuffer
-完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に216
-byte全体をcopyし、第2入口を`0x76858`で実行します。
+完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に940
+byte全体をcopyし、第2入口を`0x76858`で実行します。Extension offset `+0x300`の
+固定第3入口は、routingがstaged areaを再利用する前に`0x7D560`で実行し、wave RAMを
+clear・初期化します。
 
-Subはdisc byteを変更せず、2,848-byte next-index tableをPRG-RAM `0x0C000`、
-256-byte output tableを`0x0CB20`、5,696-byte signed-delta tableを両physical
-bankのgenerated fixed-tail offsetへcopyします。Decoded PCM bufferはSub所有PRG-RAM
-`0x08000..0x085FF`にあります。Generated Word-RAM tailは未使用のindex/output holeを
-含むtable全体とPCMの予約を保持するため、player-only A/B buildのpreload容量とstream
-byteを同一にします。
+Subはdisc byteを変更せず、2,848-byte next-index tableをPRG-RAM `0x07400`、
+256-byte output tableを`0x09600`、5,696-byte signed-delta tableをPRG-RAM
+`0x0C000`へcopyします。各tableは1回だけinstallし、Word-RAM bankにはADPCM
+lookupもPCM予約も残しません。Decoded PCM bufferはSub所有PRG-RAM
+`0x08000..0x085FF`にあります。
 
 ## Pattern preload領域
 
@@ -723,18 +762,46 @@ ADPCM tableの後にWR0_PRELOADとWR1_PRELOADを置きます。DIC_PRELOADは最
 handoffでfront-of-bankのtemporary dataをすべてMainが消費できるようADPCMより前に
 置きます。各preloadは32-byte patternを持ち、宣言したsector境界までzero padします。
 
-WordBuf0とWordBuf1はgenerated parity別startとcapacityを持ちます。Wr0はframe-0
-`O_LOADS` envelopeの直後、Wr1はtimed cold/run envelopeの直後から始まります。
-両capacityとも完全なpreload sectorへ切り下げます。偶数timed frameはWordBuf0、
-奇数timed frameはWordBuf1を消費します。各preloadは、そのparityのWordBuf ringの
-初期内容です。WordBuf-ring featureを持つstreamでは、slot先頭の `n_word_sec`
+WordBuf0とWordBuf1はgenerated parity別startとcapacityを持ちます。各startは
+そのparityの正確な`O_LOADS v2`ピーク
+`32 * inline Prg patterns + 22 * runs`を全偶数または奇数frameから再計算して
+先に予約します。残余だけがWordBufとなり、完全なpreload sectorへ切り下げます。
+偶数timed frameはWordBuf0、奇数timed frameはWordBuf1を消費します。各preloadは、
+そのparityのWordBuf ringの初期内容です。WordBuf-ring featureを持つstreamでは、
+slot先頭の `n_word_sec`
 payload sectorが到着frameのparity ringへ64 patternずつ追記されます。writeと
 readのcursorはともに前進のみで宣言capacityでwrapし、packerのreplayは全refill
-sectorがそのframeの展開開始前にcommitされることを証明します。
+sectorがそのframeの展開開始前にcommitされることを証明します。CompactなWr
+source runが宣言済みphysical ring末尾へ達する場合、control blockを書き出す前に
+その位置で隣接descriptorへ分割します。VRAM destinationは連続したままで、追加の
+descriptor、`O_LOADS v2` record、DMA first-word repair、control bytesを全capacity
+およびwork modelへ含めます。LinearなWord-RAM DMA source rangeがring末尾を
+またぐことはありません。
 
 DicBufは最大512個の再利用可能patternを持ちます。Word RAM `+0x6000..+0x9FFF` に
 一時配置し、Main RAM `0xFFBA40..0xFFFA3F` へ起動時に1回copyします。run descriptor
 は9-bit indexでentryを参照し、その最上位bitはrun source fieldに載ります。
+
+### Player `O_LOADS v2` handoff
+
+`BODY.DAT`の4-byte cold-run descriptorはcompactなtransport dataのままであり、
+Main向けrun計画ではありません。Subはframe展開時にbank offset `+0`と`+2`へ
+`O_NRUN`、`O_NLOAD`を書き、`+4`の`O_LOADS`から22-byte recordをinterleaveして
+書きます。
+
+| Record offset | Size | 意味 |
+|---:|---:|---|
+| `+0` | 2 | word単位DMA length |
+| `+2`, `+4` | 各2 | VDP register 93、94 |
+| `+6` | 4 | destination VDP command |
+| `+10` | 2 | raw destination byte address |
+| `+12`, `+14`, `+16` | 各2 | VDP source register 95、96、97 |
+| `+18` | 4 | 解決済みraw source address |
+
+Prg recordの直後には`count * 32` byteのinline patternが続き、raw sourceはMainの
+Word-RAM viewでそのbyte列を指します。WrとDic recordはinline payloadを持たず、
+WordBufまたはDicBufを直接指します。Mainはsplit DMA継続を含め、この単一cursorを
+in-placeで消費し、Main-RAM run tableを構築しません。
 
 ## BODY arm音声
 
@@ -809,8 +876,8 @@ patternを消費する前に届き得るため、schedulerは消費前のPrgBuf 
 ## Prebuffer
 
 PREBUFFERはframe 1以降で最初に使う `prebuf_pat` 個のPrg patternを持ちます。playback
-前に読み込みます。PREBUFFERと正確なscheduled-delivery上限は15 fpsで378 KiB、
-24 fpsで393 KiB、30 fpsで398 KiBです。418 KiB観測境界までの40/25/20 KiBは
+前に読み込みます。PREBUFFERと正確なscheduled-delivery上限は15 fpsで374 KiB、
+24 fpsで389 KiB、30 fpsで394 KiBです。414 KiB観測境界までの40/25/20 KiBは
 liveのsector到着変動専用です。
 
 ## BODY frame slot
@@ -847,10 +914,11 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 gapがあればre-seekして正確に読み直します。それでもsequenceが一致しない場合は
 前frameを保持し、desync counterを増やします。
 
-Run descriptorは`n_runs`の直後に続きます。Mainはguard付き残余VBlank budgetで
-runtime scheduleします。全pattern runがDMAを使います。Current残budget境界を越える
-runはそこで分割し、次のfresh VBlank headから続きを行います。Streamはencoded
-VBlank boundaryを持ちません。
+Run descriptorは`n_runs`の直後に続きます。SubがCDC polling cadenceを保ちながら
+`O_LOADS v2`へ解決し、Mainはguard付き残余VBlank budgetでその展開済みrecordを
+runtime scheduleします。全pattern runがDMAを使います。Current残budget境界を
+越えるrunはそこで分割し、次のfresh VBlank headから続きを行います。Streamは
+encoded VBlank boundaryを持ちません。
 
 bitmap updateは `ceil(cells / 8)` byteで、そのサイズが奇数ならzero byteを続けます。
 set bitごとにcell昇順で16-bit entryを1個置きます。

@@ -267,6 +267,11 @@ $(MOVIEPACK_OUTPUTS): moviepack
 # 既定はリリースビルド。DEBUG=1 でデバッグオーバーレイを有効化する。
 DEBUG ?= 0
 ISO_HOLD_N ?= 0
+# Diagnostic-only continuous-read qualification for the reclaimed resident-SP
+# tail. The diagnostic relocates two pending destinations above PrgBuf and
+# rejects streams that could need the normal third destination, leaving the
+# complete 0x7400..0x7FFF interval marker-owned.
+ISO_VERIFY_SP_TAIL ?= 0
 # Issue #27 Main-CPU straight-line bitmap handlers and fixed-geometry NT
 # blitters. H32/H40 full-playback validation is complete; MAIN_CODEGEN=0 keeps
 # the byte-identical reference player available for fallback/A-B diagnostics.
@@ -283,7 +288,7 @@ $(PLAYER_CONSTANTS): $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT tools/player_constants.p
 	$(PYTHON) tools/player_constants.py $< --output $@
 
 $(SP_EXTENSION_OBJ): $(BOOT_DIR)/movieplay_sp_ext.s $(CFG_DIR)/sp_ext.ld tools/av_config.py tools/ima_adpcm.py movieplay-force | movieplay-setup
-	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--defsym ISO_VERIFY_SP_TAIL=1) -I$(BOOT_DIR) $< -o $@
 
 $(SP_EXTENSION_BIN): $(SP_EXTENSION_OBJ)
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp_ext.ld -o $@ $<
@@ -298,7 +303,7 @@ $(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
 	$(PYTHON) tools/gen_debugfont.py --output $@
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
-	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
+	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
@@ -314,14 +319,16 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 		fi
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
-	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@
+	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
+	$(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),$(PYTHON) harness/sp_tail_marker/verify_profile.py --header $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT --max-pending-sectors 2)
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--defsym ISO_VERIFY_SP_TAIL=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $<
 	@bytes=$$(wc -c < $@); \
-		if [ "$$bytes" -gt 8192 ]; then \
-			echo "ERROR: $@ is $$bytes bytes; the boot system area reserves 8192 bytes for SP" >&2; \
+		limit=5120; \
+		if [ "$$bytes" -gt "$$limit" ]; then \
+			echo "ERROR: $@ is $$bytes bytes; this build reserves $$limit bytes for SP" >&2; \
 			rm -f $@; \
 			exit 1; \
 		fi

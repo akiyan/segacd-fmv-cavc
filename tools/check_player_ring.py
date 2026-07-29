@@ -15,6 +15,7 @@ import ima_adpcm
 import pattern_supply
 import sp_extension
 import ttrc_routing
+import wordbuf_ring
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -27,7 +28,10 @@ SP_EXT_LD = ROOT / "cfg/sp_ext.ld"
 MAKEFILE = ROOT / "Makefile"
 QUALIFIED_ADPCM_BOOT_COPY_BYTES = 0x58
 QUALIFIED_ADPCM_BOOT_COPY_SHA256 = (
-    "bdc2ae6b75cf3fce945cf695aa6c0e1088591aa3d9fad5c2a9041aa79d440257"
+    "8bca1932c1351273279a3329519a4051e5796749b05b43be911e3247af79d925"
+)
+SP_TAIL_MARKER_ADPCM_BOOT_COPY_SHA256 = (
+    "d68bf023717f28c36134c48c339e786f87259f0a7c3a70bb0604780eade8d862"
 )
 sp_text = SP.read_text()
 sp_ext_text = SP_EXT.read_text()
@@ -72,6 +76,14 @@ parser.add_argument(
     type=Path,
     help="generated sp_extension.inc",
 )
+parser.add_argument(
+    "--sp-tail-marker",
+    action="store_true",
+    help=(
+        "expect the diagnostic extension whose index table leaves "
+        "0x7400..0x7fff marker-owned"
+    ),
+)
 args = parser.parse_args()
 
 pc_text = args.constants.read_text() if args.constants else ""
@@ -84,13 +96,18 @@ if extension_include_values != extension_values:
         "check_player_ring: Sub extension constants do not match the linked "
         "binary size/hash/address contract")
 qualified_adpcm_entry = extension_bytes[:QUALIFIED_ADPCM_BOOT_COPY_BYTES]
+expected_adpcm_entry_hash = (
+    SP_TAIL_MARKER_ADPCM_BOOT_COPY_SHA256
+    if args.sp_tail_marker
+    else QUALIFIED_ADPCM_BOOT_COPY_SHA256
+)
 if (
     len(qualified_adpcm_entry) != QUALIFIED_ADPCM_BOOT_COPY_BYTES
     or hashlib.sha256(qualified_adpcm_entry).hexdigest()
-    != QUALIFIED_ADPCM_BOOT_COPY_SHA256
+    != expected_adpcm_entry_hash
 ):
     sys.exit(
-        "check_player_ring: the qualified 88-byte ADPCM boot entry changed")
+        "check_player_ring: the expected 88-byte ADPCM boot entry changed")
 def pc(name: str) -> int:
     if not pc_text:
         sys.exit(
@@ -136,7 +153,12 @@ for name, expected in format_contract.items():
 
 # Generated layout: one Python calculation owns every offset and capacity.
 layout = pattern_supply.word_ram_layout(
-    pc("FRAMES"), pc("CELLS"), pc("COLD_CAP"))
+    pc("FRAMES"),
+    pc("CELLS"),
+    pc("COLD_CAP"),
+    wr0_load_bytes=pc("WR0_LOAD_BYTES"),
+    wr1_load_bytes=pc("WR1_LOAD_BYTES"),
+)
 layout_contract = {
     "ROUTING_BYTES": layout.routing_bytes,
     "ROUTING_OFFSET": layout.routing_offset,
@@ -144,8 +166,6 @@ layout_contract = {
     "STATUS_OFFSET": layout.status_offset,
     "CTRL_SCR_OFFSET": layout.ctrl_scr_offset,
     "PAD_SCR_OFFSET": layout.pad_scr_offset,
-    "ADPCM_TABLE_OFFSET": layout.adpcm_table_offset,
-    "PCM_DEC_BUF_OFFSET": layout.pcm_dec_buf_offset,
     "WR0_OFFSET": layout.wr0_offset,
     "WR0_END": layout.wr0_end,
     "WR0_CAPACITY": layout.wr0_patterns,
@@ -233,8 +253,34 @@ print(
     f"Wr0={pc('WR0_PATTERNS')}/{layout.wr0_patterns} "
     f"Wr1={pc('WR1_PATTERNS')}/{layout.wr1_patterns} patterns")
 
+# O_LOADS v2 is constructed entirely by Sub and consumed in place by Main.
+# The former Main-RAM run table and Main-owned WordBuf cursors must stay absent.
+for source, token, description in (
+        (sp_text, ".equ O_NRUN,    SUB_BANK_1M+0x0000",
+         "Sub O_NRUN handoff"),
+        (sp_text, "addq.w\t#1, (O_NRUN).l",
+         "Sub completed-record count"),
+        (sp_text, "lea\t10(a1), a3",
+         "Sub inline-Prg raw source"),
+        (sp_text, "move.l\t#WORD_BUF0, word_read_ptr0",
+         "Sub Wr0 read-cursor ownership"),
+        (ip_text, "move.w\t(PROBE_BANK+O_NRUN_OFF).l, n_runs",
+         "Main O_NRUN read"),
+        (ip_text, "lea\t(PROBE_BANK+O_LOADS_OFF), a2",
+         "Main in-place O_LOADS read"),
+        (ip_text, "cmpa.l\ta2, a3",
+         "Main inline-Prg cursor skip"),
+):
+    if token not in source:
+        sys.exit(f"check_player_ring: missing {description}")
+for removed in (
+        "RUN_TABLE", "bf_stage:", "bf_emit_src", "wr_ptr0:", "wr_ptr1:"):
+    if removed in ip_text:
+        sys.exit(
+            f"check_player_ring: removed Main O_LOADS-v1 state returned: {removed}")
 
-# TTRC v22 has one startup command. HEADER contains only static boot state;
+
+# TTRC v23 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # frame=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
@@ -296,7 +342,7 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v22 BODY arm and one-command "
+    "check_player_ring: OK  v23 BODY arm and one-command "
     "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
     "and PCM begins on its first control sector")
 
@@ -401,17 +447,11 @@ for name, (actual, expected) in hash_contract.items():
     if actual != expected:
         sys.exit(
             f"check_player_ring: ADPCM {name} table hash {actual} != {expected}")
-if pattern_supply.PCM_DEC_BUF_BYTES != av_config.PCM_DEC_BUF_BYTES:
-    sys.exit(
-        "check_player_ring: A/B-stable Word-RAM PCM reserve differs from "
-        "the live PRG buffer size")
 expected_adpcm_sectors = (
     ima_adpcm.FULL_TABLE_BYTES + ttrc_routing.SECTOR_BYTES - 1
 ) // ttrc_routing.SECTOR_BYTES
 if equ(sp_text, "ADPCM_TABLE_SECTORS", SP) != expected_adpcm_sectors:
     sys.exit("check_player_ring: Sub ADPCM table sector count differs from Python")
-if equ(sp_text, "ADPCM_BANK_COPIES", SP) != 2:
-    sys.exit("check_player_ring: ADPCM table must be duplicated in both banks")
 if equ(ip_text, "DIC_BUF_PATTERNS", IP) != pattern_supply.DIC_BUF_PATTERNS:
     sys.exit("check_player_ring: Main DicBuf capacity differs from Python")
 if equ(ip_text, "DIC_BUF", IP) != pattern_supply.DIC_BUF_BASE:
@@ -483,6 +523,9 @@ adpcm_indices_end = equ(sp_text, "ADPCM_INDICES_END", SP)
 adpcm_lut = equ(sp_text, "ADPCM_LUT", SP)
 adpcm_lut_bytes = equ(sp_text, "ADPCM_LUT_BYTES", SP)
 adpcm_lut_end = equ(sp_text, "ADPCM_LUT_END", SP)
+adpcm_deltas = equ(sp_text, "ADPCM_DELTAS", SP)
+adpcm_delta_bytes = equ(sp_text, "ADPCM_DELTA_BYTES", SP)
+adpcm_deltas_end = equ(sp_text, "ADPCM_DELTAS_END", SP)
 adpcm_boot_copy = equ(sp_text, "ADPCM_BOOT_COPY", SP)
 max_f0_bytes = (
     (40 * 28 * pattern_supply.PATTERN_BYTES
@@ -492,7 +535,7 @@ max_f0_bytes = (
 )
 if ring_base + ring_size + ttrc_routing.SECTOR_BYTES != apply_base:
     sys.exit(
-        "check_player_ring: PrgBuf plus fourth pending Word sector "
+        "check_player_ring: PrgBuf plus third pending Word sector "
         "does not end at APPLY")
 if f0pat_tmp + max_f0_bytes != routing_tmp:
     sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
@@ -534,6 +577,12 @@ prg_adpcm_contract = {
         adpcm_lut_bytes, av_config.ADPCM_OUTPUT_LUT_BYTES),
     "ADPCM_LUT_END": (
         adpcm_lut_end, av_config.ADPCM_OUTPUT_LUT_END),
+    "ADPCM_DELTAS": (
+        adpcm_deltas, av_config.ADPCM_DELTA_TABLE_BASE),
+    "ADPCM_DELTA_BYTES": (
+        adpcm_delta_bytes, av_config.ADPCM_DELTA_TABLE_BYTES),
+    "ADPCM_DELTAS_END": (
+        adpcm_deltas_end, av_config.ADPCM_DELTA_TABLE_END),
     "ADPCM_BOOT_COPY": (
         adpcm_boot_copy, av_config.SUB_BOOT_EXTENSION_EXEC_BASE),
 }
@@ -543,10 +592,11 @@ for name, (actual, expected) in prg_adpcm_contract.items():
             f"check_player_ring: {name}={actual:#x} != config {expected:#x}")
 if not (
         adpcm_indices + adpcm_index_bytes == adpcm_indices_end
-        and adpcm_indices_end == adpcm_lut
         and adpcm_lut + adpcm_lut_bytes == adpcm_lut_end
-        and sub_prg_safe_end <= adpcm_indices
-        and adpcm_lut_end <= ring_base
+        and adpcm_deltas + adpcm_delta_bytes == adpcm_deltas_end
+        and sub_prg_safe_base <= adpcm_indices < adpcm_indices_end <= pcm_dec_buf
+        and pcm_dec_buf_end <= adpcm_lut < adpcm_lut_end <= sub_prg_safe_end
+        and 0xC000 <= adpcm_deltas < adpcm_deltas_end <= ring_base
 ):
     sys.exit("check_player_ring: persistent Sub PRG PCM/table allocations overlap")
 if not (
@@ -555,7 +605,7 @@ if not (
 ):
     sys.exit(
         "check_player_ring: boot-only Sub extension exceeds the later "
-        "fourth pending Word sector")
+        "third pending Word sector")
 if (
         extension_values.load_base
         != routing_tmp + ima_adpcm.FULL_TABLE_BYTES
@@ -597,8 +647,8 @@ for pattern, description in (
     require(boot_text, pattern, description)
 require(
     sp_ld_text,
-    r'ASSERT\(\.\s*<=\s*0x008000,\s*"resident Sub image exceeds',
-    "8 KiB resident Sub linker assertion",
+    r'ASSERT\(\.\s*<=\s*0x007400,\s*"resident Sub image exceeds',
+    "5 KiB resident Sub linker assertion",
 )
 if re.search(
         r'^\s*\.incbin\s+"movieplay_sp_ext\.bin"\s*$',
@@ -612,11 +662,11 @@ for token in (
         "lea\tSP_EXTENSION_EXEC_BASE, a1",
         "move.w\t#ADPCM_BOOT_COPY_LONGS-1, d0",
         "move.w\t#SP_EXTENSION_LONGS-1, d0",
-        "lea\tADPCM_DELTAS, a2",
         "PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d6",
         "lea\tring_head, a4",
         "lea\tdrain_k, a5",
         "jsr\tADPCM_BOOT_COPY",
+        "jsr\t(SP_EXTENSION_LOAD_BASE+PCM_BOOT_INIT_OFF).l",
         "jsr\t(SP_EXTENSION_LOAD_BASE+ADPCM_BOOT_COPY_BYTES).l",
         "jsr\t(SP_EXTENSION_EXEC_BASE+ADPCM_BOOT_COPY_BYTES).l",
 ):
@@ -643,12 +693,13 @@ require(
 for token in (
         "lea\tROUTING_TMP, a0",
         "lea\tADPCM_INDEX_TABLE, a1",
+        "lea\tADPCM_DELTA_TABLE, a1",
         "lea\tROUTING_TMP+ADPCM_OUTPUT_LUT_OFFSET, a0",
         "lea\tADPCM_OUTPUT_LUT, a1",
         "lea\tROUTING_TMP+ADPCM_DELTA_OFFSET, a0",
-        "movea.l\ta2, a1",
-        "moveq\t#ADPCM_BANK_COPIES-1, d1",
         ".org 0x0058",
+        ".org PCM_BOOT_INIT_OFF",
+        ".global pcm_boot_init",
         ".global routing_prepare",
         "routing_prepare:",
         "movea.l\ta0, a2",
@@ -676,8 +727,13 @@ for token in (
             f"check_player_ring: inline Sub diagnostic is missing {token!r}")
 require(
     make_text,
-    rf'if \[ "\$\$bytes" -gt {av_config.SUB_BOOT_IMAGE_MAX_BYTES} \]; then',
-    "resident Sub image-size Makefile guard",
+    rf'limit={av_config.SUB_BOOT_IMAGE_MAX_BYTES};',
+    "resident Sub image-size limit",
+)
+require(
+    make_text,
+    r'if \[ "\$\$bytes" -gt "\$\$limit" \]; then',
+    "resident Sub image-size comparison",
 )
 require(
     make_text,
@@ -701,6 +757,13 @@ for token in (
         sys.exit(f"check_player_ring: route-aware pump is missing {token!r}")
 
 if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
+    if (
+            av_config.WORD_PENDING_SECTORS != 3
+            or wordbuf_ring.MAX_WORD_STAGE_SECTORS
+            != av_config.WORD_PENDING_SECTORS
+    ):
+        sys.exit(
+            "check_player_ring: WordBuf planner and three pending destinations differ")
     if equ(ip_text, "FEATURE_WORDBUF_RING_BIT", IP) != (
             ttrc_routing.FEATURE_WORDBUF_RING.bit_length() - 1):
         sys.exit("check_player_ring: Main WordBuf-ring feature bit differs")
@@ -711,14 +774,16 @@ if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
              "Wr0 timed write cursor initialization"),
             (sp_text, "move.l\td0, word_write_ptr1",
              "Wr1 timed write cursor initialization"),
+            (sp_text, "move.l\t#WORD_BUF0, word_read_ptr0",
+             "Wr0 Sub-owned read cursor initialization"),
+            (sp_text, "move.l\t#WORD_BUF1, word_read_ptr1",
+             "Wr1 Sub-owned read cursor initialization"),
             (sp_text, "cmp.w\tframe_idx, d0\n\tblo.s\twag_no",
              "expanded-frame Word refill cutoff (early arrival accepted)"),
             (sp_text, "cmp.w\tword_owned_bank, d1",
              "physical Word-RAM ownership guard"),
             (sp_text, "word_pending_count:",
              "bounded pending Word-sector state"),
-            (sp_text, "word_pending2:",
-             "third resident pending Word-sector buffer"),
             (sp_text, "bsr\tflush_word_pending",
              "post-swap pending Word-sector commit"),
             (sp_text, "addi.w\t#64, word_level0",
@@ -729,10 +794,8 @@ if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
              "Wr0 source-run retirement"),
             (sp_text, "sub.w\td3, word_level1",
              "Wr1 source-run retirement"),
-            (ip_text, "cmpa.l\t#PROBE_BANK+WR0_END, a3",
-             "Main Wr0 ring-end normalization"),
-            (ip_text, "cmpa.l\t#PROBE_BANK+WR1_END, a3",
-             "Main Wr1 ring-end normalization"),
+            (ip_text, "lea\t(PROBE_BANK+O_LOADS_OFF), a2",
+             "Main in-place O_LOADS cursor"),
     ):
         if token not in source:
             sys.exit(
@@ -768,14 +831,8 @@ if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
                 "second pending Word sector -> WORD_PENDING1",
             ),
             (
-                r"cmpi\.w\s+#2,\s*d0.*?"
-                r"lea\s+word_pending2,\s*a1\s+"
-                r"bra\.s\s+4f",
-                "third pending Word sector -> word_pending2",
-            ),
-            (
-                r"3:\s+movea\.l\s+#WORD_PENDING3,\s*a1\s+4:",
-                "fourth pending Word sector -> WORD_PENDING3",
+                r"2:\s+movea\.l\s+#WORD_PENDING3,\s*a1\s+4:",
+                "third pending Word sector -> WORD_PENDING3",
             ),
     ):
         if not re.search(pattern, pending_dispatch, re.DOTALL):
@@ -796,7 +853,7 @@ if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
             and word_pending3 + ttrc_routing.SECTOR_BYTES == apply_base):
         sys.exit(
             "check_player_ring: pending Word sectors overlap or exceed their "
-            "two safe-PRG, resident-tail, and PrgBuf-tail allocations")
+            "two safe-PRG and PrgBuf-tail allocations")
     process = sp_text[
         sp_text.index("pf_pump:"):sp_text.index("pf_ready:")
     ]
