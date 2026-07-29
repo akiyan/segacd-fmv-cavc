@@ -1152,7 +1152,8 @@ def _decode_control_chunk(chunk):
 
 
 def write_stream(
-        path, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
+        path, log, per, blocks, source_pcm_chunks, supply_plan,
+        wordram_layout, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
     """Write the v23 split stream and a combined tooling container.
 
@@ -1971,7 +1972,8 @@ def main():
                       boot_sidecar=boot_sidecar)
     if not args.no_write:
         write_stream(
-            output, log, per, blocks, source_pcm_chunks, supply_plan, sc, POOL,
+            output, log, per, blocks, source_pcm_chunks, supply_plan,
+            wordram_layout, sc, POOL,
             boot_sidecar=boot_sidecar,
             sp_extension_bytes=sp_extension_bytes)
 
