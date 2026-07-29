@@ -1979,7 +1979,7 @@ expand_frame:
 	PC_MOVE_W h_bmbytes, PC_BMBYTES, d1	/* corrupt-count guard: never walk past this mode's cells */
 	lsl.w	#3, d1
 	cmp.w	d1, d5
-	bls	1f
+	bls.s	1f
 	move.w	d1, d5
 1:
 ef_bm:
@@ -2035,10 +2035,10 @@ ef_audio_positioned:
 	clr.w	(O_NRUN).l
 	movea.l	ring_head, a4			/* pop ptr(PRG読み) */
 	tst.w	f0_expand
-	beq	ef_ring_count
+	beq.s	ef_ring_count
 	movea.l	f0_pat_addr, a4			/* frame0: popはboot専用PRG一時領域から(ring_headは0xD000維持) */
 	moveq	#-1, d6				/* frame0 patterns are contiguous and never wrap */
-	bra	ef_count_ready
+	bra.s	ef_count_ready
 ef_ring_count:
 	move.l	#RING_END, d6
 	sub.l	a4, d6
@@ -2054,9 +2054,8 @@ ef_count_ready:
 	   updates receive the legacy path's extra CDC service before copying runs;
 	   the normal end poll below remains unchanged. */
 	cmpi.w	#1024, d5
-	bls	ef_runs_setup
+	bls.s	ef_runs_setup
 	bsr	pump_poll
-	bra	ef_runs_setup
 .else
 .ifdef INCLUDE_COLD_RUN_FASTPATH
 .ifndef PLAYER_SPECIALIZED
@@ -2074,9 +2073,13 @@ ef_count_ready:
 .endif
 .ifdef INCLUDE_COLD_RUN_FASTPATH
 ef_runs_setup:
+.ifdef PLAYER_SPECIALIZED
+	lea	PC_AUDIO_CONTROL_BYTES(a5), a0	/* first byte after audio */
+.else
 	movea.l	a5, a0				/* audio start */
 	PC_MOVE_W h_audio_control_bytes, PC_AUDIO_CONTROL_BYTES, d0
 	adda.w	d0, a0				/* first byte after audio */
+.endif
 	move.l	a0, d0
 	btst	#0, d0				/* align the absolute block address, not AUDIO alone */
 	beq.s	1f				/* an odd H40 bitmap can start audio on an odd byte */
@@ -2098,7 +2101,7 @@ ef_runs_setup:
 2:
 .endif
 	cmp.w	d1, d7
-	bls	1f
+	bls.s	1f
 	move.w	d1, d7				/* corrupt-count clamp */
 1:
 	tst.w	d7
@@ -2126,7 +2129,7 @@ ef_run:
 	andi.w	#0x07FF, d3
 	sub.w	d4, d1				/* remaining cold count cannot exceed stream limit */
 	cmp.w	d1, d3
-	bls	1f
+	bls.s	1f
 	move.w	d1, d3
 1:
 	andi.w	#0x07FF, d2			/* discard Dic index high bits for bounds proof */
@@ -2134,7 +2137,7 @@ ef_run:
 	sub.w	d2, d1				/* slots available from slot_start */
 	bls	ef_run_next			/* corrupt slot outside the pool */
 	cmp.w	d1, d3
-	bls	1f
+	bls.s	1f
 	move.w	d1, d3
 1:
 	tst.w	d3
@@ -2145,13 +2148,11 @@ ef_run:
 	move.w	d3, d1
 	lsl.w	#4, d1				/* VDP DMA length in words */
 	move.w	d1, (a1)+
-	move.w	#0x9300, d2
-	move.b	d1, d2
-	move.w	d2, (a1)+
-	move.w	d1, d2
-	lsr.w	#8, d2
-	ori.w	#0x9400, d2
-	move.w	d2, (a1)+
+	move.b	#0x93, (a1)+
+	move.b	d1, (a1)+
+	lsr.w	#8, d1
+	move.b	#0x94, (a1)+
+	move.b	d1, (a1)+
 	move.w	-4(a0), d2
 	andi.w	#0x07FF, d2
 	addq.w	#1, d2
@@ -2178,7 +2179,7 @@ ef_run:
 	bra	ef_source_word_ready
 ef_source_preload:
 	cmpi.w	#0x4000, d0
-	bne	ef_source_dic
+	bne.s	ef_source_dic
 	/* frame_idx points one past the descriptor being expanded. Each parity has
 	   its own Sub-owned read cursor; a complete run never crosses its end. */
 	move.w	frame_idx, d1
@@ -2251,7 +2252,7 @@ ef_source_dic:
 	lsl.l	#5, d1
 	add.l	d1, d2
 	cmpi.l	#DIC_BUF_END, d2
-	bhi	ef_run_next
+	bhi.s	ef_run_next
 	bra.s	ef_source_ready
 
 ef_source_word_ready:
@@ -2262,22 +2263,19 @@ ef_source_ready:
 	move.l	a3, d2				/* Main-RAM Dic DMA needs no source correction */
 ef_source_regs:
 	lsr.l	#1, d2
-	move.w	#0x9500, d1
-	move.b	d2, d1
-	move.w	d1, (a1)+
+	move.b	#0x95, (a1)+
+	move.b	d2, (a1)+
 	lsr.l	#8, d2
-	move.w	#0x9600, d1
-	move.b	d2, d1
-	move.w	d1, (a1)+
+	move.b	#0x96, (a1)+
+	move.b	d2, (a1)+
 	lsr.l	#8, d2
-	move.w	#0x9700, d1
-	move.b	d2, d1
-	move.w	d1, (a1)+
+	move.b	#0x97, (a1)+
+	move.b	d2, (a1)+
 	move.l	a3, (a1)+
 	addq.w	#1, (O_NRUN).l
 	add.w	d3, d4
 	tst.w	d0
-	bne	ef_run_next			/* Wr/Dic records carry no inline bytes */
+	bne.s	ef_run_next			/* Wr/Dic records carry no inline bytes */
 .ifdef DEBUG_PRGBUF_Q
 	/* Charge the complete Prg run before its bytes are copied.  Unlike the
 	   modulo head/tail distance, this signed balance preserves an underflow
@@ -2294,7 +2292,7 @@ ef_run_pattern:
 	move.l	(a4)+, 28(a1)			/* final 4 bytes without clobbering a4 */
 	lea	32(a1), a1
 	subq.w	#1, d6
-	bne	1f
+	bne.s	1f
 	movea.l	#RING_BASE, a4
 	move.w	#RING_PATTERNS, d6
 1:
@@ -2325,9 +2323,15 @@ ef_run_next:
 	dbra	d7, ef_run
 ef_runs_polled:
 	tst.w	d5				/* legacy path polls once iff at least one entry exists */
+.ifdef INCLUDE_PATTERN_SUPPLY
+	beq.s	ef_store
+.else
 	beq	ef_store
+.endif
 	bsr	pump_poll_after_pop
+.ifndef INCLUDE_PATTERN_SUPPLY
 	bra	ef_store
+.endif
 .endif
 .ifndef INCLUDE_PATTERN_SUPPLY
 ef_entries:
