@@ -385,6 +385,25 @@ def main() -> None:
         f"{int(apply_backpressure_frames)} frames | "
         if apply_backpressure_frames is not None else ""
     )
+    ready_pressure_text = (
+        "ready pressure max "
+        f"0x{int(hudline['pattern_dma_ready_pressure_max']):02X}, "
+        "min margin "
+        f"{int(hudline['pattern_dma_ready_min_margin_scanlines'])} lines, "
+        "missed "
+        f"{int(hudline['pattern_dma_ready_missed_frames'])}/"
+        f"{int(hudline['pattern_dma_ready_pressure_samples'])} | "
+        if all(
+            key in hudline
+            for key in (
+                "pattern_dma_ready_pressure_max",
+                "pattern_dma_ready_min_margin_scanlines",
+                "pattern_dma_ready_missed_frames",
+                "pattern_dma_ready_pressure_samples",
+            )
+        )
+        else ""
+    )
     vblank_text = ""
     if hudline.get("display_vblank_warning_supported"):
         vblank_text = (
@@ -402,6 +421,7 @@ def main() -> None:
             f"cd_wait_count diagnostic max {cd_wait_max} | "
             f"{pump_gap_text}"
             f"{apply_backpressure_text}"
+            f"{ready_pressure_text}"
             "PrgBuf jitter normal "
             f"{int(hudline['jitter_normal_kib'])} KiB | "
             f"OCR {float(hudline.get('ocr_confidence_min', 0.0)):.3f}"

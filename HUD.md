@@ -109,6 +109,17 @@ back from `EA` to `E5`: the second `E5-EA` maps to blank offsets 11-16, and
 context; resolve it from nearby samples and the operation order. Tools preserve
 the raw value rather than silently choosing one occurrence.
 
+`/hudline` converts only the pattern-ready field into the derived
+`pattern_dma_ready_pressure` row. A ready event on visible scanline `00..DF`
+has the same pressure `00..DF`, so scanline 0 is pressure zero and larger
+values mean later, more pressured readiness. `E0` is the zero-margin first
+VBlank head. Any raw value later than `E0` becomes the `0x100` missed-head
+sentinel; this avoids inventing an order for the repeated `E5..EA` values.
+Frames with no cold run have no pressure point, rather than a false zero.
+The row has an orange `E0` guide, and `0x100` points are red. The raw
+`pattern_dma_ready_vcounter` remains unchanged in the TSV and gate JSON.
+`name_table_dma_start_vcounter` remains a raw V-counter row.
+
 ## Upload gate
 
 `harness/startup_resync/analyze.py` writes descriptive gate schema 14. The
@@ -314,6 +325,17 @@ blank は raster line 224 の `E0` から始まります。Visible 中の patter
 です。このため `E5-EA` は sequence context なしでは二通りに解釈できます。
 Nearby sample と operation order で決め、tool は一方を暗黙に選ばず raw 値を保持
 します。
+
+`/hudline` は pattern-ready field だけを、導出値
+`pattern_dma_ready_pressure` の row へ変換します。Visible scanline
+`00..DF` の ready event は同じ `00..DF` の逼迫度になり、scanline 0 が
+逼迫度 0、値が大きいほど遅く逼迫した ready です。`E0` は最初の VBlank head
+までの余裕が 0 の位置です。`E0` より後の raw 値はすべて、head を逃したことを
+示す `0x100` sentinel にします。これにより、繰り返す `E5..EA` の順序を捏造せずに
+済みます。Cold run がない frame は偽の 0 ではなく、逼迫度の点自体を表示しません。
+Row には orange の `E0` guide を引き、`0x100` の点は red にします。TSV と gate
+JSON の raw `pattern_dma_ready_vcounter` は変更しません。
+`name_table_dma_start_vcounter` も raw V-counter row のままです。
 
 ## Upload gate
 

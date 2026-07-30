@@ -83,13 +83,19 @@ HUD OCR pass. Use descriptive field names throughout.
   30 fps expects two. Delivery-paced cadence has no fixed guide. At fixed
   cadence, observations in the first/last four content frames at 30 fps and
   two at 15 fps stay plotted as diagnostics but do not raise ALERT.
-- The next two rows are the raw `pattern_dma_ready_vcounter` and
-  `name_table_dma_start_vcounter` values. They are diagnostic-only and sit
-  directly below VBLANK. Pattern ready is sampled immediately before Main
-  waits for the first fresh blank head; it is not the post-wait DMA trigger.
-  Each uses three times the standard row height so small V-counter differences
-  remain visible in the whole-movie image. Plot each frame as an unconnected
-  point; do not fill bars or connect the points.
+- The next two rows are derived `pattern_dma_ready_pressure` and raw
+  `name_table_dma_start_vcounter`. They are diagnostic-only and sit directly
+  below VBLANK. Pattern ready is sampled immediately before Main waits for the
+  first fresh blank head; it is not the post-wait DMA trigger. Ready pressure
+  measures lateness: visible scanlines `00..DF` map directly to pressure
+  `00..DF`, `E0` is the zero-margin first VBlank head, and any later raw
+  V-counter maps to the `0x100` missed-head sentinel. A frame with no cold run
+  has no pressure point; a real ready event on scanline 0 is pressure zero.
+  This saturation avoids inventing an order for the NTSC V-counter's repeated
+  `E5..EA` values. Draw an orange `E0` deadline guide and colour `0x100`
+  points red. Each row uses three times the standard row height so small phase
+  differences remain visible in the whole-movie image. Plot each frame as an
+  unconnected point; do not fill bars or connect the points.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
   `prgbuf_jitter_peak_kib`.
@@ -99,15 +105,16 @@ HUD OCR pass. Use descriptive field names throughout.
   `transfer_end_vcounter`, `cd_wait_count`, `audio_lead_256b`,
   `sub_wait_scanlines`, `adpcm_decode_units`, `transfer_ticks`, `cold_runs`,
   `flip_vcounter`, `first_share_exit_vcounter`,
-  `pattern_dma_ready_vcounter`, `name_table_dma_start_vcounter`, and
-  `pass2_delay_q4`.
+  `pattern_dma_ready_pressure` (derived from
+  `pattern_dma_ready_vcounter` + `cold_runs`),
+  `name_table_dma_start_vcounter`, and `pass2_delay_q4`.
 - The palette segment is a switch label and vertical boundary, not a separate
   value row.
 - Frame 0 keeps its horizontal cell for alignment but contributes to no bar,
   maximum, statistic, event, or scale.
 - Preserve native units and hexadecimal axis labels.
-- Gate limits are orange, the normal jitter interval is yellow, and the
-  normal cadence guide is green.
+- Gate limits and the ready-pressure `E0` deadline are orange, the normal
+  jitter interval is yellow, and the normal cadence guide is green.
 - The receipt records row geometry and plot style, hashes, expected/observed
   frames, gate limits, descriptive diagnostic maxima, statistics, and
   recording identity.

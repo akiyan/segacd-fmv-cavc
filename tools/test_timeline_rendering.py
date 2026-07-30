@@ -96,7 +96,7 @@ class TimelineRenderingTests(unittest.TestCase):
     def test_dma_start_rows_follow_vblank_before_gate_rows(self):
         data = {
             "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
-            "pattern_dma_ready_vcounter": np.asarray(
+            "pattern_dma_ready_pressure": np.asarray(
                 [0, 0xC8, 0xD4], np.float64),
             "name_table_dma_start_vcounter": np.asarray(
                 [0, 0xEE, 0xF0], np.float64),
@@ -118,14 +118,14 @@ class TimelineRenderingTests(unittest.TestCase):
             keys[:4],
             [
                 "display_vblanks",
-                "pattern_dma_ready_vcounter",
+                "pattern_dma_ready_pressure",
                 "name_table_dma_start_vcounter",
                 "sector_slip",
             ],
         )
         by_key = {spec.key: spec for spec in specs}
         self.assertEqual(
-            by_key["pattern_dma_ready_vcounter"].height,
+            by_key["pattern_dma_ready_pressure"].height,
             hudline.DEFAULT_ROW_HEIGHT * 3,
         )
         self.assertEqual(
@@ -137,18 +137,84 @@ class TimelineRenderingTests(unittest.TestCase):
             hudline.DEFAULT_ROW_HEIGHT,
         )
         self.assertTrue(
-            by_key["pattern_dma_ready_vcounter"].point_plot)
+            by_key["pattern_dma_ready_pressure"].point_plot)
         self.assertTrue(
             by_key["name_table_dma_start_vcounter"].point_plot)
+        self.assertEqual(
+            by_key["pattern_dma_ready_pressure"].maximum,
+            hudline.PATTERN_READY_MISSED_PRESSURE,
+        )
+        self.assertEqual(
+            by_key["pattern_dma_ready_pressure"].deadline_value,
+            hudline.PATTERN_READY_DEADLINE_SCANLINE,
+        )
+        self.assertTrue(
+            by_key["pattern_dma_ready_pressure"].show_zero)
         point_keys = {
             spec.key for spec in specs if spec.point_plot
         }
         self.assertEqual(
             point_keys,
             {
-                "pattern_dma_ready_vcounter",
+                "pattern_dma_ready_pressure",
                 "name_table_dma_start_vcounter",
             },
+        )
+
+    def test_pattern_ready_pressure_starts_at_zero_and_marks_missed_head(self):
+        pressure = hudline.derive_pattern_ready_pressure({
+            "pattern_dma_ready_vcounter": np.asarray(
+                [0xFF, 0x00, 0xC3, 0xDF, 0xE0, 0xE5, 0xFC],
+                np.float64,
+            ),
+            "cold_runs": np.asarray([1, 1, 1, 1, 1, 1, 0], np.float64),
+        })
+        self.assertEqual(float(pressure[1]), 0)
+        self.assertEqual(float(pressure[2]), 0xC3)
+        self.assertEqual(float(pressure[3]), 0xDF)
+        self.assertEqual(float(pressure[4]), 0xE0)
+        self.assertEqual(
+            float(pressure[5]),
+            hudline.PATTERN_READY_MISSED_PRESSURE,
+        )
+        self.assertTrue(np.isnan(pressure[6]))
+        summary = hudline.pattern_ready_pressure_summary(pressure)
+        self.assertEqual(
+            summary["maximum"],
+            hudline.PATTERN_READY_MISSED_PRESSURE,
+        )
+        self.assertEqual(summary["minimum_margin_scanlines"], 0)
+        self.assertEqual(summary["missed_frames"], 1)
+        self.assertEqual(summary["sample_count"], 5)
+
+    def test_pattern_ready_deadline_and_missed_point_colors_are_distinct(self):
+        spec = hudline.RowSpec(
+            "pattern_dma_ready_pressure",
+            "PATTERN READY PRESSURE",
+            "scanlines",
+            hudline.PATTERN_READY_MISSED_PRESSURE,
+            (98, 184, 224),
+            deadline_value=hudline.PATTERN_READY_DEADLINE_SCANLINE,
+        )
+        self.assertEqual(
+            hudline.value_color(0xDF, spec, {}),
+            spec.color,
+        )
+        self.assertEqual(
+            hudline.value_color(
+                hudline.PATTERN_READY_DEADLINE_SCANLINE,
+                spec,
+                {},
+            ),
+            hudline.WARN,
+        )
+        self.assertEqual(
+            hudline.value_color(
+                hudline.PATTERN_READY_MISSED_PRESSURE,
+                spec,
+                {},
+            ),
+            hudline.FAIL,
         )
 
     def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
