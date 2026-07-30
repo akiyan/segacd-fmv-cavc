@@ -45,6 +45,10 @@ DMA_START_LINE_SCALE = 3
 DMA_START_LINE_HEIGHT = DEFAULT_ROW_HEIGHT * DMA_START_LINE_SCALE
 PATTERN_READY_DEADLINE_SCANLINE = 0xE0
 PATTERN_READY_MISSED_PRESSURE = 0x100
+NTSC_RASTER_SCANLINES = 262
+NT_VCOUNTER_REPEAT_START = 0xE5
+NT_VCOUNTER_REPEAT_END = 0xEA
+NT_VCOUNTER_REPEAT_OFFSET = 6
 
 
 @dataclass(frozen=True)
@@ -61,6 +65,8 @@ class RowSpec:
     point_plot: bool = False
     show_unit: bool = True
     show_zero: bool = False
+    reference_value: float | None = None
+    reference_label: str | None = None
     deadline_value: float | None = None
     deadline_label: str | None = None
 
@@ -525,6 +531,64 @@ def pattern_ready_pressure_summary(
     }
 
 
+def derive_name_table_start_pressure(
+    data: dict[str, np.ndarray],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Map raw NT DMA start V-counters to conservative raster pressure.
+
+    The NTSC V-counter repeats E5..EA during VBlank.  Those raw values are
+    deliberately assigned to their later occurrence so the graph never
+    overstates the remaining VBlank time.  EB..FF are unique after the repeat
+    and therefore also need the six-line physical-raster offset.
+
+    A movie with no nonzero timed sample does not use this DMA path.  When the
+    path is present, a real raw scanline-0 sample remains pressure zero.
+    """
+
+    raw = np.asarray(data["name_table_dma_start_vcounter"], np.float64)
+    if np.any(~np.isfinite(raw)) or np.any((raw < 0) | (raw > 0xFF)):
+        raise SystemExit("name-table DMA start V-counter must stay in 00..FF")
+    pressure = np.full(raw.shape, np.nan, dtype=np.float64)
+    ambiguous = np.zeros(raw.shape, dtype=bool)
+    path_present = bool(np.any(raw[1:] != 0)) if raw.size > 1 else False
+    if not path_present:
+        return pressure, ambiguous
+    pressure[:] = raw
+    repeated_or_later = raw >= NT_VCOUNTER_REPEAT_START
+    pressure[repeated_or_later] += NT_VCOUNTER_REPEAT_OFFSET
+    ambiguous = (
+        (raw >= NT_VCOUNTER_REPEAT_START)
+        & (raw <= NT_VCOUNTER_REPEAT_END)
+    )
+    return pressure, ambiguous
+
+
+def name_table_start_pressure_summary(
+    pressure: np.ndarray,
+    ambiguous: np.ndarray,
+) -> dict[str, int]:
+    """Summarize timed NT start pressure and conservative repeat choices."""
+
+    timed = np.asarray(pressure[1:], np.float64)
+    measured = timed[np.isfinite(timed)]
+    if not measured.size:
+        return {
+            "maximum": 0,
+            "minimum_margin_scanlines": NTSC_RASTER_SCANLINES,
+            "conservative_repeat_frames": 0,
+            "sample_count": 0,
+        }
+    margin = np.maximum(NTSC_RASTER_SCANLINES - measured, 0)
+    return {
+        "maximum": int(measured.max()),
+        "minimum_margin_scanlines": int(margin.min()),
+        "conservative_repeat_frames": int(
+            np.count_nonzero(np.asarray(ambiguous[1:], dtype=bool))
+        ),
+        "sample_count": int(measured.size),
+    }
+
+
 def display_vblank_alert_masks(
     data: dict[str, np.ndarray],
     displayed: np.ndarray,
@@ -601,14 +665,18 @@ def row_specs(
             deadline_label="VBlank head",
         ),
         RowSpec(
-            "name_table_dma_start_vcounter",
-            "NT DMA START LINE",
-            "raw VDP V-counter",
-            0xFF,
+            "name_table_dma_start_pressure",
+            "NT DMA START PRESSURE",
+            "raster scanline; E5-EA use late occurrence",
+            NTSC_RASTER_SCANLINES,
             (152, 139, 222),
-            eight_bit_scale=True,
             height=DMA_START_LINE_HEIGHT,
             point_plot=True,
+            show_zero=True,
+            reference_value=PATTERN_READY_DEADLINE_SCANLINE,
+            reference_label="VBlank head",
+            deadline_value=NTSC_RASTER_SCANLINES,
+            deadline_label="VBlank end",
         ),
         RowSpec(
             "sector_slip", "SECTOR SLIP", "cumulative",
@@ -1002,6 +1070,24 @@ def draw_rows(
                 font=font(13),
                 anchor="rb",
             )
+        if spec.reference_value is not None:
+            reference = float(spec.reference_value)
+            reference_y = y1 - int(round(
+                (row_height - 1) * min(reference, spec.maximum)
+                / max(spec.maximum, 1e-9)))
+            draw.line(
+                (left, reference_y, right, reference_y),
+                fill=PASS_GUIDE,
+                width=2,
+            )
+            label = spec.reference_label or "reference"
+            draw.text(
+                (right - 4, reference_y - 2),
+                f"{label} {fmt_hex(reference)}",
+                fill=PASS_GUIDE,
+                font=font(13),
+                anchor="rb",
+            )
         if spec.deadline_value is not None:
             deadline = float(spec.deadline_value)
             deadline_y = y1 - int(round(
@@ -1084,6 +1170,14 @@ def main() -> None:
     data["pattern_dma_ready_pressure"] = derive_pattern_ready_pressure(data)
     ready_pressure = pattern_ready_pressure_summary(
         data["pattern_dma_ready_pressure"]
+    )
+    (
+        data["name_table_dma_start_pressure"],
+        name_table_start_ambiguous,
+    ) = derive_name_table_start_pressure(data)
+    name_table_start_pressure = name_table_start_pressure_summary(
+        data["name_table_dma_start_pressure"],
+        name_table_start_ambiguous,
     )
     finite_display_vblanks = display_vblanks[np.isfinite(display_vblanks)]
     (
@@ -1224,6 +1318,18 @@ def main() -> None:
         int(data["name_table_dma_start_vcounter"][1:].max(initial=0))
         if "name_table_dma_start_vcounter" in data else None
     )
+    name_table_dma_start_pressure_max = int(
+        name_table_start_pressure["maximum"]
+    )
+    name_table_dma_start_min_margin_scanlines = int(
+        name_table_start_pressure["minimum_margin_scanlines"]
+    )
+    name_table_dma_start_conservative_repeat_frames = int(
+        name_table_start_pressure["conservative_repeat_frames"]
+    )
+    name_table_dma_start_pressure_samples = int(
+        name_table_start_pressure["sample_count"]
+    )
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -1261,6 +1367,12 @@ def main() -> None:
         f"{pattern_dma_ready_min_margin_scanlines} lines, "
         f"missed {pattern_dma_ready_missed_frames}/"
         f"{pattern_dma_ready_pressure_samples}; "
+        f"NT start pressure max {name_table_dma_start_pressure_max:02X}, "
+        f"min VBlank-end margin "
+        f"{name_table_dma_start_min_margin_scanlines} lines, "
+        f"conservative E5-EA "
+        f"{name_table_dma_start_conservative_repeat_frames}/"
+        f"{name_table_dma_start_pressure_samples}; "
         "raw ready/NT start max "
         f"{pattern_dma_ready_vcounter_max:02X}/"
         f"{name_table_dma_start_vcounter_max:02X}; "
@@ -1304,11 +1416,11 @@ def main() -> None:
     )
     phase_note = (
         "pump_gap_ticks is the maximum Sub pump-opportunity interval; "
-        "pattern-ready pressure, NT start, and transfer-exit phases belong "
+        "pattern-ready and NT-start pressure, and transfer-exit phases belong "
         "to this frame; "
         if pump_gap_stats is not None
         else "flip_vcounter belongs to the preceding flip; "
-        "pattern-ready pressure, NT start, and transfer-exit phases belong "
+        "pattern-ready and NT-start pressure, and transfer-exit phases belong "
         "to this frame; "
     )
     coverage_text = (
@@ -1411,7 +1523,8 @@ def main() -> None:
             f"frame is the x-axis. {phase_note}"
             "pass2_delay_q4 belongs to frame. LOGVDP active CPU work includes writes "
             "on the two V-counter edge representations. Orange lines are gate "
-            "limits or the ready-pressure E0 deadline; "
+            "limits, the ready-pressure E0 deadline, or the NT-pressure 0x106 "
+            "deadline; "
             "PrgBuf jitter also shows the yellow normal interval."
         ),
         fill=DIM,
@@ -1449,13 +1562,15 @@ def main() -> None:
             "plot_style": "point" if spec.point_plot else "bar",
             "show_unit": spec.show_unit,
             "show_zero": spec.show_zero,
+            "reference_value": spec.reference_value,
+            "reference_label": spec.reference_label,
             "deadline_value": spec.deadline_value,
             "deadline_label": spec.deadline_label,
         })
         receipt_row_top += spec.height
 
     receipt = {
-        "schema_version": 10,
+        "schema_version": 11,
         "kind": "hudline",
         "label": title,
         "image": str(actual_output),
@@ -1552,6 +1667,8 @@ def main() -> None:
             ),
             "pattern_dma_ready_pressure":
                 pattern_dma_ready_pressure_max,
+            "name_table_dma_start_pressure":
+                name_table_dma_start_pressure_max,
             **(
                 {
                     "name_table_dma_start_vcounter":
@@ -1589,6 +1706,24 @@ def main() -> None:
             PATTERN_READY_MISSED_PRESSURE,
         "name_table_dma_start_vcounter_max":
             name_table_dma_start_vcounter_max,
+        "name_table_dma_start_pressure_max":
+            name_table_dma_start_pressure_max,
+        "name_table_dma_start_min_margin_scanlines":
+            name_table_dma_start_min_margin_scanlines,
+        "name_table_dma_start_conservative_repeat_frames":
+            name_table_dma_start_conservative_repeat_frames,
+        "name_table_dma_start_pressure_samples":
+            name_table_dma_start_pressure_samples,
+        "name_table_dma_start_deadline_scanline":
+            NTSC_RASTER_SCANLINES,
+        "name_table_dma_start_vblank_head_scanline":
+            PATTERN_READY_DEADLINE_SCANLINE,
+        "name_table_dma_start_repeat_start":
+            NT_VCOUNTER_REPEAT_START,
+        "name_table_dma_start_repeat_end":
+            NT_VCOUNTER_REPEAT_END,
+        "name_table_dma_start_repeat_offset":
+            NT_VCOUNTER_REPEAT_OFFSET,
         "gpgx_vdp_maxima": gpgx_vdp_maxima,
         "gpgx_vdp_extraction": gpgx_vdp_receipt,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),

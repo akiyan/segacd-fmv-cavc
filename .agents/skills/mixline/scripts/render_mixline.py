@@ -404,6 +404,25 @@ def main() -> None:
         )
         else ""
     )
+    nt_start_pressure_text = (
+        "NT start pressure max "
+        f"0x{int(hudline['name_table_dma_start_pressure_max']):02X}, "
+        "min end margin "
+        f"{int(hudline['name_table_dma_start_min_margin_scanlines'])} lines, "
+        "conservative E5-EA "
+        f"{int(hudline['name_table_dma_start_conservative_repeat_frames'])}/"
+        f"{int(hudline['name_table_dma_start_pressure_samples'])} | "
+        if all(
+            key in hudline
+            for key in (
+                "name_table_dma_start_pressure_max",
+                "name_table_dma_start_min_margin_scanlines",
+                "name_table_dma_start_conservative_repeat_frames",
+                "name_table_dma_start_pressure_samples",
+            )
+        )
+        else ""
+    )
     vblank_text = ""
     if hudline.get("display_vblank_warning_supported"):
         vblank_text = (
@@ -422,6 +441,7 @@ def main() -> None:
             f"{pump_gap_text}"
             f"{apply_backpressure_text}"
             f"{ready_pressure_text}"
+            f"{nt_start_pressure_text}"
             "PrgBuf jitter normal "
             f"{int(hudline['jitter_normal_kib'])} KiB | "
             f"OCR {float(hudline.get('ocr_confidence_min', 0.0)):.3f}"

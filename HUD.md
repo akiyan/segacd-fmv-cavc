@@ -109,7 +109,7 @@ back from `EA` to `E5`: the second `E5-EA` maps to blank offsets 11-16, and
 context; resolve it from nearby samples and the operation order. Tools preserve
 the raw value rather than silently choosing one occurrence.
 
-`/hudline` converts only the pattern-ready field into the derived
+`/hudline` converts the pattern-ready field into the derived
 `pattern_dma_ready_pressure` row. A ready event on visible scanline `00..DF`
 has the same pressure `00..DF`, so scanline 0 is pressure zero and larger
 values mean later, more pressured readiness. `E0` is the zero-margin first
@@ -118,7 +118,17 @@ sentinel; this avoids inventing an order for the repeated `E5..EA` values.
 Frames with no cold run have no pressure point, rather than a false zero.
 The row has an orange `E0` guide, and `0x100` points are red. The raw
 `pattern_dma_ready_vcounter` remains unchanged in the TSV and gate JSON.
-`name_table_dma_start_vcounter` remains a raw V-counter row.
+
+`/hudline` also converts `name_table_dma_start_vcounter` into the derived
+`name_table_dma_start_pressure` row. This pressure is physical raster lateness
+toward the end of the VBlank that carries the H40 name-table DMA: scanline 0 is
+pressure zero, `E0` is the VBlank head, and `0x106` is the one-past-raster
+deadline. Raw `E5..EA` can be either occurrence, so the graph always chooses
+the later one (`EB..F0` pressure) and cannot overstate the remaining time.
+Unique raw `EB..FF` maps to physical scanlines `F1..105`. The row has a green
+`E0` VBlank-head guide and an orange `0x106` end guide. A movie without this
+DMA path has no NT pressure points. Raw `name_table_dma_start_vcounter` remains
+unchanged in the TSV and gate JSON.
 
 ## Upload gate
 
@@ -326,7 +336,7 @@ blank は raster line 224 の `E0` から始まります。Visible 中の patter
 Nearby sample と operation order で決め、tool は一方を暗黙に選ばず raw 値を保持
 します。
 
-`/hudline` は pattern-ready field だけを、導出値
+`/hudline` は pattern-ready field を、導出値
 `pattern_dma_ready_pressure` の row へ変換します。Visible scanline
 `00..DF` の ready event は同じ `00..DF` の逼迫度になり、scanline 0 が
 逼迫度 0、値が大きいほど遅く逼迫した ready です。`E0` は最初の VBlank head
@@ -335,7 +345,17 @@ Nearby sample と operation order で決め、tool は一方を暗黙に選ば�
 済みます。Cold run がない frame は偽の 0 ではなく、逼迫度の点自体を表示しません。
 Row には orange の `E0` guide を引き、`0x100` の点は red にします。TSV と gate
 JSON の raw `pattern_dma_ready_vcounter` は変更しません。
-`name_table_dma_start_vcounter` も raw V-counter row のままです。
+
+`/hudline` は `name_table_dma_start_vcounter` も導出値
+`name_table_dma_start_pressure` の row へ変換します。この逼迫度は、H40
+name-table DMA を実行する VBlank の終端へ向かう physical raster 上の遅さです。
+scanline 0 が逼迫度 0、`E0` が VBlank head、`0x106` が raster の直後にある
+deadline です。Raw `E5..EA` は二つの occurrence のどちらか判別できないため、
+graph は常に後半側（逼迫度 `EB..F0`）として扱い、残り時間を過大評価しません。
+一意な raw `EB..FF` は physical scanline `F1..105` へ変換します。Row には
+green の `E0` VBlank-head guide と orange の `0x106` end guide を引きます。
+この DMA path がない movie には NT pressure の点を表示しません。TSV と gate
+JSON の raw `name_table_dma_start_vcounter` は変更しません。
 
 ## Upload gate
 

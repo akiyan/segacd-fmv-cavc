@@ -83,8 +83,8 @@ HUD OCR pass. Use descriptive field names throughout.
   30 fps expects two. Delivery-paced cadence has no fixed guide. At fixed
   cadence, observations in the first/last four content frames at 30 fps and
   two at 15 fps stay plotted as diagnostics but do not raise ALERT.
-- The next two rows are derived `pattern_dma_ready_pressure` and raw
-  `name_table_dma_start_vcounter`. They are diagnostic-only and sit directly
+- The next two rows are derived `pattern_dma_ready_pressure` and
+  `name_table_dma_start_pressure`. They are diagnostic-only and sit directly
   below VBLANK. Pattern ready is sampled immediately before Main waits for the
   first fresh blank head; it is not the post-wait DMA trigger. Ready pressure
   measures lateness: visible scanlines `00..DF` map directly to pressure
@@ -93,9 +93,15 @@ HUD OCR pass. Use descriptive field names throughout.
   has no pressure point; a real ready event on scanline 0 is pressure zero.
   This saturation avoids inventing an order for the NTSC V-counter's repeated
   `E5..EA` values. Draw an orange `E0` deadline guide and colour `0x100`
-  points red. Each row uses three times the standard row height so small phase
-  differences remain visible in the whole-movie image. Plot each frame as an
-  unconnected point; do not fill bars or connect the points.
+  points red. NT start pressure measures lateness against the VBlank end:
+  scanline 0 is pressure zero, VBlank begins at `E0`, and the one-past-raster
+  deadline is `0x106`. Raw `E5..EA` is ambiguous because it occurs twice; map
+  it conservatively to the later occurrence. Map the unique post-repeat
+  `EB..FF` range to physical scanlines `F1..105`. Draw a green `E0` VBlank-head
+  guide and an orange `0x106` end guide. A movie without the H40 name-table DMA
+  path has no NT pressure points. Each row uses three times the standard row
+  height so small phase differences remain visible in the whole-movie image.
+  Plot each frame as an unconnected point; do not fill bars or connect points.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
   `prgbuf_jitter_peak_kib`.
@@ -107,14 +113,16 @@ HUD OCR pass. Use descriptive field names throughout.
   `flip_vcounter`, `first_share_exit_vcounter`,
   `pattern_dma_ready_pressure` (derived from
   `pattern_dma_ready_vcounter` + `cold_runs`),
-  `name_table_dma_start_vcounter`, and `pass2_delay_q4`.
+  `name_table_dma_start_pressure` (derived conservatively from
+  `name_table_dma_start_vcounter`), and `pass2_delay_q4`.
 - The palette segment is a switch label and vertical boundary, not a separate
   value row.
 - Frame 0 keeps its horizontal cell for alignment but contributes to no bar,
   maximum, statistic, event, or scale.
 - Preserve native units and hexadecimal axis labels.
-- Gate limits and the ready-pressure `E0` deadline are orange, the normal
-  jitter interval is yellow, and the normal cadence guide is green.
+- Gate limits, the ready-pressure `E0` deadline, and the NT-pressure `0x106`
+  deadline are orange. The NT-pressure `E0` VBlank-head reference and normal
+  cadence guide are green; the normal jitter interval is yellow.
 - The receipt records row geometry and plot style, hashes, expected/observed
   frames, gate limits, descriptive diagnostic maxima, statistics, and
   recording identity.
