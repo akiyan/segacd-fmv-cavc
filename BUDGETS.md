@@ -148,14 +148,111 @@ includes:
 
 - Sub-CPU `expand_frame`: 16 PRG→Word-RAM words per cold pop plus interleaved
   `pump_poll` CD drain.
-- Main-CPU: Word-RAM→Main-RAM stage copy, shadow blit, VBlank-split tile DMA
-  (a full-frame wait each time the per-VBlank word budget `md_vbudget` is
-  exhausted), flip.
+- Main-CPU: Word-RAM control decode and shadow updates, Main-RAM
+  `shadow`→`nt_stage` copy, VBlank-split tile DMA (a full-frame wait each time
+  the per-VBlank word budget `md_vbudget` is exhausted), name-table DMA, flip.
 - The two CPUs serialize at the swap handshake.
 
 The cold cap must therefore be qualified with the complete encoder, stream,
 Sub-CPU, Main-CPU, audio, and CD-pump path. A pure DMA benchmark cannot justify
 raising it by itself.
+
+### Main work before pattern-transfer readiness (H40)
+
+The current standard specialized H40 DEBUG path samples
+`pattern_dma_ready_vcounter` after Main has prepared the frame but immediately
+before `bf_start_vbudget` waits for the first fresh pattern-transfer VBlank.
+This section accounts for the complete timed-frame path from the preceding
+accepted flip through that sample. Frame 0 and frames with no pattern run do
+not take this path.
+
+The estimates use about 488 Main-CPU cycles per scanline, matching `dmabench`.
+"Nominal" means an MC68000 instruction timing estimate without platform bus
+wait states. "Measured" comes from the matching full-playback HUD. One
+independent check is `pass2_delay_q4`: it measures from the preceding flip to
+entry at `bf_dma`, before the ready sample.
+
+| Order | Object, operation, and memory domain | Estimated scanlines | Reduction reading |
+|---:|---|---:|---|
+| 1 | Finish the preceding `do_flip`, restore `build_frame`, re-enter `play_loop`, sample the request V-counter, and write `CMD_SWAP` through the Gate Array | about 0.8 nominal | Small fixed work; DEBUG flip sampling is not a release-build saving |
+| 2 | Poll Gate Array `STAT_READY` while Sub finishes the Word-RAM handoff | measured per frame; Bad Apple p50 2.0, p90 81.0, p95 92.0 | Main is spinning, but the duration is owned by Sub scheduling, CD/audio work, and bank handoff |
+| 3 | Accept READY, record the approximate wait, clear `CMD_SWAP`, wait for status clear, return, and call `build_frame` | about 0.5 nominal, plus any status-clear wait | Small fixed work; a long tail is a cross-CPU handshake problem |
+| 4 | Save Main registers, clear per-frame DEBUG counters, load `n_runs`, and decode the Word-RAM control header's update count and bitmap/list tag | about 0.5 nominal | Small; DEBUG clearing does not improve the release path |
+| 5 | Apply completed name entries from the swapped Word-RAM control block to the persistent Main-RAM `shadow`, using the selected generated-bitmap or list walker | data-dependent; Bad Apple p50 29.7, p95 42.4, max 60.1 nominal | Large CPU target; bitmap frames dominate the sample |
+| 6 | Compute the inactive name-table base retained for the later flip | about 0.2 nominal | Too small to lead the work |
+| 7 | Copy all 40x28 `shadow` words into the centered 64-word-pitch Main-RAM `nt_stage` | 24.1 nominal every frame | Large fixed target; this is Main-RAM→Main-RAM name work, not pattern staging |
+| 8 | At `bf_dma`, record `pass2_delay_q4`, clear PT/NT DEBUG state, compute the final-VBlank reserve including palette lookahead, clear the budget-origin flag, test `n_runs`, and set the Word-RAM `O_LOADS` cursor | about 0.8 nominal | Small fixed bookkeeping |
+| 9 | Zero the DEBUG logical-word counter, read `VDP_HV`, and store `pattern_dma_ready_vcounter` | about 0.1 nominal | This store is the endpoint |
+
+On the one-time frame-0-to-frame-1 transition, `start_playback` also clears
+the startup `CMD_STREAM` and waits for Sub status clear before the next
+`CMD_SWAP`. Bad Apple frame 1 has no pattern run, so this startup-only wait is
+not part of the PT sample below. If `n_upd` is zero, order 5 is only the bypass
+branch; every sampled Bad Apple PT frame has at least one update. Main runs
+with interrupts masked (`SR = 0x2700`), so there is no asynchronous Main
+interrupt handler omitted from the list.
+
+The small work in orders 1, 3, 4, and 6 is also checked as one group rather
+than trusted only as separate static estimates. After subtracting the measured
+Sub wait, the selected shadow-update model, and the fixed NT-stage copy from
+`pass2_delay_q4`, the Bad Apple remainder is 2.3 scanlines at p50 and 3.6 at
+p95. Its negative minimum and high p99 outliers come from stopwatch
+quantization and the approximate 8-bit V-counter wait, so those endpoints must
+not be interpreted as real negative work or a 100-line fixed path. Order 8-9
+adds 448 nominal cycles, or 0.92 scanline, after the `pass2_delay_q4` sample.
+
+The matching Bad Apple H40 320x224, 30 fps, cold-cap-210 capture contains 6,396
+timed PT frames:
+
+| Work or observation | Samples | min | p50 | p90 | p95 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Updated cells | 6,396 | 1 | 171 | 319 | 385.25 | 643.05 | 1,120 |
+| Measured Sub wait, scanlines | 6,396 | 0.0 | 2.0 | 81.0 | 92.0 | 102.0 | 187.0 |
+| Selected shadow update, nominal scanlines | 6,396 | 0.18 | 29.67 | 39.51 | 42.39 | 52.35 | 60.06 |
+| Bitmap shadow update, nominal scanlines | 5,861 | 17.04 | 30.43 | 39.87 | 42.69 | 52.71 | 60.06 |
+| List shadow update, nominal scanlines | 535 | 0.18 | 4.80 | 6.57 | 6.87 | 6.97 | 6.97 |
+| Shadow update + NT-stage copy, nominal scanlines | 6,396 | 24.26 | 53.75 | 63.59 | 66.47 | 76.43 | 84.14 |
+| Preceding flip to `bf_dma`, measured scanlines | 6,396 | 25.11 | 67.60 | 141.00 | 152.58 | 166.10 | 243.36 |
+| Preceding flip to ready, measured + nominal tail scanlines | 6,396 | 26.03 | 68.52 | 141.91 | 153.50 | 167.02 | 244.28 |
+
+The raw ready-pressure value is a physical V-counter phase, not elapsed work.
+For the same PT frames its p50 is scanline 54, p95 is 137.25, and p99 is 154.
+One of 6,396 frames missed the first VBlank head and is represented by the
+`0x100` sentinel. For a visible ready phase `x`, the remaining time before
+VBlank starts at `E0` is `224 - x` scanlines.
+
+The strongest benchmark candidates, without choosing an implementation yet,
+are:
+
+1. Move name-side work off the pre-PT critical path and into an active-display
+   interval after the first PT VBlank. This can move readiness earlier by the
+   combined name-work distribution: 53.75 scanlines at p50, 66.47 at p95, and
+   up to 84.14 in this capture. It does not reduce total CPU work and can make
+   NT readiness worse, so both PT and NT pressure must be benchmarked.
+2. Remove or fuse the full `shadow`→`nt_stage` copy. Making the 64-pitch stage
+   authoritative, or writing the final stage form while decoding updates, are
+   examples to test rather than a selected design. The fixed opportunity is
+   24.08 scanlines and reduces total Main work, so it can help both PT and NT.
+3. Reduce the bitmap shadow-update cost or replace the representation. Bitmap
+   frames use 30.43 scanlines at p50 versus 4.80 for selected list frames.
+   Lists cannot simply be forced: the encoder currently accepts them only when
+   the exact BODY route preserves PrgBuf/readiness margins and does not grow
+   control data.
+4. Return or request the next Word-RAM bank earlier enough to overlap more Sub
+   work. This targets the measured p90 81-line wait tail, not Main instruction
+   cost. It changes cross-CPU ownership and must preserve CD pumping, audio,
+   startup, and both 15/30 fps handoffs.
+
+Fixed bookkeeping is only a few scanlines and is lower priority. The
+`bf_start_vbudget` fresh-head wait, pattern-run parsing and DMA, full HUD
+formatting, CRAM work, NT DMA, cadence-final wait, and flip all occur after the
+ready sample. Optimizing them may improve PT completion or NT readiness but
+cannot move this particular ready measurement earlier.
+
+`harness/pt_prework/analyze.py` reproduces these tables from a matching packed
+stream and HUD TSV. Every experiment must keep the packed stream and target
+quality fixed, then report PT readiness, PT completion, NT readiness, playback
+cadence, and the HUD safety fields separately.
 
 ### Encoder cap
 
@@ -359,14 +456,101 @@ Pure-DMA ceilingだけでは再生上限を決められません。各frameに�
 
 - Sub CPUの`expand_frame`: cold popごとに16 wordをPRGからWord-RAMへ送り、その間に
   `pump_poll`でCDをdrainします。
-- Main CPU: Word-RAMからMain-RAMへのstage copy、shadow blit、VBlankに分割したtile DMA、
-  flipを行います。VBlankごとのword予算`md_vbudget`を使い切るたびに1 display frame
-  待ちます。
+- Main CPU: Word-RAM controlのdecodeとshadow update、Main-RAMの
+  `shadow`→`nt_stage` copy、VBlankに分割したtile DMA、name-table DMA、flipを行います。
+  VBlankごとのword予算`md_vbudget`を使い切るたびに1 display frame待ちます。
 - 2つのCPUはswap handshakeで直列化されます。
 
 したがってcold capは、encoder、stream、Sub CPU、Main CPU、audio、CD pumpを含む
 完全な経路でqualificationする必要があります。Pure DMA benchmarkだけではcap引き上げの
 根拠になりません。
+
+### Pattern転送ready前のMain処理（H40）
+
+現在のstandard specialized H40 DEBUG経路は、Mainがframe準備を終え、
+`bf_start_vbudget`が最初のfreshなpattern-transfer VBlankを待つ直前に
+`pattern_dma_ready_vcounter`をsampleします。この節は、1つ前に受理したflipから
+そのsampleまでのtimed-frame経路をすべて数えます。Frame 0とpattern runがないframeは
+この経路を通りません。
+
+見積もりは`dmabench`と同じく、Main CPUの約488 cycleを1 scanlineへ換算します。
+「Nominal」はplatformのbus waitを含めないMC68000命令timingの見積もりです。
+「Measured」は対応するfull-playback HUDから得ます。独立した照合値として、
+`pass2_delay_q4`が1つ前のflipから`bf_dma` entryまで、ready sampleより前の時間を
+測っています。
+
+| 順番 | Object、operation、memory domain | 見込みscanline数 | 削減の読み方 |
+|---:|---|---:|---|
+| 1 | 1つ前の`do_flip`を終え、`build_frame`をrestoreし、`play_loop`へ戻り、request時V-counterをsampleしてGate Arrayへ`CMD_SWAP`を書く | nominalで約0.8 | 小さい固定処理。DEBUGのflip sampleを消してもrelease buildの削減にはならない |
+| 2 | SubがWord-RAM handoffを終えるまでGate Arrayの`STAT_READY`をpollする | frameごとの実測。Bad Appleはp50 2.0、p90 81.0、p95 92.0 | Mainはspinするが、時間のownerはSub scheduling、CD/audio処理、bank handoff |
+| 3 | READYを受理し、approximate waitを記録し、`CMD_SWAP`をclearし、status clearを待ち、returnして`build_frame`をcallする | nominalで約0.5 + status-clear待ち | 小さい固定処理。長いtailならcross-CPU handshakeの問題 |
+| 4 | Main registerをsaveし、frame単位DEBUG counterをclearし、`n_runs`をloadし、Word-RAM control headerのupdate countとbitmap/list tagをdecodeする | nominalで約0.5 | 小さい。DEBUG clearを削ってもrelease経路は改善しない |
+| 5 | Swap済みWord-RAM control blockの完成name entryを、選択済みgenerated-bitmap walkerまたはlist walkerでMain-RAMの永続`shadow`へ反映する | data依存。Bad Appleはp50 29.7、p95 42.4、最大60.1 nominal | 大きいCPU target。sampleの大半はbitmap frame |
+| 6 | 後のflipまで保持するinactive name-table baseを計算する | nominalで約0.2 | 小さすぎるため先に扱う対象ではない |
+| 7 | 40x28の`shadow` wordをすべて、中央配置された64-word-pitchのMain-RAM `nt_stage`へcopyする | 毎frame nominalで24.1 | 大きい固定target。Pattern stagingではなくMain-RAM→Main-RAMのname処理 |
+| 8 | `bf_dma`で`pass2_delay_q4`を記録し、PT/NT DEBUG stateをclearし、palette先読みを含む最終VBlank reserveを計算し、budget origin flagをclearし、`n_runs`をtestしてWord-RAM `O_LOADS` cursorを設定する | nominalで約0.8 | 小さい固定bookkeeping |
+| 9 | DEBUG logical-word counterをzeroにし、`VDP_HV`を読み、`pattern_dma_ready_vcounter`へstoreする | nominalで約0.1 | このstoreが終点 |
+
+一度だけ通るframe 0からframe 1への遷移では、`start_playback`がstartup時の
+`CMD_STREAM`もclearし、次の`CMD_SWAP`より前にSub status clearを待ちます。
+Bad Appleのframe 1にはpattern runがないため、このstartup専用waitは下記PT sampleに
+入りません。`n_upd`がzeroなら順番5はbypass branchだけですが、sample対象のBad Apple
+PT frameはすべて1つ以上のupdateを持ちます。Mainはinterrupt mask状態
+（`SR = 0x2700`）で動くため、一覧から漏れたasynchronousなMain interrupt handlerは
+ありません。
+
+順番1、3、4、6の小さい処理は、個別の静的見積もりだけでなく1つのgroupとしても
+照合します。`pass2_delay_q4`から、実測Sub wait、選択されたshadow-update model、
+固定NT-stage copyを引くと、Bad Appleの残りはp50で2.3 scanline、p95で3.6です。
+負の最小値と大きいp99外れ値は、stopwatch量子化とapproximateな8-bit V-counter waitから
+生じるため、実際の負の処理や100-lineの固定経路とは解釈しません。
+順番8〜9は`pass2_delay_q4` sampleの後に448 nominal cycle、つまり0.92 scanlineを
+追加します。
+
+対応するBad Apple H40 320x224、30 fps、cold cap 210のcaptureには、timed PT frameが
+6,396あります。
+
+| 処理または観測 | Sample数 | min | p50 | p90 | p95 | p99 | max |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 更新cell数 | 6,396 | 1 | 171 | 319 | 385.25 | 643.05 | 1,120 |
+| Sub待ち実測、scanline | 6,396 | 0.0 | 2.0 | 81.0 | 92.0 | 102.0 | 187.0 |
+| 選択済みshadow update、nominal scanline | 6,396 | 0.18 | 29.67 | 39.51 | 42.39 | 52.35 | 60.06 |
+| Bitmap shadow update、nominal scanline | 5,861 | 17.04 | 30.43 | 39.87 | 42.69 | 52.71 | 60.06 |
+| List shadow update、nominal scanline | 535 | 0.18 | 4.80 | 6.57 | 6.87 | 6.97 | 6.97 |
+| Shadow update + NT-stage copy、nominal scanline | 6,396 | 24.26 | 53.75 | 63.59 | 66.47 | 76.43 | 84.14 |
+| 1つ前のflipから`bf_dma`まで、実測scanline | 6,396 | 25.11 | 67.60 | 141.00 | 152.58 | 166.10 | 243.36 |
+| 1つ前のflipからreadyまで、実測 + nominal tail scanline | 6,396 | 26.03 | 68.52 | 141.91 | 153.50 | 167.02 | 244.28 |
+
+Raw ready pressure値はphysical V-counter上のphaseで、経過処理時間ではありません。
+同じPT frameでp50はscanline 54、p95は137.25、p99は154です。6,396 frame中1 frameは
+最初のVBlank headを逃し、`0x100` sentinelで表します。Visible上のready phaseを`x`と
+すると、VBlankが`E0`で始まるまでの残りは`224 - x` scanlineです。
+
+実装方法をまだ決めずにbenchmarkする候補は、強い順に次のとおりです。
+
+1. Name側の処理をpre-PT critical pathから外し、最初のPT VBlank後のactive-display
+   intervalへ移します。このcaptureでは、readyを前倒しできる候補量がname処理の合計、
+   p50で53.75、p95で66.47、最大84.14 scanlineです。Total CPU処理は減らず、NT readyを
+   悪化させる可能性があるため、PTとNTのpressureを両方benchmarkします。
+2. `shadow`→`nt_stage`全copyをなくすか融合します。64-pitch stageをauthoritativeにする、
+   update decode中に最終stage形式へ書く、といった案は選択済み設計ではなくtest候補です。
+   固定の候補量は24.08 scanlineで、Mainのtotal処理も減るためPTとNTの両方へ寄与できます。
+3. Bitmap shadow-update costを減らすか表現を置き換えます。Bitmap frameのp50は
+   30.43 scanline、選択済みlist frameは4.80です。ただしlistの強制はできません。
+   現在のencoderは、正確なBODY routeがPrgBuf/readiness marginを維持し、control dataを
+   増やさない場合だけlistを採用します。
+4. 次のWord-RAM bankをより早く返す、またはrequestし、Sub処理とのoverlapを増やします。
+   これはMain命令costではなく、実測p90 81-lineのwait tailが対象です。Cross-CPU ownershipを
+   変えるため、CD pump、audio、startup、15/30 fps両方のhandoffを維持する必要があります。
+
+固定bookkeepingは数scanlineだけなので優先度が低いです。`bf_start_vbudget`のfresh-head待ち、
+pattern-run parseとDMA、HUD全体のformat、CRAM処理、NT DMA、cadence-final待ち、flipはすべて
+ready sampleより後です。これらの最適化はPT完了やNT readyを改善し得ますが、このready値を
+早めることはできません。
+
+`harness/pt_prework/analyze.py`は、対応するpacked streamとHUD TSVからこれらの表を再生成します。
+各experimentはpacked streamとtarget qualityを固定し、PT ready、PT完了、NT ready、
+playback cadence、HUD safety fieldを分けて報告する必要があります。
 
 ### Encoder cap
 
