@@ -45,6 +45,10 @@ DMA_START_LINE_SCALE = 3
 DMA_START_LINE_HEIGHT = DEFAULT_ROW_HEIGHT * DMA_START_LINE_SCALE
 PATTERN_READY_DEADLINE_SCANLINE = 0xE0
 PATTERN_READY_MISSED_PRESSURE = 0x100
+# One NTSC V28 blank is 38 scanlines, just under twenty groups of four
+# 30.72-us stopwatch ticks. A blank-phase ready sample inside this bound after
+# the preceding flip still belongs to that preceding blank, not PT VBlank 1.
+PATTERN_READY_SAME_BLANK_Q4_MAX = 20
 NT_READY_DEADLINE_SCANLINE = 0xE0
 NT_READY_MISSED_PRESSURE = 0x100
 
@@ -473,27 +477,46 @@ def derive_pattern_ready_pressure(
     """Map raw ready V-counters to first-VBlank pressure.
 
     Visible scanlines 0..223 map directly to pressure 0..223.  E0 is the
-    zero-margin blank head.  Any later blank sample maps to the 0x100 missed-head
-    sentinel, avoiding the NTSC V-counter's ambiguous E5..EA repeat.  Frames
-    without a cold run have no ready event and remain NaN rather than
-    masquerading as a real scanline-0 sample.
+    zero-margin target head. A blank-phase sample no more than one complete
+    blank after the preceding flip belongs to that preceding blank and clamps
+    to zero: it is earlier than the active raster leading to PT VBlank 1.
+    Any other later-blank sample maps to the 0x100 missed-head sentinel,
+    avoiding the NTSC V-counter's ambiguous E5..EA repeat. Frames without a
+    cold run have no ready event and remain NaN rather than masquerading as a
+    real scanline-0 sample.
     """
 
     ready = np.asarray(data["pattern_dma_ready_vcounter"], np.float64)
     runs = np.asarray(data["cold_runs"], np.float64)
-    if ready.shape != runs.shape:
+    delay_q4 = np.asarray(data["pass2_delay_q4"], np.float64)
+    if ready.shape != runs.shape or ready.shape != delay_q4.shape:
         raise SystemExit(
-            "pattern ready V-counter and cold-run arrays have different lengths"
+            "pattern ready V-counter, cold-run, and pass2-delay arrays "
+            "have different lengths"
         )
     if np.any(~np.isfinite(ready)) or np.any((ready < 0) | (ready > 0xFF)):
         raise SystemExit("pattern ready V-counter must stay in 00..FF")
+    if np.any(~np.isfinite(delay_q4)) or np.any(
+        (delay_q4 < 0) | (delay_q4 > 0xFF)
+    ):
+        raise SystemExit("pass2 delay q4 must stay in 00..FF")
     pressure = np.full(ready.shape, np.nan, dtype=np.float64)
     measured = runs > 0
     pressure[measured] = np.minimum(
         ready[measured],
         PATTERN_READY_MISSED_PRESSURE,
     )
-    pressure[measured & (ready > PATTERN_READY_DEADLINE_SCANLINE)] = (
+    preceding_blank = (
+        measured
+        & (ready >= PATTERN_READY_DEADLINE_SCANLINE)
+        & (delay_q4 <= PATTERN_READY_SAME_BLANK_Q4_MAX)
+    )
+    pressure[preceding_blank] = 0
+    pressure[
+        measured
+        & ~preceding_blank
+        & (ready > PATTERN_READY_DEADLINE_SCANLINE)
+    ] = (
         PATTERN_READY_MISSED_PRESSURE
     )
     return pressure
@@ -534,11 +557,16 @@ def derive_name_table_ready_pressure(
     """Map pre-wait NT readiness to cadence-final-VBlank pressure.
 
     ``transfer_vblanks`` identifies which fresh pattern budget has already
-    opened.  Readiness at least one whole raster before the cadence-final blank
-    is unpressured and clamps to zero.  In the active raster immediately before
-    that target blank, raw scanlines 00..DF map directly to pressure.  Reaching
-    the target pattern budget means its head has already been consumed and
-    maps to the 0x100 missed-head sentinel.
+    opened. Readiness at least one whole raster before the cadence-final blank
+    is unpressured and clamps to zero. In the active raster immediately before
+    that target blank, raw scanlines 00..DF map directly to pressure.
+
+    If PT splits into the cadence-final budget, NT cannot start at that
+    VBlank's head: its earliest legal point is after PT2. A readiness sample in
+    that target VBlank therefore keeps its raw E0..FF pressure instead of
+    collapsing to a generic missed-head sentinel. A visible sample after that
+    budget opened means the target blank was exhausted; a later-than-target
+    PT budget also maps to 0x100.
 
     A movie with no nonzero timed sample does not use this DMA path.  When the
     path is present, a real raw scanline-0 sample remains pressure zero.
@@ -565,7 +593,10 @@ def derive_name_table_ready_pressure(
     final_preblank = opened == final_preblank_budget
     visible = raw < NT_READY_DEADLINE_SCANLINE
     pressure[final_preblank & visible] = raw[final_preblank & visible]
-    pressure[opened >= target_vblank] = NT_READY_MISSED_PRESSURE
+    target_budget = opened == target_vblank
+    pressure[target_budget & ~visible] = raw[target_budget & ~visible]
+    pressure[target_budget & visible] = NT_READY_MISSED_PRESSURE
+    pressure[opened > target_vblank] = NT_READY_MISSED_PRESSURE
     return pressure
 
 
@@ -663,7 +694,7 @@ def row_specs(
         RowSpec(
             "pattern_dma_ready_pressure",
             "PATTERN READY PRESSURE",
-            "scanline 0=0; 0x100=missed head",
+            "scanline 0=0; prior blank=0; 0x100=missed head",
             PATTERN_READY_MISSED_PRESSURE,
             (98, 184, 224),
             height=DMA_START_LINE_HEIGHT,
@@ -675,7 +706,7 @@ def row_specs(
         RowSpec(
             "name_table_dma_ready_pressure",
             "NT READY PRESSURE",
-            "scanline 0=0; 0x100=missed target head",
+            "scanline 0=0; split E0..FF=after PT2; 0x100=escaped blank",
             NT_READY_MISSED_PRESSURE,
             (152, 139, 222),
             height=DMA_START_LINE_HEIGHT,
@@ -1357,7 +1388,7 @@ def main() -> None:
         f"NT ready pressure max {name_table_dma_ready_pressure_max:02X}, "
         f"min target-VBlank margin "
         f"{name_table_dma_ready_min_margin_scanlines} lines, "
-        f"missed {name_table_dma_ready_missed_frames}/"
+        f"past head {name_table_dma_ready_missed_frames}/"
         f"{name_table_dma_ready_pressure_samples}; "
         "raw pattern/NT ready max "
         f"{pattern_dma_ready_vcounter_max:02X}/"

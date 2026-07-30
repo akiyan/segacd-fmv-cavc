@@ -53,7 +53,7 @@ Report the Gist page, raw PNG URL, and clickable local image path.
   maximum. When present, also show the `pump_gap_ticks` maximum, APPLY
   back-pressure frame count, and pattern-ready pressure maximum, minimum
   first-VBlank margin, and missed-head count. Also show the NT-ready pressure
-  maximum, minimum cadence-final-VBlank margin, and missed-head count. The
+  maximum, minimum cadence-final-VBlank margin, and past-head count. The
   complete descriptive rows remain in the pixel-preserved hudline body. Do not
   retain two full, repetitive headers.
 - Directly below the hud summary line, repeat the timeline's whole-movie

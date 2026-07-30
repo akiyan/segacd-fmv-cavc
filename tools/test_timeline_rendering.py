@@ -174,20 +174,29 @@ class TimelineRenderingTests(unittest.TestCase):
     def test_pattern_ready_pressure_starts_at_zero_and_marks_missed_head(self):
         pressure = hudline.derive_pattern_ready_pressure({
             "pattern_dma_ready_vcounter": np.asarray(
-                [0xFF, 0x00, 0xC3, 0xDF, 0xE0, 0xE5, 0xFC],
+                [0xFF, 0x00, 0xC3, 0xDF, 0xE0, 0xE5, 0xE5, 0xFC],
                 np.float64,
             ),
-            "cold_runs": np.asarray([1, 1, 1, 1, 1, 1, 0], np.float64),
+            "cold_runs": np.asarray(
+                [1, 1, 1, 1, 1, 1, 1, 0],
+                np.float64,
+            ),
+            "pass2_delay_q4": np.asarray(
+                [1, 30, 40, 50, 120, 2, 120, 0],
+                np.float64,
+            ),
         })
+        self.assertEqual(float(pressure[0]), 0)
         self.assertEqual(float(pressure[1]), 0)
         self.assertEqual(float(pressure[2]), 0xC3)
         self.assertEqual(float(pressure[3]), 0xDF)
         self.assertEqual(float(pressure[4]), 0xE0)
+        self.assertEqual(float(pressure[5]), 0)
         self.assertEqual(
-            float(pressure[5]),
+            float(pressure[6]),
             hudline.PATTERN_READY_MISSED_PRESSURE,
         )
-        self.assertTrue(np.isnan(pressure[6]))
+        self.assertTrue(np.isnan(pressure[7]))
         summary = hudline.pattern_ready_pressure_summary(pressure)
         self.assertEqual(
             summary["maximum"],
@@ -195,43 +204,43 @@ class TimelineRenderingTests(unittest.TestCase):
         )
         self.assertEqual(summary["minimum_margin_scanlines"], 0)
         self.assertEqual(summary["missed_frames"], 1)
-        self.assertEqual(summary["sample_count"], 5)
+        self.assertEqual(summary["sample_count"], 6)
 
     def test_nt_ready_pressure_targets_second_vblank_at_30fps(self):
         pressure = hudline.derive_name_table_ready_pressure({
             "name_table_dma_ready_vcounter": np.asarray(
-                [0, 0xD0, 0x00, 0xC3, 0xE5, 0x10, 0xDF],
+                [0, 0xD0, 0x00, 0xC3, 0xE5, 0x10, 0xDF, 0xE5, 0xFC],
                 np.float64,
             ),
             "transfer_vblanks": np.asarray(
-                [0, 0, 1, 1, 1, 2, 2],
+                [0, 0, 1, 1, 1, 2, 2, 2, 2],
                 np.float64,
             ),
         }, 30.0)
         np.testing.assert_array_equal(
             pressure,
-            [0, 0, 0, 0xC3, 0, 0x100, 0x100],
+            [0, 0, 0, 0xC3, 0, 0x100, 0x100, 0xE5, 0xFC],
         )
         summary = hudline.name_table_ready_pressure_summary(
             pressure,
         )
         self.assertEqual(summary["maximum"], 0x100)
         self.assertEqual(summary["minimum_margin_scanlines"], 0)
-        self.assertEqual(summary["missed_frames"], 2)
-        self.assertEqual(summary["sample_count"], 6)
+        self.assertEqual(summary["missed_frames"], 4)
+        self.assertEqual(summary["sample_count"], 8)
 
     def test_nt_ready_pressure_targets_fourth_vblank_at_15fps(self):
         pressure = hudline.derive_name_table_ready_pressure({
             "name_table_dma_ready_vcounter": np.asarray(
-                [0, 0xC0, 0xC1, 0xC2], np.float64,
+                [0, 0xC0, 0xC1, 0xC2, 0xE7], np.float64,
             ),
             "transfer_vblanks": np.asarray(
-                [0, 2, 3, 4], np.float64,
+                [0, 2, 3, 4, 4], np.float64,
             ),
         }, 15.0)
         np.testing.assert_array_equal(
             pressure,
-            [0, 0, 0xC1, 0x100],
+            [0, 0, 0xC1, 0x100, 0xE7],
         )
 
     def test_nt_ready_pressure_is_absent_when_dma_path_is_absent(self):

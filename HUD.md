@@ -112,12 +112,15 @@ the raw value rather than silently choosing one occurrence.
 `/hudline` converts the pattern-ready field into the derived
 `pattern_dma_ready_pressure` row. A ready event on visible scanline `00..DF`
 has the same pressure `00..DF`, so scanline 0 is pressure zero and larger
-values mean later, more pressured readiness. `E0` is the zero-margin first
-VBlank head. Any raw value later than `E0` becomes the `0x100` missed-head
-sentinel; this avoids inventing an order for the repeated `E5..EA` values.
-Frames with no cold run have no pressure point, rather than a false zero.
-The row has an orange `E0` guide, and `0x100` points are red. The raw
-`pattern_dma_ready_vcounter` remains unchanged in the TSV and gate JSON.
+values mean later, more pressured readiness. A blank-phase ready sample within
+one complete blank of the preceding flip still belongs to that preceding
+blank; `pass2_delay_q4` identifies it and the pressure clamps to zero. `E0`
+otherwise means the zero-margin first target-VBlank head. A later blank value
+becomes the `0x100` missed-head sentinel; this avoids inventing an order for
+the repeated `E5..EA` values. Frames with no cold run have no pressure point,
+rather than a false zero. The row has an orange `E0` guide, and `0x100` points
+are red. The raw `pattern_dma_ready_vcounter` remains unchanged in the TSV and
+gate JSON.
 
 `/hudline` also converts `name_table_dma_ready_vcounter` into the derived
 `name_table_dma_ready_pressure` row. Its deadline is the cadence-final VBlank
@@ -126,12 +129,18 @@ fourth at 15 fps. `transfer_vblanks` identifies how many fresh pattern budgets
 have already opened. Readiness earlier than the active raster immediately
 before that target clamps to pressure zero. In that final active raster, raw
 scanlines `00..DF` map directly to pressure; scanline 0 is pressure zero and
-`E0` is zero margin. If the target pattern budget has already opened, pressure
-is the `0x100` missed-head sentinel. A blank-phase raw sample before the target
-belongs to the preceding budget and also clamps to zero, avoiding the repeated
-`E5..EA` ambiguity. The row has an orange `E0` target-head guide, and `0x100`
-points are red. A movie without this DMA path has no NT pressure points. Raw
-`name_table_dma_ready_vcounter` remains unchanged in the TSV and gate JSON.
+`E0` is zero margin.
+
+That target head applies directly when PT fits before it. If PT splits into the
+target budget, NT can start only after PT2; a ready sample in that same VBlank
+keeps its physical `E0..FF` value so the remaining blank pressure stays
+visible. A visible sample after the target budget opened, or a third PT budget
+at 30 fps, becomes the `0x100` escaped-target-blank sentinel. A blank-phase raw
+sample before the target belongs to the preceding budget and clamps to zero,
+avoiding the repeated `E5..EA` ambiguity. The row has an orange `E0`
+target-head guide, and values after it are red. A movie without this DMA path
+has no NT pressure points. Raw `name_table_dma_ready_vcounter` remains
+unchanged in the TSV and gate JSON.
 
 ## Upload gate
 
@@ -342,12 +351,14 @@ Nearby sample と operation order で決め、tool は一方を暗黙に選ば�
 `/hudline` は pattern-ready field を、導出値
 `pattern_dma_ready_pressure` の row へ変換します。Visible scanline
 `00..DF` の ready event は同じ `00..DF` の逼迫度になり、scanline 0 が
-逼迫度 0、値が大きいほど遅く逼迫した ready です。`E0` は最初の VBlank head
-までの余裕が 0 の位置です。`E0` より後の raw 値はすべて、head を逃したことを
-示す `0x100` sentinel にします。これにより、繰り返す `E5..EA` の順序を捏造せずに
-済みます。Cold run がない frame は偽の 0 ではなく、逼迫度の点自体を表示しません。
-Row には orange の `E0` guide を引き、`0x100` の点は red にします。TSV と gate
-JSON の raw `pattern_dma_ready_vcounter` は変更しません。
+逼迫度 0、値が大きいほど遅く逼迫した ready です。直前のflipから1 blank以内の
+blank-phase readyはまだその直前blankに属します。`pass2_delay_q4`でこれを判定し、
+逼迫度を0へclampします。それ以外の`E0`は最初のtarget VBlank headまでの余裕が
+0の位置です。それより後のblank値はheadを逃した`0x100` sentinelにします。
+これにより、繰り返す`E5..EA`の順序を捏造せずに済みます。Cold runがないframeは
+偽の0ではなく、逼迫度の点自体を表示しません。Rowにはorangeの`E0` guideを引き、
+`0x100`の点はredにします。TSVとgate JSONのraw
+`pattern_dma_ready_vcounter`は変更しません。
 
 `/hudline` は `name_table_dma_ready_vcounter` も導出値
 `name_table_dma_ready_pressure` の row へ変換します。Deadline は H40
@@ -355,13 +366,17 @@ name-table DMA を実行する cadence-final VBlank head、つまり 30 fps な�
 15 fps なら 4 回目です。`transfer_vblanks` で、すでに開いた fresh pattern
 budget 数を判定します。Target 直前の active raster より早く ready なら逼迫度 0
 へ clamp します。その最後の active raster では raw scanline `00..DF` をそのまま
-逼迫度にし、scanline 0 が逼迫度 0、`E0` が余裕 0 です。Target の pattern budget
-がすでに開いていれば、head を逃した `0x100` sentinel にします。Target より前の
-blank-phase raw sample は一つ前の budget に属するため 0 へ clamp し、繰り返す
-`E5..EA` の曖昧さを持ち込みません。Row には orange の `E0` target-head guide
-を引き、`0x100` の点は red にします。この DMA path がない movie には NT
-pressure の点を表示しません。TSV と gate JSON の raw
-`name_table_dma_ready_vcounter` は変更しません。
+逼迫度にし、scanline 0 が逼迫度 0、`E0` が余裕 0 です。
+
+このtarget headをそのまま使うのは、PTがその前に収まる場合です。PTがtarget
+budgetへ分割された場合、NT開始可能点はPT2の後です。同じVBlank内のready sampleは
+physicalな`E0..FF`をそのまま残し、残りblankの逼迫を見えるようにします。Target
+budgetを開いた後のvisible sample、または30 fpsで3本目のPT budgetまで進んだ場合は
+target blankを抜けた`0x100` sentinelにします。Targetより前のblank-phase raw
+sampleは一つ前のbudgetに属するため0へclampし、繰り返す`E5..EA`の曖昧さを
+持ち込みません。Rowにはorangeの`E0` target-head guideを引き、それより後の値は
+redにします。このDMA pathがないmovieにはNT pressureの点を表示しません。TSVと
+gate JSONのraw `name_table_dma_ready_vcounter`は変更しません。
 
 ## Upload gate
 
