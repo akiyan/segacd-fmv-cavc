@@ -1,6 +1,6 @@
 ---
 name: hudline
-description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-12 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
+description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-13 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
 ---
 
 # Playback HUD Timeline
@@ -18,7 +18,7 @@ HUD OCR pass. Use descriptive field names throughout.
    logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud_gate.json
    ```
 
-   The gate must use schema 12. Render failed gates too. An incomplete loop may
+   The gate must use schema 13. Render failed gates too. An incomplete loop may
    be rendered only when the gate explicitly records that failure; keep the
    complete expected frame axis and shade the missing suffix.
 
@@ -83,6 +83,9 @@ HUD OCR pass. Use descriptive field names throughout.
   30 fps expects two. Delivery-paced cadence has no fixed guide. At fixed
   cadence, observations in the first/last four content frames at 30 fps and
   two at 15 fps stay plotted as diagnostics but do not raise ALERT.
+- The next two rows are the raw `pattern_dma_start_vcounter` and
+  `name_table_dma_start_vcounter` values. They are diagnostic-only and sit
+  directly below VBLANK.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
   `prgbuf_jitter_peak_kib`.
@@ -91,7 +94,9 @@ HUD OCR pass. Use descriptive field names throughout.
   `reader_ahead_frames`, `reader_slot_sector`, `transfer_vblanks`,
   `transfer_end_vcounter`, `cd_wait_count`, `audio_lead_256b`,
   `sub_wait_scanlines`, `adpcm_decode_units`, `transfer_ticks`, `cold_runs`,
-  `flip_vcounter`, `first_share_exit_vcounter`, and `pass2_delay_q4`.
+  `flip_vcounter`, `first_share_exit_vcounter`,
+  `pattern_dma_start_vcounter`, `name_table_dma_start_vcounter`, and
+  `pass2_delay_q4`.
 - The palette segment is a switch label and vertical boundary, not a separate
   value row.
 - Frame 0 keeps its horizontal cell for alignment but contributes to no bar,
@@ -104,7 +109,7 @@ HUD OCR pass. Use descriptive field names throughout.
 
 ## Gate interpretation
 
-Schema 12 gate fields are:
+Schema 13 gate fields are:
 
 ```text
 sector_slip control_desync audio_resync vblank_spill

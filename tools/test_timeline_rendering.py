@@ -93,6 +93,36 @@ class TimelineRenderingTests(unittest.TestCase):
         run = next(spec for spec in specs if spec.key == "cold_runs")
         self.assertEqual(run.maximum, 12)
 
+    def test_dma_start_rows_follow_vblank_before_gate_rows(self):
+        data = {
+            "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
+            "pattern_dma_start_vcounter": np.asarray(
+                [0, 0xE0, 0xE0], np.float64),
+            "name_table_dma_start_vcounter": np.asarray(
+                [0, 0xEE, 0xF0], np.float64),
+        }
+        gate = {
+            "content_fps": 30,
+            "limits": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 1,
+                "prgbuf_jitter_peak_kib": 25,
+            },
+            "jitter_headroom_kib": 20,
+        }
+        keys = [spec.key for spec in hudline.row_specs(data, gate, 2)]
+        self.assertEqual(
+            keys[:4],
+            [
+                "display_vblanks",
+                "pattern_dma_start_vcounter",
+                "name_table_dma_start_vcounter",
+                "sector_slip",
+            ],
+        )
+
     def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
         data = {
             "display_vblanks": np.asarray([np.nan, 2, 3], np.float64),

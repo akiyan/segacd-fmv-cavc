@@ -107,7 +107,7 @@ the raw value rather than silently choosing one occurrence.
 
 ## Upload gate
 
-`harness/startup_resync/analyze.py` writes descriptive gate schema 12. The
+`harness/startup_resync/analyze.py` writes descriptive gate schema 13. The
 binary `gate` is `PASS` or `FAIL`; `alert` is `NONE`, `WARNING`, or `FAIL`.
 `NONE` and `WARNING` remain upload-capable.
 
@@ -309,7 +309,7 @@ Nearby sample と operation order で決め、tool は一方を暗黙に選ば�
 
 ## Upload gate
 
-`harness/startup_resync/analyze.py` は descriptive gate schema 12 を書きます。
+`harness/startup_resync/analyze.py` は descriptive gate schema 13 を書きます。
 Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` です。
 `NONE` と `WARNING` は upload 可能です。
 

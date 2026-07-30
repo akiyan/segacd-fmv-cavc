@@ -18,7 +18,7 @@ Use this skill to:
 - build a DEBUG disc by default, or release only when explicitly requested;
 - launch RetroArch, send START, and record synchronized A/V;
 - validate timing, video, audio, logs, and optional diagnostic counters;
-- run the mandatory descriptive schema-12 HUD upload gate for any capture
+- run the mandatory descriptive schema-13 HUD upload gate for any capture
   that may proceed to `compilation` or another upload step, while preserving
   `cd_wait_count` and `adpcm_decode_units` as diagnostics;
 - render the complete HUD TSV through the `hudline` skill, show it inline, and
@@ -261,9 +261,10 @@ Check the raw MKV and reports before trusting a capture:
    matching gate to `_gate.json`. Use the two printed direct paths for every
    downstream tool; no compatibility symlink is created.
 
-   An H32 or H40 profile automatically selects the standard 39-cell layout.
-   H32 wraps after 32 cells into a second seven-cell row; H40 keeps all cells
-   on one row. The analyzer unpacks `vblank_spill` from the high nibble of the
+   An H32 or H40 profile automatically selects the standard 43-cell layout.
+   H32 wraps after 32 cells into an 11-cell second row; H40 wraps after 40
+   cells into a three-cell second row. The analyzer unpacks `vblank_spill`
+   from the high nibble of the
    transfer word, `apply_backpressure` from bit 15 of the pump-gap word, and
    reader lead into `reader_ahead_frames` plus `reader_slot_sector`.
 
@@ -317,9 +318,9 @@ sound is clean or free of audible clicks only after listening to the final file.
 
 ## Required upload HUD gate and optional diagnostics
 
-The standard capture already builds DEBUG. The HUD is a 39-cell values-only
-stream. H32 wraps after 32 cells; H40 fits it on one row. The profile selects
-the layout automatically. Parse the complete first loop
+The standard capture already builds DEBUG. The HUD is a 43-cell values-only
+stream. H32 wraps after 32 cells; H40 wraps after 40 cells. The profile
+selects the layout automatically. Parse the complete first loop
 whenever the capture can be uploaded; for a local-only recording, full OCR
 remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
@@ -337,7 +338,7 @@ Confirm the Plane A HUD is visible before a long OCR scan. Read the complete
 loop. `transfer_ticks` is the Main pattern-transfer time in 30.72 us ticks,
 `cold_runs` is the packed run count's low byte, and
 `prgbuf_jitter_peak_kib` is sticky ceil-KiB excess above the cadence-derived
-normal ceiling. Gate `PASS` in the descriptive schema-12 result is the
+normal ceiling. Gate `PASS` in the descriptive schema-13 result is the
 required handoff condition; alert may be `NONE` or `WARNING`. Fixed-cadence
 visible-duration and transfer-budget excesses are warning-only. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a

@@ -55,7 +55,12 @@ class MixlineRenderingTests(unittest.TestCase):
 
     def test_plain_hudline_remains_one_source_range(self):
         log_range, hud_ranges = mixline.split_hudline_ranges(
-            receipt(["display_vblanks", "sector_slip"]),
+            receipt([
+                "display_vblanks",
+                "pattern_dma_start_vcounter",
+                "name_table_dma_start_vcounter",
+                "sector_slip",
+            ]),
             image_height=30,
         )
         self.assertIsNone(log_range)

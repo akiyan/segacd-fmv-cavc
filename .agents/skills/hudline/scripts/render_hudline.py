@@ -74,6 +74,8 @@ HEX_COLUMNS = {
     "flip_vcounter",
     "first_share_exit_vcounter",
     "transfer_end_vcounter",
+    "pattern_dma_start_vcounter",
+    "name_table_dma_start_vcounter",
 }
 
 GPGX_VDP_COLUMNS = (
@@ -215,8 +217,8 @@ def load_gate(path: Path) -> dict:
     ):
         if key not in gate:
             raise SystemExit(f"gate JSON lacks {key}")
-    if int(gate.get("schema_version", 0)) != 12:
-        raise SystemExit("hudline requires descriptive HUD gate schema 12")
+    if int(gate.get("schema_version", 0)) != 13:
+        raise SystemExit("hudline requires descriptive HUD gate schema 13")
     if "cd_wait_count" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks cd_wait_count maximum")
     if "cd_wait_count" in gate["limits"]:
@@ -225,6 +227,13 @@ def load_gate(path: Path) -> dict:
         raise SystemExit("gate_fields do not match the descriptive HUD gate")
     if list(gate.get("warning_fields", ())) != ["vblank_spill"]:
         raise SystemExit("warning_fields must contain only vblank_spill")
+    diagnostics = set(gate.get("diagnostic_fields", ()))
+    for field in (
+        "pattern_dma_start_vcounter",
+        "name_table_dma_start_vcounter",
+    ):
+        if field not in diagnostics:
+            raise SystemExit(f"diagnostic_fields omit required {field}")
     return gate
 
 
@@ -278,6 +287,12 @@ def validate(
     gate: dict,
 ) -> None:
     frames = len(rows)
+    for field in (
+        "pattern_dma_start_vcounter",
+        "name_table_dma_start_vcounter",
+    ):
+        if field not in data:
+            raise SystemExit(f"HUD TSV lacks required schema-13 field {field}")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit(
             "gate observed_first_loop_frames does not match the HUD TSV")
@@ -370,6 +385,14 @@ def validate(
         (
             "first_share_exit_vcounter",
             "first_share_exit_vcounter_max",
+        ),
+        (
+            "pattern_dma_start_vcounter",
+            "pattern_dma_start_vcounter_max",
+        ),
+        (
+            "name_table_dma_start_vcounter",
+            "name_table_dma_start_vcounter_max",
         ),
     ):
         values = data.get(column)
@@ -495,6 +518,22 @@ def row_specs(
                 if display_vblank_expected is not None
                 else None
             ),
+        ),
+        RowSpec(
+            "pattern_dma_start_vcounter",
+            "DMA START LINE",
+            "raw VDP V-counter",
+            0xFF,
+            (98, 184, 224),
+            eight_bit_scale=True,
+        ),
+        RowSpec(
+            "name_table_dma_start_vcounter",
+            "NT DMA START LINE",
+            "raw VDP V-counter",
+            0xFF,
+            (152, 139, 222),
+            eight_bit_scale=True,
         ),
         RowSpec(
             "sector_slip", "SECTOR SLIP", "cumulative",
@@ -1049,6 +1088,14 @@ def main() -> None:
         int(data["first_share_exit_vcounter"][1:].max(initial=0))
         if "first_share_exit_vcounter" in data else None
     )
+    pattern_dma_start_vcounter_max = (
+        int(data["pattern_dma_start_vcounter"][1:].max(initial=0))
+        if "pattern_dma_start_vcounter" in data else None
+    )
+    name_table_dma_start_vcounter_max = (
+        int(data["name_table_dma_start_vcounter"][1:].max(initial=0))
+        if "name_table_dma_start_vcounter" in data else None
+    )
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
         f"{display_vblank_warning_count} / {display_vblank_total}, "
@@ -1081,10 +1128,15 @@ def main() -> None:
         f"transfer VBlanks max {transfer_vblanks_max}; "
         f"end V-counter max {transfer_end_vcounter_max:02X}; "
         f"first-share exit max {first_share_exit_vcounter_max:02X}; "
+        "pattern/NT start max "
+        f"{pattern_dma_start_vcounter_max:02X}/"
+        f"{name_table_dma_start_vcounter_max:02X}; "
         if (
             transfer_vblanks_max is not None
             and transfer_end_vcounter_max is not None
             and first_share_exit_vcounter_max is not None
+            and pattern_dma_start_vcounter_max is not None
+            and name_table_dma_start_vcounter_max is not None
         ) else ""
     )
     gpgx_vdp_maxima = (
@@ -1119,10 +1171,10 @@ def main() -> None:
     )
     phase_note = (
         "pump_gap_ticks is the maximum Sub pump-opportunity interval; "
-        "first_share_exit_vcounter and transfer_end_vcounter belong to this frame; "
+        "DMA-start and transfer-exit V-counters belong to this frame; "
         if pump_gap_stats is not None
         else "flip_vcounter belongs to the preceding flip; "
-        "transfer exit counters belong to this frame; "
+        "DMA-start and transfer-exit counters belong to this frame; "
     )
     coverage_text = (
         f"Complete DEBUG HUD timeline | {axis_frames} frames | "
@@ -1264,7 +1316,7 @@ def main() -> None:
         receipt_row_top += spec.height
 
     receipt = {
-        "schema_version": 7,
+        "schema_version": 8,
         "kind": "hudline",
         "label": title,
         "image": str(actual_output),
@@ -1353,6 +1405,20 @@ def main() -> None:
                 if first_share_exit_vcounter_max is not None else {}
             ),
             **(
+                {
+                    "pattern_dma_start_vcounter":
+                        pattern_dma_start_vcounter_max
+                }
+                if pattern_dma_start_vcounter_max is not None else {}
+            ),
+            **(
+                {
+                    "name_table_dma_start_vcounter":
+                        name_table_dma_start_vcounter_max
+                }
+                if name_table_dma_start_vcounter_max is not None else {}
+            ),
+            **(
                 {"LOGVDP": gpgx_vdp_maxima}
                 if gpgx_vdp_maxima is not None else {}
             ),
@@ -1366,6 +1432,10 @@ def main() -> None:
         "transfer_vblanks_max": transfer_vblanks_max,
         "transfer_end_vcounter_max": transfer_end_vcounter_max,
         "first_share_exit_vcounter_max": first_share_exit_vcounter_max,
+        "pattern_dma_start_vcounter_max":
+            pattern_dma_start_vcounter_max,
+        "name_table_dma_start_vcounter_max":
+            name_table_dma_start_vcounter_max,
         "gpgx_vdp_maxima": gpgx_vdp_maxima,
         "gpgx_vdp_extraction": gpgx_vdp_receipt,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
