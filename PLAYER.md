@@ -307,12 +307,12 @@ waits for the next head.
 
 Budgets 1 through N-1 are available to patterns. Before pattern work enters
 budget N, Main withholds the complete display reserve: the 1,792-word
-64-by-28 name-table DMA, a 128-unit timing guard, the 39-unit DEBUG HUD
+64-by-28 name-table DMA, a 128-unit timing guard, the 43-unit DEBUG HUD
 staging allowance when present, and an optional CRAM replacement. CRAM is
 written by the CPU, so its 64 words reserve 256 units. The normal reserves are
-1,920 units in release and 1,959 in DEBUG; a palette switch raises them to
-2,176 and 2,215. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
-1,241 pattern units in VBlank 2, or 985 on a palette switch.
+1,920 units in release and 1,963 in DEBUG; a palette switch raises them to
+2,176 and 2,219. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
+1,237 pattern units in VBlank 2, or 981 on a palette switch.
 
 A DMA run crossing a residual boundary is split exactly there and continued
 at the next fresh VBlank head, regardless of run length. After the pattern
@@ -327,7 +327,7 @@ after the first transfer budget and before waiting for the next fresh VBlank.
 After the final pattern word, it patches only the transfer-final fields and
 the resolved palette segment into the Main-RAM name-table stage. The existing
 single 1,792-word name-table DMA therefore carries both picture and HUD; there
-is no separate 39-cell VDP-port republish after that DMA. Exact logical pattern
+is no separate 43-cell VDP-port republish after that DMA. Exact logical pattern
 word counters cover runtime VBlank budgets 1 through 4; they remain separate
 from the weighted capacity charge. `transfer_vblanks` exposes a fifth or later
 budget. The staging allowance
@@ -662,11 +662,11 @@ Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新し�
 
 Budget 1からN-1まではpatternに使えます。Pattern workがbudget Nへ入る前に、
 Mainはdisplay work全体を先に取り置きします。内訳は64-by-28 name-table DMAの
-1,792 word、128-unit timing guard、存在する場合の39-unit DEBUG HUD staging
+1,792 word、128-unit timing guard、存在する場合の43-unit DEBUG HUD staging
 allowance、任意のCRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを
-予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,959 unit、palette switch時は
-2,176と2,215です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
-VBlank 2にpattern用1,241 unit、palette switch時は985 unitを持ちます。
+予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,963 unit、palette switch時は
+2,176と2,219です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
+VBlank 2にpattern用1,237 unit、palette switch時は981 unitを持ちます。
 
 DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
 fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
@@ -678,7 +678,7 @@ multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後�
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
 transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
 patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
-DMA後に別の39-cell VDP-port republishは行いません。Runtime VBlank budget
+DMA後に別の43-cell VDP-port republishは行いません。Runtime VBlank budget
 1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、
 `transfer_vblanks`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
 含まれますが、staging allowanceはshared admission checkを保守的に維持します。

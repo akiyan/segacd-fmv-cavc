@@ -300,6 +300,18 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     if not clear_state.start() < load_runs.start() < branch_empty.start():
         raise AssertionError(
             f"{obj}: shared-state clear overwrites the n_runs zero flag")
+    ready_sample = re.search(
+        r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", dma_entry)
+    budget_wait = re.search(
+        r"\bbsr\w*\s+[^\n]*<bf_start_vbudget>", dma_entry)
+    if (
+        not ready_sample
+        or not budget_wait
+        or ready_sample.start() >= budget_wait.start()
+    ):
+        raise AssertionError(
+            f"{obj}: pattern DMA readiness is not sampled before the "
+            "fresh-blank wait")
 
     run_loop = block("bf_run_lp", "bf_split_run")
     repair_charge = re.search(r"\baddqw\s+#4,%d6", run_loop)
@@ -362,7 +374,7 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
             f"{obj}: shared deadline path lacks its two status reads")
 
     flip = block("bf_flip", "bf_after_flip")
-    normal_reserve = 64 * 28 + 39 + 128
+    normal_reserve = 64 * 28 + 43 + 128
     palette_reserve = normal_reserve + 64 * 4
     for reserve, description in (
             (normal_reserve, "normal NT/HUD/guard reserve"),
@@ -380,6 +392,15 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     if "<publish_dbg>" in flip:
         raise AssertionError(
             f"{obj}: H40 flip path still republishes HUD through the VDP port")
+
+    nt_dma = block("nt_dma_flip", "set_vram_write")
+    nt_start = re.search(
+        r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d2", nt_dma)
+    nt_trigger = re.search(
+        r"\bmovel\s+%d0,(?:00)?c00004 <VDP_CTRL>", nt_dma)
+    if not nt_start or not nt_trigger or nt_start.start() >= nt_trigger.start():
+        raise AssertionError(
+            f"{obj}: NT DMA lacks its immediate pre-trigger V-counter sample")
 
 
 def verify_transfer_cleanup(objdump: Path, obj: Path) -> None:

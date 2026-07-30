@@ -32,8 +32,8 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertGreaterEqual(confidence, 0.99)
 
     def test_combined_layout_wraps_at_each_native_width(self) -> None:
-        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 39)
-        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 39)
+        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 43)
+        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 43)
         self.assertEqual(
             read_frameno.hud_layout_dimensions(
                 read_frameno.HUD_H32_COMBINED_LAYOUT
@@ -44,7 +44,7 @@ class FrameMinusOneTest(unittest.TestCase):
             read_frameno.hud_layout_dimensions(
                 read_frameno.HUD_H40_COMBINED_LAYOUT
             ),
-            (39, 1),
+            (40, 2),
         )
         self.assertEqual(
             read_frameno.hud_layout_field_position(
@@ -57,6 +57,18 @@ class FrameMinusOneTest(unittest.TestCase):
                 read_frameno.HUD_H40_COMBINED_LAYOUT, 40
             ),
             (0, 1),
+        )
+        self.assertEqual(
+            read_frameno.hud_layout_field_position(
+                read_frameno.HUD_H32_COMBINED_LAYOUT, 42
+            ),
+            (10, 1),
+        )
+        self.assertEqual(
+            read_frameno.hud_layout_field_position(
+                read_frameno.HUD_H40_COMBINED_LAYOUT, 42
+            ),
+            (2, 1),
         )
         transfer_vblank_col = next(
             col for name, col, _digits
@@ -84,6 +96,9 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertIn("transfer_ticks", read_frameno.HUD_FIELDS)
         self.assertIn("apply_backpressure", read_frameno.HUD_FIELDS)
         self.assertIn("reader_ahead_frames", read_frameno.HUD_FIELDS)
+        self.assertIn("pattern_dma_ready_vcounter", read_frameno.HUD_FIELDS)
+        self.assertIn(
+            "name_table_dma_ready_vcounter", read_frameno.HUD_FIELDS)
         self.assertNotIn(
             "vblank_spill_transfer_ticks", read_frameno.HUD_FIELDS)
 

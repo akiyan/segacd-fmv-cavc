@@ -31,7 +31,7 @@ description: Prepare and upload an existing, verified record lossless playback c
 
 - `record` が作成したネイティブ解像度のロスレスMKV
 - 同じMKVを直接OCRして作られた、gateが`PASS`でalertが`NONE`または
-  `WARNING`のdescriptive schema-12 HUD result JSON
+  `WARNING`のdescriptive schema-15 HUD result JSON
   （`cd_wait_count`と`adpcm_decode_units`はdiagnostic）
 - 同gateの`ocr_start_anchor`。`method=frame_minus_one`、
   `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須。これは録画が

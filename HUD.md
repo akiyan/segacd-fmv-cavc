@@ -13,9 +13,9 @@ Build a DEBUG disc:
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 39
-hexadecimal digits. H32 wraps after 32 cells and uses seven cells on a second
-row. H40 fits all 39 cells on one row.
+Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 43
+hexadecimal digits. H32 wraps after 32 cells and uses 11 cells on a second
+row. H40 wraps after 40 cells and uses three cells on a second row.
 
 ## Physical layout
 
@@ -23,9 +23,9 @@ Each cell is an 8x8 hexadecimal glyph. The glyph's top scanline also contains
 four two-pixel bars that encode the nibble directly. OCR reads the bars and
 checks the visible glyph as an independent confidence signal.
 
-The table lists logical cell offsets before H32 wrapping. H32 maps
-`row = offset // 32` and `column = offset % 32`. H40 uses row 0 and the listed
-offset as its column.
+The table lists logical cell offsets before native-width wrapping. H32 maps
+`row = offset // 32` and `column = offset % 32`. H40 maps
+`row = offset // 40` and `column = offset % 40`.
 
 | Stored value | Logical cells | Digits | Decoded field or packing |
 |---|---:|---:|---|
@@ -49,6 +49,8 @@ offset as its column.
 | packed reader byte | 34-35 | 2 | High nibble `reader_ahead_frames`; low nibble `reader_slot_sector` |
 | `transfer_vblanks` | 36 | 1 | Fresh transfer budgets opened this frame |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
+| `pattern_dma_ready_vcounter` | 39-40 | 2 | Pattern-run ready V-counter before the fresh-blank wait |
+| `name_table_dma_ready_vcounter` | 41-42 | 2 | Name-table path ready V-counter before the cadence-final VBlank wait; zero when that path is absent |
 
 The player-only pre-roll sentinel uses `frame=FFFF`. It is an OCR anchor, not a
 stream frame, and is never written to the HUD TSV. Movie frame 0 remains in the
@@ -81,6 +83,8 @@ TSV for sequence alignment but is untimed boot staging.
 | `reader_slot_sector` | Sub | per frame | Sector position inside the current reader slot |
 | `transfer_vblanks` | Main | per frame | Number of fresh transfer budgets opened |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+| `pattern_dma_ready_vcounter` | Main | per frame | Raw V-counter when Main is ready to consume the first pattern run, immediately before waiting for a fresh blank head |
+| `name_table_dma_ready_vcounter` | Main | per frame | Raw V-counter when the fixed-N H40 name-table path is ready, immediately before waiting for the cadence-final VBlank |
 
 `sector_slip`, `control_desync`, `audio_resync`, and
 `msf_gap_recoveries` are four-bit cumulative counters. A transition is the
@@ -93,9 +97,45 @@ The transport-retry remainder is
 was spent; a larger wait can also mean the Sub path reached the next sector
 earlier.
 
+The pattern-ready and name-table-ready fields retain the raw eight-bit NTSC V28
+V-counter. On the current raster, visible lines 0-223 use `00-DF`; blank starts
+at raster line 224 with `E0`. A visible pattern-ready value `V` means Main
+became ready `E0 - V` raster lines before the next blank head. `E0` means zero
+lead. A value later than `E0` means the current blank head was already missed;
+`bf_start_vbudget` waits for the following head instead of granting a partial
+budget. Raw `E0-EA` first maps to blank offsets 0-10. The counter then jumps
+back from `EA` to `E5`: the second `E5-EA` maps to blank offsets 11-16, and
+`EB-FF` maps to offsets 17-37. Therefore `E5-EA` is ambiguous without sequence
+context; resolve it from nearby samples and the operation order. Tools preserve
+the raw value rather than silently choosing one occurrence.
+
+`/hudline` converts the pattern-ready field into the derived
+`pattern_dma_ready_pressure` row. A ready event on visible scanline `00..DF`
+has the same pressure `00..DF`, so scanline 0 is pressure zero and larger
+values mean later, more pressured readiness. `E0` is the zero-margin first
+VBlank head. Any raw value later than `E0` becomes the `0x100` missed-head
+sentinel; this avoids inventing an order for the repeated `E5..EA` values.
+Frames with no cold run have no pressure point, rather than a false zero.
+The row has an orange `E0` guide, and `0x100` points are red. The raw
+`pattern_dma_ready_vcounter` remains unchanged in the TSV and gate JSON.
+
+`/hudline` also converts `name_table_dma_ready_vcounter` into the derived
+`name_table_dma_ready_pressure` row. Its deadline is the cadence-final VBlank
+head that carries the H40 name-table DMA: the second VBlank at 30 fps and the
+fourth at 15 fps. `transfer_vblanks` identifies how many fresh pattern budgets
+have already opened. Readiness earlier than the active raster immediately
+before that target clamps to pressure zero. In that final active raster, raw
+scanlines `00..DF` map directly to pressure; scanline 0 is pressure zero and
+`E0` is zero margin. If the target pattern budget has already opened, pressure
+is the `0x100` missed-head sentinel. A blank-phase raw sample before the target
+belongs to the preceding budget and also clamps to zero, avoiding the repeated
+`E5..EA` ambiguity. The row has an orange `E0` target-head guide, and `0x100`
+points are red. A movie without this DMA path has no NT pressure points. Raw
+`name_table_dma_ready_vcounter` remains unchanged in the TSV and gate JSON.
+
 ## Upload gate
 
-`harness/startup_resync/analyze.py` writes descriptive gate schema 12. The
+`harness/startup_resync/analyze.py` writes descriptive gate schema 15. The
 binary `gate` is `PASS` or `FAIL`; `alert` is `NONE`, `WARNING`, or `FAIL`.
 `NONE` and `WARNING` remain upload-capable.
 
@@ -152,6 +192,7 @@ adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
 flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
 apply_backpressure msf_gap_recoveries reader_ahead_frames
 reader_slot_sector transfer_vblanks transfer_end_vcounter
+pattern_dma_ready_vcounter name_table_dma_ready_vcounter
 ```
 
 It also stores capture timing, OCR confidence, sample counts, derived
@@ -202,9 +243,9 @@ DEBUG disc を build します。
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 39 桁の
-16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 7 cell を使います。
-H40 は 39 cell 全体を 1 行へ収めます。
+Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 43 桁の
+16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 11 cell を使います。
+H40 は 40 cell の後で折り返し、2 行目の 3 cell を使います。
 
 ## 物理 layout
 
@@ -212,9 +253,9 @@ H40 は 39 cell 全体を 1 行へ収めます。
 表す 2 pixel 幅の bar も 4 本あります。OCR は bar を読み、表示 glyph を独立した
 confidence check に使います。
 
-表の cell は H32 で折り返す前の logical offset です。H32 は
-`row = offset // 32`、`column = offset % 32`、H40 は row 0 の listed offset を
-使います。
+表の cell は native width で折り返す前の logical offset です。H32 は
+`row = offset // 32`、`column = offset % 32`、H40 は
+`row = offset // 40`、`column = offset % 40` を使います。
 
 | Stored value | Logical cells | Digits | Decoded field または packing |
 |---|---:|---:|---|
@@ -238,6 +279,8 @@ confidence check に使います。
 | packed reader byte | 34-35 | 2 | High nibble が `reader_ahead_frames`、low nibble が `reader_slot_sector` |
 | `transfer_vblanks` | 36 | 1 | この frame で開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
+| `pattern_dma_ready_vcounter` | 39-40 | 2 | Fresh-blank 待ち直前の pattern-run ready V-counter |
+| `name_table_dma_ready_vcounter` | 41-42 | 2 | Cadence-final VBlank 待ち直前の name-table path ready V-counter。該当 path がなければ 0 |
 
 Player-only pre-roll sentinel は `frame=FFFF` です。OCR anchor であり stream frame
 ではなく、HUD TSV にも書きません。Movie frame 0 は sequence alignment のため
@@ -270,6 +313,8 @@ TSV に残しますが、untimed boot staging です。
 | `reader_slot_sector` | Sub | per frame | Current reader slot 内の sector position |
 | `transfer_vblanks` | Main | per frame | 開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+| `pattern_dma_ready_vcounter` | Main | per frame | Main が最初の pattern run を consume 可能になり、fresh blank head を待つ直前の raw V-counter |
+| `name_table_dma_ready_vcounter` | Main | per frame | fixed-N H40 name-table path が ready になり、cadence-final VBlank を待つ直前の raw V-counter |
 
 `sector_slip`、`control_desync`、`audio_resync`、
 `msf_gap_recoveries` は 4-bit cumulative counter です。Transition が event で、
@@ -282,9 +327,45 @@ Transport-retry remainder は
 使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
 結果でもあり得ます。
 
+Pattern-ready field と name-table-ready field は NTSC V28 の raw 8-bit
+V-counter を保持します。現在の raster では visible line 0-223 が `00-DF`、
+blank は raster line 224 の `E0` から始まります。Visible 中の pattern-ready
+値を `V` とすると、Main は次の blank head の `E0 - V` raster line 前に ready
+になっています。`E0` は lead 0 です。`E0` より後なら現在の blank head をすでに
+逃しており、`bf_start_vbudget` は partial budget を認めず次の head を待ちます。
+最初の `E0-EA` は blank offset 0-10 です。その後 counter は `EA` から `E5`
+へ戻り、2 回目の `E5-EA` は blank offset 11-16、`EB-FF` は offset 17-37
+です。このため `E5-EA` は sequence context なしでは二通りに解釈できます。
+Nearby sample と operation order で決め、tool は一方を暗黙に選ばず raw 値を保持
+します。
+
+`/hudline` は pattern-ready field を、導出値
+`pattern_dma_ready_pressure` の row へ変換します。Visible scanline
+`00..DF` の ready event は同じ `00..DF` の逼迫度になり、scanline 0 が
+逼迫度 0、値が大きいほど遅く逼迫した ready です。`E0` は最初の VBlank head
+までの余裕が 0 の位置です。`E0` より後の raw 値はすべて、head を逃したことを
+示す `0x100` sentinel にします。これにより、繰り返す `E5..EA` の順序を捏造せずに
+済みます。Cold run がない frame は偽の 0 ではなく、逼迫度の点自体を表示しません。
+Row には orange の `E0` guide を引き、`0x100` の点は red にします。TSV と gate
+JSON の raw `pattern_dma_ready_vcounter` は変更しません。
+
+`/hudline` は `name_table_dma_ready_vcounter` も導出値
+`name_table_dma_ready_pressure` の row へ変換します。Deadline は H40
+name-table DMA を実行する cadence-final VBlank head、つまり 30 fps なら 2 回目、
+15 fps なら 4 回目です。`transfer_vblanks` で、すでに開いた fresh pattern
+budget 数を判定します。Target 直前の active raster より早く ready なら逼迫度 0
+へ clamp します。その最後の active raster では raw scanline `00..DF` をそのまま
+逼迫度にし、scanline 0 が逼迫度 0、`E0` が余裕 0 です。Target の pattern budget
+がすでに開いていれば、head を逃した `0x100` sentinel にします。Target より前の
+blank-phase raw sample は一つ前の budget に属するため 0 へ clamp し、繰り返す
+`E5..EA` の曖昧さを持ち込みません。Row には orange の `E0` target-head guide
+を引き、`0x100` の点は red にします。この DMA path がない movie には NT
+pressure の点を表示しません。TSV と gate JSON の raw
+`name_table_dma_ready_vcounter` は変更しません。
+
 ## Upload gate
 
-`harness/startup_resync/analyze.py` は descriptive gate schema 12 を書きます。
+`harness/startup_resync/analyze.py` は descriptive gate schema 15 を書きます。
 Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` です。
 `NONE` と `WARNING` は upload 可能です。
 
@@ -339,6 +420,7 @@ adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
 flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
 apply_backpressure msf_gap_recoveries reader_ahead_frames
 reader_slot_sector transfer_vblanks transfer_end_vcounter
+pattern_dma_ready_vcounter name_table_dma_ready_vcounter
 ```
 
 さらに capture timing、OCR confidence、sample count、derived milliseconds、

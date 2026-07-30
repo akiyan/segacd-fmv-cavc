@@ -29,11 +29,12 @@ mixline = load_module(
 )
 
 
-def receipt(keys: list[str]) -> dict:
+def receipt(keys: list[str], heights: dict[str, int] | None = None) -> dict:
+    heights = heights or {}
     return {
         "plot_top": 10,
         "rows": [
-            {"key": key, "height": 4}
+            {"key": key, "height": heights.get(key, 4)}
             for key in keys
         ],
     }
@@ -43,19 +44,30 @@ class MixlineRenderingTests(unittest.TestCase):
     def test_extracts_one_contiguous_logvdpline_block(self):
         keys = [
             "display_vblanks",
+            "pattern_dma_ready_pressure",
+            "name_table_dma_ready_pressure",
             *mixline.LOGVDPLINE_KEYS,
             "pump_gap_ticks",
         ]
+        heights = {
+            "pattern_dma_ready_pressure": 12,
+            "name_table_dma_ready_pressure": 12,
+        }
         log_range, hud_ranges = mixline.split_hudline_ranges(
-            receipt(keys),
-            image_height=54,
+            receipt(keys, heights),
+            image_height=70,
         )
-        self.assertEqual(log_range, (14, 42))
-        self.assertEqual(hud_ranges, [(10, 14), (42, 54)])
+        self.assertEqual(log_range, (38, 66))
+        self.assertEqual(hud_ranges, [(10, 38), (66, 70)])
 
     def test_plain_hudline_remains_one_source_range(self):
         log_range, hud_ranges = mixline.split_hudline_ranges(
-            receipt(["display_vblanks", "sector_slip"]),
+            receipt([
+                "display_vblanks",
+                "pattern_dma_ready_pressure",
+                "name_table_dma_ready_pressure",
+                "sector_slip",
+            ]),
             image_height=30,
         )
         self.assertIsNone(log_range)

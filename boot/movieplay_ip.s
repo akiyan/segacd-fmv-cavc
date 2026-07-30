@@ -144,13 +144,13 @@
 .endif
 
 .ifdef HUD_HEX_TABLE
-/* Specialized H32/H40 DEBUG builds publish the same 39 hexadecimal cells.
+/* Specialized H32/H40 DEBUG builds publish the same 43 hexadecimal cells.
    Small counters use one digit, Main VBlank spill is packed into the high
    nibble of the 12-bit transfer stopwatch, and reader lead/slot use one
-   nibble each. H32 wraps after 32 cells; H40 fits one row. */
+   nibble each. H32 wraps after 32 cells; H40 wraps after 40 cells. */
 .equ HUD_FLIP_FIELDS, 1
 .equ HUD_SUB_POLL_GAP, 1
-.equ HUD_COMBINED_WORDS, 39
+.equ HUD_COMBINED_WORDS, 43
 .endif
 
 .ifdef PLAYER_SPECIALIZED
@@ -484,6 +484,8 @@ ip_entry:
 	clr.w	flip_hv_v
 	clr.w	pattern_vblank1_exit_v
 	clr.w	pass2_entry_q
+	clr.w	pattern_dma_ready_v
+	clr.w	nt_dma_ready_v
 .endif
 .endif
 play_loop:
@@ -907,6 +909,8 @@ bf_dma:
 	move.l	d0, pattern_vblank3_words
 	clr.w	pattern_exit_v
 	clr.w	pattern_vblank1_exit_v
+	clr.w	pattern_dma_ready_v
+	clr.w	nt_dma_ready_v
 .endif
 	clr.w	pattern_transfer_vblanks
 .ifdef NT_DMA_FLIP
@@ -925,10 +929,15 @@ bf_dma:
 	beq	bf_flip
 	move.w	#1, pattern_transfer_vblanks
 	lea	(PROBE_BANK+O_LOADS_OFF), a2
-	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
 	moveq	#0, d0
 	movea.l	d0, a1				/* exact logical words in the current budget */
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, pattern_dma_ready_v		/* ready phase before waiting for a fresh blank head */
+.endif
+	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
+.ifdef DEBUG
 	move.w	(GA_STOPWATCH).l, d0
 	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
 .endif
@@ -1105,6 +1114,11 @@ bf_flip:
 .if (PC_FEATURES & 0x0002) != 0
 .ifdef NT_DMA_FLIP
 	move.w	#NT_CRAM_FLIP_RESERVE_WORDS, d6
+.ifdef DEBUG
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, nt_dma_ready_v		/* ready phase before the cadence-final VBlank wait */
+.endif
 	bsr	bf_wait_fixed_flip_vblank	/* share the budgeted deadline blank when safe */
 .ifdef DEBUG
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
@@ -1155,6 +1169,11 @@ bf_doflip:
 .if (PC_FEATURES & 0x0002) != 0
 .ifdef NT_DMA_FLIP
 	move.w	#NT_FLIP_RESERVE_WORDS, d6
+.ifdef DEBUG
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, nt_dma_ready_v		/* ready phase before the cadence-final VBlank wait */
+.endif
 	bsr	bf_wait_fixed_flip_vblank	/* cold tail + NT DMA + flip share the deadline */
 .ifdef DEBUG
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
@@ -1577,7 +1596,10 @@ wait_dma_done:
 
 .ifdef NT_DMA_FLIP
 /* Copy the complete 40x28 visible name-table aperture into the inactive back
-   table with one Main-RAM DMA.  Call inside the flip VBlank.  trashes d0,d2. */
+   table with one Main-RAM DMA. Call inside the flip VBlank. The DEBUG readiness
+   sample captured before the cadence wait is patched into the staged row
+   immediately before the trigger so it belongs to the frame carried by this
+   same DMA. trashes d0,d2,a0. */
 nt_dma_flip:
 	move.w	#0x8F02, (VDP_CTRL).l
 	move.w	#0x9300|(NT_STAGE_WORDS&0xFF), (VDP_CTRL).l
@@ -1609,6 +1631,14 @@ nt_dma_flip:
 	andi.w	#0x0003, d2
 	or.w	d2, d0
 	ori.w	#0x0080, d0			/* CD5 */
+.ifdef DEBUG
+	move.w	nt_dma_ready_v, d2
+	andi.w	#0x00FF, d2
+	add.w	d2, d2
+	add.w	d2, d2
+	lea	dbg_hex_pairs, a0
+	move.l	(a0,d2.w), nt_stage+(64+1)*2	/* logical cells 41-42 */
+.endif
 	move.l	d0, (VDP_CTRL).l
 	bra	wait_dma_done
 .endif
@@ -1927,12 +1957,13 @@ wait_vblank:
    Publishing the finished rows into the inactive Plane A table is a short fixed
    copy; reg2 selects the completed picture and HUD atomically.
    Category glyphs are omitted to reserve cells for future supply metrics.
-   The 39-word layout uses four frame digits; one digit each for palette,
+   The 43-word layout uses four frame digits; one digit each for palette,
    slip, desync, resync and CD wait; two for audio lead, Sub wait and ADPCM;
    four for packed VBlank-spill/transfer ticks; two for runs and PrgBuf jitter;
    then flip/share/delay, packed pump-gap/back-pressure, one-digit MSF gap,
-   packed reader lead/slot, transfer-VBlank count and transfer-end V-counter.
-   H32 wraps after 32 words; H40 fits one row. */
+   packed reader lead/slot, transfer-VBlank count, transfer-end V-counter,
+   pattern-DMA start V-counter and name-table-DMA start V-counter.
+   H32 wraps after 32 words; H40 wraps after 40 words. */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
 	movem.l	d0-d4/a0-a1, -(sp)
@@ -2043,6 +2074,14 @@ prepare_dbg:
 	DBG_PUT1
 	move.w	pattern_exit_v, d4
 	DBG_PUT2
+	/* Raw V-counters when the first pattern run is ready before its fresh-blank
+	   wait, and when the H40 name-table path is ready before its cadence-final
+	   VBlank wait. A frame with no pattern run or no NT-DMA path retains zero
+	   for that field. */
+	move.w	pattern_dma_ready_v, d4
+	DBG_PUT2
+	move.w	nt_dma_ready_v, d4
+	DBG_PUT2
 .endif
 .endif
 .ifdef HUD_HEX_TABLE
@@ -2060,10 +2099,12 @@ prepare_dbg:
 stamp_dbg_stage:
 	lea	dbg_row, a0
 	lea	nt_stage, a1
-	moveq	#19-1, d0			/* H40 row 0: first 38 words */
+	moveq	#20-1, d0			/* H40 row 0: first 40 words */
 1:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
+	lea	nt_stage+64*2, a1		/* H40 row 1: remaining three words */
+	move.l	(a0)+, (a1)+
 	move.w	(a0)+, (a1)+
 	rts
 .endif
@@ -2089,25 +2130,26 @@ publish_dbg:
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
 .else
-	moveq	#19-1, d1			/* H40 row 0: first 38 words */
-1:
+	.rept 20				/* H40 row 0: first 40 words */
 	move.l	(a0)+, (VDP_DATA).l
-	dbra	d1, 1b
-	move.w	(a0)+, (VDP_DATA).l
+	.endr
 .endif
 .ifdef HUD_SUB_POLL_GAP
-	/* Name tables use a 64-cell pitch. H32 resumes the linear 39-cell stream
-	   at logical cell 32; H40 already completed its single row. */
-.if PC_MODE == 0
+	/* Name tables use a 64-cell pitch. Resume the linear 43-cell stream at
+	   logical cell 32 for H32 and logical cell 40 for H40. */
 	moveq	#0, d0
 	move.w	back_idx, d0
 	lsl.l	#8, d0
 	lsl.l	#5, d0
 	add.l	#NT0+0x80, d0
 	bsr	set_vram_write
-	.rept 3				/* H32 row 1: first six of seven words */
+.if PC_MODE == 0
+	.rept 5				/* H32 row 1: first ten of eleven words */
 	move.l	(a0)+, (VDP_DATA).l
 	.endr
+	move.w	(a0)+, (VDP_DATA).l
+.else
+	move.l	(a0)+, (VDP_DATA).l		/* H40 row 1: first two of three words */
 	move.w	(a0)+, (VDP_DATA).l
 .endif
 .endif
@@ -2303,6 +2345,10 @@ pattern_transfer_vblanks:
 	.space 2				/* runtime budget index; DEBUG transfer_vblanks */
 pattern_exit_v:
 	.space 2				/* DEBUG transfer_end_vcounter */
+pattern_dma_ready_v:
+	.space 2				/* DEBUG pattern_dma_ready_vcounter */
+nt_dma_ready_v:
+	.space 2				/* DEBUG name_table_dma_ready_vcounter */
 .ifdef MAIN_CODEGEN
 md_codegen:
 	.space 2				/* 1 only after the complete runtime proof succeeds */

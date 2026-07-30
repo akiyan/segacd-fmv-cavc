@@ -1,8 +1,9 @@
 # DEBUG HUD OCR proof
 
-The movie player writes 39 hexadecimal digits as one contiguous logical
-values-only stream. H32 wraps after digit 31 and uses 32+7 cells; H40 fits all
-39 cells on one row. Field letters are not drawn. The physical field order is:
+The movie player writes 43 hexadecimal digits as one contiguous logical
+values-only stream. H32 wraps after digit 31 and uses 32+11 cells; H40 wraps
+after digit 39 and uses 40+3 cells. Field letters are not drawn. The physical
+field order is:
 
 ```text
 frame:4 palette_segment:1 sector_slip:1 control_desync:1 audio_resync:1
@@ -11,7 +12,8 @@ vblank_spill+transfer_ticks:4 cold_runs:2 prgbuf_jitter_peak_kib:2
 flip_vcounter:2 first_share_exit_vcounter:2 pass2_delay_q4:2
 apply_backpressure+pump_gap_ticks:4 msf_gap_recoveries:1
 reader_ahead_frames+reader_slot_sector:2 transfer_vblanks:1
-transfer_end_vcounter:2
+transfer_end_vcounter:2 pattern_dma_ready_vcounter:2
+name_table_dma_ready_vcounter:2
 ```
 
 Small cumulative counters use one digit. The transfer word packs
@@ -31,6 +33,6 @@ tools/python.sh harness/hud_ocr/verify.py
 ```
 
 The proof renders the actual generated font onto native H32 and H40 frames,
-checks every value and packed-field split, verifies 32-cell H32 wrapping and
-single-row H40 placement, and confirms that the standalone
+checks every value and packed-field split, verifies 32-cell H32 and 40-cell H40
+wrapping, and confirms that the standalone
 `read_frameno()` API still reads an isolated four-digit `frame` field.

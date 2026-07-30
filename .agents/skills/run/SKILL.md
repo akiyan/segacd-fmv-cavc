@@ -254,8 +254,8 @@ Before accepting the recording, verify:
   compatibility symlink is created.
   Fixed-cadence `transfer_vblanks` above the cadence interval also raises
   alert `WARNING` without failing the gate. Both H32 and H40 profiles select
-  the same 39-cell diagnostic set; OCR wraps H32 after 32 cells and keeps H40
-  on one row.
+  the same 43-cell diagnostic set; OCR wraps H32 after 32 cells and H40 after
+  40 cells.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
 timestamps and a `$(dirname "$LOSSLESS")/record_check` base; inspect only the new directory
@@ -383,7 +383,7 @@ unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
 fix it when the requested scope permits, and rerun the failed stage plus every
 downstream stage whose inputs changed.
 
-An absent or `FAIL` descriptive schema-12 HUD gate is a Stage 4 failure. Alert `WARNING`
+An absent or `FAIL` descriptive schema-15 HUD gate is a Stage 4 failure. Alert `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
 public MP4 until a complete loop returns gate `PASS`.
 
