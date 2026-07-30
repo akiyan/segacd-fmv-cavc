@@ -40,6 +40,9 @@ PASS_GUIDE = (84, 204, 139)
 LIMIT = (248, 174, 58)
 NORMAL_LIMIT = (246, 220, 96)
 INCOMPLETE_TAIL = (92, 25, 31, 150)
+DEFAULT_ROW_HEIGHT = 46
+DMA_START_LINE_SCALE = 3
+DMA_START_LINE_HEIGHT = DEFAULT_ROW_HEIGHT * DMA_START_LINE_SCALE
 
 
 @dataclass(frozen=True)
@@ -52,7 +55,7 @@ class RowSpec:
     gate_key: str | None = None
     eight_bit_scale: bool = False
     normal_value: float | None = None
-    height: int = 46
+    height: int = DEFAULT_ROW_HEIGHT
     show_unit: bool = True
     show_zero: bool = False
 
@@ -526,6 +529,7 @@ def row_specs(
             0xFF,
             (98, 184, 224),
             eight_bit_scale=True,
+            height=DMA_START_LINE_HEIGHT,
         ),
         RowSpec(
             "name_table_dma_start_vcounter",
@@ -534,6 +538,7 @@ def row_specs(
             0xFF,
             (152, 139, 222),
             eight_bit_scale=True,
+            height=DMA_START_LINE_HEIGHT,
         ),
         RowSpec(
             "sector_slip", "SECTOR SLIP", "cumulative",

@@ -85,7 +85,8 @@ HUD OCR pass. Use descriptive field names throughout.
   two at 15 fps stay plotted as diagnostics but do not raise ALERT.
 - The next two rows are the raw `pattern_dma_start_vcounter` and
   `name_table_dma_start_vcounter` values. They are diagnostic-only and sit
-  directly below VBLANK.
+  directly below VBLANK. Each uses three times the standard row height so
+  small V-counter differences remain visible in the whole-movie image.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
   `prgbuf_jitter_peak_kib`.

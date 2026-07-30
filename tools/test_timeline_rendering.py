@@ -112,7 +112,8 @@ class TimelineRenderingTests(unittest.TestCase):
             },
             "jitter_headroom_kib": 20,
         }
-        keys = [spec.key for spec in hudline.row_specs(data, gate, 2)]
+        specs = hudline.row_specs(data, gate, 2)
+        keys = [spec.key for spec in specs]
         self.assertEqual(
             keys[:4],
             [
@@ -121,6 +122,19 @@ class TimelineRenderingTests(unittest.TestCase):
                 "name_table_dma_start_vcounter",
                 "sector_slip",
             ],
+        )
+        by_key = {spec.key: spec for spec in specs}
+        self.assertEqual(
+            by_key["pattern_dma_start_vcounter"].height,
+            hudline.DEFAULT_ROW_HEIGHT * 3,
+        )
+        self.assertEqual(
+            by_key["name_table_dma_start_vcounter"].height,
+            hudline.DEFAULT_ROW_HEIGHT * 3,
+        )
+        self.assertEqual(
+            by_key["display_vblanks"].height,
+            hudline.DEFAULT_ROW_HEIGHT,
         )
 
     def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
