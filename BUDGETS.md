@@ -102,6 +102,45 @@ and had to be treated as a no-op/status artifact. The usable path is to keep
 SMS Mode 4 for active display, switch to Mode 5 at VBlank start, issue the DMA,
 then switch back to SMS Mode 4 before active display resumes.
 
+### Mid-VBlank DMA start (measured)
+
+`make dmabench DMABENCH_MODE=0|1|2 DMABENCH_DELAY=N` waits N raster lines
+after the VBlank rise (calibrated busy-wait, ~49 dbra iterations per line)
+before issuing the DMA, then binary-searches the largest transfer that still
+completes inside the same VBlank.
+
+The fits check needs more than the VBlank flag: a huge transfer crosses the
+whole active display and completes inside the **next** frame's VBlank with the
+flag set again, so the delayed search converges on an impossible wrap solution
+(H32 delay 10 first reported 7,022 words). `dmabench` therefore also proves
+same-window completion with a Gate-Array stopwatch bound (`FIT_MAX_TICKS`);
+the guard reproduces the full-window numbers within the 8-word search
+granularity (H32 `W 0B9D` vs `0BA6`, H40 `0E43` vs `0E50`).
+
+Measured (Genesis Plus GX), words per VBlank against the delay:
+
+| Mode | delay 0 | 10 lines | 19 lines | 29 lines | per-line slope |
+|------|--------:|---------:|---------:|---------:|---------------:|
+| H32  | 2,973 (`W 0B9D`) | 2,135 (`W 0857`) | 1,388 (`W 056C`) | 553 (`W 0229`) | 83.0-83.8 |
+| H40  | 3,651 (`W 0E43`) | 2,622 (`W 0A3E`) | 1,708 (`W 06AC`) | 679 (`W 02A7`) | 101.6-102.9 |
+
+Screenshots: `tmp/dmabench_h32_d{10,19,29}_result.png`,
+`tmp/dmabench_h40_d{10,19,29}_result.png`.
+
+- Capacity falls **linearly** with the start delay. The consecutive-point
+  slopes are constant within measurement granularity and equal the theory
+  per-line rate (H32 3,168 words / 38 lines = 83.4; H40 3,888 / 38 = 102.3).
+  The per-line DMA rate of the remaining window does not degrade: a mid-VBlank
+  start has no extra rate penalty beyond the lines already lost.
+- The delay-0 total sits about 200-250 words below `slope x 38`: a fixed
+  per-window overhead (VBlank-rise poll latency, DMA register setup, and the
+  completion margin), not a rate effect.
+- Player consequence: the `bf_start_vbudget` rule "full budget only from a
+  proven blank head" stays correct and is not overly pessimistic — a late
+  start loses exactly the elapsed lines' capacity, and there is no cliff
+  beyond that loss. As with every `dmabench` number, confirm on ares / real
+  hardware before relying on the absolute values.
+
 ### The binding limit is the complete pipeline
 
 The pure-DMA ceiling is **not** a sufficient playback limit. Each frame also
@@ -278,6 +317,41 @@ SMS Mode 4のままMain-RAMからVRAMへのDMAを発行する直接testは、GPG
 artifactとして扱う必要があります。利用可能な経路は、active displayをSMS Mode 4に
 保ち、VBlank開始時にMode 5へ切り替えてDMAを発行し、active display再開前にSMS Mode 4へ
 戻す方法です。
+
+### VBlank途中開始のDMA（実測）
+
+`make dmabench DMABENCH_MODE=0|1|2 DMABENCH_DELAY=N`は、VBlank立ち上がりから
+Nライン（較正済みbusy-wait、約49 dbra/ライン）待ってからDMAを発行し、同じVBlank内に
+完了する最大転送をbinary searchします。
+
+fits判定はVBlankフラグだけでは不十分です。巨大な転送はactive display全体を跨いで
+**次の**frameのVBlank中に完了し、フラグが再び立っているため、遅延ありの探索は
+物理的に不可能なwrap解に収束します（H32 delay 10で最初に7,022語と報告）。そのため
+`dmabench`はGate Array stopwatchの上限（`FIT_MAX_TICKS`）で同一window内完了も
+証明します。このguardは全window値を探索粒度（8語）以内で再現します
+（H32 `W 0B9D` vs `0BA6`、H40 `0E43` vs `0E50`）。
+
+実測（Genesis Plus GX）、遅延に対するVBlankあたり語数:
+
+| Mode | delay 0 | 10ライン | 19ライン | 29ライン | ラインあたり傾き |
+|------|--------:|---------:|---------:|---------:|-----------------:|
+| H32  | 2,973 (`W 0B9D`) | 2,135 (`W 0857`) | 1,388 (`W 056C`) | 553 (`W 0229`) | 83.0〜83.8 |
+| H40  | 3,651 (`W 0E43`) | 2,622 (`W 0A3E`) | 1,708 (`W 06AC`) | 679 (`W 02A7`) | 101.6〜102.9 |
+
+Screenshot: `tmp/dmabench_h32_d{10,19,29}_result.png`、
+`tmp/dmabench_h40_d{10,19,29}_result.png`。
+
+- 容量は開始遅延に対して**線形**に減ります。隣接点の傾きは測定粒度内で一定で、
+  理論のラインあたりレート（H32は3,168語/38ライン = 83.4、H40は3,888/38 = 102.3）と
+  一致します。残りwindowのラインあたりDMAレートは劣化しません。VBlank途中開始に、
+  失ったライン分を超える追加のレートペナルティはありません。
+- delay 0の合計は`傾き × 38`より約200〜250語小さい値です。これはwindowあたりの
+  固定overhead（VBlank立ち上がりのpoll遅れ、DMA register設定、完了margin）であり、
+  レートの効果ではありません。
+- Playerへの帰結: `bf_start_vbudget`の「証明されたblank headからのみ全budget」の
+  ruleは正しく、過度に悲観的でもありません。遅い開始は経過ライン分の容量を正確に
+  失うだけで、それを超える崖はありません。他の`dmabench`値と同様、絶対値に依存する
+  前にares / 実機で確認してください。
 
 ### 制約になるのはpipeline全体
 
