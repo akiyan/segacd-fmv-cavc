@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Read descriptive fields from native DEBUG playback HUD recordings.
 
-The standard layout has 39 digits. H32 wraps after 32 digits; H40 fits on one
-row. Small cumulative counters use one digit. The four-digit pattern-transfer
+The standard layout has 43 digits. H32 wraps after 32 digits; H40 wraps after
+40 digits. Small cumulative counters use one digit. The four-digit pattern-transfer
 word packs ``vblank_spill`` in its high nibble and ``transfer_ticks`` in its
 low 12 bits. The pump-gap word packs ``apply_backpressure`` in bit 15 and
 ``pump_gap_ticks`` in its low 12 bits. The reader byte stores
@@ -59,6 +59,8 @@ HUD_FIELD_DIGITS = (     # physical value cells; no separators
     ("reader_ahead_slot", 2),
     ("transfer_vblanks", 1),
     ("transfer_end_vcounter", 2),
+    ("pattern_dma_start_vcounter", 2),
+    ("name_table_dma_start_vcounter", 2),
 )
 HUD_COMBINED_FIELD_DIGITS = HUD_FIELD_DIGITS
 
@@ -256,7 +258,7 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Current native H32/H40 frames default to their 39-cell standard layouts.
+    Current native H32/H40 frames default to their 43-cell standard layouts.
     """
     gray = _gray(img)
     if layout is None:

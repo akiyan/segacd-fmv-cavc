@@ -2,7 +2,7 @@
 
 This harness reads a native DEBUG playback recording sequentially and finds the
 first `audio_resync` transition without seeking by eye. It uses the player's
-fixed 39-digit values-only HUD. H32 wraps after 32 digits; H40 fits on one row.
+fixed 43-digit values-only HUD. H32 wraps after 32 digits; H40 wraps after 40.
 The physical order and widths are:
 
 ```text
@@ -12,7 +12,8 @@ vblank_spill+transfer_ticks:4 cold_runs:2 prgbuf_jitter_peak_kib:2
 flip_vcounter:2 first_share_exit_vcounter:2 pass2_delay_q4:2
 apply_backpressure+pump_gap_ticks:4 msf_gap_recoveries:1
 reader_ahead_frames+reader_slot_sector:2 transfer_vblanks:1
-transfer_end_vcounter:2
+transfer_end_vcounter:2 pattern_dma_start_vcounter:2
+name_table_dma_start_vcounter:2
 ```
 
 Small cumulative counters use one hexadecimal digit. The four-digit transfer

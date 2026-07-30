@@ -99,15 +99,15 @@ def main():
                            for bit in range(3, -1, -1))
         if rows[0] != expected:
             raise SystemExit(f"glyph {value:X} barcode {rows[0]!r}, expected {expected!r}")
-    if read_frameno.HUD_H32_COMBINED_CELLS != 39:
+    if read_frameno.HUD_H32_COMBINED_CELLS != 43:
         raise SystemExit(
             f"H32 combined HUD has "
-            f"{read_frameno.HUD_H32_COMBINED_CELLS} cells, expected 39"
+            f"{read_frameno.HUD_H32_COMBINED_CELLS} cells, expected 43"
         )
-    if read_frameno.HUD_H40_COMBINED_CELLS != 39:
+    if read_frameno.HUD_H40_COMBINED_CELLS != 43:
         raise SystemExit(
             f"H40 combined HUD has "
-            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 39"
+            f"{read_frameno.HUD_H40_COMBINED_CELLS} cells, expected 43"
         )
     if read_frameno.hud_layout_dimensions(
         read_frameno.HUD_H32_COMBINED_LAYOUT
@@ -115,8 +115,8 @@ def main():
         raise SystemExit("H32 combined HUD must occupy 32x2 cells")
     if read_frameno.hud_layout_dimensions(
         read_frameno.HUD_H40_COMBINED_LAYOUT
-    ) != (39, 1):
-        raise SystemExit("H40 combined HUD must occupy 39x1 cells")
+    ) != (40, 2):
+        raise SystemExit("H40 combined HUD must occupy 40x2 cells")
     combined_values = {
         "frame": 0x0A99,
         "palette_segment": 0xC,
@@ -138,6 +138,8 @@ def main():
         "reader_ahead_slot": 0xC3,
         "transfer_vblanks": 0x4,
         "transfer_end_vcounter": 0xE9,
+        "pattern_dma_start_vcounter": 0xE0,
+        "name_table_dma_start_vcounter": 0xEE,
     }
     check_case(
         256, combined_values, (0, 3),
@@ -152,16 +154,16 @@ def main():
     ) != (0, 1):
         raise SystemExit("H32 combined HUD must wrap after logical cell 31")
     if read_frameno.hud_layout_field_position(
-        read_frameno.HUD_H40_COMBINED_LAYOUT, 38
-    ) != (38, 0):
-        raise SystemExit("H40 combined HUD must fit on one 39-cell row")
+        read_frameno.HUD_H40_COMBINED_LAYOUT, 42
+    ) != (2, 1):
+        raise SystemExit("H40 combined HUD must wrap three cells to row 1")
 
     h40 = np.asarray(make_hud(
         320, dict(combined_values, frame=0, palette_segment=0),
         origin=(0, 3), black_backing=True,
         layout=read_frameno.HUD_H40_LAYOUT))
-    if np.all(h40[3:11, read_frameno.HUD_H40_CELLS * 8:] == 0):
-        raise SystemExit("H40 HUD unused width must remain movie-visible")
+    if np.all(h40[11:19, 3 * read_frameno.CELL:] == 0):
+        raise SystemExit("H40 HUD row-1 unused width must remain movie-visible")
 
     # The longstanding single-purpose API must not depend on later HUD fields.
     only_f = make_hud(
@@ -172,8 +174,8 @@ def main():
         raise SystemExit(
             f"standalone F API: got {frame:04X}/{confidence:.3f}, expected CAFE")
 
-    print("HUD OCR proof: OK (39 values-only cells, H32 32+7 wrapped and "
-          "H40 single-row, unused H40 width movie-visible, standalone frame "
+    print("HUD OCR proof: OK (43 values-only cells, H32 32+11 and "
+          "H40 40+3 wrapped, unused H40 width movie-visible, standalone frame "
           "compatible)")
 
 

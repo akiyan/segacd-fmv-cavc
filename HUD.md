@@ -13,9 +13,9 @@ Build a DEBUG disc:
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 39
-hexadecimal digits. H32 wraps after 32 cells and uses seven cells on a second
-row. H40 fits all 39 cells on one row.
+Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 43
+hexadecimal digits. H32 wraps after 32 cells and uses 11 cells on a second
+row. H40 wraps after 40 cells and uses three cells on a second row.
 
 ## Physical layout
 
@@ -23,9 +23,9 @@ Each cell is an 8x8 hexadecimal glyph. The glyph's top scanline also contains
 four two-pixel bars that encode the nibble directly. OCR reads the bars and
 checks the visible glyph as an independent confidence signal.
 
-The table lists logical cell offsets before H32 wrapping. H32 maps
-`row = offset // 32` and `column = offset % 32`. H40 uses row 0 and the listed
-offset as its column.
+The table lists logical cell offsets before native-width wrapping. H32 maps
+`row = offset // 32` and `column = offset % 32`. H40 maps
+`row = offset // 40` and `column = offset % 40`.
 
 | Stored value | Logical cells | Digits | Decoded field or packing |
 |---|---:|---:|---|
@@ -49,6 +49,8 @@ offset as its column.
 | packed reader byte | 34-35 | 2 | High nibble `reader_ahead_frames`; low nibble `reader_slot_sector` |
 | `transfer_vblanks` | 36 | 1 | Fresh transfer budgets opened this frame |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
+| `pattern_dma_start_vcounter` | 39-40 | 2 | First pattern run-loop entry V-counter |
+| `name_table_dma_start_vcounter` | 41-42 | 2 | Name-table DMA pre-trigger V-counter; zero when that path is absent |
 
 The player-only pre-roll sentinel uses `frame=FFFF`. It is an OCR anchor, not a
 stream frame, and is never written to the HUD TSV. Movie frame 0 remains in the
@@ -81,6 +83,8 @@ TSV for sequence alignment but is untimed boot staging.
 | `reader_slot_sector` | Sub | per frame | Sector position inside the current reader slot |
 | `transfer_vblanks` | Main | per frame | Number of fresh transfer budgets opened |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+| `pattern_dma_start_vcounter` | Main | per frame | Raw V-counter before entering the first pattern run loop from a proven blank head |
+| `name_table_dma_start_vcounter` | Main | per frame | Raw V-counter immediately before the fixed-N H40 name-table DMA trigger |
 
 `sector_slip`, `control_desync`, `audio_resync`, and
 `msf_gap_recoveries` are four-bit cumulative counters. A transition is the
@@ -92,6 +96,14 @@ The transport-retry remainder is
 `cd_wait_count`, `pump_gap_ticks`, and `apply_backpressure` diagnose why time
 was spent; a larger wait can also mean the Sub path reached the next sector
 earlier.
+
+The two DMA-start fields retain the raw eight-bit NTSC V28 V-counter. On the
+current raster, visible lines 0-223 use `00-DF`; blank starts at raster line 224
+with `E0`. Raw `E0-EA` first maps to blank offsets 0-10. The counter then jumps
+back from `EA` to `E5`: the second `E5-EA` maps to blank offsets 11-16, and
+`EB-FF` maps to offsets 17-37. Therefore `E5-EA` is ambiguous without sequence
+context; resolve it from nearby samples and the operation order. Tools preserve
+the raw value rather than silently choosing one occurrence.
 
 ## Upload gate
 
@@ -152,6 +164,7 @@ adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
 flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
 apply_backpressure msf_gap_recoveries reader_ahead_frames
 reader_slot_sector transfer_vblanks transfer_end_vcounter
+pattern_dma_start_vcounter name_table_dma_start_vcounter
 ```
 
 It also stores capture timing, OCR confidence, sample counts, derived
@@ -202,9 +215,9 @@ DEBUG disc を build します。
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 39 桁の
-16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 7 cell を使います。
-H40 は 39 cell 全体を 1 行へ収めます。
+Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 43 桁の
+16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 11 cell を使います。
+H40 は 40 cell の後で折り返し、2 行目の 3 cell を使います。
 
 ## 物理 layout
 
@@ -212,9 +225,9 @@ H40 は 39 cell 全体を 1 行へ収めます。
 表す 2 pixel 幅の bar も 4 本あります。OCR は bar を読み、表示 glyph を独立した
 confidence check に使います。
 
-表の cell は H32 で折り返す前の logical offset です。H32 は
-`row = offset // 32`、`column = offset % 32`、H40 は row 0 の listed offset を
-使います。
+表の cell は native width で折り返す前の logical offset です。H32 は
+`row = offset // 32`、`column = offset % 32`、H40 は
+`row = offset // 40`、`column = offset % 40` を使います。
 
 | Stored value | Logical cells | Digits | Decoded field または packing |
 |---|---:|---:|---|
@@ -238,6 +251,8 @@ confidence check に使います。
 | packed reader byte | 34-35 | 2 | High nibble が `reader_ahead_frames`、low nibble が `reader_slot_sector` |
 | `transfer_vblanks` | 36 | 1 | この frame で開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
+| `pattern_dma_start_vcounter` | 39-40 | 2 | 最初の pattern run-loop entry の V-counter |
+| `name_table_dma_start_vcounter` | 41-42 | 2 | Name-table DMA trigger 直前の V-counter。該当 path がなければ 0 |
 
 Player-only pre-roll sentinel は `frame=FFFF` です。OCR anchor であり stream frame
 ではなく、HUD TSV にも書きません。Movie frame 0 は sequence alignment のため
@@ -270,6 +285,8 @@ TSV に残しますが、untimed boot staging です。
 | `reader_slot_sector` | Sub | per frame | Current reader slot 内の sector position |
 | `transfer_vblanks` | Main | per frame | 開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+| `pattern_dma_start_vcounter` | Main | per frame | 証明済み blank head から最初の pattern run loop へ入る直前の raw V-counter |
+| `name_table_dma_start_vcounter` | Main | per frame | fixed-N H40 name-table DMA trigger 直前の raw V-counter |
 
 `sector_slip`、`control_desync`、`audio_resync`、
 `msf_gap_recoveries` は 4-bit cumulative counter です。Transition が event で、
@@ -281,6 +298,14 @@ Transport-retry remainder は
 ありません。`cd_wait_count`、`pump_gap_ticks`、`apply_backpressure` は時間を
 使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
 結果でもあり得ます。
+
+2 個の DMA start field は NTSC V28 の raw 8-bit V-counter を保持します。現在の
+raster では visible line 0-223 が `00-DF`、blank は raster line 224 の `E0` から
+始まります。最初の `E0-EA` は blank offset 0-10 です。その後 counter は `EA`
+から `E5` へ戻り、2 回目の `E5-EA` は blank offset 11-16、`EB-FF` は offset
+17-37 です。このため `E5-EA` は sequence context なしでは二通りに解釈できます。
+Nearby sample と operation order で決め、tool は一方を暗黙に選ばず raw 値を保持
+します。
 
 ## Upload gate
 
@@ -339,6 +364,7 @@ adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
 flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
 apply_backpressure msf_gap_recoveries reader_ahead_frames
 reader_slot_sector transfer_vblanks transfer_end_vcounter
+pattern_dma_start_vcounter name_table_dma_start_vcounter
 ```
 
 さらに capture timing、OCR confidence、sample count、derived milliseconds、
