@@ -45,13 +45,13 @@ class MixlineRenderingTests(unittest.TestCase):
         keys = [
             "display_vblanks",
             "pattern_dma_ready_pressure",
-            "name_table_dma_start_pressure",
+            "name_table_dma_ready_pressure",
             *mixline.LOGVDPLINE_KEYS,
             "pump_gap_ticks",
         ]
         heights = {
             "pattern_dma_ready_pressure": 12,
-            "name_table_dma_start_pressure": 12,
+            "name_table_dma_ready_pressure": 12,
         }
         log_range, hud_ranges = mixline.split_hudline_ranges(
             receipt(keys, heights),
@@ -65,7 +65,7 @@ class MixlineRenderingTests(unittest.TestCase):
             receipt([
                 "display_vblanks",
                 "pattern_dma_ready_pressure",
-                "name_table_dma_start_pressure",
+                "name_table_dma_ready_pressure",
                 "sector_slip",
             ]),
             image_height=30,

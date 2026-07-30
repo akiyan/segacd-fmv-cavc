@@ -45,10 +45,8 @@ DMA_START_LINE_SCALE = 3
 DMA_START_LINE_HEIGHT = DEFAULT_ROW_HEIGHT * DMA_START_LINE_SCALE
 PATTERN_READY_DEADLINE_SCANLINE = 0xE0
 PATTERN_READY_MISSED_PRESSURE = 0x100
-NTSC_RASTER_SCANLINES = 262
-NT_VCOUNTER_REPEAT_START = 0xE5
-NT_VCOUNTER_REPEAT_END = 0xEA
-NT_VCOUNTER_REPEAT_OFFSET = 6
+NT_READY_DEADLINE_SCANLINE = 0xE0
+NT_READY_MISSED_PRESSURE = 0x100
 
 
 @dataclass(frozen=True)
@@ -65,8 +63,6 @@ class RowSpec:
     point_plot: bool = False
     show_unit: bool = True
     show_zero: bool = False
-    reference_value: float | None = None
-    reference_label: str | None = None
     deadline_value: float | None = None
     deadline_label: str | None = None
 
@@ -89,7 +85,7 @@ HEX_COLUMNS = {
     "first_share_exit_vcounter",
     "transfer_end_vcounter",
     "pattern_dma_ready_vcounter",
-    "name_table_dma_start_vcounter",
+    "name_table_dma_ready_vcounter",
 }
 
 GPGX_VDP_COLUMNS = (
@@ -231,8 +227,8 @@ def load_gate(path: Path) -> dict:
     ):
         if key not in gate:
             raise SystemExit(f"gate JSON lacks {key}")
-    if int(gate.get("schema_version", 0)) != 14:
-        raise SystemExit("hudline requires descriptive HUD gate schema 14")
+    if int(gate.get("schema_version", 0)) != 15:
+        raise SystemExit("hudline requires descriptive HUD gate schema 15")
     if "cd_wait_count" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks cd_wait_count maximum")
     if "cd_wait_count" in gate["limits"]:
@@ -245,7 +241,7 @@ def load_gate(path: Path) -> dict:
     for field in (
         "cold_runs",
         "pattern_dma_ready_vcounter",
-        "name_table_dma_start_vcounter",
+        "name_table_dma_ready_vcounter",
     ):
         if field not in diagnostics:
             raise SystemExit(f"diagnostic_fields omit required {field}")
@@ -304,10 +300,10 @@ def validate(
     frames = len(rows)
     for field in (
         "pattern_dma_ready_vcounter",
-        "name_table_dma_start_vcounter",
+        "name_table_dma_ready_vcounter",
     ):
         if field not in data:
-            raise SystemExit(f"HUD TSV lacks required schema-14 field {field}")
+            raise SystemExit(f"HUD TSV lacks required schema-15 field {field}")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit(
             "gate observed_first_loop_frames does not match the HUD TSV")
@@ -406,8 +402,8 @@ def validate(
             "pattern_dma_ready_vcounter_max",
         ),
         (
-            "name_table_dma_start_vcounter",
-            "name_table_dma_start_vcounter_max",
+            "name_table_dma_ready_vcounter",
+            "name_table_dma_ready_vcounter_max",
         ),
     ):
         values = data.get(column)
@@ -531,60 +527,72 @@ def pattern_ready_pressure_summary(
     }
 
 
-def derive_name_table_start_pressure(
+def derive_name_table_ready_pressure(
     data: dict[str, np.ndarray],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Map raw NT DMA start V-counters to conservative raster pressure.
+    content_fps: float,
+) -> np.ndarray:
+    """Map pre-wait NT readiness to cadence-final-VBlank pressure.
 
-    The NTSC V-counter repeats E5..EA during VBlank.  Those raw values are
-    deliberately assigned to their later occurrence so the graph never
-    overstates the remaining VBlank time.  EB..FF are unique after the repeat
-    and therefore also need the six-line physical-raster offset.
+    ``transfer_vblanks`` identifies which fresh pattern budget has already
+    opened.  Readiness at least one whole raster before the cadence-final blank
+    is unpressured and clamps to zero.  In the active raster immediately before
+    that target blank, raw scanlines 00..DF map directly to pressure.  Reaching
+    the target pattern budget means its head has already been consumed and
+    maps to the 0x100 missed-head sentinel.
 
     A movie with no nonzero timed sample does not use this DMA path.  When the
     path is present, a real raw scanline-0 sample remains pressure zero.
     """
 
-    raw = np.asarray(data["name_table_dma_start_vcounter"], np.float64)
+    raw = np.asarray(data["name_table_dma_ready_vcounter"], np.float64)
+    opened = np.asarray(data["transfer_vblanks"], np.float64)
+    if raw.shape != opened.shape:
+        raise SystemExit(
+            "name-table ready V-counter and transfer-VBlank arrays "
+            "have different lengths"
+        )
     if np.any(~np.isfinite(raw)) or np.any((raw < 0) | (raw > 0xFF)):
-        raise SystemExit("name-table DMA start V-counter must stay in 00..FF")
+        raise SystemExit("name-table DMA ready V-counter must stay in 00..FF")
+    if np.any(~np.isfinite(opened)) or np.any(opened < 0):
+        raise SystemExit("transfer VBlanks must be finite and nonnegative")
     pressure = np.full(raw.shape, np.nan, dtype=np.float64)
-    ambiguous = np.zeros(raw.shape, dtype=bool)
     path_present = bool(np.any(raw[1:] != 0)) if raw.size > 1 else False
     if not path_present:
-        return pressure, ambiguous
-    pressure[:] = raw
-    repeated_or_later = raw >= NT_VCOUNTER_REPEAT_START
-    pressure[repeated_or_later] += NT_VCOUNTER_REPEAT_OFFSET
-    ambiguous = (
-        (raw >= NT_VCOUNTER_REPEAT_START)
-        & (raw <= NT_VCOUNTER_REPEAT_END)
-    )
-    return pressure, ambiguous
+        return pressure
+    target_vblank = av_config.vsync_n_for_fps(content_fps)
+    final_preblank_budget = max(0, target_vblank - 1)
+    pressure[:] = 0
+    final_preblank = opened == final_preblank_budget
+    visible = raw < NT_READY_DEADLINE_SCANLINE
+    pressure[final_preblank & visible] = raw[final_preblank & visible]
+    pressure[opened >= target_vblank] = NT_READY_MISSED_PRESSURE
+    return pressure
 
 
-def name_table_start_pressure_summary(
+def name_table_ready_pressure_summary(
     pressure: np.ndarray,
-    ambiguous: np.ndarray,
 ) -> dict[str, int]:
-    """Summarize timed NT start pressure and conservative repeat choices."""
+    """Summarize timed NT readiness against its cadence-final blank head."""
 
-    timed = np.asarray(pressure[1:], np.float64)
-    measured = timed[np.isfinite(timed)]
+    measured = np.asarray(pressure[1:], np.float64)
+    measured = measured[np.isfinite(measured)]
     if not measured.size:
         return {
             "maximum": 0,
-            "minimum_margin_scanlines": NTSC_RASTER_SCANLINES,
-            "conservative_repeat_frames": 0,
+            "minimum_margin_scanlines": NT_READY_DEADLINE_SCANLINE,
+            "missed_frames": 0,
             "sample_count": 0,
         }
-    margin = np.maximum(NTSC_RASTER_SCANLINES - measured, 0)
+    missed = measured > NT_READY_DEADLINE_SCANLINE
+    margin = np.maximum(
+        NT_READY_DEADLINE_SCANLINE
+        - np.minimum(measured, NT_READY_DEADLINE_SCANLINE),
+        0,
+    )
     return {
         "maximum": int(measured.max()),
         "minimum_margin_scanlines": int(margin.min()),
-        "conservative_repeat_frames": int(
-            np.count_nonzero(np.asarray(ambiguous[1:], dtype=bool))
-        ),
+        "missed_frames": int(np.count_nonzero(missed)),
         "sample_count": int(measured.size),
     }
 
@@ -665,18 +673,16 @@ def row_specs(
             deadline_label="VBlank head",
         ),
         RowSpec(
-            "name_table_dma_start_pressure",
-            "NT DMA START PRESSURE",
-            "raster scanline; E5-EA use late occurrence",
-            NTSC_RASTER_SCANLINES,
+            "name_table_dma_ready_pressure",
+            "NT READY PRESSURE",
+            "scanline 0=0; 0x100=missed target head",
+            NT_READY_MISSED_PRESSURE,
             (152, 139, 222),
             height=DMA_START_LINE_HEIGHT,
             point_plot=True,
             show_zero=True,
-            reference_value=PATTERN_READY_DEADLINE_SCANLINE,
-            reference_label="VBlank head",
-            deadline_value=NTSC_RASTER_SCANLINES,
-            deadline_label="VBlank end",
+            deadline_value=NT_READY_DEADLINE_SCANLINE,
+            deadline_label="target VBlank head",
         ),
         RowSpec(
             "sector_slip", "SECTOR SLIP", "cumulative",
@@ -1070,24 +1076,6 @@ def draw_rows(
                 font=font(13),
                 anchor="rb",
             )
-        if spec.reference_value is not None:
-            reference = float(spec.reference_value)
-            reference_y = y1 - int(round(
-                (row_height - 1) * min(reference, spec.maximum)
-                / max(spec.maximum, 1e-9)))
-            draw.line(
-                (left, reference_y, right, reference_y),
-                fill=PASS_GUIDE,
-                width=2,
-            )
-            label = spec.reference_label or "reference"
-            draw.text(
-                (right - 4, reference_y - 2),
-                f"{label} {fmt_hex(reference)}",
-                fill=PASS_GUIDE,
-                font=font(13),
-                anchor="rb",
-            )
         if spec.deadline_value is not None:
             deadline = float(spec.deadline_value)
             deadline_y = y1 - int(round(
@@ -1171,13 +1159,12 @@ def main() -> None:
     ready_pressure = pattern_ready_pressure_summary(
         data["pattern_dma_ready_pressure"]
     )
-    (
-        data["name_table_dma_start_pressure"],
-        name_table_start_ambiguous,
-    ) = derive_name_table_start_pressure(data)
-    name_table_start_pressure = name_table_start_pressure_summary(
-        data["name_table_dma_start_pressure"],
-        name_table_start_ambiguous,
+    data["name_table_dma_ready_pressure"] = derive_name_table_ready_pressure(
+        data,
+        float(gate["content_fps"]),
+    )
+    name_table_ready_pressure = name_table_ready_pressure_summary(
+        data["name_table_dma_ready_pressure"],
     )
     finite_display_vblanks = display_vblanks[np.isfinite(display_vblanks)]
     (
@@ -1314,21 +1301,21 @@ def main() -> None:
     )
     pattern_dma_ready_missed_frames = int(ready_pressure["missed_frames"])
     pattern_dma_ready_pressure_samples = int(ready_pressure["sample_count"])
-    name_table_dma_start_vcounter_max = (
-        int(data["name_table_dma_start_vcounter"][1:].max(initial=0))
-        if "name_table_dma_start_vcounter" in data else None
+    name_table_dma_ready_vcounter_max = (
+        int(data["name_table_dma_ready_vcounter"][1:].max(initial=0))
+        if "name_table_dma_ready_vcounter" in data else None
     )
-    name_table_dma_start_pressure_max = int(
-        name_table_start_pressure["maximum"]
+    name_table_dma_ready_pressure_max = int(
+        name_table_ready_pressure["maximum"]
     )
-    name_table_dma_start_min_margin_scanlines = int(
-        name_table_start_pressure["minimum_margin_scanlines"]
+    name_table_dma_ready_min_margin_scanlines = int(
+        name_table_ready_pressure["minimum_margin_scanlines"]
     )
-    name_table_dma_start_conservative_repeat_frames = int(
-        name_table_start_pressure["conservative_repeat_frames"]
+    name_table_dma_ready_missed_frames = int(
+        name_table_ready_pressure["missed_frames"]
     )
-    name_table_dma_start_pressure_samples = int(
-        name_table_start_pressure["sample_count"]
+    name_table_dma_ready_pressure_samples = int(
+        name_table_ready_pressure["sample_count"]
     )
     cadence_text = (
         f"VBlank warn {display_vblank_warning_rate:.2f}% / "
@@ -1367,21 +1354,20 @@ def main() -> None:
         f"{pattern_dma_ready_min_margin_scanlines} lines, "
         f"missed {pattern_dma_ready_missed_frames}/"
         f"{pattern_dma_ready_pressure_samples}; "
-        f"NT start pressure max {name_table_dma_start_pressure_max:02X}, "
-        f"min VBlank-end margin "
-        f"{name_table_dma_start_min_margin_scanlines} lines, "
-        f"conservative E5-EA "
-        f"{name_table_dma_start_conservative_repeat_frames}/"
-        f"{name_table_dma_start_pressure_samples}; "
-        "raw ready/NT start max "
+        f"NT ready pressure max {name_table_dma_ready_pressure_max:02X}, "
+        f"min target-VBlank margin "
+        f"{name_table_dma_ready_min_margin_scanlines} lines, "
+        f"missed {name_table_dma_ready_missed_frames}/"
+        f"{name_table_dma_ready_pressure_samples}; "
+        "raw pattern/NT ready max "
         f"{pattern_dma_ready_vcounter_max:02X}/"
-        f"{name_table_dma_start_vcounter_max:02X}; "
+        f"{name_table_dma_ready_vcounter_max:02X}; "
         if (
             transfer_vblanks_max is not None
             and transfer_end_vcounter_max is not None
             and first_share_exit_vcounter_max is not None
             and pattern_dma_ready_vcounter_max is not None
-            and name_table_dma_start_vcounter_max is not None
+            and name_table_dma_ready_vcounter_max is not None
         ) else ""
     )
     gpgx_vdp_maxima = (
@@ -1523,8 +1509,7 @@ def main() -> None:
             f"frame is the x-axis. {phase_note}"
             "pass2_delay_q4 belongs to frame. LOGVDP active CPU work includes writes "
             "on the two V-counter edge representations. Orange lines are gate "
-            "limits, the ready-pressure E0 deadline, or the NT-pressure 0x106 "
-            "deadline; "
+            "limits or either ready-pressure E0 deadline; "
             "PrgBuf jitter also shows the yellow normal interval."
         ),
         fill=DIM,
@@ -1562,15 +1547,13 @@ def main() -> None:
             "plot_style": "point" if spec.point_plot else "bar",
             "show_unit": spec.show_unit,
             "show_zero": spec.show_zero,
-            "reference_value": spec.reference_value,
-            "reference_label": spec.reference_label,
             "deadline_value": spec.deadline_value,
             "deadline_label": spec.deadline_label,
         })
         receipt_row_top += spec.height
 
     receipt = {
-        "schema_version": 11,
+        "schema_version": 12,
         "kind": "hudline",
         "label": title,
         "image": str(actual_output),
@@ -1667,14 +1650,14 @@ def main() -> None:
             ),
             "pattern_dma_ready_pressure":
                 pattern_dma_ready_pressure_max,
-            "name_table_dma_start_pressure":
-                name_table_dma_start_pressure_max,
+            "name_table_dma_ready_pressure":
+                name_table_dma_ready_pressure_max,
             **(
                 {
-                    "name_table_dma_start_vcounter":
-                        name_table_dma_start_vcounter_max
+                    "name_table_dma_ready_vcounter":
+                        name_table_dma_ready_vcounter_max
                 }
-                if name_table_dma_start_vcounter_max is not None else {}
+                if name_table_dma_ready_vcounter_max is not None else {}
             ),
             **(
                 {"LOGVDP": gpgx_vdp_maxima}
@@ -1704,26 +1687,20 @@ def main() -> None:
             PATTERN_READY_DEADLINE_SCANLINE,
         "pattern_dma_ready_missed_sentinel":
             PATTERN_READY_MISSED_PRESSURE,
-        "name_table_dma_start_vcounter_max":
-            name_table_dma_start_vcounter_max,
-        "name_table_dma_start_pressure_max":
-            name_table_dma_start_pressure_max,
-        "name_table_dma_start_min_margin_scanlines":
-            name_table_dma_start_min_margin_scanlines,
-        "name_table_dma_start_conservative_repeat_frames":
-            name_table_dma_start_conservative_repeat_frames,
-        "name_table_dma_start_pressure_samples":
-            name_table_dma_start_pressure_samples,
-        "name_table_dma_start_deadline_scanline":
-            NTSC_RASTER_SCANLINES,
-        "name_table_dma_start_vblank_head_scanline":
-            PATTERN_READY_DEADLINE_SCANLINE,
-        "name_table_dma_start_repeat_start":
-            NT_VCOUNTER_REPEAT_START,
-        "name_table_dma_start_repeat_end":
-            NT_VCOUNTER_REPEAT_END,
-        "name_table_dma_start_repeat_offset":
-            NT_VCOUNTER_REPEAT_OFFSET,
+        "name_table_dma_ready_vcounter_max":
+            name_table_dma_ready_vcounter_max,
+        "name_table_dma_ready_pressure_max":
+            name_table_dma_ready_pressure_max,
+        "name_table_dma_ready_min_margin_scanlines":
+            name_table_dma_ready_min_margin_scanlines,
+        "name_table_dma_ready_missed_frames":
+            name_table_dma_ready_missed_frames,
+        "name_table_dma_ready_pressure_samples":
+            name_table_dma_ready_pressure_samples,
+        "name_table_dma_ready_deadline_scanline":
+            NT_READY_DEADLINE_SCANLINE,
+        "name_table_dma_ready_missed_sentinel":
+            NT_READY_MISSED_PRESSURE,
         "gpgx_vdp_maxima": gpgx_vdp_maxima,
         "gpgx_vdp_extraction": gpgx_vdp_receipt,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),

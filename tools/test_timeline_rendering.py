@@ -98,8 +98,8 @@ class TimelineRenderingTests(unittest.TestCase):
             "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
             "pattern_dma_ready_pressure": np.asarray(
                 [0, 0xC8, 0xD4], np.float64),
-            "name_table_dma_start_pressure": np.asarray(
-                [np.nan, 0xF4, 0xF6], np.float64),
+            "name_table_dma_ready_pressure": np.asarray(
+                [np.nan, 0xC4, 0xD6], np.float64),
         }
         gate = {
             "content_fps": 30,
@@ -119,7 +119,7 @@ class TimelineRenderingTests(unittest.TestCase):
             [
                 "display_vblanks",
                 "pattern_dma_ready_pressure",
-                "name_table_dma_start_pressure",
+                "name_table_dma_ready_pressure",
                 "sector_slip",
             ],
         )
@@ -129,7 +129,7 @@ class TimelineRenderingTests(unittest.TestCase):
             hudline.DEFAULT_ROW_HEIGHT * 3,
         )
         self.assertEqual(
-            by_key["name_table_dma_start_pressure"].height,
+            by_key["name_table_dma_ready_pressure"].height,
             hudline.DEFAULT_ROW_HEIGHT * 3,
         )
         self.assertEqual(
@@ -139,7 +139,7 @@ class TimelineRenderingTests(unittest.TestCase):
         self.assertTrue(
             by_key["pattern_dma_ready_pressure"].point_plot)
         self.assertTrue(
-            by_key["name_table_dma_start_pressure"].point_plot)
+            by_key["name_table_dma_ready_pressure"].point_plot)
         self.assertEqual(
             by_key["pattern_dma_ready_pressure"].maximum,
             hudline.PATTERN_READY_MISSED_PRESSURE,
@@ -151,19 +151,15 @@ class TimelineRenderingTests(unittest.TestCase):
         self.assertTrue(
             by_key["pattern_dma_ready_pressure"].show_zero)
         self.assertEqual(
-            by_key["name_table_dma_start_pressure"].maximum,
-            hudline.NTSC_RASTER_SCANLINES,
+            by_key["name_table_dma_ready_pressure"].maximum,
+            hudline.NT_READY_MISSED_PRESSURE,
         )
         self.assertEqual(
-            by_key["name_table_dma_start_pressure"].reference_value,
-            hudline.PATTERN_READY_DEADLINE_SCANLINE,
-        )
-        self.assertEqual(
-            by_key["name_table_dma_start_pressure"].deadline_value,
-            hudline.NTSC_RASTER_SCANLINES,
+            by_key["name_table_dma_ready_pressure"].deadline_value,
+            hudline.NT_READY_DEADLINE_SCANLINE,
         )
         self.assertTrue(
-            by_key["name_table_dma_start_pressure"].show_zero)
+            by_key["name_table_dma_ready_pressure"].show_zero)
         point_keys = {
             spec.key for spec in specs if spec.point_plot
         }
@@ -171,7 +167,7 @@ class TimelineRenderingTests(unittest.TestCase):
             point_keys,
             {
                 "pattern_dma_ready_pressure",
-                "name_table_dma_start_pressure",
+                "name_table_dma_ready_pressure",
             },
         )
 
@@ -201,38 +197,53 @@ class TimelineRenderingTests(unittest.TestCase):
         self.assertEqual(summary["missed_frames"], 1)
         self.assertEqual(summary["sample_count"], 5)
 
-    def test_nt_start_pressure_uses_conservative_repeated_vcounter(self):
-        pressure, ambiguous = hudline.derive_name_table_start_pressure({
-            "name_table_dma_start_vcounter": np.asarray(
-                [0, 0x00, 0xE0, 0xE4, 0xE5, 0xEA, 0xEB, 0xFF],
+    def test_nt_ready_pressure_targets_second_vblank_at_30fps(self):
+        pressure = hudline.derive_name_table_ready_pressure({
+            "name_table_dma_ready_vcounter": np.asarray(
+                [0, 0xD0, 0x00, 0xC3, 0xE5, 0x10, 0xDF],
                 np.float64,
             ),
-        })
+            "transfer_vblanks": np.asarray(
+                [0, 0, 1, 1, 1, 2, 2],
+                np.float64,
+            ),
+        }, 30.0)
         np.testing.assert_array_equal(
             pressure,
-            [0, 0, 0xE0, 0xE4, 0xEB, 0xF0, 0xF1, 0x105],
+            [0, 0, 0, 0xC3, 0, 0x100, 0x100],
         )
-        np.testing.assert_array_equal(
-            ambiguous,
-            [False, False, False, False, True, True, False, False],
-        )
-        summary = hudline.name_table_start_pressure_summary(
+        summary = hudline.name_table_ready_pressure_summary(
             pressure,
-            ambiguous,
         )
-        self.assertEqual(summary["maximum"], 0x105)
-        self.assertEqual(summary["minimum_margin_scanlines"], 1)
-        self.assertEqual(summary["conservative_repeat_frames"], 2)
-        self.assertEqual(summary["sample_count"], 7)
+        self.assertEqual(summary["maximum"], 0x100)
+        self.assertEqual(summary["minimum_margin_scanlines"], 0)
+        self.assertEqual(summary["missed_frames"], 2)
+        self.assertEqual(summary["sample_count"], 6)
 
-    def test_nt_start_pressure_is_absent_when_dma_path_is_absent(self):
-        pressure, ambiguous = hudline.derive_name_table_start_pressure({
-            "name_table_dma_start_vcounter": np.asarray(
+    def test_nt_ready_pressure_targets_fourth_vblank_at_15fps(self):
+        pressure = hudline.derive_name_table_ready_pressure({
+            "name_table_dma_ready_vcounter": np.asarray(
+                [0, 0xC0, 0xC1, 0xC2], np.float64,
+            ),
+            "transfer_vblanks": np.asarray(
+                [0, 2, 3, 4], np.float64,
+            ),
+        }, 15.0)
+        np.testing.assert_array_equal(
+            pressure,
+            [0, 0, 0xC1, 0x100],
+        )
+
+    def test_nt_ready_pressure_is_absent_when_dma_path_is_absent(self):
+        pressure = hudline.derive_name_table_ready_pressure({
+            "name_table_dma_ready_vcounter": np.asarray(
                 [0, 0, 0], np.float64,
             ),
-        })
+            "transfer_vblanks": np.asarray(
+                [0, 1, 2], np.float64,
+            ),
+        }, 30.0)
         self.assertTrue(np.all(np.isnan(pressure)))
-        self.assertFalse(np.any(ambiguous))
 
     def test_pattern_ready_deadline_and_missed_point_colors_are_distinct(self):
         spec = hudline.RowSpec(

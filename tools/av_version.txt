@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p133: Move the H40 name-table V-counter sample before the cadence-final
+#         VBlank wait. Rename it from NT DMA start to NT readiness so the HUD
+#         can measure pressure toward the second VBlank head at 30 fps rather
+#         than reporting the post-wait DMA trigger inside that VBlank.
 #   p132: Move the pattern V-counter sample to the Main-ready point before
 #         bf_start_vbudget waits for a fresh blank head. Rename the diagnostic
 #         from DMA start to pattern readiness and advance the HUD gate schema
@@ -1130,4 +1134,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260730
 e=160
-p=132
+p=133

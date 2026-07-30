@@ -383,7 +383,7 @@ unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
 fix it when the requested scope permits, and rerun the failed stage plus every
 downstream stage whose inputs changed.
 
-An absent or `FAIL` descriptive schema-14 HUD gate is a Stage 4 failure. Alert `WARNING`
+An absent or `FAIL` descriptive schema-15 HUD gate is a Stage 4 failure. Alert `WARNING`
 remains upload-capable and must be reported. Do not create or upload either
 public MP4 until a complete loop returns gate `PASS`.
 

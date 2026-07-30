@@ -1,6 +1,6 @@
 ---
 name: hudline
-description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-14 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
+description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-15 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
 ---
 
 # Playback HUD Timeline
@@ -18,7 +18,7 @@ HUD OCR pass. Use descriptive field names throughout.
    logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud_gate.json
    ```
 
-   The gate must use schema 14. Render failed gates too. An incomplete loop may
+   The gate must use schema 15. Render failed gates too. An incomplete loop may
    be rendered only when the gate explicitly records that failure; keep the
    complete expected frame axis and shade the missing suffix.
 
@@ -84,7 +84,7 @@ HUD OCR pass. Use descriptive field names throughout.
   cadence, observations in the first/last four content frames at 30 fps and
   two at 15 fps stay plotted as diagnostics but do not raise ALERT.
 - The next two rows are derived `pattern_dma_ready_pressure` and
-  `name_table_dma_start_pressure`. They are diagnostic-only and sit directly
+  `name_table_dma_ready_pressure`. They are diagnostic-only and sit directly
   below VBLANK. Pattern ready is sampled immediately before Main waits for the
   first fresh blank head; it is not the post-wait DMA trigger. Ready pressure
   measures lateness: visible scanlines `00..DF` map directly to pressure
@@ -93,13 +93,16 @@ HUD OCR pass. Use descriptive field names throughout.
   has no pressure point; a real ready event on scanline 0 is pressure zero.
   This saturation avoids inventing an order for the NTSC V-counter's repeated
   `E5..EA` values. Draw an orange `E0` deadline guide and colour `0x100`
-  points red. NT start pressure measures lateness against the VBlank end:
-  scanline 0 is pressure zero, VBlank begins at `E0`, and the one-past-raster
-  deadline is `0x106`. Raw `E5..EA` is ambiguous because it occurs twice; map
-  it conservatively to the later occurrence. Map the unique post-repeat
-  `EB..FF` range to physical scanlines `F1..105`. Draw a green `E0` VBlank-head
-  guide and an orange `0x106` end guide. A movie without the H40 name-table DMA
-  path has no NT pressure points. Each row uses three times the standard row
+  points red. NT ready is sampled before the cadence-final VBlank wait. Its
+  pressure targets the VBlank head that carries the H40 name-table DMA: VBlank
+  2 at 30 fps and VBlank 4 at 15 fps. Use `transfer_vblanks` to identify the
+  opened pattern budget. Readiness before the final active raster clamps to
+  zero; within that raster, `00..DF` maps directly to pressure. An already
+  opened target budget maps to the `0x100` missed-head sentinel. A blank sample
+  before the target belongs to the preceding budget and clamps to zero, so the
+  repeated `E5..EA` range is never ordered speculatively. Draw an orange `E0`
+  target-head guide and colour `0x100` points red. A movie without the H40
+  name-table DMA path has no NT pressure points. Each row uses three times the standard row
   height so small phase differences remain visible in the whole-movie image.
   Plot each frame as an unconnected point; do not fill bars or connect points.
 - Gate rows, in descriptive order:
@@ -113,16 +116,16 @@ HUD OCR pass. Use descriptive field names throughout.
   `flip_vcounter`, `first_share_exit_vcounter`,
   `pattern_dma_ready_pressure` (derived from
   `pattern_dma_ready_vcounter` + `cold_runs`),
-  `name_table_dma_start_pressure` (derived conservatively from
-  `name_table_dma_start_vcounter`), and `pass2_delay_q4`.
+  `name_table_dma_ready_pressure` (derived from
+  `name_table_dma_ready_vcounter` + `transfer_vblanks` + cadence), and
+  `pass2_delay_q4`.
 - The palette segment is a switch label and vertical boundary, not a separate
   value row.
 - Frame 0 keeps its horizontal cell for alignment but contributes to no bar,
   maximum, statistic, event, or scale.
 - Preserve native units and hexadecimal axis labels.
-- Gate limits, the ready-pressure `E0` deadline, and the NT-pressure `0x106`
-  deadline are orange. The NT-pressure `E0` VBlank-head reference and normal
-  cadence guide are green; the normal jitter interval is yellow.
+- Gate limits and both ready-pressure `E0` deadlines are orange. The normal
+  cadence guide is green; the normal jitter interval is yellow.
 - The receipt records row geometry and plot style, hashes, expected/observed
   frames, gate limits, descriptive diagnostic maxima, statistics, and
   recording identity.

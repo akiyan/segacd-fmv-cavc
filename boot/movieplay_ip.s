@@ -485,7 +485,7 @@ ip_entry:
 	clr.w	pattern_vblank1_exit_v
 	clr.w	pass2_entry_q
 	clr.w	pattern_dma_ready_v
-	clr.w	nt_dma_start_v
+	clr.w	nt_dma_ready_v
 .endif
 .endif
 play_loop:
@@ -910,7 +910,7 @@ bf_dma:
 	clr.w	pattern_exit_v
 	clr.w	pattern_vblank1_exit_v
 	clr.w	pattern_dma_ready_v
-	clr.w	nt_dma_start_v
+	clr.w	nt_dma_ready_v
 .endif
 	clr.w	pattern_transfer_vblanks
 .ifdef NT_DMA_FLIP
@@ -1114,6 +1114,11 @@ bf_flip:
 .if (PC_FEATURES & 0x0002) != 0
 .ifdef NT_DMA_FLIP
 	move.w	#NT_CRAM_FLIP_RESERVE_WORDS, d6
+.ifdef DEBUG
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, nt_dma_ready_v		/* ready phase before the cadence-final VBlank wait */
+.endif
 	bsr	bf_wait_fixed_flip_vblank	/* share the budgeted deadline blank when safe */
 .ifdef DEBUG
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
@@ -1164,6 +1169,11 @@ bf_doflip:
 .if (PC_FEATURES & 0x0002) != 0
 .ifdef NT_DMA_FLIP
 	move.w	#NT_FLIP_RESERVE_WORDS, d6
+.ifdef DEBUG
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	move.w	d0, nt_dma_ready_v		/* ready phase before the cadence-final VBlank wait */
+.endif
 	bsr	bf_wait_fixed_flip_vblank	/* cold tail + NT DMA + flip share the deadline */
 .ifdef DEBUG
 	bsr	bf_patch_dbg_stage		/* final fields enter the one NT DMA */
@@ -1586,9 +1596,10 @@ wait_dma_done:
 
 .ifdef NT_DMA_FLIP
 /* Copy the complete 40x28 visible name-table aperture into the inactive back
-   table with one Main-RAM DMA.  Call inside the flip VBlank.  The DEBUG sample
-   is patched into the staged row immediately before the trigger so it belongs
-   to the frame carried by this same DMA.  trashes d0,d2,a0. */
+   table with one Main-RAM DMA. Call inside the flip VBlank. The DEBUG readiness
+   sample captured before the cadence wait is patched into the staged row
+   immediately before the trigger so it belongs to the frame carried by this
+   same DMA. trashes d0,d2,a0. */
 nt_dma_flip:
 	move.w	#0x8F02, (VDP_CTRL).l
 	move.w	#0x9300|(NT_STAGE_WORDS&0xFF), (VDP_CTRL).l
@@ -1621,9 +1632,7 @@ nt_dma_flip:
 	or.w	d2, d0
 	ori.w	#0x0080, d0			/* CD5 */
 .ifdef DEBUG
-	move.w	(VDP_HV).l, d2
-	lsr.w	#8, d2
-	move.w	d2, nt_dma_start_v
+	move.w	nt_dma_ready_v, d2
 	andi.w	#0x00FF, d2
 	add.w	d2, d2
 	add.w	d2, d2
@@ -2065,12 +2074,13 @@ prepare_dbg:
 	DBG_PUT1
 	move.w	pattern_exit_v, d4
 	DBG_PUT2
-	/* Raw V-counter when the first pattern run is ready before its fresh-blank
-	   wait, and immediately before the one H40 name-table DMA.  A frame with
-	   no pattern run or no NT-DMA path retains zero for that field. */
+	/* Raw V-counters when the first pattern run is ready before its fresh-blank
+	   wait, and when the H40 name-table path is ready before its cadence-final
+	   VBlank wait. A frame with no pattern run or no NT-DMA path retains zero
+	   for that field. */
 	move.w	pattern_dma_ready_v, d4
 	DBG_PUT2
-	move.w	nt_dma_start_v, d4
+	move.w	nt_dma_ready_v, d4
 	DBG_PUT2
 .endif
 .endif
@@ -2337,8 +2347,8 @@ pattern_exit_v:
 	.space 2				/* DEBUG transfer_end_vcounter */
 pattern_dma_ready_v:
 	.space 2				/* DEBUG pattern_dma_ready_vcounter */
-nt_dma_start_v:
-	.space 2				/* DEBUG name_table_dma_start_vcounter */
+nt_dma_ready_v:
+	.space 2				/* DEBUG name_table_dma_ready_vcounter */
 .ifdef MAIN_CODEGEN
 md_codegen:
 	.space 2				/* 1 only after the complete runtime proof succeeds */

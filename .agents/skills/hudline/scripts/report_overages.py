@@ -69,8 +69,8 @@ HUD_COLUMNS = (
     ("transfer_end_vcounter", "transfer_end_vcounter", 2),
     ("pattern_dma_ready_vcounter", "pattern_dma_ready_vcounter", 2),
     (
-        "name_table_dma_start_vcounter",
-        "name_table_dma_start_vcounter",
+        "name_table_dma_ready_vcounter",
+        "name_table_dma_ready_vcounter",
         2,
     ),
 )
@@ -194,7 +194,7 @@ def load_rows(path: Path) -> tuple[list[dict[str, str]], list[str]]:
             *MAXIMUM_COLUMNS.values(),
             "adpcm_decode_units",
             "pattern_dma_ready_vcounter",
-            "name_table_dma_start_vcounter",
+            "name_table_dma_ready_vcounter",
         }
         missing = required - set(fields)
         if missing:
@@ -226,8 +226,8 @@ def load_gate(path: Path) -> dict:
     for key in GATE_COLUMNS:
         if key not in gate["limits"] or key not in gate["maxima"]:
             raise SystemExit(f"gate JSON lacks {key} limit or maximum")
-    if int(gate.get("schema_version", 0)) != 14:
-        raise SystemExit("overage report requires descriptive HUD gate schema 14")
+    if int(gate.get("schema_version", 0)) != 15:
+        raise SystemExit("overage report requires descriptive HUD gate schema 15")
     if "cd_wait_count" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks diagnostic cd_wait_count maximum")
     if "cd_wait_count" in gate["limits"]:
@@ -313,8 +313,8 @@ def validate(rows: list[dict[str, str]], gate: dict) -> None:
             "pattern_dma_ready_vcounter_max",
         ),
         (
-            "name_table_dma_start_vcounter",
-            "name_table_dma_start_vcounter_max",
+            "name_table_dma_ready_vcounter",
+            "name_table_dma_ready_vcounter_max",
         ),
     ):
         present = has_values(rows, column)
@@ -519,7 +519,7 @@ def render_markdown(
         column in fields and has_values(rows, column)
         for column in (
             "pattern_dma_ready_vcounter",
-            "name_table_dma_start_vcounter",
+            "name_table_dma_ready_vcounter",
             "first_share_exit_vcounter",
             "transfer_vblanks",
             "transfer_end_vcounter",
@@ -527,9 +527,9 @@ def render_markdown(
     ):
         summary.append(
             "Main transfer maxima (timed first loop): "
-            "pattern ready/NT start V-counter "
+            "pattern/NT ready V-counter "
             f"{max(as_int(row, 'pattern_dma_ready_vcounter') for row in rows[1:]):02X}/"
-            f"{max(as_int(row, 'name_table_dma_start_vcounter') for row in rows[1:]):02X}, "
+            f"{max(as_int(row, 'name_table_dma_ready_vcounter') for row in rows[1:]):02X}, "
             "first-share exit V-counter "
             f"{max(as_int(row, 'first_share_exit_vcounter') for row in rows[1:]):02X}, "
             "opened VBlank budget count "

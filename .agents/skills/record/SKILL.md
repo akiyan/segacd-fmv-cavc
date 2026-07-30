@@ -18,7 +18,7 @@ Use this skill to:
 - build a DEBUG disc by default, or release only when explicitly requested;
 - launch RetroArch, send START, and record synchronized A/V;
 - validate timing, video, audio, logs, and optional diagnostic counters;
-- run the mandatory descriptive schema-14 HUD upload gate for any capture
+- run the mandatory descriptive schema-15 HUD upload gate for any capture
   that may proceed to `compilation` or another upload step, while preserving
   `cd_wait_count` and `adpcm_decode_units` as diagnostics;
 - render the complete HUD TSV through the `hudline` skill, show it inline, and
@@ -338,7 +338,7 @@ Confirm the Plane A HUD is visible before a long OCR scan. Read the complete
 loop. `transfer_ticks` is the Main pattern-transfer time in 30.72 us ticks,
 `cold_runs` is the packed run count's low byte, and
 `prgbuf_jitter_peak_kib` is sticky ceil-KiB excess above the cadence-derived
-normal ceiling. Gate `PASS` in the descriptive schema-14 result is the
+normal ceiling. Gate `PASS` in the descriptive schema-15 result is the
 required handoff condition; alert may be `NONE` or `WARNING`. Fixed-cadence
 visible-duration and transfer-budget excesses are warning-only. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a

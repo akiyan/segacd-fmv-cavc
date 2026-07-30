@@ -139,7 +139,7 @@ def main():
         "transfer_vblanks": 0x4,
         "transfer_end_vcounter": 0xE9,
         "pattern_dma_ready_vcounter": 0xD4,
-        "name_table_dma_start_vcounter": 0xEE,
+        "name_table_dma_ready_vcounter": 0xEE,
     }
     check_case(
         256, combined_values, (0, 3),

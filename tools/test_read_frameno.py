@@ -98,7 +98,7 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertIn("reader_ahead_frames", read_frameno.HUD_FIELDS)
         self.assertIn("pattern_dma_ready_vcounter", read_frameno.HUD_FIELDS)
         self.assertIn(
-            "name_table_dma_start_vcounter", read_frameno.HUD_FIELDS)
+            "name_table_dma_ready_vcounter", read_frameno.HUD_FIELDS)
         self.assertNotIn(
             "vblank_spill_transfer_ticks", read_frameno.HUD_FIELDS)
 

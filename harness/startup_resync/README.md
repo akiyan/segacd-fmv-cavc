@@ -13,7 +13,7 @@ flip_vcounter:2 first_share_exit_vcounter:2 pass2_delay_q4:2
 apply_backpressure+pump_gap_ticks:4 msf_gap_recoveries:1
 reader_ahead_frames+reader_slot_sector:2 transfer_vblanks:1
 transfer_end_vcounter:2 pattern_dma_ready_vcounter:2
-name_table_dma_start_vcounter:2
+name_table_dma_ready_vcounter:2
 ```
 
 Small cumulative counters use one hexadecimal digit. The four-digit transfer

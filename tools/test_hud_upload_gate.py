@@ -160,7 +160,7 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 14)
+        self.assertEqual(result["schema_version"], 15)
         self.assertEqual(result["gate_fields"], [
             "sector_slip", "control_desync", "audio_resync",
             "vblank_spill", "prgbuf_jitter_peak_kib",
@@ -172,7 +172,7 @@ class HudUploadGateTests(unittest.TestCase):
             "reader_ahead_frames", "reader_slot_sector", "cold_runs",
             "transfer_ticks", "transfer_vblanks", "transfer_end_vcounter",
             "pattern_dma_ready_vcounter",
-            "name_table_dma_start_vcounter",
+            "name_table_dma_ready_vcounter",
             "sub_wait_scanlines", "flip_vcounter",
             "first_share_exit_vcounter", "pass2_delay_q4",
         ])
@@ -409,7 +409,7 @@ class HudUploadGateTests(unittest.TestCase):
                 "transfer_vblanks": transfer_vblanks,
                 "transfer_end_vcounter": exit_vcounter,
                 "pattern_dma_ready_vcounter": pattern_start,
-                "name_table_dma_start_vcounter": nt_start,
+                "name_table_dma_ready_vcounter": nt_start,
             })
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "hud.tsv"
@@ -427,7 +427,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(parsed[1]["transfer_vblanks"], "2")
         self.assertEqual(parsed[1]["transfer_end_vcounter"], "E9")
         self.assertEqual(parsed[1]["pattern_dma_ready_vcounter"], "D4")
-        self.assertEqual(parsed[1]["name_table_dma_start_vcounter"], "EE")
+        self.assertEqual(parsed[1]["name_table_dma_ready_vcounter"], "EE")
         rows[1].values["sector_slip"] = 1
         rows[1].values["msf_gap_recoveries"] = 15
         with tempfile.TemporaryDirectory() as directory:
@@ -448,7 +448,7 @@ class HudUploadGateTests(unittest.TestCase):
                 "reader_ahead_frames", "reader_slot_sector", "cold_runs",
                 "transfer_ticks", "transfer_vblanks",
                 "transfer_end_vcounter", "pattern_dma_ready_vcounter",
-                "name_table_dma_start_vcounter", "sub_wait_scanlines",
+                "name_table_dma_ready_vcounter", "sub_wait_scanlines",
                 "flip_vcounter", "first_share_exit_vcounter",
                 "pass2_delay_q4",
             ],
@@ -471,7 +471,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["transfer_end_vcounter_max"], 0xF2)
         self.assertEqual(result["pattern_dma_ready_vcounter_max"], 0xD4)
         self.assertEqual(
-            result["name_table_dma_start_vcounter_max"], 0xF0)
+            result["name_table_dma_ready_vcounter_max"], 0xF0)
         self.assertEqual(result["status"], "PASS")
 
     def test_transfer_vblank_count_over_fixed_n_is_warning(self):

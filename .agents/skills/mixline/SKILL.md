@@ -52,11 +52,10 @@ Report the Gist page, raw PNG URL, and clickable local image path.
   `prgbuf_jitter_peak_kib`. Show `cd_wait_count` separately as a diagnostic
   maximum. When present, also show the `pump_gap_ticks` maximum, APPLY
   back-pressure frame count, and pattern-ready pressure maximum, minimum
-  first-VBlank margin, and missed-head count. Also show the NT-start pressure
-  maximum, minimum VBlank-end margin, and how many repeated `E5..EA` samples
-  used the conservative later occurrence. The complete descriptive rows remain
-  in the pixel-preserved hudline body. Do not retain two full, repetitive
-  headers.
+  first-VBlank margin, and missed-head count. Also show the NT-ready pressure
+  maximum, minimum cadence-final-VBlank margin, and missed-head count. The
+  complete descriptive rows remain in the pixel-preserved hudline body. Do not
+  retain two full, repetitive headers.
 - Directly below the hud summary line, repeat the timeline's whole-movie
   category-totals legend (swatch, category name, EVAL-scope displayed tile
   total per `analysis_style.LEGEND_ORDER` item). Read the values, order, and
