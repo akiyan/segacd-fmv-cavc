@@ -1,35 +1,35 @@
 /*
- * dmabench: 表示モード別の VRAM DMA スループット実測(再利用可能)。
+ * cpuvrambench: VBLANK 中の CPU→VRAM data port 書き込みスループット実測(再利用可能)。
  *
- * 1VBLANK で「Main-RAM → VRAM」DMA に何ワード入るかを二分探索で測る。
- * 手順(fits): active→vblank の立ち上がりを待って即 X ワードDMA。DMA完了後に
- * まだ vblank 中なら「その vblank に収まった」。X を二分探索して最大語数を求める。
+ * 1VBLANK で「Main-RAM → VRAM」CPU 書き込みに何ワード入るかを二分探索で測る。
+ * 手順(fits): active→vblank の立ち上がりを待って書込コマンド設定後、X ワードを
+ * move.l (a0)+,(VDP_DATA).l の 8 ワードブロック + move.w 端数(player の bf_bw /
+ * bf_bword と同形)で書く。書き終わりがまだ vblank 中なら「その vblank に収まった」。
  * 結果を左上にフォント表示: W=語/vblank F=タイル/コマ(3vblank換算)。
+ * dmabench の同モード W との比が実測 CPU_VDP_WORD_COST になる。
  *
- * モード: --defsym MODE=0(H32,既定) / 1(H40) / 2(mode4=SMS表示+VBlank中Mode5 DMA)。
+ * active 中は測らない: VDP FIFO は 4 ワード深で、active 中の CPU 書きは即
+ * FIFO 待ちになるため budget 設計の対象にしない。
+ *
+ * モード: --defsym MODE=0(H32,既定) / 1(H40)。
  */
 .equ VDP_DATA, 0x00C00000
 .equ VDP_CTRL, 0x00C00004
 .equ BIOS_LOAD_DEFAULT_VDP_REGS, 0x000002AC
 .equ BIOS_CLEAR_VRAM,            0x000002A0
-.equ BIOS_VDP_DISP_ENABLE,       0x000002D8
-.equ SRC, 0x00FF4000			/* Main-RAM テスト源(内容不問, タイミングのみ) */
-.equ DMA_DST, 0x2000			/* フォント/NTを壊さない測定用VRAM先 */
+.equ SRC, 0x00FF4000			/* Main-RAM テスト源(内容は白 0xFFFF, タイミングのみ) */
+.equ CPU_DST, 0x2000			/* フォント/NTを壊さない測定用VRAM先 */
 .equ DBGFONT_VTILE, 1
 .equ DBGFONT_VADDR, 1*32
 .equ DBGFONT_N, 16
 .equ NT, 0xC000				/* nametable */
-.equ HI0, 9000				/* 二分探索上限(mode4理論値も超える値) */
-.equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72us/tick, Main read-only */
-.equ FIT_MAX_TICKS, 150			/* DMA開始→完了の上限(4.6ms)。1 vblank(約2.4ms)は
-					   余裕で通り、次frameのvblankで完了する巨大DMA
-					   (16.7ms級)を弾く。遅延開始計測のwrap誤判定防止 */
+.equ HI0, 4096				/* 二分探索上限(理論上限 ~1.2k 語の3倍超) */
 
 .ifndef MODE
 .equ MODE, 0
 .endif
-.ifndef DELAY_LINES
-.equ DELAY_LINES, 0			/* VBlank立ち上がりからDMA開始までの遅延ライン数 */
+.if (MODE != 0) && (MODE != 1)
+	.error "cpuvrambench supports MODE=0 (H32) or MODE=1 (H40) only"
 .endif
 
 .text
@@ -52,14 +52,6 @@ ip_entry:
 	/* 表示モード。BIOS_VDP_DISP_ENABLE は reg1 を戻し得るので使わない。 */
 .if MODE == 1
 	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40 */
-.elseif MODE == 2
-	move.w	#0x8006, (VDP_CTRL).l		/* SMS reg0: M4+M3, 192-line mode4 */
-	move.w	#0x81E0, (VDP_CTRL).l		/* SMS reg1: display+vint, M1/M2=0 */
-	move.w	#0x82FF, (VDP_CTRL).l		/* SMS NT base = 0x3800 */
-	move.w	#0x83FF, (VDP_CTRL).l		/* SMS color mask normal */
-	move.w	#0x84FF, (VDP_CTRL).l		/* SMS pattern mask normal */
-	move.w	#0x85FF, (VDP_CTRL).l		/* SMS sprite attr mask normal */
-	move.w	#0x86FF, (VDP_CTRL).l		/* SMS sprite pattern mask normal */
 .else
 	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 H32 */
 .endif
@@ -80,10 +72,8 @@ ip_entry:
 1:
 	move.w	(a0)+, (VDP_DATA).l
 	dbra	d1, 1b
-	/* 表示ON + DMA許可 */
-.if MODE != 2
+	/* 表示ON。CPU 書きに DMA 許可は不要だが player と同じ reg1 値で揃える。 */
 	move.w	#0x8174, (VDP_CTRL).l		/* reg1: disp on+vint+DMA+M5 */
-.endif
 
 	/* 二分探索: lo=収まる最大, hi=収まらない最小 */
 	moveq	#0, d4				/* lo */
@@ -106,7 +96,7 @@ bs_loop:
 	move.w	d6, d5				/* not -> hi=mid */
 	bra	bs_loop
 bs_done:
-	/* true mode4 ではMDフォント/NTが読めないので、結果表示だけH32 mode5へ戻す。 */
+	/* 結果表示はH32 mode5で統一(dmabenchと同じ結果画面)。 */
 	move.w	#0x8004, (VDP_CTRL).l
 	move.w	#0x8174, (VDP_CTRL).l
 	move.w	#0x8C00, (VDP_CTRL).l
@@ -150,20 +140,21 @@ bs_done:
 	add.w	d1, d1
 	add.w	d1, d4				/* *3 */
 	bsr	put_row
-	/* DMA_DST tile preview: a white block here proves the DMA path wrote VRAM. */
+	/* CPU_DST tile preview: a white block here proves the CPU path wrote VRAM. */
 	move.l	#NT+6*128+2*2, d0
 	bsr	set_vram_write
 	moveq	#7, d0
 1:
-	move.w	#(DMA_DST/32), (VDP_DATA).l
+	move.w	#(CPU_DST/32), (VDP_DATA).l
 	dbra	d0, 1b
 hlt:
 	bra	hlt
 
-/* d0=語数 → 1vblankに収まるか(d0=1/0)。trashes d0-d2 */
+/* d0=語数 → 1vblankに収まるか(d0=1/0)。trashes d0-d2/a0 */
 fits:
-	movem.l	d3/d6/a0, -(sp)
+	movem.l	d3/d6, -(sp)
 	move.w	d0, d6				/* words */
+	lea	(SRC).l, a0
 1:
 	move.w	(VDP_CTRL).l, d0		/* active になるまで */
 	btst	#3, d0
@@ -172,85 +163,37 @@ fits:
 	move.w	(VDP_CTRL).l, d0		/* vblank 立ち上がり */
 	btst	#3, d0
 	beq	2b
-.if DELAY_LINES > 0
-	/* VBlank途中開始の検証: 立ち上がりからNライン待ってからDMAを出す。
-	   1ライン ≈ 488 cycle @7.67MHz、dbra(taken) 10 cycle → 49回/ライン。 */
-	move.w	#DELAY_LINES*49-1, d0
-9:
-	dbra	d0, 9b
-.endif
-.if MODE == 2
-	/* SMS Mode4中はMode5 DMA enableが使えないので、VBlank内だけMode5へ戻す。
-	   これは「mode4表示 + blank中Mode5 DMA」という実用候補経路の予算。 */
-	move.w	#0x8004, (VDP_CTRL).l
-	move.w	#0x8174, (VDP_CTRL).l
-	move.w	#0x8C00, (VDP_CTRL).l
-.endif
-	move.w	(GA_STOPWATCH).l, d3		/* DMA開始tick */
-	move.w	d6, d0
-	bsr	dma_words			/* X語DMA(完了待ち) */
-.if MODE == 2
-	move.w	#0x8006, (VDP_CTRL).l
-	move.w	#0x81E0, (VDP_CTRL).l
-.endif
-	/* vblankフラグだけでは不十分: 巨大DMAはactiveを跨いで次frameのvblank中に
-	   完了し得る(特に遅延開始時)。経過tickで同一vblank内完了を証明する。 */
-	move.w	(GA_STOPWATCH).l, d0
-	sub.w	d3, d0
-	andi.w	#0x0FFF, d0
-	cmpi.w	#FIT_MAX_TICKS, d0
-	bhi	5f				/* 次frameへwrapした */
+	move.l	#CPU_DST, d0			/* 書込コマンドも vblank 窓内で設定 */
+	bsr	set_vram_write
+	/* player の実経路と同形: move.l 4本=8語/ブロック + move.w 端数。 */
+	move.w	d6, d1
+	lsr.w	#3, d1				/* 8語ブロック数 */
+	beq	4f
+	subq.w	#1, d1
+3:
+	move.l	(a0)+, (VDP_DATA).l
+	move.l	(a0)+, (VDP_DATA).l
+	move.l	(a0)+, (VDP_DATA).l
+	move.l	(a0)+, (VDP_DATA).l
+	dbra	d1, 3b
+4:
+	move.w	d6, d1
+	andi.w	#7, d1
+	beq	6f
+	subq.w	#1, d1
+5:
+	move.w	(a0)+, (VDP_DATA).l
+	dbra	d1, 5b
+6:
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0				/* まだvblank? */
-	bne	3f
-5:
+	bne	7f
 	moveq	#0, d0				/* はみ出た */
-	bra	4f
-3:
+	bra	8f
+7:
 	moveq	#1, d0
-4:
-	movem.l	(sp)+, d3/d6/a0
-	rts
-
-/* d0=語数を SRC→VRAM tile0 へDMA。完了待ち。trashes d0,d1,d2 */
-dma_words:
-	move.w	#0x8F02, (VDP_CTRL).l
-	move.w	d0, d2
-	move.w	#0x9300, d1
-	or.b	d2, d1
-	move.w	d1, (VDP_CTRL).l
-	lsr.w	#8, d2
-	move.w	#0x9400, d1
-	or.b	d2, d1
-	move.w	d1, (VDP_CTRL).l
-	move.l	#SRC, d2
-	lsr.l	#1, d2
-	move.w	#0x9500, d1
-	or.b	d2, d1
-	move.w	d1, (VDP_CTRL).l
-	lsr.l	#8, d2
-	move.w	#0x9600, d1
-	or.b	d2, d1
-	move.w	d1, (VDP_CTRL).l
-	lsr.l	#8, d2
-	move.w	#0x9700, d1
-	or.b	d2, d1
-	move.w	d1, (VDP_CTRL).l
-	move.l	#DMA_DST, d2			/* dst コマンド(VRAM書込+CD5起動) */
-	move.l	d2, d1
-	andi.w	#0x3FFF, d1
-	ori.w	#0x4000, d1
-	move.w	d1, (VDP_CTRL).l
-	move.l	d2, d1
-	lsr.l	#8, d1
-	lsr.l	#6, d1
-	andi.w	#0x0003, d1
-	ori.w	#0x0080, d1
-	move.w	d1, (VDP_CTRL).l
-1:
-	move.w	(VDP_CTRL).l, d1
-	btst	#1, d1
-	bne	1b
+8:
+	movem.l	(sp)+, d3/d6
 	rts
 
 /* d0=NT address, d4=hex4 value. trashes d0,d1,d2 */

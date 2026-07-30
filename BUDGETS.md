@@ -102,6 +102,45 @@ and had to be treated as a no-op/status artifact. The usable path is to keep
 SMS Mode 4 for active display, switch to Mode 5 at VBlank start, issue the DMA,
 then switch back to SMS Mode 4 before active display resumes.
 
+### Mid-VBlank DMA start (measured)
+
+`make dmabench DMABENCH_MODE=0|1|2 DMABENCH_DELAY=N` waits N raster lines
+after the VBlank rise (calibrated busy-wait, ~49 dbra iterations per line)
+before issuing the DMA, then binary-searches the largest transfer that still
+completes inside the same VBlank.
+
+The fits check needs more than the VBlank flag: a huge transfer crosses the
+whole active display and completes inside the **next** frame's VBlank with the
+flag set again, so the delayed search converges on an impossible wrap solution
+(H32 delay 10 first reported 7,022 words). `dmabench` therefore also proves
+same-window completion with a Gate-Array stopwatch bound (`FIT_MAX_TICKS`);
+the guard reproduces the full-window numbers within the 8-word search
+granularity (H32 `W 0B9D` vs `0BA6`, H40 `0E43` vs `0E50`).
+
+Measured (Genesis Plus GX), words per VBlank against the delay:
+
+| Mode | delay 0 | 10 lines | 19 lines | 29 lines | per-line slope |
+|------|--------:|---------:|---------:|---------:|---------------:|
+| H32  | 2,973 (`W 0B9D`) | 2,135 (`W 0857`) | 1,388 (`W 056C`) | 553 (`W 0229`) | 83.0-83.8 |
+| H40  | 3,651 (`W 0E43`) | 2,622 (`W 0A3E`) | 1,708 (`W 06AC`) | 679 (`W 02A7`) | 101.6-102.9 |
+
+Screenshots: `tmp/dmabench_h32_d{10,19,29}_result.png`,
+`tmp/dmabench_h40_d{10,19,29}_result.png`.
+
+- Capacity falls **linearly** with the start delay. The consecutive-point
+  slopes are constant within measurement granularity and equal the theory
+  per-line rate (H32 3,168 words / 38 lines = 83.4; H40 3,888 / 38 = 102.3).
+  The per-line DMA rate of the remaining window does not degrade: a mid-VBlank
+  start has no extra rate penalty beyond the lines already lost.
+- The delay-0 total sits about 200-250 words below `slope x 38`: a fixed
+  per-window overhead (VBlank-rise poll latency, DMA register setup, and the
+  completion margin), not a rate effect.
+- Player consequence: the `bf_start_vbudget` rule "full budget only from a
+  proven blank head" stays correct and is not overly pessimistic — a late
+  start loses exactly the elapsed lines' capacity, and there is no cliff
+  beyond that loss. As with every `dmabench` number, confirm on ares / real
+  hardware before relying on the absolute values.
+
 ### The binding limit is the complete pipeline
 
 The pure-DMA ceiling is **not** a sufficient playback limit. Each frame also
@@ -133,12 +172,49 @@ because `HEADER.DAT` loads it before timed playback. Cells that cannot be
 updated within the cap appear as Miss in the analysis category map.
 
 `boot/movieplay_ip.s` sets a per-mode VBlank word budget (`md_vbudget`):
-`VB_WORDS_H32` = 2800 and `VB_WORDS_H40` = 3400. Both are below the GPGX
+`VB_WORDS_H32` = 2800 and `VB_WORDS_H40` = 3200. Both are below the GPGX
 ceilings (H32 2982 words/VBlank, H40 3664 words/VBlank). Re-check against the
 ares `dmabench` value before raising them.
 
 The mode4 player path uses true SMS Mode 4 for display with VBlank-only Mode 5
 DMA. Re-prove it on ares or hardware before raising player limits.
+
+## Empirical measurement — `cpuvrambench`
+
+Reusable measurement build for the CPU side of the same budget:
+`make cpuvrambench CPUVRAMBENCH_MODE=0|1` (0=H32, 1=H40) builds
+`out/CPUVRAMBENCH.iso`. It binary-searches the largest CPU data-port write
+burst that finishes inside one VBlank, using the player's transfer form
+(`move.l (a0)+,(VDP_DATA).l` in 8-word blocks plus a `move.w` tail, the
+`bf_bw` / `bf_bword` shape), and prints the same top-left rows as `dmabench`:
+
+- `W xxxx` = max CPU-written words per VBlank (hex)
+- `F xxxx` = derived tiles/frame ≈ `(W/16) * 3`
+
+Active-display writes are deliberately not measured: the VDP FIFO is only
+4 words deep, so active-scan CPU writes stall on FIFO slots almost
+immediately and are not a budget path.
+
+Source: `boot/cpuvrambench_ip.s` (+ `cpuvrambench_boot.s`, stub SP =
+`cdcbench_sp`). **Run it on ares / real hardware for authoritative numbers.**
+
+### Measured (Genesis Plus GX)
+
+| Mode | CPU words/VBlank | `dmabench` DMA words/VBlank | DMA/CPU ratio | note |
+|------|-----------------:|----------------------------:|--------------:|------|
+| H32  | 1,168            | 2,982                       | 2.55          | `W 0490`; `out/CPUVRAMBENCH_mode0.cue`, screenshot `tmp/cpuvrambench_h32_result.png` |
+| H40  | 1,160            | 3,664                       | 3.16          | `W 0488`; `out/CPUVRAMBENCH_mode1.cue`, screenshot `tmp/cpuvrambench_h40_result.png` |
+| *ares* | TBD            |                             |               | run the ISO to fill in |
+
+Both modes measure the same within the 8-word search granularity: the limiter
+is 68000 instruction time (measured ≈ 16 cycles/word against the move.l
+loop's theoretical ≈ 14.5 plus poll and command-setup overhead), not VDP
+slot supply, which is far above the CPU's demand during blanking.
+
+`CPU_VDP_WORD_COST = 4` in `boot/movieplay_ip.s` charges one CPU-written VDP
+word as four DMA words inside the VBlank budget. The measured GPGX ratios are
+2.6-3.2, so the constant over-charges CPU words and stays on the safe side in
+both modes. Re-measure the ratio on ares / real hardware before lowering it.
 
 ---
 
@@ -242,6 +318,41 @@ artifactとして扱う必要があります。利用可能な経路は、active
 保ち、VBlank開始時にMode 5へ切り替えてDMAを発行し、active display再開前にSMS Mode 4へ
 戻す方法です。
 
+### VBlank途中開始のDMA（実測）
+
+`make dmabench DMABENCH_MODE=0|1|2 DMABENCH_DELAY=N`は、VBlank立ち上がりから
+Nライン（較正済みbusy-wait、約49 dbra/ライン）待ってからDMAを発行し、同じVBlank内に
+完了する最大転送をbinary searchします。
+
+fits判定はVBlankフラグだけでは不十分です。巨大な転送はactive display全体を跨いで
+**次の**frameのVBlank中に完了し、フラグが再び立っているため、遅延ありの探索は
+物理的に不可能なwrap解に収束します（H32 delay 10で最初に7,022語と報告）。そのため
+`dmabench`はGate Array stopwatchの上限（`FIT_MAX_TICKS`）で同一window内完了も
+証明します。このguardは全window値を探索粒度（8語）以内で再現します
+（H32 `W 0B9D` vs `0BA6`、H40 `0E43` vs `0E50`）。
+
+実測（Genesis Plus GX）、遅延に対するVBlankあたり語数:
+
+| Mode | delay 0 | 10ライン | 19ライン | 29ライン | ラインあたり傾き |
+|------|--------:|---------:|---------:|---------:|-----------------:|
+| H32  | 2,973 (`W 0B9D`) | 2,135 (`W 0857`) | 1,388 (`W 056C`) | 553 (`W 0229`) | 83.0〜83.8 |
+| H40  | 3,651 (`W 0E43`) | 2,622 (`W 0A3E`) | 1,708 (`W 06AC`) | 679 (`W 02A7`) | 101.6〜102.9 |
+
+Screenshot: `tmp/dmabench_h32_d{10,19,29}_result.png`、
+`tmp/dmabench_h40_d{10,19,29}_result.png`。
+
+- 容量は開始遅延に対して**線形**に減ります。隣接点の傾きは測定粒度内で一定で、
+  理論のラインあたりレート（H32は3,168語/38ライン = 83.4、H40は3,888/38 = 102.3）と
+  一致します。残りwindowのラインあたりDMAレートは劣化しません。VBlank途中開始に、
+  失ったライン分を超える追加のレートペナルティはありません。
+- delay 0の合計は`傾き × 38`より約200〜250語小さい値です。これはwindowあたりの
+  固定overhead（VBlank立ち上がりのpoll遅れ、DMA register設定、完了margin）であり、
+  レートの効果ではありません。
+- Playerへの帰結: `bf_start_vbudget`の「証明されたblank headからのみ全budget」の
+  ruleは正しく、過度に悲観的でもありません。遅い開始は経過ライン分の容量を正確に
+  失うだけで、それを超える崖はありません。他の`dmabench`値と同様、絶対値に依存する
+  前にares / 実機で確認してください。
+
 ### 制約になるのはpipeline全体
 
 Pure-DMA ceilingだけでは再生上限を決められません。各frameには次の処理も含まれます。
@@ -270,9 +381,43 @@ streamへ別のcapをかけません。Frame 0は`HEADER.DAT`によってtimed p
 されるため対象外です。Cap内で更新できないcellは、解析category mapでMissとして表示します。
 
 `boot/movieplay_ip.s`はmodeごとのVBlank word予算`md_vbudget`を設定します。
-`VB_WORDS_H32`は2800、`VB_WORDS_H40`は3400です。どちらもGPGX ceiling
+`VB_WORDS_H32`は2800、`VB_WORDS_H40`は3200です。どちらもGPGX ceiling
 （H32は2982 word/VBlank、H40は3664 word/VBlank）より小さい値です。引き上げる前に、
 aresの`dmabench`値と照合してください。
 
 Mode4 playerでは、上記実測経路、つまり表示に真のSMS Mode 4を使い、VBlank中だけ
 Mode 5 DMAを行います。Player limitを引き上げる前に、aresまたは実機で再証明してください。
+
+## 実測 — `cpuvrambench`
+
+同じ予算のCPU側を測る再利用可能なmeasurement buildです。
+`make cpuvrambench CPUVRAMBENCH_MODE=0|1`（0=H32、1=H40）が
+`out/CPUVRAMBENCH.iso`をbuildします。1VBLANKに収まる最大のCPU data port書き込みを
+二分探索します。転送形はplayerの実経路（`move.l (a0)+,(VDP_DATA).l`の8語ブロック +
+`move.w`端数、`bf_bw` / `bf_bword`と同形）で、`dmabench`と同じ左上表示を出します:
+
+- `W xxxx` = VBlankあたりの最大CPU書き込み語数（hex）
+- `F xxxx` = 換算タイル/コマ ≈ `(W/16) * 3`
+
+Active中は意図的に測りません: VDP FIFOは4語深しかなく、active scan中のCPU書きは
+ほぼ即座にFIFO slot待ちになるため、予算経路ではありません。
+
+Sourceは`boot/cpuvrambench_ip.s`です（`cpuvrambench_boot.s`と、stub SP =
+`cdcbench_sp`）。**Authoritativeな値はares / 実機で測り直してください。**
+
+### 実測値（Genesis Plus GX）
+
+| Mode | CPU語/VBlank | `dmabench` DMA語/VBlank | DMA/CPU比 | note |
+|------|-------------:|------------------------:|----------:|------|
+| H32  | 1,168        | 2,982                   | 2.55      | `W 0490`、`out/CPUVRAMBENCH_mode0.cue`、screenshot `tmp/cpuvrambench_h32_result.png` |
+| H40  | 1,160        | 3,664                   | 3.16      | `W 0488`、`out/CPUVRAMBENCH_mode1.cue`、screenshot `tmp/cpuvrambench_h40_result.png` |
+| *ares* | TBD        |                         |           | ISOを実行して記入 |
+
+両modeは探索粒度（8語）の範囲で同値です。律速はVDP slot供給ではなく68000の命令時間
+（実測 ≈ 16 cycle/語。move.lループの理論値 ≈ 14.5にpollとcommand設定のoverheadが
+乗った値）で、blanking中のslot供給はCPUの需要を大きく上回ります。
+
+`boot/movieplay_ip.s`の`CPU_VDP_WORD_COST = 4`は、CPUで書く1 VDP語をVBlank予算上
+DMA 4語としてchargeします。GPGX実測の比は2.6〜3.2なので、この定数は両modeで
+CPU語を多めにchargeする安全側です。引き下げる前にares / 実機で比を測り直して
+ください。
