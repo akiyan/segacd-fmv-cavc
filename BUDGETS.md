@@ -172,17 +172,44 @@ wait states. "Measured" comes from the matching full-playback HUD. One
 independent check is `pass2_delay_q4`: it measures from the preceding flip to
 entry at `bf_dma`, before the ready sample.
 
-| Order | Object, operation, and memory domain | Estimated scanlines | Reduction reading |
-|---:|---|---:|---|
-| 1 | Finish the preceding `do_flip`, restore `build_frame`, re-enter `play_loop`, sample the request V-counter, and write `CMD_SWAP` through the Gate Array | about 0.8 nominal | Small fixed work; DEBUG flip sampling is not a release-build saving |
-| 2 | Poll Gate Array `STAT_READY` while Sub finishes the Word-RAM handoff | measured per frame; Bad Apple p50 2.0, p90 81.0, p95 92.0 | Main is spinning, but the duration is owned by Sub scheduling, CD/audio work, and bank handoff |
-| 3 | Accept READY, record the approximate wait, clear `CMD_SWAP`, wait for status clear, return, and call `build_frame` | about 0.5 nominal, plus any status-clear wait | Small fixed work; a long tail is a cross-CPU handshake problem |
-| 4 | Save Main registers, clear per-frame DEBUG counters, load `n_runs`, and decode the Word-RAM control header's update count and bitmap/list tag | about 0.5 nominal | Small; DEBUG clearing does not improve the release path |
-| 5 | Apply completed name entries from the swapped Word-RAM control block to the persistent Main-RAM `shadow`, using the selected generated-bitmap or list walker | data-dependent; Bad Apple p50 29.7, p95 42.4, max 60.1 nominal | Large CPU target; bitmap frames dominate the sample |
-| 6 | Compute the inactive name-table base retained for the later flip | about 0.2 nominal | Too small to lead the work |
-| 7 | Copy all 40x28 `shadow` words into the centered 64-word-pitch Main-RAM `nt_stage` | 24.1 nominal every frame | Large fixed target; this is Main-RAM→Main-RAM name work, not pattern staging |
-| 8 | At `bf_dma`, record `pass2_delay_q4`, clear PT/NT DEBUG state, compute the final-VBlank reserve including palette lookahead, clear the budget-origin flag, test `n_runs`, and set the Word-RAM `O_LOADS` cursor | about 0.8 nominal | Small fixed bookkeeping |
-| 9 | Zero the DEBUG logical-word counter, read `VDP_HV`, and store `pattern_dma_ready_vcounter` | about 0.1 nominal | This store is the endpoint |
+The dependency marks answer a narrower question: must this result exist before
+the **first PT DMA**?
+
+- **● PT-required**: a current-frame data, ownership, or first-budget input.
+- **△ schedule-required**: PT does not consume the value, but moving it across
+  the preceding flip can violate the visible VRAM-pattern lifetime.
+- **○ PT-independent**: the PT record walker does not consume the result; it is
+  eligible to move after the first PT VBlank if its later deadline remains met.
+- **◇ mixed**: only the named sub-operations in the row are PT-required.
+
+| Order | Dependency | Object, operation, and memory domain | Estimated scanlines | Reduction reading |
+|---:|:---:|---|---:|---|
+| 1 | ◇ | Finish the preceding `do_flip`, restore `build_frame`, re-enter `play_loop`, sample the request V-counter, and write `CMD_SWAP` through the Gate Array | about 0.8 nominal | The preceding flip is △ because it makes former front-frame slots safe to reuse; `CMD_SWAP` is ● because it requests the required bank; the intervening bookkeeping is independent. Moving PT across the flip needs a separate VRAM-lifetime proof |
+| 2 | ● | Poll Gate Array `STAT_READY` while Sub finishes the Word-RAM handoff | measured per frame; Bad Apple p50 2.0, p90 81.0, p95 92.0 | Hard ownership/data dependency: `O_LOADS` and Word-RAM sources are usable by Main only after the physical bank swap settles |
+| 3 | ◇ | After READY, record the approximate wait, clear `CMD_SWAP`, wait for status clear, return, and call `build_frame` | about 0.5 nominal, plus any status-clear wait | The handed bank is already usable, and the wait measurement/status-clear barrier are PT-independent; entering the frame routine is an unavoidable control edge. Clearing the command should stay early so Sub can start its next frame, while deferring only the `COMSTAT0=0` wait can be tested |
+| 4 | ◇ | Save Main registers, clear per-frame DEBUG counters, load `n_runs`, and decode the Word-RAM control header's update count and bitmap/list tag | about 0.5 nominal | `n_runs` is PT-required. The update count/tag and DEBUG clears are not; register save is a calling-contract cost |
+| 5 | ○ | Apply completed name entries from the swapped Word-RAM control block to the persistent Main-RAM `shadow`, using the selected generated-bitmap or list walker | frame-content-dependent; Bad Apple p50 29.7, p95 42.4, max 60.1 nominal | Large reorder target. Sub has already built each PT destination/source/length in `O_LOADS`; `bf_run_lp` never reads `shadow` |
+| 6 | ○ | Compute the inactive name-table base retained for the later flip | about 0.2 nominal | Needed for the final name-table selection, not PT |
+| 7 | ○ | Copy all 40x28 `shadow` words into the centered 64-word-pitch Main-RAM `nt_stage` | 24.1 nominal every frame | Large fixed reorder target. `nt_stage` is consumed only by the final NT DMA, not by pattern DMA |
+| 8 | ◇ | At `bf_dma`, record `pass2_delay_q4`, clear PT/NT DEBUG state, compute the final-VBlank reserve including palette lookahead, clear the budget-origin flag, test `n_runs`, and set the Word-RAM `O_LOADS` cursor | about 0.8 nominal | `n_runs`, `O_LOADS`, and clean first-budget state are PT-required. The pass2 sample/DEBUG state are observational. The final reserve can be delayed only until before admission of the cadence-final PT budget |
+| 9 | ○ | Zero the DEBUG logical-word counter, read `VDP_HV`, and store `pattern_dma_ready_vcounter` | about 0.1 nominal | Observational only; this store is the requested endpoint, while a production PT does not consume it |
+
+The hard current-frame dependency cut is therefore:
+preceding-flip lifetime → `CMD_SWAP`/settled `STAT_READY` → `n_runs` +
+`O_LOADS` + first-budget state → first PT VBlank. Control-header decode,
+`shadow` update, inactive-NT arithmetic, and `nt_stage` copy form a separate
+name-side branch. Both branches need the handed Word-RAM bank, but the PT branch
+does not need the name branch's output. Main retains that bank until the next
+frame handoff, so the name branch can in principle run in active display after
+the first PT VBlank and rejoin before the final NT DMA/flip.
+
+This makes orders 5-7 a concrete way to test a higher cold cap: the first PT
+budget can start without waiting for 53.75 median scanlines of name work, and
+the name branch can use the following active interval. It does not enlarge the
+physical VBlank DMA budget or the CD route. A cold-cap increase is valid only
+if the reordered fixed-stream A/B first improves PT readiness without moving
+NT readiness or another HUD safety field past its deadline, followed by a
+separate cap search.
 
 On the one-time frame-0-to-frame-1 transition, `start_playback` also clears
 the startup `CMD_STREAM` and waits for Sub status clear before the next
@@ -228,7 +255,10 @@ are:
    interval after the first PT VBlank. This can move readiness earlier by the
    combined name-work distribution: 53.75 scanlines at p50, 66.47 at p95, and
    up to 84.14 in this capture. It does not reduce total CPU work and can make
-   NT readiness worse, so both PT and NT pressure must be benchmarked.
+   NT readiness worse, so both PT and NT pressure must be benchmarked. This is
+   a real ordering candidate, not a guessed independence: `bf_run_lp` consumes
+   only Sub-built `O_LOADS`, while the moved work produces `shadow` and
+   `nt_stage` for the later NT DMA.
 2. Remove or fuse the full `shadow`→`nt_stage` copy. Making the 64-pitch stage
    authoritative, or writing the final stage form while decoding updates, are
    examples to test rather than a selected design. The fixed opportunity is
@@ -479,17 +509,41 @@ Pure-DMA ceilingだけでは再生上限を決められません。各frameに�
 `pass2_delay_q4`が1つ前のflipから`bf_dma` entryまで、ready sampleより前の時間を
 測っています。
 
-| 順番 | Object、operation、memory domain | 見込みscanline数 | 削減の読み方 |
-|---:|---|---:|---|
-| 1 | 1つ前の`do_flip`を終え、`build_frame`をrestoreし、`play_loop`へ戻り、request時V-counterをsampleしてGate Arrayへ`CMD_SWAP`を書く | nominalで約0.8 | 小さい固定処理。DEBUGのflip sampleを消してもrelease buildの削減にはならない |
-| 2 | SubがWord-RAM handoffを終えるまでGate Arrayの`STAT_READY`をpollする | frameごとの実測。Bad Appleはp50 2.0、p90 81.0、p95 92.0 | Mainはspinするが、時間のownerはSub scheduling、CD/audio処理、bank handoff |
-| 3 | READYを受理し、approximate waitを記録し、`CMD_SWAP`をclearし、status clearを待ち、returnして`build_frame`をcallする | nominalで約0.5 + status-clear待ち | 小さい固定処理。長いtailならcross-CPU handshakeの問題 |
-| 4 | Main registerをsaveし、frame単位DEBUG counterをclearし、`n_runs`をloadし、Word-RAM control headerのupdate countとbitmap/list tagをdecodeする | nominalで約0.5 | 小さい。DEBUG clearを削ってもrelease経路は改善しない |
-| 5 | Swap済みWord-RAM control blockの完成name entryを、選択済みgenerated-bitmap walkerまたはlist walkerでMain-RAMの永続`shadow`へ反映する | data依存。Bad Appleはp50 29.7、p95 42.4、最大60.1 nominal | 大きいCPU target。sampleの大半はbitmap frame |
-| 6 | 後のflipまで保持するinactive name-table baseを計算する | nominalで約0.2 | 小さすぎるため先に扱う対象ではない |
-| 7 | 40x28の`shadow` wordをすべて、中央配置された64-word-pitchのMain-RAM `nt_stage`へcopyする | 毎frame nominalで24.1 | 大きい固定target。Pattern stagingではなくMain-RAM→Main-RAMのname処理 |
-| 8 | `bf_dma`で`pass2_delay_q4`を記録し、PT/NT DEBUG stateをclearし、palette先読みを含む最終VBlank reserveを計算し、budget origin flagをclearし、`n_runs`をtestしてWord-RAM `O_LOADS` cursorを設定する | nominalで約0.8 | 小さい固定bookkeeping |
-| 9 | DEBUG logical-word counterをzeroにし、`VDP_HV`を読み、`pattern_dma_ready_vcounter`へstoreする | nominalで約0.1 | このstoreが終点 |
+Dependency markは、さらに狭い問い、つまりこの結果が**最初のPT DMAより前に**
+存在する必要があるかを示します。
+
+- **● PT前必須**: 現frameのdata、ownership、または最初のbudgetに必要です。
+- **△ Schedule前必須**: PTはその値をconsumeしませんが、1つ前のflipを跨いで動かすと
+  visible VRAM patternのlifetimeを壊す可能性があります。
+- **○ PT非依存**: PT record walkerは結果をconsumeしません。後段deadlineを守れるなら、
+  最初のPT VBlank後へ移せます。
+- **◇ 混在**: 行内で明記した一部のoperationだけがPT前必須です。
+
+| 順番 | Dependency | Object、operation、memory domain | 見込みscanline数 | 削減の読み方 |
+|---:|:---:|---|---:|---|
+| 1 | ◇ | 1つ前の`do_flip`を終え、`build_frame`をrestoreし、`play_loop`へ戻り、request時V-counterをsampleしてGate Arrayへ`CMD_SWAP`を書く | nominalで約0.8 | 旧front-frame slotを再利用可能にする1つ前のflipは△、必要bankをrequestする`CMD_SWAP`は●、間のbookkeepingは非依存です。PTをflip前へ動かすには別のVRAM-lifetime証明が必要です |
+| 2 | ● | SubがWord-RAM handoffを終えるまでGate Arrayの`STAT_READY`をpollする | frameごとの実測。Bad Appleはp50 2.0、p90 81.0、p95 92.0 | Hardなownership/data依存です。Physical bank swapがsettleした後でのみ、Mainは`O_LOADS`とWord-RAM sourceを利用できます |
+| 3 | ◇ | READY後、approximate waitを記録し、`CMD_SWAP`をclearし、status clearを待ち、returnして`build_frame`をcallする | nominalで約0.5 + status-clear待ち | Handoff済みbankはすでに利用でき、wait計測とstatus-clear barrierはPT非依存です。Frame routineへのcontrol edgeは不可避です。Subが次frameを始められるようcommand clearは早く保ち、`COMSTAT0=0`待ちだけの後回しをtestできます |
+| 4 | ◇ | Main registerをsaveし、frame単位DEBUG counterをclearし、`n_runs`をloadし、Word-RAM control headerのupdate countとbitmap/list tagをdecodeする | nominalで約0.5 | `n_runs`はPT前必須です。Update count/tagとDEBUG clearは非依存で、register saveはcalling contractのcostです |
+| 5 | ○ | Swap済みWord-RAM control blockの完成name entryを、選択済みgenerated-bitmap walkerまたはlist walkerでMain-RAMの永続`shadow`へ反映する | frame内容依存。Bad Appleはp50 29.7、p95 42.4、最大60.1 nominal | 大きい順序変更targetです。SubがPTのdestination/source/lengthを`O_LOADS`へ構築済みで、`bf_run_lp`は`shadow`を一切読みません |
+| 6 | ○ | 後のflipまで保持するinactive name-table baseを計算する | nominalで約0.2 | 最終name-table選択には必要ですがPTには不要です |
+| 7 | ○ | 40x28の`shadow` wordをすべて、中央配置された64-word-pitchのMain-RAM `nt_stage`へcopyする | 毎frame nominalで24.1 | 大きい固定の順序変更targetです。`nt_stage`をconsumeするのは最終NT DMAだけで、pattern DMAではありません |
+| 8 | ◇ | `bf_dma`で`pass2_delay_q4`を記録し、PT/NT DEBUG stateをclearし、palette先読みを含む最終VBlank reserveを計算し、budget origin flagをclearし、`n_runs`をtestしてWord-RAM `O_LOADS` cursorを設定する | nominalで約0.8 | `n_runs`、`O_LOADS`、cleanなfirst-budget stateはPT前必須です。Pass2 sample/DEBUG stateは観測用です。Final reserveはcadence-final PT budgetを受理する前までしか遅らせられません |
+| 9 | ○ | DEBUG logical-word counterをzeroにし、`VDP_HV`を読み、`pattern_dma_ready_vcounter`へstoreする | nominalで約0.1 | 観測専用です。このstoreが今回の終点ですが、production PTはこの値をconsumeしません |
+
+したがって現frameのhard dependency cutは、
+1つ前のflipによるlifetime確定 → `CMD_SWAP` / settle済み`STAT_READY` →
+`n_runs` + `O_LOADS` + first-budget state → 最初のPT VBlankです。Control-header decode、
+`shadow` update、inactive-NT計算、`nt_stage` copyは別のname側branchです。両branchは
+handoff済みWord-RAM bankを必要としますが、PT branchはname branchの出力を必要としません。
+Mainは次frame handoffまでそのbankを保持するため、原理上はname branchを最初のPT VBlank後の
+active displayで実行し、最終NT DMA / flip前に合流できます。
+
+したがって順番5〜7は、cold cap引き上げを具体的にtestできる対象です。最初のPT budgetを、
+name処理の中央値53.75 scanlineを待たずに始め、続くactive intervalをname branchに
+使えます。ただしphysical VBlank DMA budgetやCD route自体は増えません。まずpacked streamを
+固定した順序変更A/BでPT readyが改善し、NT readyや他のHUD safety fieldがdeadlineを
+超えないことを確認し、その後に別工程としてcapを探索した場合だけcold-cap改善と判断します。
 
 一度だけ通るframe 0からframe 1への遷移では、`start_playback`がstartup時の
 `CMD_STREAM`もclearし、次の`CMD_SWAP`より前にSub status clearを待ちます。
@@ -531,7 +585,9 @@ Raw ready pressure値はphysical V-counter上のphaseで、経過処理時間で
 1. Name側の処理をpre-PT critical pathから外し、最初のPT VBlank後のactive-display
    intervalへ移します。このcaptureでは、readyを前倒しできる候補量がname処理の合計、
    p50で53.75、p95で66.47、最大84.14 scanlineです。Total CPU処理は減らず、NT readyを
-   悪化させる可能性があるため、PTとNTのpressureを両方benchmarkします。
+   悪化させる可能性があるため、PTとNTのpressureを両方benchmarkします。これは推測した
+   independenceではなく、実際の順序変更候補です。`bf_run_lp`がconsumeするのはSub構築済み
+   `O_LOADS`だけで、移動対象が作る`shadow`と`nt_stage`は後のNT DMAがconsumeします。
 2. `shadow`→`nt_stage`全copyをなくすか融合します。64-pitch stageをauthoritativeにする、
    update decode中に最終stage形式へ書く、といった案は選択済み設計ではなくtest候補です。
    固定の候補量は24.08 scanlineで、Mainのtotal処理も減るためPTとNTの両方へ寄与できます。
