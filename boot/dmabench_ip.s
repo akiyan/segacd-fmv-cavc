@@ -20,9 +20,16 @@
 .equ DBGFONT_N, 16
 .equ NT, 0xC000				/* nametable */
 .equ HI0, 9000				/* 二分探索上限(mode4理論値も超える値) */
+.equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72us/tick, Main read-only */
+.equ FIT_MAX_TICKS, 150			/* DMA開始→完了の上限(4.6ms)。1 vblank(約2.4ms)は
+					   余裕で通り、次frameのvblankで完了する巨大DMA
+					   (16.7ms級)を弾く。遅延開始計測のwrap誤判定防止 */
 
 .ifndef MODE
 .equ MODE, 0
+.endif
+.ifndef DELAY_LINES
+.equ DELAY_LINES, 0			/* VBlank立ち上がりからDMA開始までの遅延ライン数 */
 .endif
 
 .text
@@ -165,6 +172,13 @@ fits:
 	move.w	(VDP_CTRL).l, d0		/* vblank 立ち上がり */
 	btst	#3, d0
 	beq	2b
+.if DELAY_LINES > 0
+	/* VBlank途中開始の検証: 立ち上がりからNライン待ってからDMAを出す。
+	   1ライン ≈ 488 cycle @7.67MHz、dbra(taken) 10 cycle → 49回/ライン。 */
+	move.w	#DELAY_LINES*49-1, d0
+9:
+	dbra	d0, 9b
+.endif
 .if MODE == 2
 	/* SMS Mode4中はMode5 DMA enableが使えないので、VBlank内だけMode5へ戻す。
 	   これは「mode4表示 + blank中Mode5 DMA」という実用候補経路の予算。 */
@@ -172,15 +186,24 @@ fits:
 	move.w	#0x8174, (VDP_CTRL).l
 	move.w	#0x8C00, (VDP_CTRL).l
 .endif
+	move.w	(GA_STOPWATCH).l, d3		/* DMA開始tick */
 	move.w	d6, d0
 	bsr	dma_words			/* X語DMA(完了待ち) */
 .if MODE == 2
 	move.w	#0x8006, (VDP_CTRL).l
 	move.w	#0x81E0, (VDP_CTRL).l
 .endif
+	/* vblankフラグだけでは不十分: 巨大DMAはactiveを跨いで次frameのvblank中に
+	   完了し得る(特に遅延開始時)。経過tickで同一vblank内完了を証明する。 */
+	move.w	(GA_STOPWATCH).l, d0
+	sub.w	d3, d0
+	andi.w	#0x0FFF, d0
+	cmpi.w	#FIT_MAX_TICKS, d0
+	bhi	5f				/* 次frameへwrapした */
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0				/* まだvblank? */
 	bne	3f
+5:
 	moveq	#0, d0				/* はみ出た */
 	bra	4f
 3:

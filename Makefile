@@ -220,15 +220,17 @@ $(OUT_DIR)/STILL256.cue: $(OUT_DIR)/STILL256.iso
 
 # --- dmabench: 表示モード別 VRAM DMA スループット実測(再利用可能) ---
 # 使い方: make dmabench DMABENCH_MODE=0|1|2  (0=H32, 1=H40, 2=mode4)
+#         DMABENCH_DELAY=N でVBlank立ち上がりからNライン遅らせてDMAを開始(既定0)。
 # 右下に W=語/vblank T=タイル/vblank F=タイル/コマ(3vblank換算) を表示。結果は BUDGETS.md 参照。
 DMABENCH_MODE ?= 0
-DMABENCH_TAG := mode$(DMABENCH_MODE)
+DMABENCH_DELAY ?= 0
+DMABENCH_TAG := mode$(DMABENCH_MODE)$(if $(filter-out 0,$(DMABENCH_DELAY)),d$(DMABENCH_DELAY),)
 dmabench: check-tools $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue
 	@cp $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso $(OUT_DIR)/DMABENCH.iso
 	@cp $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue $(OUT_DIR)/DMABENCH.cue
 
 $(OUT_DIR)/dmabench_ip_$(DMABENCH_TAG).o: $(BOOT_DIR)/dmabench_ip.s $(BOOT_DIR)/security.bin $(BOOT_DIR)/dbgfont.bin | setup
-	$(AS) $(ASFLAGS) --defsym MODE=$(DMABENCH_MODE) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) --defsym MODE=$(DMABENCH_MODE) --defsym DELAY_LINES=$(DMABENCH_DELAY) -I$(BOOT_DIR) $< -o $@
 
 $(OUT_DIR)/dmabench_ip_$(DMABENCH_TAG).bin: $(OUT_DIR)/dmabench_ip_$(DMABENCH_TAG).o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
