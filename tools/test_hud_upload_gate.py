@@ -160,7 +160,7 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 13)
+        self.assertEqual(result["schema_version"], 14)
         self.assertEqual(result["gate_fields"], [
             "sector_slip", "control_desync", "audio_resync",
             "vblank_spill", "prgbuf_jitter_peak_kib",
@@ -171,7 +171,7 @@ class HudUploadGateTests(unittest.TestCase):
             "apply_backpressure", "msf_gap_recoveries",
             "reader_ahead_frames", "reader_slot_sector", "cold_runs",
             "transfer_ticks", "transfer_vblanks", "transfer_end_vcounter",
-            "pattern_dma_start_vcounter",
+            "pattern_dma_ready_vcounter",
             "name_table_dma_start_vcounter",
             "sub_wait_scanlines", "flip_vcounter",
             "first_share_exit_vcounter", "pass2_delay_q4",
@@ -394,7 +394,7 @@ class HudUploadGateTests(unittest.TestCase):
             (0, 0xE8, 0xF1),
             (0, 2, 2),
             (0, 0xE9, 0xF2),
-            (0, 0xE0, 0xE0),
+            (0, 0xD4, 0xC8),
             (0, 0xEE, 0xF0),
             strict=True,
         ):
@@ -408,7 +408,7 @@ class HudUploadGateTests(unittest.TestCase):
                 "first_share_exit_vcounter": first_exit,
                 "transfer_vblanks": transfer_vblanks,
                 "transfer_end_vcounter": exit_vcounter,
-                "pattern_dma_start_vcounter": pattern_start,
+                "pattern_dma_ready_vcounter": pattern_start,
                 "name_table_dma_start_vcounter": nt_start,
             })
         with tempfile.TemporaryDirectory() as directory:
@@ -426,7 +426,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(parsed[1]["first_share_exit_vcounter"], "E8")
         self.assertEqual(parsed[1]["transfer_vblanks"], "2")
         self.assertEqual(parsed[1]["transfer_end_vcounter"], "E9")
-        self.assertEqual(parsed[1]["pattern_dma_start_vcounter"], "E0")
+        self.assertEqual(parsed[1]["pattern_dma_ready_vcounter"], "D4")
         self.assertEqual(parsed[1]["name_table_dma_start_vcounter"], "EE")
         rows[1].values["sector_slip"] = 1
         rows[1].values["msf_gap_recoveries"] = 15
@@ -447,7 +447,7 @@ class HudUploadGateTests(unittest.TestCase):
                 "apply_backpressure", "msf_gap_recoveries",
                 "reader_ahead_frames", "reader_slot_sector", "cold_runs",
                 "transfer_ticks", "transfer_vblanks",
-                "transfer_end_vcounter", "pattern_dma_start_vcounter",
+                "transfer_end_vcounter", "pattern_dma_ready_vcounter",
                 "name_table_dma_start_vcounter", "sub_wait_scanlines",
                 "flip_vcounter", "first_share_exit_vcounter",
                 "pass2_delay_q4",
@@ -469,7 +469,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["first_share_exit_vcounter_max"], 0xF1)
         self.assertEqual(result["transfer_vblanks_max"], 2)
         self.assertEqual(result["transfer_end_vcounter_max"], 0xF2)
-        self.assertEqual(result["pattern_dma_start_vcounter_max"], 0xE0)
+        self.assertEqual(result["pattern_dma_ready_vcounter_max"], 0xD4)
         self.assertEqual(
             result["name_table_dma_start_vcounter_max"], 0xF0)
         self.assertEqual(result["status"], "PASS")

@@ -138,7 +138,7 @@ def main():
         "reader_ahead_slot": 0xC3,
         "transfer_vblanks": 0x4,
         "transfer_end_vcounter": 0xE9,
-        "pattern_dma_start_vcounter": 0xE0,
+        "pattern_dma_ready_vcounter": 0xD4,
         "name_table_dma_start_vcounter": 0xEE,
     }
     check_case(

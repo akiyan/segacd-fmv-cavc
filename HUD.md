@@ -49,7 +49,7 @@ The table lists logical cell offsets before native-width wrapping. H32 maps
 | packed reader byte | 34-35 | 2 | High nibble `reader_ahead_frames`; low nibble `reader_slot_sector` |
 | `transfer_vblanks` | 36 | 1 | Fresh transfer budgets opened this frame |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
-| `pattern_dma_start_vcounter` | 39-40 | 2 | First pattern run-loop entry V-counter |
+| `pattern_dma_ready_vcounter` | 39-40 | 2 | Pattern-run ready V-counter before the fresh-blank wait |
 | `name_table_dma_start_vcounter` | 41-42 | 2 | Name-table DMA pre-trigger V-counter; zero when that path is absent |
 
 The player-only pre-roll sentinel uses `frame=FFFF`. It is an OCR anchor, not a
@@ -83,7 +83,7 @@ TSV for sequence alignment but is untimed boot staging.
 | `reader_slot_sector` | Sub | per frame | Sector position inside the current reader slot |
 | `transfer_vblanks` | Main | per frame | Number of fresh transfer budgets opened |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
-| `pattern_dma_start_vcounter` | Main | per frame | Raw V-counter before entering the first pattern run loop from a proven blank head |
+| `pattern_dma_ready_vcounter` | Main | per frame | Raw V-counter when Main is ready to consume the first pattern run, immediately before waiting for a fresh blank head |
 | `name_table_dma_start_vcounter` | Main | per frame | Raw V-counter immediately before the fixed-N H40 name-table DMA trigger |
 
 `sector_slip`, `control_desync`, `audio_resync`, and
@@ -97,9 +97,13 @@ The transport-retry remainder is
 was spent; a larger wait can also mean the Sub path reached the next sector
 earlier.
 
-The two DMA-start fields retain the raw eight-bit NTSC V28 V-counter. On the
-current raster, visible lines 0-223 use `00-DF`; blank starts at raster line 224
-with `E0`. Raw `E0-EA` first maps to blank offsets 0-10. The counter then jumps
+The pattern-ready and name-table-start fields retain the raw eight-bit NTSC V28
+V-counter. On the current raster, visible lines 0-223 use `00-DF`; blank starts
+at raster line 224 with `E0`. A visible pattern-ready value `V` means Main
+became ready `E0 - V` raster lines before the next blank head. `E0` means zero
+lead. A value later than `E0` means the current blank head was already missed;
+`bf_start_vbudget` waits for the following head instead of granting a partial
+budget. Raw `E0-EA` first maps to blank offsets 0-10. The counter then jumps
 back from `EA` to `E5`: the second `E5-EA` maps to blank offsets 11-16, and
 `EB-FF` maps to offsets 17-37. Therefore `E5-EA` is ambiguous without sequence
 context; resolve it from nearby samples and the operation order. Tools preserve
@@ -107,7 +111,7 @@ the raw value rather than silently choosing one occurrence.
 
 ## Upload gate
 
-`harness/startup_resync/analyze.py` writes descriptive gate schema 13. The
+`harness/startup_resync/analyze.py` writes descriptive gate schema 14. The
 binary `gate` is `PASS` or `FAIL`; `alert` is `NONE`, `WARNING`, or `FAIL`.
 `NONE` and `WARNING` remain upload-capable.
 
@@ -164,7 +168,7 @@ adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
 flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
 apply_backpressure msf_gap_recoveries reader_ahead_frames
 reader_slot_sector transfer_vblanks transfer_end_vcounter
-pattern_dma_start_vcounter name_table_dma_start_vcounter
+pattern_dma_ready_vcounter name_table_dma_start_vcounter
 ```
 
 It also stores capture timing, OCR confidence, sample counts, derived
@@ -251,7 +255,7 @@ confidence check に使います。
 | packed reader byte | 34-35 | 2 | High nibble が `reader_ahead_frames`、low nibble が `reader_slot_sector` |
 | `transfer_vblanks` | 36 | 1 | この frame で開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
-| `pattern_dma_start_vcounter` | 39-40 | 2 | 最初の pattern run-loop entry の V-counter |
+| `pattern_dma_ready_vcounter` | 39-40 | 2 | Fresh-blank 待ち直前の pattern-run ready V-counter |
 | `name_table_dma_start_vcounter` | 41-42 | 2 | Name-table DMA trigger 直前の V-counter。該当 path がなければ 0 |
 
 Player-only pre-roll sentinel は `frame=FFFF` です。OCR anchor であり stream frame
@@ -285,7 +289,7 @@ TSV に残しますが、untimed boot staging です。
 | `reader_slot_sector` | Sub | per frame | Current reader slot 内の sector position |
 | `transfer_vblanks` | Main | per frame | 開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
-| `pattern_dma_start_vcounter` | Main | per frame | 証明済み blank head から最初の pattern run loop へ入る直前の raw V-counter |
+| `pattern_dma_ready_vcounter` | Main | per frame | Main が最初の pattern run を consume 可能になり、fresh blank head を待つ直前の raw V-counter |
 | `name_table_dma_start_vcounter` | Main | per frame | fixed-N H40 name-table DMA trigger 直前の raw V-counter |
 
 `sector_slip`、`control_desync`、`audio_resync`、
@@ -299,17 +303,21 @@ Transport-retry remainder は
 使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
 結果でもあり得ます。
 
-2 個の DMA start field は NTSC V28 の raw 8-bit V-counter を保持します。現在の
-raster では visible line 0-223 が `00-DF`、blank は raster line 224 の `E0` から
-始まります。最初の `E0-EA` は blank offset 0-10 です。その後 counter は `EA`
-から `E5` へ戻り、2 回目の `E5-EA` は blank offset 11-16、`EB-FF` は offset
-17-37 です。このため `E5-EA` は sequence context なしでは二通りに解釈できます。
+Pattern-ready field と name-table-start field は NTSC V28 の raw 8-bit
+V-counter を保持します。現在の raster では visible line 0-223 が `00-DF`、
+blank は raster line 224 の `E0` から始まります。Visible 中の pattern-ready
+値を `V` とすると、Main は次の blank head の `E0 - V` raster line 前に ready
+になっています。`E0` は lead 0 です。`E0` より後なら現在の blank head をすでに
+逃しており、`bf_start_vbudget` は partial budget を認めず次の head を待ちます。
+最初の `E0-EA` は blank offset 0-10 です。その後 counter は `EA` から `E5`
+へ戻り、2 回目の `E5-EA` は blank offset 11-16、`EB-FF` は offset 17-37
+です。このため `E5-EA` は sequence context なしでは二通りに解釈できます。
 Nearby sample と operation order で決め、tool は一方を暗黙に選ばず raw 値を保持
 します。
 
 ## Upload gate
 
-`harness/startup_resync/analyze.py` は descriptive gate schema 13 を書きます。
+`harness/startup_resync/analyze.py` は descriptive gate schema 14 を書きます。
 Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` です。
 `NONE` と `WARNING` は upload 可能です。
 
@@ -364,7 +372,7 @@ adpcm_decode_units transfer_ticks cold_runs prgbuf_jitter_peak_kib
 flip_vcounter first_share_exit_vcounter pass2_delay_q4 pump_gap_ticks
 apply_backpressure msf_gap_recoveries reader_ahead_frames
 reader_slot_sector transfer_vblanks transfer_end_vcounter
-pattern_dma_start_vcounter name_table_dma_start_vcounter
+pattern_dma_ready_vcounter name_table_dma_start_vcounter
 ```
 
 さらに capture timing、OCR confidence、sample count、derived milliseconds、

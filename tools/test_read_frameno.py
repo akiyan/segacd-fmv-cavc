@@ -96,7 +96,7 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertIn("transfer_ticks", read_frameno.HUD_FIELDS)
         self.assertIn("apply_backpressure", read_frameno.HUD_FIELDS)
         self.assertIn("reader_ahead_frames", read_frameno.HUD_FIELDS)
-        self.assertIn("pattern_dma_start_vcounter", read_frameno.HUD_FIELDS)
+        self.assertIn("pattern_dma_ready_vcounter", read_frameno.HUD_FIELDS)
         self.assertIn(
             "name_table_dma_start_vcounter", read_frameno.HUD_FIELDS)
         self.assertNotIn(

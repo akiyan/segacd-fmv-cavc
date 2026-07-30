@@ -96,8 +96,8 @@ class TimelineRenderingTests(unittest.TestCase):
     def test_dma_start_rows_follow_vblank_before_gate_rows(self):
         data = {
             "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
-            "pattern_dma_start_vcounter": np.asarray(
-                [0, 0xE0, 0xE0], np.float64),
+            "pattern_dma_ready_vcounter": np.asarray(
+                [0, 0xC8, 0xD4], np.float64),
             "name_table_dma_start_vcounter": np.asarray(
                 [0, 0xEE, 0xF0], np.float64),
         }
@@ -118,14 +118,14 @@ class TimelineRenderingTests(unittest.TestCase):
             keys[:4],
             [
                 "display_vblanks",
-                "pattern_dma_start_vcounter",
+                "pattern_dma_ready_vcounter",
                 "name_table_dma_start_vcounter",
                 "sector_slip",
             ],
         )
         by_key = {spec.key: spec for spec in specs}
         self.assertEqual(
-            by_key["pattern_dma_start_vcounter"].height,
+            by_key["pattern_dma_ready_vcounter"].height,
             hudline.DEFAULT_ROW_HEIGHT * 3,
         )
         self.assertEqual(
@@ -137,7 +137,7 @@ class TimelineRenderingTests(unittest.TestCase):
             hudline.DEFAULT_ROW_HEIGHT,
         )
         self.assertTrue(
-            by_key["pattern_dma_start_vcounter"].point_plot)
+            by_key["pattern_dma_ready_vcounter"].point_plot)
         self.assertTrue(
             by_key["name_table_dma_start_vcounter"].point_plot)
         point_keys = {
@@ -146,7 +146,7 @@ class TimelineRenderingTests(unittest.TestCase):
         self.assertEqual(
             point_keys,
             {
-                "pattern_dma_start_vcounter",
+                "pattern_dma_ready_vcounter",
                 "name_table_dma_start_vcounter",
             },
         )

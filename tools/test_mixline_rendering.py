@@ -44,13 +44,13 @@ class MixlineRenderingTests(unittest.TestCase):
     def test_extracts_one_contiguous_logvdpline_block(self):
         keys = [
             "display_vblanks",
-            "pattern_dma_start_vcounter",
+            "pattern_dma_ready_vcounter",
             "name_table_dma_start_vcounter",
             *mixline.LOGVDPLINE_KEYS,
             "pump_gap_ticks",
         ]
         heights = {
-            "pattern_dma_start_vcounter": 12,
+            "pattern_dma_ready_vcounter": 12,
             "name_table_dma_start_vcounter": 12,
         }
         log_range, hud_ranges = mixline.split_hudline_ranges(
@@ -64,7 +64,7 @@ class MixlineRenderingTests(unittest.TestCase):
         log_range, hud_ranges = mixline.split_hudline_ranges(
             receipt([
                 "display_vblanks",
-                "pattern_dma_start_vcounter",
+                "pattern_dma_ready_vcounter",
                 "name_table_dma_start_vcounter",
                 "sector_slip",
             ]),

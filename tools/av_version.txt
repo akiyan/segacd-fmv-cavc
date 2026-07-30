@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p132: Move the pattern V-counter sample to the Main-ready point before
+#         bf_start_vbudget waits for a fresh blank head. Rename the diagnostic
+#         from DMA start to pattern readiness and advance the HUD gate schema
+#         so the value expresses pre-VBlank lead rather than post-wait entry.
 #   p131: Add raw V-counter samples for the first pattern run-loop entry and
 #         the fixed-N H40 name-table DMA trigger. Extend the DEBUG HUD to 43
 #         hexadecimal cells and carry its wrapped second row through the
@@ -1126,4 +1130,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260730
 e=160
-p=131
+p=132

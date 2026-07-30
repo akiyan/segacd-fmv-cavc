@@ -300,10 +300,18 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     if not clear_state.start() < load_runs.start() < branch_empty.start():
         raise AssertionError(
             f"{obj}: shared-state clear overwrites the n_runs zero flag")
-    if not re.search(
-            r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", dma_entry):
+    ready_sample = re.search(
+        r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", dma_entry)
+    budget_wait = re.search(
+        r"\bbsr\w*\s+[^\n]*<bf_start_vbudget>", dma_entry)
+    if (
+        not ready_sample
+        or not budget_wait
+        or ready_sample.start() >= budget_wait.start()
+    ):
         raise AssertionError(
-            f"{obj}: first pattern run-loop entry lacks its V-counter sample")
+            f"{obj}: pattern DMA readiness is not sampled before the "
+            "fresh-blank wait")
 
     run_loop = block("bf_run_lp", "bf_split_run")
     repair_charge = re.search(r"\baddqw\s+#4,%d6", run_loop)

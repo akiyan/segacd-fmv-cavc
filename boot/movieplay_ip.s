@@ -484,7 +484,7 @@ ip_entry:
 	clr.w	flip_hv_v
 	clr.w	pattern_vblank1_exit_v
 	clr.w	pass2_entry_q
-	clr.w	pattern_dma_start_v
+	clr.w	pattern_dma_ready_v
 	clr.w	nt_dma_start_v
 .endif
 .endif
@@ -909,7 +909,7 @@ bf_dma:
 	move.l	d0, pattern_vblank3_words
 	clr.w	pattern_exit_v
 	clr.w	pattern_vblank1_exit_v
-	clr.w	pattern_dma_start_v
+	clr.w	pattern_dma_ready_v
 	clr.w	nt_dma_start_v
 .endif
 	clr.w	pattern_transfer_vblanks
@@ -929,13 +929,15 @@ bf_dma:
 	beq	bf_flip
 	move.w	#1, pattern_transfer_vblanks
 	lea	(PROBE_BANK+O_LOADS_OFF), a2
-	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
 .ifdef DEBUG
 	moveq	#0, d0
 	movea.l	d0, a1				/* exact logical words in the current budget */
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
-	move.w	d0, pattern_dma_start_v		/* first run-loop entry from a proven blank head */
+	move.w	d0, pattern_dma_ready_v		/* ready phase before waiting for a fresh blank head */
+.endif
+	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
+.ifdef DEBUG
 	move.w	(GA_STOPWATCH).l, d0
 	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
 .endif
@@ -2063,9 +2065,10 @@ prepare_dbg:
 	DBG_PUT1
 	move.w	pattern_exit_v, d4
 	DBG_PUT2
-	/* Raw V-counter at the first pattern run-loop entry and immediately
-	   before the one H40 name-table DMA.  Non-NT-DMA modes retain zero. */
-	move.w	pattern_dma_start_v, d4
+	/* Raw V-counter when the first pattern run is ready before its fresh-blank
+	   wait, and immediately before the one H40 name-table DMA.  A frame with
+	   no pattern run or no NT-DMA path retains zero for that field. */
+	move.w	pattern_dma_ready_v, d4
 	DBG_PUT2
 	move.w	nt_dma_start_v, d4
 	DBG_PUT2
@@ -2332,8 +2335,8 @@ pattern_transfer_vblanks:
 	.space 2				/* runtime budget index; DEBUG transfer_vblanks */
 pattern_exit_v:
 	.space 2				/* DEBUG transfer_end_vcounter */
-pattern_dma_start_v:
-	.space 2				/* DEBUG pattern_dma_start_vcounter */
+pattern_dma_ready_v:
+	.space 2				/* DEBUG pattern_dma_ready_vcounter */
 nt_dma_start_v:
 	.space 2				/* DEBUG name_table_dma_start_vcounter */
 .ifdef MAIN_CODEGEN

@@ -78,7 +78,7 @@ HEX_COLUMNS = {
     "flip_vcounter",
     "first_share_exit_vcounter",
     "transfer_end_vcounter",
-    "pattern_dma_start_vcounter",
+    "pattern_dma_ready_vcounter",
     "name_table_dma_start_vcounter",
 }
 
@@ -221,8 +221,8 @@ def load_gate(path: Path) -> dict:
     ):
         if key not in gate:
             raise SystemExit(f"gate JSON lacks {key}")
-    if int(gate.get("schema_version", 0)) != 13:
-        raise SystemExit("hudline requires descriptive HUD gate schema 13")
+    if int(gate.get("schema_version", 0)) != 14:
+        raise SystemExit("hudline requires descriptive HUD gate schema 14")
     if "cd_wait_count" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks cd_wait_count maximum")
     if "cd_wait_count" in gate["limits"]:
@@ -233,7 +233,7 @@ def load_gate(path: Path) -> dict:
         raise SystemExit("warning_fields must contain only vblank_spill")
     diagnostics = set(gate.get("diagnostic_fields", ()))
     for field in (
-        "pattern_dma_start_vcounter",
+        "pattern_dma_ready_vcounter",
         "name_table_dma_start_vcounter",
     ):
         if field not in diagnostics:
@@ -292,11 +292,11 @@ def validate(
 ) -> None:
     frames = len(rows)
     for field in (
-        "pattern_dma_start_vcounter",
+        "pattern_dma_ready_vcounter",
         "name_table_dma_start_vcounter",
     ):
         if field not in data:
-            raise SystemExit(f"HUD TSV lacks required schema-13 field {field}")
+            raise SystemExit(f"HUD TSV lacks required schema-14 field {field}")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit(
             "gate observed_first_loop_frames does not match the HUD TSV")
@@ -391,8 +391,8 @@ def validate(
             "first_share_exit_vcounter_max",
         ),
         (
-            "pattern_dma_start_vcounter",
-            "pattern_dma_start_vcounter_max",
+            "pattern_dma_ready_vcounter",
+            "pattern_dma_ready_vcounter_max",
         ),
         (
             "name_table_dma_start_vcounter",
@@ -524,8 +524,8 @@ def row_specs(
             ),
         ),
         RowSpec(
-            "pattern_dma_start_vcounter",
-            "DMA START LINE",
+            "pattern_dma_ready_vcounter",
+            "DMA READY LINE",
             "raw VDP V-counter",
             0xFF,
             (98, 184, 224),
@@ -1106,9 +1106,9 @@ def main() -> None:
         int(data["first_share_exit_vcounter"][1:].max(initial=0))
         if "first_share_exit_vcounter" in data else None
     )
-    pattern_dma_start_vcounter_max = (
-        int(data["pattern_dma_start_vcounter"][1:].max(initial=0))
-        if "pattern_dma_start_vcounter" in data else None
+    pattern_dma_ready_vcounter_max = (
+        int(data["pattern_dma_ready_vcounter"][1:].max(initial=0))
+        if "pattern_dma_ready_vcounter" in data else None
     )
     name_table_dma_start_vcounter_max = (
         int(data["name_table_dma_start_vcounter"][1:].max(initial=0))
@@ -1146,14 +1146,14 @@ def main() -> None:
         f"transfer VBlanks max {transfer_vblanks_max}; "
         f"end V-counter max {transfer_end_vcounter_max:02X}; "
         f"first-share exit max {first_share_exit_vcounter_max:02X}; "
-        "pattern/NT start max "
-        f"{pattern_dma_start_vcounter_max:02X}/"
+        "pattern ready/NT start max "
+        f"{pattern_dma_ready_vcounter_max:02X}/"
         f"{name_table_dma_start_vcounter_max:02X}; "
         if (
             transfer_vblanks_max is not None
             and transfer_end_vcounter_max is not None
             and first_share_exit_vcounter_max is not None
-            and pattern_dma_start_vcounter_max is not None
+            and pattern_dma_ready_vcounter_max is not None
             and name_table_dma_start_vcounter_max is not None
         ) else ""
     )
@@ -1425,10 +1425,10 @@ def main() -> None:
             ),
             **(
                 {
-                    "pattern_dma_start_vcounter":
-                        pattern_dma_start_vcounter_max
+                    "pattern_dma_ready_vcounter":
+                        pattern_dma_ready_vcounter_max
                 }
-                if pattern_dma_start_vcounter_max is not None else {}
+                if pattern_dma_ready_vcounter_max is not None else {}
             ),
             **(
                 {
@@ -1451,8 +1451,8 @@ def main() -> None:
         "transfer_vblanks_max": transfer_vblanks_max,
         "transfer_end_vcounter_max": transfer_end_vcounter_max,
         "first_share_exit_vcounter_max": first_share_exit_vcounter_max,
-        "pattern_dma_start_vcounter_max":
-            pattern_dma_start_vcounter_max,
+        "pattern_dma_ready_vcounter_max":
+            pattern_dma_ready_vcounter_max,
         "name_table_dma_start_vcounter_max":
             name_table_dma_start_vcounter_max,
         "gpgx_vdp_maxima": gpgx_vdp_maxima,

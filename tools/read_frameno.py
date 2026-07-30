@@ -59,7 +59,7 @@ HUD_FIELD_DIGITS = (     # physical value cells; no separators
     ("reader_ahead_slot", 2),
     ("transfer_vblanks", 1),
     ("transfer_end_vcounter", 2),
-    ("pattern_dma_start_vcounter", 2),
+    ("pattern_dma_ready_vcounter", 2),
     ("name_table_dma_start_vcounter", 2),
 )
 HUD_COMBINED_FIELD_DIGITS = HUD_FIELD_DIGITS

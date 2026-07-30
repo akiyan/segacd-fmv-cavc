@@ -454,7 +454,7 @@ def _fmt(group: FrameGroup) -> str:
         f"reader_slot_sector={v['reader_slot_sector']:X} "
         f"transfer_vblanks={v['transfer_vblanks']:X} "
         f"transfer_end_vcounter={v['transfer_end_vcounter']:02X} "
-        f"pattern_dma_start_vcounter={v['pattern_dma_start_vcounter']:02X} "
+        f"pattern_dma_ready_vcounter={v['pattern_dma_ready_vcounter']:02X} "
         f"name_table_dma_start_vcounter="
         f"{v['name_table_dma_start_vcounter']:02X} "
         f"n={group.sample_count} "
@@ -545,7 +545,7 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
         "transfer_ticks", "transfer_ms", "cold_runs",
         "prgbuf_jitter_peak_kib", "reader_ahead_frames",
         "reader_slot_sector", "transfer_vblanks", "transfer_end_vcounter",
-        "pattern_dma_start_vcounter", "name_table_dma_start_vcounter",
+        "pattern_dma_ready_vcounter", "name_table_dma_start_vcounter",
         "pump_gap_ticks", "pump_gap_ms", "apply_backpressure",
         "msf_gap_recoveries", "transport_retry_recoveries",
         "flip_vcounter", "first_share_exit_vcounter", "pass2_delay_q4",
@@ -596,8 +596,8 @@ def write_tsv(path: Path, groups: list[FrameGroup], transitions: list[int]) -> N
                 "transfer_vblanks": values["transfer_vblanks"],
                 "transfer_end_vcounter": (
                     f"{values['transfer_end_vcounter']:02X}"),
-                "pattern_dma_start_vcounter": (
-                    f"{values['pattern_dma_start_vcounter']:02X}"),
+                "pattern_dma_ready_vcounter": (
+                    f"{values['pattern_dma_ready_vcounter']:02X}"),
                 "name_table_dma_start_vcounter": (
                     f"{values['name_table_dma_start_vcounter']:02X}"),
                 "pump_gap_ticks": values["pump_gap_ticks"],
@@ -841,7 +841,7 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 13,
+        "schema_version": 14,
         "gate": gate,
         "alert": alert,
         "pass": gate == "PASS",
@@ -877,7 +877,7 @@ def evaluate_upload_gate(
             "apply_backpressure", "msf_gap_recoveries",
             "reader_ahead_frames", "reader_slot_sector", "cold_runs",
             "transfer_ticks", "transfer_vblanks", "transfer_end_vcounter",
-            "pattern_dma_start_vcounter",
+            "pattern_dma_ready_vcounter",
             "name_table_dma_start_vcounter",
             "sub_wait_scanlines", "flip_vcounter",
             "first_share_exit_vcounter", "pass2_delay_q4",
@@ -925,7 +925,7 @@ def evaluate_upload_gate(
             default=0,
         )
     for field in (
-        "pattern_dma_start_vcounter",
+        "pattern_dma_ready_vcounter",
         "name_table_dma_start_vcounter",
     ):
         if field in first_loop[0].values:
@@ -984,8 +984,8 @@ def write_gate_json(path: Path, result: dict) -> None:
             f"{result['transfer_vblanks_max']}, end V-counter max="
             f"{result['transfer_end_vcounter_max']:02X}, first-share exit max="
             f"{result.get('first_share_exit_vcounter_max', 0):02X}, "
-            "pattern/NT start max="
-            f"{result.get('pattern_dma_start_vcounter_max', 0):02X}/"
+            "pattern ready/NT start max="
+            f"{result.get('pattern_dma_ready_vcounter_max', 0):02X}/"
             f"{result.get('name_table_dma_start_vcounter_max', 0):02X}"
         )
     if "pump_gap_statistics" in result:
