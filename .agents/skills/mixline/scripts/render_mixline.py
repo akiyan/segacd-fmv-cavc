@@ -409,7 +409,7 @@ def main() -> None:
         f"0x{int(hudline['name_table_dma_ready_pressure_max']):02X}, "
         "min target margin "
         f"{int(hudline['name_table_dma_ready_min_margin_scanlines'])} lines, "
-        "missed "
+        "past head "
         f"{int(hudline['name_table_dma_ready_missed_frames'])}/"
         f"{int(hudline['name_table_dma_ready_pressure_samples'])} | "
         if all(

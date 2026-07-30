@@ -88,22 +88,27 @@ HUD OCR pass. Use descriptive field names throughout.
   below VBLANK. Pattern ready is sampled immediately before Main waits for the
   first fresh blank head; it is not the post-wait DMA trigger. Ready pressure
   measures lateness: visible scanlines `00..DF` map directly to pressure
-  `00..DF`, `E0` is the zero-margin first VBlank head, and any later raw
-  V-counter maps to the `0x100` missed-head sentinel. A frame with no cold run
-  has no pressure point; a real ready event on scanline 0 is pressure zero.
-  This saturation avoids inventing an order for the NTSC V-counter's repeated
-  `E5..EA` values. Draw an orange `E0` deadline guide and colour `0x100`
-  points red. NT ready is sampled before the cadence-final VBlank wait. Its
-  pressure targets the VBlank head that carries the H40 name-table DMA: VBlank
-  2 at 30 fps and VBlank 4 at 15 fps. Use `transfer_vblanks` to identify the
-  opened pattern budget. Readiness before the final active raster clamps to
-  zero; within that raster, `00..DF` maps directly to pressure. An already
-  opened target budget maps to the `0x100` missed-head sentinel. A blank sample
-  before the target belongs to the preceding budget and clamps to zero, so the
-  repeated `E5..EA` range is never ordered speculatively. Draw an orange `E0`
-  target-head guide and colour `0x100` points red. A movie without the H40
-  name-table DMA path has no NT pressure points. Each row uses three times the standard row
-  height so small phase differences remain visible in the whole-movie image.
+  `00..DF`. A blank-phase sample within one complete blank of the preceding
+  flip is identified with `pass2_delay_q4` and clamps to zero because it
+  precedes the active raster leading to PT VBlank 1. `E0` otherwise is the
+  zero-margin first target head, and a later blank value maps to the `0x100`
+  missed-head sentinel. A frame with no cold run has no pressure point; a real
+  ready event on scanline 0 is pressure zero. This saturation avoids inventing
+  an order for the NTSC V-counter's repeated `E5..EA` values.
+
+  NT ready is sampled before the cadence-final VBlank wait. Its pressure
+  targets the VBlank head that carries the H40 name-table DMA: VBlank 2 at
+  30 fps and VBlank 4 at 15 fps. Use `transfer_vblanks` to identify the opened
+  pattern budget. Readiness before the final active raster clamps to zero;
+  within that raster, `00..DF` maps directly to pressure. If PT splits into the
+  target budget, NT can begin only after PT2, so a target-blank sample retains
+  its physical `E0..FF` pressure. A visible sample after that budget opens, or
+  a later PT budget, maps to the `0x100` escaped-target-blank sentinel. A blank
+  sample before the target belongs to the preceding budget and clamps to zero,
+  so the repeated `E5..EA` range is never ordered speculatively. Draw an orange
+  `E0` guide and colour values after it red. A movie without the H40 name-table
+  DMA path has no NT pressure points. Each row uses three times the standard
+  row height so small phase differences remain visible in the whole-movie image.
   Plot each frame as an unconnected point; do not fill bars or connect points.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
@@ -115,7 +120,7 @@ HUD OCR pass. Use descriptive field names throughout.
   `sub_wait_scanlines`, `adpcm_decode_units`, `transfer_ticks`, `cold_runs`,
   `flip_vcounter`, `first_share_exit_vcounter`,
   `pattern_dma_ready_pressure` (derived from
-  `pattern_dma_ready_vcounter` + `cold_runs`),
+  `pattern_dma_ready_vcounter` + `cold_runs` + `pass2_delay_q4`),
   `name_table_dma_ready_pressure` (derived from
   `name_table_dma_ready_vcounter` + `transfer_vblanks` + cadence), and
   `pass2_delay_q4`.
@@ -132,7 +137,7 @@ HUD OCR pass. Use descriptive field names throughout.
 
 ## Gate interpretation
 
-Schema 14 gate fields are:
+Schema 15 gate fields are:
 
 ```text
 sector_slip control_desync audio_resync vblank_spill
