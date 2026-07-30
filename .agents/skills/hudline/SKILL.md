@@ -86,7 +86,8 @@ HUD OCR pass. Use descriptive field names throughout.
 - The next two rows are the raw `pattern_dma_start_vcounter` and
   `name_table_dma_start_vcounter` values. They are diagnostic-only and sit
   directly below VBLANK. Each uses three times the standard row height so
-  small V-counter differences remain visible in the whole-movie image.
+  small V-counter differences remain visible in the whole-movie image. Plot
+  each frame as an unconnected point; do not fill bars or connect the points.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,
   `prgbuf_jitter_peak_kib`.
@@ -105,8 +106,9 @@ HUD OCR pass. Use descriptive field names throughout.
 - Preserve native units and hexadecimal axis labels.
 - Gate limits are orange, the normal jitter interval is yellow, and the
   normal cadence guide is green.
-- The receipt records row geometry, hashes, expected/observed frames, gate
-  limits, descriptive diagnostic maxima, statistics, and recording identity.
+- The receipt records row geometry and plot style, hashes, expected/observed
+  frames, gate limits, descriptive diagnostic maxima, statistics, and
+  recording identity.
 
 ## Gate interpretation
 

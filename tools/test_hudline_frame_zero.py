@@ -259,6 +259,37 @@ class HudlineFrameZeroTests(unittest.TestCase):
                 axis_frames=2,
             )
 
+    def test_point_plot_draws_unconnected_points_without_bar_fill(self):
+        color = (98, 184, 224)
+        image = Image.new("RGBA", (32, 12), (0, 0, 0, 255))
+        spec = render.RowSpec(
+            "metric",
+            "METRIC",
+            "units",
+            10,
+            color,
+            height=10,
+            point_plot=True,
+        )
+        render.draw_rows(
+            image,
+            {
+                "frame": np.asarray([0, 1, 2, 3], np.int64),
+                "metric": np.asarray([0, 0, 4, 7], np.float64),
+            },
+            [spec],
+            {"content_fps": 30, "limits": {}},
+            left=5,
+            top=0,
+            ppf=2,
+            axis_frames=4,
+        )
+        self.assertEqual(image.getpixel((8, 8))[:3], color)
+        self.assertEqual(image.getpixel((10, 5))[:3], color)
+        self.assertEqual(image.getpixel((12, 3))[:3], color)
+        self.assertNotEqual(image.getpixel((10, 6))[:3], color)
+        self.assertNotEqual(image.getpixel((11, 4))[:3], color)
+
 
 if __name__ == "__main__":
     unittest.main()

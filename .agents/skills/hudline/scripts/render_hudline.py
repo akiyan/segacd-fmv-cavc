@@ -56,6 +56,7 @@ class RowSpec:
     eight_bit_scale: bool = False
     normal_value: float | None = None
     height: int = DEFAULT_ROW_HEIGHT
+    point_plot: bool = False
     show_unit: bool = True
     show_zero: bool = False
 
@@ -530,6 +531,7 @@ def row_specs(
             (98, 184, 224),
             eight_bit_scale=True,
             height=DMA_START_LINE_HEIGHT,
+            point_plot=True,
         ),
         RowSpec(
             "name_table_dma_start_vcounter",
@@ -539,6 +541,7 @@ def row_specs(
             (152, 139, 222),
             eight_bit_scale=True,
             height=DMA_START_LINE_HEIGHT,
+            point_plot=True,
         ),
         RowSpec(
             "sector_slip", "SECTOR SLIP", "cumulative",
@@ -835,7 +838,17 @@ def draw_rows(
             x1 = x0 + ppf - 1
             clipped = min(value, spec.maximum)
             bar = int(round((row_height - 1) * clipped / max(spec.maximum, 1e-9)))
-            if bar:
+            if spec.point_plot:
+                point_x = x0 + ppf // 2
+                point_span = max(row_height - 3, 1)
+                point_y = y1 - 1 - int(round(
+                    point_span * clipped / max(spec.maximum, 1e-9)
+                ))
+                draw.point(
+                    (point_x, point_y),
+                    fill=value_color(value, spec, gate),
+                )
+            elif bar:
                 draw.rectangle(
                     (x0, y1 - bar + 1, x1, y1),
                     fill=value_color(value, spec, gate),
@@ -1315,13 +1328,14 @@ def main() -> None:
             "normal_value": spec.normal_value,
             "top": receipt_row_top,
             "height": spec.height,
+            "plot_style": "point" if spec.point_plot else "bar",
             "show_unit": spec.show_unit,
             "show_zero": spec.show_zero,
         })
         receipt_row_top += spec.height
 
     receipt = {
-        "schema_version": 8,
+        "schema_version": 9,
         "kind": "hudline",
         "label": title,
         "image": str(actual_output),

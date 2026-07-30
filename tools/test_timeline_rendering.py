@@ -136,6 +136,20 @@ class TimelineRenderingTests(unittest.TestCase):
             by_key["display_vblanks"].height,
             hudline.DEFAULT_ROW_HEIGHT,
         )
+        self.assertTrue(
+            by_key["pattern_dma_start_vcounter"].point_plot)
+        self.assertTrue(
+            by_key["name_table_dma_start_vcounter"].point_plot)
+        point_keys = {
+            spec.key for spec in specs if spec.point_plot
+        }
+        self.assertEqual(
+            point_keys,
+            {
+                "pattern_dma_start_vcounter",
+                "name_table_dma_start_vcounter",
+            },
+        )
 
     def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
         data = {
