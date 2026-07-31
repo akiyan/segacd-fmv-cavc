@@ -7,6 +7,8 @@
  *   CMD_BENCH_CHUNK(0x42): read BENCH_TOTAL sectors as ceil(BENCH_TOTAL/CHUNK)
  *                          separate CDC_STOP+ROM_READN calls of CHUNK sectors
  *                          each (the per-chunk restart the real player pays).
+ *   CMD_GRANT_1M    (0x43): switch to 1M/1M mode and hand one physical bank
+ *                          to Main for the Word-RAM dmabench path.
  *
  * Both timed modes transfer to the SAME 2 KB buffer (no dest increment) and bump
  * COMSTAT1 per drained sector so Main can sample the live sector count. Each
@@ -36,6 +38,7 @@
 .equ CMD_INIT,        0x40
 .equ CMD_BENCH_CONT,  0x41
 .equ CMD_BENCH_CHUNK, 0x42
+.equ CMD_GRANT_1M,    0x43
 .equ STAT_INIT_DONE, 0x0001
 .equ STAT_DONE,      0x00D0
 
@@ -87,6 +90,8 @@ command_loop:
 	beq	c_cont
 	cmp.w	#CMD_BENCH_CHUNK, d0
 	beq	c_chunk
+	cmp.w	#CMD_GRANT_1M, d0
+	beq	c_grant_1m
 	/* unknown: just ack-clear */
 	move.w	#STAT_DONE, (COMSTAT0).l
 	bra	ack_wait
@@ -103,12 +108,27 @@ c_chunk:
 	bsr	do_chunk
 	move.w	#STAT_DONE, (COMSTAT0).l
 	bra	ack_wait
+c_grant_1m:
+	bsr	grant_1m
+	move.w	#STAT_DONE, (COMSTAT0).l
+	bra	ack_wait
 
 ack_wait:
 	tst.w	(COMCMD0).l
 	bne	ack_wait
 	move.w	#0, (COMSTAT0).l
 	bra	sp_main
+
+/* Give Main a stable 1M Word-RAM bank.  The benchmark fills that bank itself
+   before timing, so this command only establishes the player-equivalent
+   memory mode and ownership. */
+grant_1m:
+	bset	#2, (MEMMODE+1).l
+	bchg	#0, (MEMMODE+1).l
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	rts
 
 do_init:
 	andi.b	#0xFA, (MEMMODE+1).l
