@@ -473,6 +473,7 @@ ip_entry:
 	bsr	show_frame_minus_one
 	clr.w	frame_no
 	clr.w	started
+	clr.w	swap_request_pending		/* .bss is not cleared; no startup request is pending */
 	clr.w	vsync_acc			/* v4: ペーシングカウンタ初期化(.bssはMD上でクリアされない) */
 	move.l	#PALIDX_RAM, palidx_ptr		/* ip_entry冒頭でも設定済み(防御的) */
 	bsr	prime_fixed_cadence		/* frame0 has no preceding movie flip */
@@ -493,7 +494,11 @@ play_loop:
 	   fixed-N CD rate. Feature-clear 24fps remains delivery paced. */
 	tst.w	started
 	beq	1f
-	bsr	swap_or_end			/* CMD_SWAP → READY(継続) or END(映画終端) */
+	tst.w	swap_request_pending
+	bne.s	2f
+	bsr	swap_begin			/* frame 1 / final END retain synchronous request timing */
+2:
+	bsr	swap_finish_or_end		/* finish an early request, or block on the new one */
 	cmp.w	#STAT_END, d0
 	beq	movie_end_md
 1:
@@ -522,6 +527,7 @@ movie_end_md:
 	bsr	load_movie_palette
 	clr.w	frame_no
 	clr.w	started
+	clr.w	swap_request_pending
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
 	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
@@ -1071,6 +1077,22 @@ bf_flip:
 2:
 .endif
 .endif
+.ifdef NT_DMA_FLIP
+	/* The final pattern DMA/repair and every Word-RAM HUD/status read are now
+	   complete. Return the consumed bank without waiting, overlapping Sub's
+	   exchange/pump work with Main's NT-DMA setup, cadence wait, CRAM and flip.
+	   Frame 0 still owns CMD_STREAM until its flip; the final frame must request
+	   STAT_END only after it has become visible. */
+.ifndef DEBUG
+	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, release_slip_count
+.endif
+	tst.w	frame_no
+	beq.s	9f
+	cmpi.w	#PC_FRAMES-1, frame_no
+	bhs.s	9f
+	bsr	swap_begin
+9:
+.endif
 	/* Precompute the display-register write before the cadence wait.
 	   do_flip performs only a final VBlank check followed by this command, so
 	   the check-to-reg2 race is a few bus cycles instead of an address/branch
@@ -1193,7 +1215,11 @@ bf_doflip:
 bf_after_flip:
 .ifndef DEBUG
 	/* Release build has no Sxx HUD, so retain the existing red slip indicator. */
+.ifdef NT_DMA_FLIP
+	move.w	release_slip_count, d0
+.else
 	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, d0
+.endif
 	beq	1f
 	move.l	#0xC0000000, (VDP_CTRL).l
 	move.w	#0x000E, (VDP_DATA).l
@@ -1881,13 +1907,21 @@ load_boot_vram_records:
 8:
 	rts
 
-/* CMD_SWAP送信 → STAT_READY(通常) か STAT_END(映画終端) を待つ。d0=受けたSTAT */
-swap_or_end:
+/* Start one bank exchange without waiting. The caller has finished every
+   reference into the currently mapped Word-RAM bank. */
+swap_begin:
+	move.w	#1, swap_request_pending
+	move.w	#CMD_SWAP, (GA_COMCMD0).l
+	rts
+
+/* Finish an already-started exchange. d0=STAT_READY or STAT_END.
+   DEBUG measures only the blocking tail from this call until the response;
+   an exchange completed behind NT/CRAM/flip therefore reports zero lines. */
+swap_finish_or_end:
 .ifdef DEBUG
 	move.w	(VDP_HV).l, d1
-	lsr.w	#8, d1				/* V-counter at CMD_SWAP request */
+	lsr.w	#8, d1				/* V-counter when Main begins blocking */
 .endif
-	move.w	#CMD_SWAP, (GA_COMCMD0).l
 1:
 	move.w	(GA_COMSTAT0).l, d0
 	cmp.w	#STAT_READY, d0
@@ -1907,7 +1941,8 @@ swap_or_end:
 3:
 	tst.w	(GA_COMSTAT0).l
 	bne	3b
-	move.w	d3, d0				/* swap_or_end return contract */
+	clr.w	swap_request_pending
+	move.w	d3, d0				/* swap_finish_or_end return contract */
 	rts
 
 /* Display the player-only frame -1 while frame 0 is built. It is a black movie
@@ -2307,6 +2342,8 @@ frame_no:
 	.space 2
 started:
 	.space 2
+swap_request_pending:
+	.space 2				/* CMD_SWAP is asserted; finish it at the next loop head */
 n_runs:
 	.space 2
 dbg_seg:
@@ -2314,7 +2351,9 @@ dbg_seg:
 palidx_ptr:
 	.space 4				/* next unconsumed M-PALIDX switch entry */
 sub_wait_lines:
-	.space 2				/* DEBUG sub_wait_scanlines */
+	.space 2				/* DEBUG residual blocking swap wait in scanlines */
+release_slip_count:
+	.space 2				/* release H40 snapshot before early bank exchange */
 frame_vblank_waits:
 	.space 2				/* DEBUG vblank_spill snapshot before display pacing */
 dma_elapsed_ticks:

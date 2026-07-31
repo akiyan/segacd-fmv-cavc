@@ -45,6 +45,7 @@ CASES = (
     Case("h40-30-supply", 1, 30, True),
     Case("h40-30-centered", 1, 30, True, 36, 25),
 )
+TEST_FRAMES = 600
 
 
 def find_tool(name: str) -> Path:
@@ -61,7 +62,7 @@ def make_header(case: Case) -> bytes:
     tcols = case.tcols if case.tcols is not None else (32 if case.mode == 0 else 40)
     trows = case.trows
     cells = tcols * trows
-    frames = 600
+    frames = TEST_FRAMES
     features = ttrc_routing.FEATURE_COLD_RUNS
     if av_config.uses_fixed_n_cadence(case.fps):
         features |= ttrc_routing.FEATURE_FIXED_N
@@ -271,7 +272,7 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
 
 def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
     """Prove the H40 fixed-N cold-tail/NT shared-VBlank guards."""
-    disassembly = run([str(objdump), "-d", str(obj)])
+    disassembly = run([str(objdump), "-dr", str(obj)])
 
     def block(start_name: str, end_name: str) -> str:
         start = re.search(
@@ -394,13 +395,145 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
             f"{obj}: H40 flip path still republishes HUD through the VDP port")
 
     nt_dma = block("nt_dma_flip", "set_vram_write")
-    nt_start = re.search(
-        r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d2", nt_dma)
+    ready_addr = symbol_address(objdump, obj, "nt_dma_ready_v")
+    ready_load = re.search(
+        rf"\bmovew\s+0 [^\n]*,%d2\n"
+        rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{ready_addr:x}",
+        nt_dma,
+    )
     nt_trigger = re.search(
         r"\bmovel\s+%d0,(?:00)?c00004 <VDP_CTRL>", nt_dma)
-    if not nt_start or not nt_trigger or nt_start.start() >= nt_trigger.start():
+    if (
+        not ready_load
+        or not nt_trigger
+        or ready_load.start() >= nt_trigger.start()
+        or re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>", nt_dma)
+    ):
         raise AssertionError(
-            f"{obj}: NT DMA lacks its immediate pre-trigger V-counter sample")
+            f"{obj}: NT DMA does not use the pre-wait readiness sample")
+
+
+def verify_early_nonblocking_swap(
+    objdump: Path, obj: Path, *, expected_frames: int,
+) -> None:
+    """Prove the H40 bank exchange starts after Word RAM and before the flip."""
+    disassembly = run([str(objdump), "-dr", str(obj)])
+
+    def block(start_name: str, end_name: str) -> str:
+        start = re.search(
+            rf"^[0-9a-f]+ <{re.escape(start_name)}>:$",
+            disassembly,
+            re.MULTILINE,
+        )
+        end = re.search(
+            rf"^[0-9a-f]+ <{re.escape(end_name)}>:$",
+            disassembly,
+            re.MULTILINE,
+        )
+        if not start or not end or start.start() >= end.start():
+            raise AssertionError(
+                f"{obj}: missing or reordered {start_name}/{end_name}")
+        return disassembly[start.end():end.start()]
+
+    def bss_reference(
+        text: str, instruction: str, symbol_name: str,
+    ) -> re.Match[str] | None:
+        address = symbol_address(objdump, obj, symbol_name)
+        return re.search(
+            rf"{instruction}[^\n]*\n"
+            rf"(?:\s+[0-9a-f]+:\s+[^\n]*\n){{0,2}}"
+            rf"\s+[0-9a-f]+:\s+R_68K_32\s+\.bss\+0x{address:x}",
+            text,
+        )
+
+    play_loop = block("play_loop", "movie_end_md")
+    pending_test = bss_reference(
+        play_loop, r"\btstw\s+0 ", "swap_request_pending")
+    synchronous_begin = re.search(
+        r"\bbsr\w*\s+[^\n]*<swap_begin>", play_loop)
+    finish = re.search(
+        r"\bbsr\w*\s+[^\n]*<swap_finish_or_end>", play_loop)
+    if not all((pending_test, synchronous_begin, finish)):
+        raise AssertionError(f"{obj}: play loop lacks split swap state handling")
+    if not pending_test.start() < synchronous_begin.start() < finish.start():
+        raise AssertionError(f"{obj}: play-loop swap begin/finish order is wrong")
+
+    frame_tail = block("bf_flip", "bf_update_list")
+    early_calls = list(re.finditer(
+        r"\bbsr\w*\s+[^\n]*<swap_begin>", frame_tail))
+    if len(early_calls) != 1:
+        raise AssertionError(
+            f"{obj}: expected one early swap request, found {len(early_calls)}")
+    early = early_calls[0]
+    guarded_prefix = frame_tail[:early.start()]
+    frame_zero_guard = bss_reference(
+        guarded_prefix, r"\btstw\s+0 ", "frame_no")
+    final_guard = bss_reference(
+        guarded_prefix,
+        rf"\bcmpiw\s+#{expected_frames - 1},0 ",
+        "frame_no",
+    )
+    if not frame_zero_guard or not final_guard:
+        raise AssertionError(
+            f"{obj}: early swap lacks frame-0/final-frame guards")
+    if (
+        not re.search(r"\bbeq\w*\s+", guarded_prefix[frame_zero_guard.end():])
+        or not re.search(r"\bbcc\w*\s+", guarded_prefix[final_guard.end():])
+    ):
+        raise AssertionError(
+            f"{obj}: early swap frame guards do not branch around the request")
+    waits = list(re.finditer(
+        r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", frame_tail))
+    if len(waits) != 2 or any(early.start() >= wait.start() for wait in waits):
+        raise AssertionError(
+            f"{obj}: bank exchange is not ahead of both cadence-final paths")
+
+    after_early = frame_tail[early.end():]
+    direct_word_ram = re.search(
+        r"\b(?:move|lea|cmp|tst)[a-z]*\s+(?:00)?[23][0-9a-f]{5}\b",
+        after_early,
+    )
+    indirect_word_cursor = re.search(
+        r"%(?:a2|a3)@", after_early)
+    if direct_word_ram or indirect_word_cursor:
+        raise AssertionError(
+            f"{obj}: Main still references Word RAM after early bank exchange")
+    allowed_calls = {
+        "bf_wait_fixed_flip_vblank",
+        "bf_patch_dbg_stage",
+        "nt_dma_flip",
+        "do_flip",
+    }
+    calls = set(re.findall(
+        r"\bbsr\w*\s+[^\n]*<([^>]+)>", after_early))
+    if calls - allowed_calls:
+        raise AssertionError(
+            f"{obj}: unaudited post-swap call(s): "
+            f"{', '.join(sorted(calls - allowed_calls))}")
+
+    begin = block("swap_begin", "swap_finish_or_end")
+    if not bss_reference(
+            begin, r"\bmovew\s+#1,0 ", "swap_request_pending"):
+        raise AssertionError(f"{obj}: swap_begin does not mark the request pending")
+    if not re.search(
+            r"\bmovew\s+#81,(?:00)?a12010 <GA_COMCMD0>", begin):
+        raise AssertionError(f"{obj}: swap_begin does not assert CMD_SWAP")
+    if re.search(r"\bmovew\s+(?:00)?a12020 <GA_COMSTAT0>", begin):
+        raise AssertionError(f"{obj}: swap_begin blocks on Sub status")
+
+    finish_block = block("swap_finish_or_end", "show_frame_minus_one")
+    for status in (-32765, -32764):
+        if not re.search(rf"\bcmpiw\s+#{status},%d0", finish_block):
+            raise AssertionError(
+                f"{obj}: swap_finish_or_end lacks status {status}")
+    if re.search(r"\bmovew\s+#81,(?:00)?a12010 <GA_COMCMD0>", finish_block):
+        raise AssertionError(f"{obj}: swap finish reissues CMD_SWAP")
+    if not re.search(
+            r"\bmovew\s+#0,(?:00)?a12010 <GA_COMCMD0>", finish_block):
+        raise AssertionError(f"{obj}: swap finish does not clear CMD_SWAP")
+    if not bss_reference(
+            finish_block, r"\bclrw\s+0 ", "swap_request_pending"):
+        raise AssertionError(f"{obj}: swap finish leaves the request pending")
 
 
 def verify_transfer_cleanup(objdump: Path, obj: Path) -> None:
@@ -684,6 +817,13 @@ def build_case(
             verify_runtime_vblank_cadence(
                 objdump, ip_obj,
                 expected_n=av_config.vsync_n_for_fps(case.fps))
+            verify_early_nonblocking_swap(
+                objdump, ip_obj, expected_frames=TEST_FRAMES)
+            release_ip_obj = case_dir / "ip-specialized-release.o"
+            run(common[:4] + ["--defsym", "MAIN_CODEGEN=1"] + fixed + includes + [
+                str(ROOT / "boot/movieplay_ip.s"), "-o", str(release_ip_obj)])
+            verify_early_nonblocking_swap(
+                objdump, release_ip_obj, expected_frames=TEST_FRAMES)
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"
