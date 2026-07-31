@@ -32,11 +32,11 @@ choosing encoder targets. Numbers are estimates for NTSC 60 Hz playback.
 
 ## Theory DMA Per VBlank
 
-| Mode | Active lines | Blanking lines | Pattern tiles/VBlank |
-|---|---:|---:|---:|
-| H40 | 224 | 38 | 243 |
-| H32 | 224 | 38 | 198 |
-| mode4 | 192 | 70 | 365 |
+| Mode | Active lines | Blanking lines | DMA words/VBlank | Pattern tiles/VBlank |
+|---|---:|---:|---:|---:|
+| H40 | 224 | 38 | 3,888 | 243 |
+| H32 | 224 | 38 | 3,168 | 198 |
+| mode4 | 192 | 70 | 5,840 | 365 |
 
 The mode4 row is only a theory estimate for a 192-line SMS-style display. True
 SMS Mode 4 changes the meaning of VDP registers; in particular, the bit used as
@@ -46,16 +46,17 @@ VBlank to issue the DMA.
 
 ## DMA Update Budget Per Video Frame
 
-This is the average DMA capacity available per encoded video frame, expressed
-as pattern tiles and using the GPGX `dmabench` measured values below. At 24 fps,
-the average is 2.5 VBlanks per video frame, so the real scheduler would
-alternate shorter and longer gaps.
+This is the average DMA capacity available per encoded video frame, using the
+GPGX `dmabench` measured values below. Each cell gives exact average DMA words,
+then the number of complete 16-word pattern tiles. At 24 fps, the average is
+2.5 VBlanks per video frame, so the real scheduler would alternate shorter and
+longer gaps.
 
-| Mode | 15 fps tiles/frame | 24 fps tiles/frame | 30 fps tiles/frame |
+| Mode | 15 fps words / tiles | 24 fps words / tiles | 30 fps words / tiles |
 |---|---:|---:|---:|
-| H40 | 916 | 572 | 458 |
-| H32 | 745 | 465 | 372 |
-| mode4 | 1,405 | 878 | 702 |
+| H40 | 14,656 / 916 | 9,160 / 572 | 7,328 / 458 |
+| H32 | 11,928 / 745 | 7,455 / 465 | 5,964 / 372 |
+| mode4 | 22,480 / 1,405 | 14,050 / 878 | 11,240 / 702 |
 
 ## CD Raw Read Budget Per Video Frame
 
@@ -72,8 +73,9 @@ replacement for the exact per-profile scheduler.
 ## Empirical measurement — `dmabench`
 
 Reusable measurement build. `make dmabench DMABENCH_MODE=0|1|2` (0=H32, 1=H40,
-2=mode4) builds `out/DMABENCH.iso`. It binary-searches the largest
-`Main-RAM → VRAM` DMA that finishes inside one VBlank and prints, top-left:
+2=mode4) builds `out/DMABENCH.iso`. With the default `DMABENCH_RUNS=0`, it
+binary-searches the largest `Main-RAM → VRAM` DMA that finishes inside one
+VBlank and prints, top-left:
 
 - `W xxxx` = max words per VBlank (hex)
 - `F xxxx` = derived tiles/frame ≈ `(W/16) * 3`
@@ -84,12 +86,12 @@ is lenient and over-reports.
 
 ### Measured (Genesis Plus GX)
 
-| Mode  | Pattern tiles/VBlank | note |
-|-------|---------------------:|------|
-| H32   | 186                  | `W 0BA6`; `out/DMABENCH_mode0.cue`, screenshot `tmp/dmabench_h32_clean_sheet.jpg` |
-| H40   | 229                  | `W 0E50`; `out/DMABENCH_mode1.cue`, screenshot `tmp/dmabench_h40_clean_sheet.jpg` |
-| mode4 | 351                  | `W 15F4`; `out/DMABENCH_mode2.cue`, screenshot `tmp/dmabench_mode4_clean_sheet.jpg`; SMS Mode 4 display, VBlank-only Mode 5 DMA, with a white proof block showing the DMA destination tile was written |
-| *ares* | TBD                 | run the ISO to fill in |
+| Mode  | DMA words/VBlank | Pattern tiles/VBlank | note |
+|-------|-----------------:|---------------------:|------|
+| H32   | 2,982 | 186 | `W 0BA6`; `out/DMABENCH_mode0.cue`, screenshot `tmp/dmabench_h32_clean_sheet.jpg` |
+| H40   | 3,664 | 229 | `W 0E50`; `out/DMABENCH_mode1.cue`, screenshot `tmp/dmabench_h40_clean_sheet.jpg` |
+| mode4 | 5,620 | 351 | `W 15F4`; `out/DMABENCH_mode2.cue`, screenshot `tmp/dmabench_mode4_clean_sheet.jpg`; SMS Mode 4 display, VBlank-only Mode 5 DMA, with a white proof block showing the DMA destination tile was written |
+| *ares* | TBD | TBD | run the ISO to fill in |
 
 The GPGX result `0x0F98` for every mode is invalid. A harness using
 `reg1 = 0x8144` for mode4 leaves Mode 5 selected, does not enable Mode 5 DMA,
@@ -140,6 +142,75 @@ Screenshots: `tmp/dmabench_h32_d{10,19,29}_result.png`,
   start loses exactly the elapsed lines' capacity, and there is no cliff
   beyond that loss. As with every `dmabench` number, confirm on ares / real
   hardware before relying on the absolute values.
+
+### Repaired Word-RAM multi-run DMA (measured)
+
+The multi-run mode measures the current Main-player whole-run path instead of a
+single Main-RAM DMA:
+
+```sh
+make dmabench DMABENCH_MODE=1 DMABENCH_RUNS=N DMABENCH_REPAIR=1
+make dmabench DMABENCH_MODE=1 DMABENCH_RUNS=N DMABENCH_REPAIR=0
+```
+
+The shared Sub benchmark program establishes 1M/1M mode and hands a settled
+physical Word-RAM bank to Main. Before timing, Main divides the total payload
+as evenly as possible into `N` 22-byte `O_LOADS v2` records. The timed loop pops
+the pre-swizzled registers from Word RAM, issues each DMA as `src+2` with the
+full length and normal destination, waits for completion, restores the normal
+destination command, and CPU-writes the destination's first word. This matches
+the DEBUG player's unsplit Word-RAM whole-run path, including its logical-word
+accounting and four-unit budget bookkeeping. `DMABENCH_REPAIR=0` keeps the same
+run division, records, source offset, DMA setup, trigger, and completion wait,
+but omits the repair-specific bookkeeping, command restore, source load/check,
+and CPU write.
+
+`W` is the maximum total payload words that complete inside one H40 VBlank.
+`E` is the direct Gate-Array stopwatch result for a fixed 1,024-word payload,
+in 30.72 us ticks, so its slope is independent of the shrinking `W` ceiling.
+All values below are decimal even though the benchmark displays hexadecimal.
+The binary search leaves a range of at most seven words, so 2,495 and an
+earlier 2,499 reading for 16 repaired runs are the same measurement bucket.
+
+| Runs | Repaired `W` words/VBlank | No-repair `W` words/VBlank | Repaired `E` ticks | No-repair `E` ticks |
+|---:|---:|---:|---:|---:|
+| 1 | 3,656 | 3,668 | 22 | 22 |
+| 4 | 3,427 | 3,475 | 27 | 26 |
+| 8 | 3,114 | 3,225 | 34 | 32 |
+| 16 | 2,495 | 2,714 | 46 | 42 |
+| 24 | 1,883 | 2,205 | 59 | 52 |
+| 32 | 1,265 | 1,687 | 72 | 62 |
+
+Linear fits over all six points give:
+
+- Repaired elapsed time: `E = 20.625 + 1.603 * runs` ticks, `R² = 0.99976`.
+  The slope is 49.24 us/run and differs by only 1.3% from the independently
+  observed Bad Apple full-playback HUD coefficient of 1.624 ticks/run.
+- No-repair elapsed time: `E = 21.110 + 1.286 * runs` ticks,
+  `R² = 0.99938`, or 39.52 us/run.
+- Repaired payload ceiling: `W = 3732.84 - 77.14 * runs` words,
+  `R² = 0.999994`.
+- No-repair payload ceiling: `W = 3733.11 - 63.82 * runs` words,
+  `R² = 0.999984`.
+
+The 1.603-tick slope is therefore the cost of one complete repaired run, not
+the repair alone. Subtracting the paired no-repair control isolates the repair
+sequence at 0.317 tick = 9.73 us per run, or 13.32 words/run of lost H40 payload
+capacity. The remaining 1.286 ticks/run and 63.82 words/run are the common
+record-pop, DMA-register, trigger, and completion-poll cost of another run.
+
+The H40 player payload budget is 3,200 words. In this isolated measurement, four
+repaired runs still allow 3,427 words, while eight allow only 3,114. The fitted
+crossing is about seven runs, so the fixed 3,200-word budget is not by itself a
+proof that an arbitrarily fragmented transfer fits one VBlank. The existing
+four-unit `CPU_VDP_WORD_COST` charges the one CPU data-port write; it is not a
+complete time model for the whole repair sequence or the common per-run setup.
+
+These are Genesis Plus GX results with no simultaneous Sub access to the other
+Word-RAM bank. The managed LOGVDP core SHA-256 is
+`51cfd71f338865288e274b271b8ce0d9a1d3dc415688f14db963a29555d9b4ac`.
+Re-measure on ares and real hardware before turning either fitted slope into a
+production budget or run cap.
 
 ### The binding limit is the complete pipeline
 
@@ -251,11 +322,11 @@ both modes. Re-measure the ratio on ares / real hardware before lowering it.
 
 ## VBlankあたりの理論DMA
 
-| Mode | Active lines | Blanking lines | Pattern tiles/VBlank |
-|---|---:|---:|---:|
-| H40 | 224 | 38 | 243 |
-| H32 | 224 | 38 | 198 |
-| mode4 | 192 | 70 | 365 |
+| Mode | Active lines | Blanking lines | DMA words/VBlank | Pattern tiles/VBlank |
+|---|---:|---:|---:|---:|
+| H40 | 224 | 38 | 3,888 | 243 |
+| H32 | 224 | 38 | 3,168 | 198 |
+| mode4 | 192 | 70 | 5,840 | 365 |
 
 mode4の行は、192-line SMS-style displayに対する理論値です。SMS Mode 4ではVDP
 registerの意味が変わり、特にMode 5でDMA enableに使うbitは、SMS Mode 4では
@@ -264,15 +335,16 @@ VBlank中だけMode 5へ切り替えます。
 
 ## Video frameあたりのDMA update予算
 
-下表は、encode済みvideo frameごとに使える平均DMA capacityをpattern tileで表します。
-値は下記GPGX `dmabench`の実測値を使います。24 fpsではvideo frameあたり平均2.5 VBlank
-なので、実schedulerは短い間隔と長い間隔を交互に使います。
+下表は、encode済みvideo frameごとに使える平均DMA capacityです。値は
+下記GPGX `dmabench`の実測値を使います。各cellは、正確な平均DMA word数、
+その次に16 wordの完全なpattern tile数を示します。24 fpsではvideo frameあたり
+平均2.5 VBlankなので、実schedulerは短い間隔と長い間隔を交互に使います。
 
-| Mode | 15 fps tiles/frame | 24 fps tiles/frame | 30 fps tiles/frame |
+| Mode | 15 fps words / tiles | 24 fps words / tiles | 30 fps words / tiles |
 |---|---:|---:|---:|
-| H40 | 916 | 572 | 458 |
-| H32 | 745 | 465 | 372 |
-| mode4 | 1,405 | 878 | 702 |
+| H40 | 14,656 / 916 | 9,160 / 572 | 7,328 / 458 |
+| H32 | 11,928 / 745 | 7,455 / 465 | 5,964 / 372 |
+| mode4 | 22,480 / 1,405 | 14,050 / 878 | 11,240 / 702 |
 
 ## Video frameあたりのCD raw-read予算
 
@@ -288,8 +360,9 @@ raw tile update数で表したもので、profileごとの正確なschedulerの�
 ## 実測 — `dmabench`
 
 再利用可能なmeasurement buildです。`make dmabench DMABENCH_MODE=0|1|2`
-（0=H32、1=H40、2=mode4）は`out/DMABENCH.iso`をbuildします。1 VBlank内に完了する
-最大の`Main-RAM → VRAM` DMAをbinary searchし、左上に次を表示します。
+（0=H32、1=H40、2=mode4）は`out/DMABENCH.iso`をbuildします。既定の
+`DMABENCH_RUNS=0`では、1 VBlank内に完了する最大の`Main-RAM → VRAM` DMAを
+binary searchし、左上に次を表示します。
 
 - `W xxxx` = VBlankあたりの最大word数（hex）
 - `F xxxx` = 導出したtiles/frame、約`(W/16) * 3`
@@ -300,12 +373,12 @@ Genesis Plus GXは判定が緩く、大きすぎる値を報告します。
 
 ### 実測値（Genesis Plus GX）
 
-| Mode | Pattern tiles/VBlank | note |
-|---|---:|---|
-| H32 | 186 | `W 0BA6`、`out/DMABENCH_mode0.cue`、screenshot `tmp/dmabench_h32_clean_sheet.jpg` |
-| H40 | 229 | `W 0E50`、`out/DMABENCH_mode1.cue`、screenshot `tmp/dmabench_h40_clean_sheet.jpg` |
-| mode4 | 351 | `W 15F4`、`out/DMABENCH_mode2.cue`、screenshot `tmp/dmabench_mode4_clean_sheet.jpg`。SMS Mode 4表示、VBlank中だけMode 5 DMA。DMA destination tileへのwriteを示すwhite proof block付き |
-| *ares* | TBD | ISOを実行して記入 |
+| Mode | DMA words/VBlank | Pattern tiles/VBlank | note |
+|---|---:|---:|---|
+| H32 | 2,982 | 186 | `W 0BA6`、`out/DMABENCH_mode0.cue`、screenshot `tmp/dmabench_h32_clean_sheet.jpg` |
+| H40 | 3,664 | 229 | `W 0E50`、`out/DMABENCH_mode1.cue`、screenshot `tmp/dmabench_h40_clean_sheet.jpg` |
+| mode4 | 5,620 | 351 | `W 15F4`、`out/DMABENCH_mode2.cue`、screenshot `tmp/dmabench_mode4_clean_sheet.jpg`。SMS Mode 4表示、VBlank中だけMode 5 DMA。DMA destination tileへのwriteを示すwhite proof block付き |
+| *ares* | TBD | TBD | ISOを実行して記入 |
 
 全modeで`0x0F98`となるGPGX結果は無効です。mode4で`reg1 = 0x8144`を使うharnessは
 Mode 5を選んだままにし、Mode 5 DMAをenableせず、さらにregister 1を復元し得るBIOS
@@ -352,6 +425,70 @@ Screenshot: `tmp/dmabench_h32_d{10,19,29}_result.png`、
   ruleは正しく、過度に悲観的でもありません。遅い開始は経過ライン分の容量を正確に
   失うだけで、それを超える崖はありません。他の`dmabench`値と同様、絶対値に依存する
   前にares / 実機で確認してください。
+
+### 先頭word補修付きWord RAM多run DMA（実測）
+
+多run modeは、単一のMain-RAM DMAではなく、現行Main playerのwhole-run経路を
+測ります。
+
+```sh
+make dmabench DMABENCH_MODE=1 DMABENCH_RUNS=N DMABENCH_REPAIR=1
+make dmabench DMABENCH_MODE=1 DMABENCH_RUNS=N DMABENCH_REPAIR=0
+```
+
+共有Sub benchmark programが1M/1M modeを設定し、settle済みの物理Word-RAM bankをMainへ
+渡します。Mainは計時前に総payloadをできるだけ均等な`N`本の22-byte
+`O_LOADS v2` recordへ分けます。計時loopはWord RAMからpre-swizzle済みregisterを
+popし、各DMAを`src+2`、full length、normal destinationで発行します。そして完了を
+待ち、normal destination commandを復元し、destinationの先頭wordをCPU writeします。
+これはDEBUG playerの未分割Word-RAM whole-run経路と同じで、logical-word集計と4-unitの
+budget簿記も含みます。`DMABENCH_REPAIR=0`はrun分割、record、source offset、
+DMA setup、trigger、完了待ちを同じに保ち、補修固有のbudget簿記、command復元、
+source load/check、CPU writeだけを省いた対照です。
+
+`W`は、1回のH40 VBlank内に完了する総payloadの最大word数です。`E`は、固定
+1,024-word payloadに対するGate-Array stopwatchの直接値で、単位は30.72 us tickです。
+そのため、その傾きは縮小する`W` ceilingに影響されません。Benchmarkの画面表示は
+16進ですが、下表はすべて10進値です。Binary searchには最大7 wordの幅が残るため、
+補修あり16 runの2,495と、先に得た2,499は同じ測定bucketです。
+
+| Runs | 補修あり`W` words/VBlank | 補修なし`W` words/VBlank | 補修あり`E` ticks | 補修なし`E` ticks |
+|---:|---:|---:|---:|---:|
+| 1 | 3,656 | 3,668 | 22 | 22 |
+| 4 | 3,427 | 3,475 | 27 | 26 |
+| 8 | 3,114 | 3,225 | 34 | 32 |
+| 16 | 2,495 | 2,714 | 46 | 42 |
+| 24 | 1,883 | 2,205 | 59 | 52 |
+| 32 | 1,265 | 1,687 | 72 | 62 |
+
+6点すべての直線fitは次の値です。
+
+- 補修ありの経過時間: `E = 20.625 + 1.603 * runs` ticks、`R² = 0.99976`。
+  傾きは49.24 us/runで、別に観測したBad Apple全編再生HUDの1.624 ticks/runとの差は
+  1.3%だけです。
+- 補修なしの経過時間: `E = 21.110 + 1.286 * runs` ticks、
+  `R² = 0.99938`、または39.52 us/runです。
+- 補修ありのpayload ceiling: `W = 3732.84 - 77.14 * runs` words、
+  `R² = 0.999994`です。
+- 補修なしのpayload ceiling: `W = 3733.11 - 63.82 * runs` words、
+  `R² = 0.999984`です。
+
+したがって1.603-tickの傾きは、完全な補修付きrun 1本のcostであり、補修だけの
+costではありません。対の補修なし結果を引くと、補修sequence固有分はrunあたり
+0.317 tick = 9.73 us、H40 payload capacityの減少では13.32 words/runと分かります。
+残る1.286 ticks/runと63.82 words/runは、別runに共通のrecord pop、DMA register、trigger、
+完了pollのcostです。
+
+H40 playerのpayload budgetは3,200 wordです。この単独実測では、補修あり4 runは
+3,427 wordを許しますが、8 runは3,114 wordしか許しません。Fitの交点は約7 runであり、
+固定3,200-word budgetだけでは、任意に分断された転送が1 VBlankに収まる証明には
+なりません。現行の4-unit `CPU_VDP_WORD_COST`は、CPU data-port write 1語をchargeします。
+これは補修sequence全体や共通のrunごとのsetupを表す完全な時間modelではありません。
+
+これらは、Subが反対側のWord-RAM bankを同時accessしていないGenesis Plus GXでの結果です。
+管理LOGVDP coreのSHA-256は
+`51cfd71f338865288e274b271b8ce0d9a1d3dc415688f14db963a29555d9b4ac`です。どちらのfit傾きも、
+production budgetまたはrun capへ変える前にaresと実機で測り直してください。
 
 ### 制約になるのはpipeline全体
 
