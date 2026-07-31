@@ -363,7 +363,7 @@ tmp/<profile>/
 
 | TOML table | Keys | Meaning |
 |---|---|---|
-| `[source]` | `path`, `fps`, `duration`, optional `sar` | Input and native timing. `sar` repairs source metadata. |
+| `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | Input and native timing. `sar` repairs source metadata. `audio_filter` is an ffmpeg `-af` chain applied to the source audio before the mono 22.05 kHz conversion (e.g. `loudnorm=I=-8:TP=-1:LRA=7` to raise a quiet master's loudness); omission extracts the audio as-is. |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | Human-readable requested sim identity, decoded-input reuse, and decision-log output. Sim bytes use a deterministic direct tmpfs path. |
@@ -771,7 +771,7 @@ tmp/<profile>/
 
 | TOML table | Keys | 意味 |
 |---|---|---|
-| `[source]` | `path`, `fps`, `duration`, optional `sar` | inputとnative timing。`sar` はsource metadataを補正する。 |
+| `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | inputとnative timing。`sar` はsource metadataを補正する。`audio_filter` はmono 22.05kHz変換前のsource audioへ適用するffmpeg `-af` chain（例: 音圧の低いmasterを持ち上げる `loudnorm=I=-8:TP=-1:LRA=7`）。省略時は無加工で抽出する。 |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | human-readableなsim要求identity、decoded-input reuse、decision-log output。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
