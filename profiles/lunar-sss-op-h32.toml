@@ -5,6 +5,10 @@ path = "assets/lunar_sss_op.mp4"
 fps = "24"
 duration = "105.641000"
 sar = "1:1"
+# Loudness-match the quiet source master to Bad Apple's level
+# (measured mono I=-14.85 LUFS; gain into tanh soft clip and a
+# -1 dB limiter lands near -7 LUFS integrated).
+audio_filter = "aformat=channel_layouts=mono,volume=10.9dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
 mode = "H32"
