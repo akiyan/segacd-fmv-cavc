@@ -42,6 +42,7 @@ ENV_MAP = {
     ("source", "fps"): "CBRSIM_FPS",
     ("source", "duration"): "CBRSIM_DURATION",
     ("source", "sar"): "CBRSIM_SOURCE_SAR",
+    ("source", "audio_filter"): "CBRSIM_AUDIO_AF",
     ("video", "mode"): "CBRSIM_MODE",
     ("video", "width"): "CBRSIM_W",
     ("video", "height"): "CBRSIM_H",
@@ -61,6 +62,10 @@ ENV_MAP = {
     ("palette", "algorithm"): "CBRSIM_PAL_ALGO",
 }
 PROFILE_ENV_DEFAULTS = {
+    # An empty audio filter chain means "extract the source audio as-is".
+    # Always overwritten so an inherited shell value cannot leak between
+    # profiles.
+    "CBRSIM_AUDIO_AF": "",
     "CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX": "-1",
     "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN": "256",
     "CBRSIM_RESIZE_FILTER": "lanczos",

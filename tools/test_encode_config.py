@@ -390,6 +390,23 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env = apply_profile_env(load_profile(path), {})
         self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
 
+    def test_source_audio_filter_maps_to_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "loud.toml"
+            path.write_text(PROFILE.replace(
+                'duration = "1"',
+                'duration = "1"\naudio_filter = "loudnorm=I=-8:TP=-1:LRA=7"'))
+            env = apply_profile_env(load_profile(path), {})
+        self.assertEqual(env["CBRSIM_AUDIO_AF"], "loudnorm=I=-8:TP=-1:LRA=7")
+
+    def test_absent_audio_filter_overwrites_inherited_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "plain.toml"
+            path.write_text(PROFILE)
+            env = {"CBRSIM_AUDIO_AF": "loudnorm=I=-8:TP=-1:LRA=7"}
+            apply_profile_env(load_profile(path), env)
+        self.assertEqual(env["CBRSIM_AUDIO_AF"], "")
+
     def test_removed_audio_section_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad-audio.toml"
