@@ -120,6 +120,9 @@ CD_RATE = av_config.CD_BYTES_PER_SECOND
 # controls carry checkpointed 4-bit IMA and the Sub CPU reconstructs RF5C164
 # samples.
 AUDIO_FFCODEC = "pcm_s16le"
+# Optional profile-supplied ffmpeg -af chain applied while extracting the
+# source audio (e.g. loudnorm to match loud masters). Empty means as-is.
+AUDIO_AF = os.environ.get("CBRSIM_AUDIO_AF", "").strip()
 AUDIO_LABEL = "22.05kHz mono IMA ADPCM"
 AUDIO_FILE = "audio_22k05_s16_mono.wav"
 AUDIO_PLAYBACK_FILE = "audio_playback_adpcm22_rf5c.wav"
@@ -1268,12 +1271,15 @@ def main():
                  "-ss", "0", "-t", DURATION, "-i", SRC,
                  "-vf", f"{RAW_VF},fps={FPS_STR}", str(raw_dir / "%05d.png")])
             print(f"extracting audio ({AUDIO_LABEL}) ...")
+            if AUDIO_AF:
+                print(f"  audio filter: {AUDIO_AF}")
             for old in OUT.glob("audio_*.wav"):     # 別形式の残骸を除去(REUSE時の取り違え防止)
                 old.unlink()
             run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                  *ffmpeg_threads,
                  "-ss", "0", "-t", DURATION, "-i", SRC,
-                 "-vn", "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
+                 "-vn", *(["-af", AUDIO_AF] if AUDIO_AF else []),
+                 "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
                  str(OUT / AUDIO_FILE)])
     _t = _mark("Extract", _t)
     frames = sorted(master_dir.glob("*.png"))
@@ -4057,6 +4063,7 @@ def main():
                 "vsync_n": int(VSYNC_N), "playback_fps": float(PLAYBACK_FPS),
             },
             "audio": {
+                "filter": AUDIO_AF,
                 "rate": int(AUDIO_RATE),
                 "frame_bytes": int(AUDIO_CONTROL_BYTES),
                 "control_bytes": int(AUDIO_CONTROL_BYTES),
