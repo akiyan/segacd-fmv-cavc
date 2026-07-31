@@ -258,7 +258,10 @@ block, a routing entry, or a HUD TSV row.
 
 ### Timed playback
 
-After a bank swap, Main consumes frame `N` while Sub prepares frame `N+1`.
+On the specialized fixed-N H40 path, Main returns the consumed Word RAM bank as
+soon as its final pattern and status reads are complete. The bank exchange is
+started without blocking, before Main finishes the name-table, CRAM, and flip
+work for frame `N`.
 
 ```mermaid
 sequenceDiagram
@@ -268,10 +271,6 @@ sequenceDiagram
     participant M as Main CPU
     participant V as VDP
 
-    M->>S: CMD_SWAP for prepared frame N
-    S->>W: Exchange bank ownership
-    S-->>M: STAT_READY
-
     par Sub prepares frame N+1
         CD-->>S: BODY sectors
         S->>S: Route control and Prg payload
@@ -280,12 +279,31 @@ sequenceDiagram
     and Main consumes frame N
         M->>W: Read O_LOADS v2 in place
         M->>M: Apply bitmap or update list
-        M->>V: Transfer cold runs during VBlank
+        M->>V: Transfer the final cold run and repair its first word
+    end
+
+    M->>S: Assert CMD_SWAP for prepared frame N+1; do not wait
+    S->>W: Exchange bank ownership
+    S-->>M: STAT_READY
+
+    par Sub uses the returned bank
+        S->>W: Flush pending WordBuf data
+        CD-->>S: Pump sectors while CMD_SWAP remains asserted
+    and Main finishes frame N without Word RAM
         M->>V: DMA name table, update CRAM, flip
     end
 
-    M->>S: Next CMD_SWAP
+    M->>S: At the next loop head, wait only for any unfinished READY tail
+    M->>S: Clear CMD_SWAP
 ```
+
+A zero residual wait means Sub completed the exchange during Main's remaining
+display work. It does not mean that the exchange itself was free. Main makes no
+further access to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
+the startup `CMD_STREAM` ownership through its flip, so frame 1 is acquired by
+the ordinary synchronous request. The final frame is also excluded: Main
+requests `STAT_END` only after that frame has become visible. H32,
+non-specialized, and non-fixed-N paths retain the synchronous handoff timing.
 
 TTRC v23 controls store `n_runs` immediately followed by compact source-aware
 run descriptors. Sub keeps the existing CDC polling cadence while resolving
@@ -614,8 +632,9 @@ entry、HUD TSV rowは追加しません。
 
 ### Timed playback
 
-Bank swap後、Mainはframe `N`を消費し、Subは他方のbankでframe `N+1`を準備
-します。
+Specialized fixed-N H40 pathでは、Mainは最後のpattern readとstatus readを
+終えた時点で、消費済みWord RAM bankを返します。Frame `N`のname-table、
+CRAM、flip処理を終える前に、bank交換をblockingせず開始します。
 
 ```mermaid
 sequenceDiagram
@@ -625,10 +644,6 @@ sequenceDiagram
     participant M as Main CPU
     participant V as VDP
 
-    M->>S: prepared frame NのCMD_SWAP
-    S->>W: bank ownership交換
-    S-->>M: STAT_READY
-
     par Subがframe N+1を準備
         CD-->>S: BODY sector
         S->>S: controlとPrg payloadをroute
@@ -637,12 +652,31 @@ sequenceDiagram
     and Mainがframe Nを消費
         M->>W: O_LOADS v2をin-placeで読む
         M->>M: bitmapまたはupdate listをapply
-        M->>V: VBlank中にcold runをtransfer
+        M->>V: 最後のcold runをtransferして先頭wordを補修
+    end
+
+    M->>S: prepared frame N+1のCMD_SWAPをassertし、待たない
+    S->>W: bank ownership交換
+    S-->>M: STAT_READY
+
+    par Subが返却bankを使う
+        S->>W: pending WordBuf dataをflush
+        CD-->>S: CMD_SWAP assert中にsectorをpump
+    and MainがWord RAMなしでframe Nを完了
         M->>V: name table DMA、CRAM update、flip
     end
 
-    M->>S: 次のCMD_SWAP
+    M->>S: 次のloop先頭で未完了のREADY tailだけを待つ
+    M->>S: CMD_SWAPをclear
 ```
+
+残り待ちがゼロなら、Mainの残るdisplay work中にSubの交換が完了したという
+意味です。交換自体の所要時間がゼロという意味ではありません。Mainは
+`CMD_SWAP` assert後、返却したbankへアクセスしません。Frame 0はflipまで
+startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期requestで
+取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
+requestします。H32、non-specialized、non-fixed-N pathは同期handoff timingを
+維持します。
 
 TTRC v23 controlは`n_runs`の直後にcompactなsource-aware run descriptorを
 置きます。Subは既存のCDC polling cadenceを保ったままdescriptorを

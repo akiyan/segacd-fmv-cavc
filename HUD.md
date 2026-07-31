@@ -36,7 +36,7 @@ The table lists logical cell offsets before native-width wrapping. H32 maps
 | `audio_resync` | 7 | 1 | Cumulative audio-pointer recovery count |
 | `audio_lead_256b` | 8-9 | 2 | Audio lead in 256-byte units |
 | `cd_wait_count` | 10 | 1 | Blocking CD service operations this frame |
-| `sub_wait_scanlines` | 11-12 | 2 | Main wait for Sub, in approximate scanlines |
+| `sub_wait_scanlines` | 11-12 | 2 | Residual Main wait for Sub after overlap, in approximate scanlines |
 | `adpcm_decode_units` | 13-14 | 2 | Sub ADPCM work in 0.12288 ms units |
 | packed transfer word | 15-18 | 4 | High nibble `vblank_spill`; low 12 bits `transfer_ticks` |
 | `cold_runs` | 19-20 | 2 | Low byte of packed cold-run count |
@@ -67,7 +67,7 @@ TSV for sequence alignment but is untimed boot staging.
 | `audio_resync` | Sub | cumulative nibble | Audio read-pointer corrections |
 | `audio_lead_256b` | Sub | per frame | Queued audio lead in 256-byte units |
 | `cd_wait_count` | Sub | per frame | Blocking CD work on the current-frame path; diagnostic only |
-| `sub_wait_scanlines` | Main | per frame | Approximate wait for the Sub handoff |
+| `sub_wait_scanlines` | Main | per frame | Residual blocking wait after Main starts completing the Sub handoff |
 | `vblank_spill` | Main | per frame | Additional VBlank budgets consumed by pattern work |
 | `adpcm_decode_units` | Sub | per frame | ADPCM decode work in 0.12288 ms units |
 | `transfer_ticks` | Main | per frame | Main pattern-transfer time in 30.72 us ticks, modulo 12 bits |
@@ -96,6 +96,16 @@ The transport-retry remainder is
 `cd_wait_count`, `pump_gap_ticks`, and `apply_backpressure` diagnose why time
 was spent; a larger wait can also mean the Sub path reached the next sector
 earlier.
+
+On the specialized fixed-N H40 path, Main asserts `CMD_SWAP` without blocking
+after the final pattern DMA and repair and after every read from the current
+Word RAM bank. Main then continues the name-table, CRAM, and flip path while
+Sub exchanges the banks, flushes pending WordBuf data, and pumps the CD. At the
+next playback-loop head, `sub_wait_scanlines` measures only the time from
+entering completion polling until Sub reports ready or end. Zero means the
+handoff completed during the overlap; it does not mean that the physical bank
+exchange took zero time. Paths without this overlap continue to expose their
+ordinary blocking handoff wait.
 
 The pattern-ready and name-table-ready fields retain the raw eight-bit NTSC V28
 V-counter. On the current raster, visible lines 0-223 use `00-DF`; blank starts
@@ -275,7 +285,7 @@ confidence check に使います。
 | `audio_resync` | 7 | 1 | Cumulative audio-pointer recovery count |
 | `audio_lead_256b` | 8-9 | 2 | 256-byte 単位の audio lead |
 | `cd_wait_count` | 10 | 1 | この frame の blocking CD service 回数 |
-| `sub_wait_scanlines` | 11-12 | 2 | Approximate scanline 単位の Main の Sub 待ち |
+| `sub_wait_scanlines` | 11-12 | 2 | 重なり実行後に残った Main の Sub 待ち。approximate scanline 単位 |
 | `adpcm_decode_units` | 13-14 | 2 | 0.12288 ms 単位の Sub ADPCM work |
 | packed transfer word | 15-18 | 4 | High nibble が `vblank_spill`、low 12 bit が `transfer_ticks` |
 | `cold_runs` | 19-20 | 2 | Packed cold-run count の low byte |
@@ -306,7 +316,7 @@ TSV に残しますが、untimed boot staging です。
 | `audio_resync` | Sub | cumulative nibble | Audio read-pointer correction |
 | `audio_lead_256b` | Sub | per frame | 256-byte 単位の queued audio lead |
 | `cd_wait_count` | Sub | per frame | Current-frame path 上の blocking CD work。Diagnostic 専用 |
-| `sub_wait_scanlines` | Main | per frame | Sub handoff の approximate wait |
+| `sub_wait_scanlines` | Main | per frame | Main が Sub handoff の完了待ちを始めた後に残った blocking wait |
 | `vblank_spill` | Main | per frame | Pattern work が消費した追加 VBlank budget |
 | `adpcm_decode_units` | Sub | per frame | 0.12288 ms 単位の ADPCM decode work |
 | `transfer_ticks` | Main | per frame | 30.72 us tick 単位の Main pattern-transfer time。12 bit wrap |
@@ -335,6 +345,15 @@ Transport-retry remainder は
 ありません。`cd_wait_count`、`pump_gap_ticks`、`apply_backpressure` は時間を
 使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
 結果でもあり得ます。
+
+Specialized fixed-N H40 pathでは、Mainは最後のpattern DMAと先頭word補修、および
+現在のWord RAM bankに対する全readを終えた後、blockingせず`CMD_SWAP`をassert
+します。その後Mainがname-table、CRAM、flip pathを進む間に、Subはbank交換、
+pending WordBuf dataのflush、CD pumpを行います。次のplayback-loop先頭で、
+`sub_wait_scanlines`は完了pollingに入ってからSubがreadyまたはendを返すまでの
+時間だけを測ります。ゼロはhandoffが重なり実行中に完了したという意味であり、
+物理bank交換の所要時間がゼロという意味ではありません。この重なり実行を
+持たないpathでは、通常のblocking handoff待ちをそのまま示します。
 
 Pattern-ready field と name-table-ready field は NTSC V28 の raw 8-bit
 V-counter を保持します。現在の raster では visible line 0-223 が `00-DF`、

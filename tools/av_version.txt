@@ -13,6 +13,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p139: On specialized fixed-N H40 playback, issue CMD_SWAP immediately after
+#         the final Word-RAM pattern repair and status snapshot, then finish the
+#         handshake at the next Main loop head. This returns the consumed bank
+#         while Main continues with NT DMA, CRAM, and flip. Frame 0 and the
+#         final STAT_END request keep their original post-flip ordering.
+#   p134-p138: Diagnostic Main-side ordering experiments. These builds were
+#         measured and discarded; p139 starts from the retained p133 path.
 #   p133: Move the H40 name-table V-counter sample before the cadence-final
 #         VBlank wait. Rename it from NT DMA start to NT readiness so the HUD
 #         can measure pressure toward the second VBlank head at 30 fps rather
@@ -1132,6 +1139,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260730
+date=20260731
 e=160
-p=133
+p=139
