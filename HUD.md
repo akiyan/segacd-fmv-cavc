@@ -178,6 +178,9 @@ are exactly `2, 3, 2, 3, ...`; the expected pattern is stored in
 exception. The first and last four content frames at 30 fps, three at 24 fps,
 and two at 15 fps remain in the measurements but do not raise this derived
 ALERT. This exception does not apply to gate fields or `transfer_vblanks`.
+When periodic 24 fps recovery repays a late VBlank, the compensating two-VBlank
+interval remains visible as a phase mismatch warning. The histogram and the
+gate therefore preserve both the missed target and its long-term clock repair.
 
 Frame 0 and the terminal hold are excluded from gate maxima, statistics,
 events, dynamic scales, and cadence measurements. `cd_wait_count` and
@@ -423,6 +426,9 @@ schedule stepと比較します。24 fpsの期待stepは厳密に`2, 3, 2, 3, ..
 外側でwarningになります。30 fpsでは先頭と末尾の各4 content frame、24 fpsでは
 各3 frame、15 fpsでは各2 frameをmeasurementには残しますが、このderived ALERTの
 対象外にします。この例外はgate fieldと`transfer_vblanks`には適用しません。
+Periodic 24 fps recoveryがlate VBlankを返済すると、補償用の2 VBlank intervalも
+位相mismatch warningとして表示に残ります。したがってhistogramとgateは、外したtargetと
+long-term clock修復の両方を保存します。
 
 Frame 0 と terminal hold は gate maximum、statistics、event、dynamic scale、
 cadence measurement から除外します。`cd_wait_count` と `adpcm_decode_units` は

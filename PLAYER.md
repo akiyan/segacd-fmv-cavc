@@ -22,6 +22,14 @@ schedule from the packed header. The 15 fps path repeats `(4)`, 24 fps repeats
 same phase. Their effective rates are 15000/1001, 24000/1001, and 30000/1001
 fps respectively.
 
+The 24 fps display controller remains phase-locked after a missed deadline.
+It counts whole-VBlank lateness as debt and repays that debt only by shortening
+a later nominal three-VBlank display step to two. It never shortens a
+two-VBlank step to one. The Sub CPU's physical `(2, 3)` sector schedule remains
+unchanged; the late frame has already given the reader the extra physical time
+that the compensating display step consumes. This prevents isolated display
+misses from becoming permanent reader lead and filling the APPLY queue.
+
 ## Unallocated Space Summary
 
 These are the only ranges with no live owner data. Guards, reserves, and
@@ -409,6 +417,13 @@ Word RAMのWordBufとrouting sizeはprofile（frame数、cell数、cold cap）�
 始まる`(2, 3)`、30 fps pathは`(2)`を反復します。Mainのdisplay deadlineとSubの
 CD-sector allowanceは同じ位相で進みます。実効rateは順に15000/1001、24000/1001、
 30000/1001 fpsです。
+
+24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
+debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
+2 VBlank stepを1へ短縮することはありません。Sub CPUの物理`(2, 3)` sector scheduleは
+変えません。遅れたframeがreaderへ追加の物理時間をすでに与えており、補償display stepは
+その時間を消費します。これにより、単発のdisplay missが恒久的なreader leadとなって
+APPLY queueを満たすことを防ぎます。
 
 ## 未割当領域の要約
 

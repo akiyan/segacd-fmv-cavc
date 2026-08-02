@@ -189,6 +189,13 @@ the player repeats `(2, 3)`; Sub uses matching `2002/800` and `3003/800` CD
 steps in that phase. The two-frame average is 24000/1001 fps. Rates without an
 authoritative cadence use the delivery-paced `75 / fps_int` accumulator.
 
+Main keeps the 24 fps display phase locked when work misses one target. Each
+whole late VBlank becomes recovery debt. A later nominal three-VBlank step may
+be shortened to two to repay one unit; a two-VBlank step is never shortened to
+one. Sub's physical sector accumulator does not change phase during recovery,
+because the late display already created the reader lead consumed by the
+shortened display step.
+
 `FEATURE_COLD_RUNS` appends four-byte source-aware run descriptors after one
 `n_runs` word. Sub validates and expands them into interleaved 22-byte
 `O_LOADS v2` records while keeping the CDC poll points. Main consumes those
@@ -612,6 +619,12 @@ N=4の6個目はphysical padだけです。routing byteの有効data上限は5 s
 24 fpsではframe 1を2 VBlank後に表示して`(2, 3)`を反復し、Subも同じ位相の
 `2002/800`と`3003/800` CD stepを使います。2 frame平均は24000/1001 fpsです。
 正式なcadenceを持たないrateはdelivery-paced `75 / fps_int` accumulatorを使います。
+
+Mainはworkがtargetを1回外しても24 fps displayの位相を維持します。VBlank単位の遅れを
+recovery debtにし、後の名目3 VBlank stepを2へ短縮する場合だけ1単位を返済します。
+2 VBlank stepを1へ短縮することはありません。Recovery中もSubの物理sector accumulator
+の位相は変えません。遅れたdisplayが、短縮stepで消費するreader leadをすでに作って
+いるためです。
 
 `FEATURE_COLD_RUNS` は各controlへ1個の`n_runs` wordと、それに続く4-byte
 source-aware run descriptorを追加します。SubはCDC poll位置を保ちながら

@@ -289,6 +289,11 @@ Check the raw MKV and reports before trusting a capture:
    `transfer_vblanks` maximum above the cadence's largest interval is another
    warning.
 
+   Periodic 24 fps playback phase-locks its long-term display clock after a
+   missed target. A compensating two-VBlank interval in a nominal three-VBlank
+   phase remains a visible cadence warning; it is expected to prevent the miss
+   from accumulating permanent reader lead, not to hide the original miss.
+
    Report distributions for `cd_wait_count`, `adpcm_decode_units`, and
    `pump_gap_ticks`; APPLY back-pressure frame count; cumulative
    `msf_gap_recoveries`; reader lead; and transfer VBlank/phase maxima.

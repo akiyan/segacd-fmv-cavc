@@ -85,6 +85,9 @@ HUD OCR pass. Use descriptive field names throughout.
   checked against its exact phase. Observations in the first/last two content
   frames at 15 fps, three at 24 fps, and four at 30 fps stay plotted as
   diagnostics but do not raise ALERT.
+  Periodic 24 fps catch-up remains plotted phase-by-phase: both a late target
+  and a compensating two-VBlank long phase are warnings, while the complete
+  histogram shows whether the long-term clock recovered.
 - The next two rows are derived `pattern_dma_ready_pressure` and
   `name_table_dma_ready_pressure`. They are diagnostic-only and sit directly
   below VBLANK. Pattern ready is sampled immediately before Main waits for the

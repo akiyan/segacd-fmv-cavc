@@ -384,6 +384,13 @@ in the same phase. This is 24000/1001 fps over each two-frame cycle. Using only
 the average `1001/320` would incorrectly give the first short interval more
 physical CD time than it has.
 
+The Main display clock treats `(2, 3)` as a phase target rather than resetting
+the clock after a late flip. Whole-VBlank lateness is repaid only by changing a
+later nominal three-VBlank display interval to two; the physical CD steps stay
+in their original frame phase. The late display has already delivered the
+extra sectors needed for that catch-up. This recovery never grants a slot
+bytes from a future physical deadline.
+
 For delivery-paced playback:
 
 ```text
@@ -870,6 +877,11 @@ N=4は5-sector slotを199個、6-sector slotを1個生成します。routing byt
 accumulatorも同じ位相でmodulus 800、numerator `(2002, 3003)`を使います。2 frame
 周期の実効速度は24000/1001 fpsです。平均`1001/320`だけを使うと、最初の短い
 間隔へ実在しないCD時間を与えるため使用しません。
+
+Main display clockはlate flip後にclockをresetせず、`(2, 3)`を位相targetとして扱います。
+VBlank単位の遅れは、後の名目3 VBlank display intervalを2へ変える場合だけ返済し、物理CD
+stepは元のframe位相を維持します。Late display中にcatch-upに必要な追加sectorはすでに
+配送済みです。このrecoveryが将来の物理deadlineからslot byteを前借りすることはありません。
 
 delivery-paced playbackでは次を使います。
 

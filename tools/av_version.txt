@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p141: Keep the periodic 24 fps display clock phase-locked after a missed
+#         target. Whole-VBlank debt is repaid only by shortening a later
+#         nominal three-VBlank step to two, preventing permanent reader lead
+#         without introducing one-VBlank display intervals.
 #   p140: Add an authoritative periodic 24 fps display cadence. Main alternates
 #         two- and three-VBlank flip deadlines from frame 1 while preserving
 #         the compile-time fixed-N hot paths and binary sizes at 15/30 fps.
@@ -1147,4 +1151,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260802
 e=161
-p=140
+p=141
