@@ -25,22 +25,70 @@ class BlackRun:
 
 @dataclass(frozen=True)
 class FadeShot:
-    """One static shot that fades in and out between two black runs."""
+    """One static shot with a fade on at least one side."""
 
-    left_black: BlackRun
+    left_black: BlackRun | None
     start: int
     end: int
     reference: int
     peak: int
-    right_black: BlackRun
+    right_black: BlackRun | None
     scales: tuple[float, ...]
     fit_rmse: tuple[float, ...]
 
     @property
     def anchor(self) -> int:
-        """First black frame on which the encoder can prepare the reference."""
+        """First ordinary frame on which the reference can be prepared."""
 
+        if self.left_black is None:
+            return self.start
         return self.left_black.start
+
+    @property
+    def preparation_end(self) -> int:
+        """Last ordinary frame available for exact reference preparation."""
+
+        if self.left_black is None:
+            return self.start
+        return self.left_black.end
+
+    @property
+    def display_end(self) -> int:
+        """Last frame whose indexed image is frozen to this reference."""
+
+        if self.right_black is None:
+            return self.end
+        return self.right_black.end
+
+    @property
+    def restoration(self) -> int:
+        """First frame after this shot's CRAM-only state."""
+
+        return self.display_end + 1
+
+    @property
+    def has_fade_in(self) -> bool:
+        return self.left_black is not None
+
+    @property
+    def has_fade_out(self) -> bool:
+        return self.right_black is not None
+
+    @property
+    def kind(self) -> str:
+        if self.has_fade_in and self.has_fade_out:
+            return "in_out"
+        if self.has_fade_in:
+            return "in"
+        if self.has_fade_out:
+            return "out"
+        raise ValueError("a fade shot must have at least one black side")
+
+    @property
+    def entry_scale(self) -> float:
+        """CRAM scale installed when the reference-preparation segment starts."""
+
+        return 0.0 if self.has_fade_in else 1.0
 
 
 @dataclass(frozen=True)
@@ -56,6 +104,7 @@ class FadeLayout:
     phases: np.ndarray
     anchors: tuple[int, ...]
     preparation_frames: tuple[int, ...]
+    preparation_deadlines: tuple[int, ...]
     restorations: tuple[int, ...]
 
 
@@ -66,6 +115,7 @@ def connected_groups(shots) -> tuple[tuple[FadeShot, ...], ...]:
     groups: list[list[FadeShot]] = []
     for shot in ordered:
         if (groups
+                and groups[-1][-1].right_black is not None
                 and groups[-1][-1].right_black == shot.left_black):
             groups[-1].append(shot)
         else:
@@ -100,7 +150,7 @@ def select_groups_with_segment_capacity(
 
     candidates = []
     for group in connected_groups(shots):
-        restore = group[-1].right_black.end + 1
+        restore = group[-1].restoration
         event_frames = {shot.anchor for shot in group}
         if restore < count:
             event_frames.add(restore)
@@ -175,7 +225,7 @@ def build_layout(
     anchors = tuple(shot.anchor for shot in selected)
     restorations = []
     for group in connected_groups(selected):
-        restore = group[-1].right_black.end + 1
+        restore = group[-1].restoration
         for frame in tuple(events):
             if group[0].anchor <= frame < min(restore, count):
                 del events[frame]
@@ -183,7 +233,8 @@ def build_layout(
             events[restore] = (int(original[restore]), 1.0)
             restorations.append(restore)
     for shot in selected:
-        events[shot.anchor] = (int(original[shot.reference]), 0.0)
+        events[shot.anchor] = (
+            int(original[shot.reference]), shot.entry_scale)
 
     frame_segments = np.zeros(count, np.int32)
     palette_sources: list[int] = []
@@ -201,22 +252,31 @@ def build_layout(
     desired = np.full(count, np.nan, np.float64)
     phases = np.zeros(count, np.uint8)
     preparation_frames = set()
+    preparation_deadlines = set()
     for shot in selected:
-        references[shot.anchor:shot.right_black.end + 1] = shot.reference
+        references[shot.anchor:shot.display_end + 1] = shot.reference
         desired[shot.start:shot.end + 1] = shot.scales
-        phases[shot.start:shot.peak + 1] = 1
-        phases[shot.peak + 1:shot.end + 1] = 2
-        desired[shot.right_black.start:shot.right_black.end + 1] = 0.0
-        phases[shot.right_black.start:shot.right_black.end + 1] = 2
+        if shot.has_fade_in and shot.has_fade_out:
+            phases[shot.start:shot.peak + 1] = 1
+            phases[shot.peak + 1:shot.end + 1] = 2
+        elif shot.has_fade_in:
+            phases[shot.start:shot.end + 1] = 1
+        else:
+            phases[shot.start:shot.end + 1] = 2
+        if shot.right_black is not None:
+            desired[
+                shot.right_black.start:shot.right_black.end + 1] = 0.0
+            phases[
+                shot.right_black.start:shot.right_black.end + 1] = 2
+        preparation_deadlines.add(shot.preparation_end)
     # A shared black frame belongs to the next shot's ordinary preparation
     # segment, not to the previous shot's CRAM-only fade-out control.
     for shot in selected:
         preparation_frames.update(
-            range(shot.left_black.start, shot.left_black.end + 1))
-        desired[shot.left_black.start:shot.left_black.end + 1] = np.nan
-        phases[shot.left_black.start:shot.left_black.end + 1] = 0
-        references[shot.left_black.start:shot.left_black.end + 1] = (
-            shot.reference)
+            range(shot.anchor, shot.preparation_end + 1))
+        desired[shot.anchor:shot.preparation_end + 1] = np.nan
+        phases[shot.anchor:shot.preparation_end + 1] = 0
+        references[shot.anchor:shot.preparation_end + 1] = shot.reference
 
     return FadeLayout(
         shots=selected,
@@ -228,6 +288,7 @@ def build_layout(
         phases=phases,
         anchors=anchors,
         preparation_frames=tuple(sorted(preparation_frames)),
+        preparation_deadlines=tuple(sorted(preparation_deadlines)),
         restorations=tuple(restorations),
     )
 

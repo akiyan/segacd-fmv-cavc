@@ -2177,7 +2177,7 @@ def main():
     fade_prepare_frames = frozenset(
         int(frame) for frame in fade_layout.preparation_frames)
     fade_prepare_deadlines = frozenset(
-        int(shot.left_black.end) for shot in fade_layout.shots)
+        int(frame) for frame in fade_layout.preparation_deadlines)
     cur_pals = np.asarray(segment_entry_cram[0], np.uint8).copy()
     for i in range(n):
         if _loop_profile:
@@ -4450,13 +4450,24 @@ def main():
                     fade_layout.restorations, np.uint16),
                 "shots": [
                     {
+                        "kind": shot.kind,
                         "anchor": int(shot.anchor),
                         "start": int(shot.start),
                         "end": int(shot.end),
                         "reference": int(shot.reference),
                         "peak": int(shot.peak),
-                        "right_black_start": int(shot.right_black.start),
-                        "right_black_end": int(shot.right_black.end),
+                        "left_black_start": (
+                            int(shot.left_black.start)
+                            if shot.left_black is not None else -1),
+                        "left_black_end": (
+                            int(shot.left_black.end)
+                            if shot.left_black is not None else -1),
+                        "right_black_start": (
+                            int(shot.right_black.start)
+                            if shot.right_black is not None else -1),
+                        "right_black_end": (
+                            int(shot.right_black.end)
+                            if shot.right_black is not None else -1),
                         "scales": tuple(float(value) for value in shot.scales),
                         "fit_rmse": tuple(float(value) for value in shot.fit_rmse),
                     }
