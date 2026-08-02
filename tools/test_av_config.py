@@ -91,7 +91,7 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.STARTUP_AUDIO_PREFETCH_FRAMES, 30)
 
     def test_boot_sidecar_capacity_preserves_fixed_word_ram_holes(self) -> None:
-        # v23: palettes ride the player image, so the three preserved stage
+        # v24: palettes ride the player image, so the three preserved stage
         # holes are fixed and the capacity is segment-independent:
         # 0x0F00//34 + 0x2000//34 + 0x1000//34 = 112 + 240 + 120 records.
         self.assertEqual(av_config.boot_vram_sidecar_capacity(), 472)
@@ -114,12 +114,17 @@ class PlaybackTimingTests(unittest.TestCase):
         self.assertEqual(av_config.adpcm_frame_samples(30), 736)
         self.assertEqual(av_config.audio_frame_layout(30), (22_050, 736, 372))
 
-    def test_24fps_is_delivery_paced_not_rounded_to_n2(self) -> None:
+    def test_24fps_uses_the_exact_two_three_vblank_pattern(self) -> None:
         self.assertEqual(av_config.vsync_n_for_fps(24), 2)
-        self.assertEqual(av_config.playback_fps_for_content(24), 24)
+        self.assertAlmostEqual(
+            av_config.playback_fps_for_content(24), 24_000 / 1001)
         self.assertEqual(av_config.adpcm_frame_samples(24), 920)
         self.assertEqual(av_config.audio_frame_layout(24), (22_050, 920, 464))
         self.assertFalse(av_config.uses_fixed_n_cadence(24))
+        self.assertTrue(av_config.uses_vblank_cadence(24))
+        self.assertEqual(av_config.vblank_cadence_pattern(24), (2, 3))
+        self.assertEqual(
+            av_config.vblank_cadence_pattern(24_000 / 1001), (2, 3))
 
     def test_integer_ntsc_divisors_use_fixed_cadence(self) -> None:
         self.assertEqual(av_config.fixed_vblank_interval(15), 4)
@@ -160,11 +165,14 @@ class PlaybackTimingTests(unittest.TestCase):
         self.assertEqual(deltas.count(6), 1)
         self.assertEqual(acc, 0)
 
-    def test_delivery_paced_rate_keeps_legacy_schedule(self) -> None:
-        self.assertEqual(av_config.cd_sector_rate(24), (75, 24))
+    def test_24fps_cd_rate_preserves_each_two_three_vblank_deadline(self) -> None:
+        self.assertEqual(av_config.cd_sector_rate_steps(24), ((2002, 3003), 800))
+        self.assertEqual(av_config.cd_sector_rate(24), (1001, 320))
 
     def test_near_30_but_non_ntsc_rate_stays_delivery_paced(self) -> None:
         self.assertFalse(av_config.uses_fixed_n_cadence(29.8))
+        self.assertFalse(av_config.uses_vblank_cadence(29.8))
+        self.assertEqual(av_config.cd_sector_rate_steps(29.8), ((75,), 30))
         self.assertEqual(av_config.cd_sector_rate(29.8), (75, 30))
 
     def test_invalid_fps_is_rejected(self) -> None:

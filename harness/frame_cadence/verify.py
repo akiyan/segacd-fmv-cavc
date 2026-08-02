@@ -3,9 +3,9 @@
 
 The verifier decodes every recorded video frame in order, OCRs only the
 player's ``frame`` field, finds a plausible frame-0000 cadence anchor, then proves
-that every movie frame first appears exactly ``N`` capture frames after the
-previous one.  It intentionally ignores the recording tail after the requested
-final movie frame first appears.
+that every movie frame first appears at its exact repeating VBlank interval.
+It intentionally ignores the recording tail after the requested final movie
+frame first appears.
 """
 
 from __future__ import annotations
@@ -27,6 +27,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import read_frameno  # noqa: E402
+import av_config  # noqa: E402
+import ttrc_routing  # noqa: E402
 
 
 NATIVE_GEOMETRIES = {(256, 224), (320, 224)}
@@ -41,6 +43,9 @@ class HeaderInfo:
     version: int
     frame_count: int
     vsync_n: int
+    fps: int
+    features: int
+    cadence: tuple[int, ...]
 
 
 @dataclass(frozen=True)
@@ -90,12 +95,46 @@ def read_header(path: Path) -> HeaderInfo:
     if data[:4] != b"TTRC":
         raise CadenceError(f"not a TTRC HEADER.DAT: {path}")
     version, frame_count = struct.unpack_from(">HH", data, 4)
-    vsync_n = struct.unpack_from(">H", data, 52)[0]
+    vsync_n, _audio_bytes, fps = struct.unpack_from(">HHH", data, 52)
+    features = struct.unpack_from(">H", data, 62)[0]
     if frame_count < 1:
         raise CadenceError("HEADER.DAT has no movie frames")
     if vsync_n < 1:
         raise CadenceError("HEADER.DAT has no valid VBlank cadence hint")
-    return HeaderInfo(version=version, frame_count=frame_count, vsync_n=vsync_n)
+    if version != ttrc_routing.VERSION:
+        raise CadenceError(
+            f"HEADER.DAT is TTRC v{version}, expected v{ttrc_routing.VERSION}")
+    cadence = ()
+    if features & ttrc_routing.FEATURE_VBLANK_CADENCE:
+        cadence = av_config.vblank_cadence_pattern(fps) or ()
+        if not cadence or cadence[0] != vsync_n:
+            raise CadenceError(
+                f"HEADER.DAT cadence fps={fps}, vsync_n={vsync_n} is invalid")
+    return HeaderInfo(
+        version=version,
+        frame_count=frame_count,
+        vsync_n=vsync_n,
+        fps=fps,
+        features=features,
+        cadence=tuple(cadence),
+    )
+
+
+def _cadence_tuple(cadence: int | Sequence[int]) -> tuple[int, ...]:
+    if isinstance(cadence, int):
+        result = (cadence,)
+    else:
+        result = tuple(int(value) for value in cadence)
+    if not result or any(value < 1 for value in result):
+        raise ValueError("cadence intervals must be positive")
+    return result
+
+
+def _frame_interval(cadence: tuple[int, ...], next_frame: int) -> int:
+    """Return the interval ending at ``next_frame`` (frame 1 uses step 0)."""
+    if next_frame < 1:
+        raise ValueError("next_frame must be positive")
+    return cadence[(next_frame - 1) % len(cadence)]
 
 
 def _fraction(value: str) -> Fraction:
@@ -230,10 +269,11 @@ def _check_observation_order(observations: Sequence[Observation]) -> None:
 def _anchor_candidate(
     observations: Sequence[Observation],
     start: int,
-    vblanks: int,
+    cadence: tuple[int, ...],
     anchor_frames: int,
 ) -> bool:
     first_capture = observations[start].capture
+    expected_capture = first_capture
     current = 0
     for observation in observations[start + 1:]:
         if observation.frame == current:
@@ -241,7 +281,8 @@ def _anchor_candidate(
         if observation.frame != current + 1:
             return False
         current += 1
-        if observation.capture != first_capture + current * vblanks:
+        expected_capture += _frame_interval(cadence, current)
+        if observation.capture != expected_capture:
             return False
         if current + 1 >= anchor_frames:
             return True
@@ -250,36 +291,37 @@ def _anchor_candidate(
 
 def find_anchor(
     observations: Sequence[Observation],
-    vblanks: int,
+    cadence: int | Sequence[int],
     anchor_frames: int = 4,
 ) -> int:
     """Return the observation index of a plausible exact frame-0000 cadence run."""
-    if vblanks < 1:
-        raise ValueError("vblanks must be positive")
+    cadence_tuple = _cadence_tuple(cadence)
     if anchor_frames < 1:
         raise ValueError("anchor_frames must be positive")
     _check_observation_order(observations)
     for index, observation in enumerate(observations):
         if observation.frame == 0 and _anchor_candidate(
-            observations, index, vblanks, anchor_frames
+            observations, index, cadence_tuple, anchor_frames
         ):
             return index
     raise CadenceError(
         f"could not find frame=0000 followed by {anchor_frames - 1} frames at "
-        f"exactly {vblanks} VBlanks; check the DEBUG build, crop and confidence"
+        f"cadence {','.join(map(str, cadence_tuple))}; check the DEBUG build, "
+        "crop and confidence"
     )
 
 
 def validate_observations(
     observations: Sequence[Observation],
     final_frame: int,
-    vblanks: int,
+    cadence: int | Sequence[int],
     anchor_frames: int = 4,
 ) -> CadenceReport:
     """Validate first appearances through ``final_frame`` and ignore the tail."""
     if final_frame < 0:
         raise ValueError("final_frame must not be negative")
-    anchor = find_anchor(observations, vblanks, anchor_frames)
+    cadence_tuple = _cadence_tuple(cadence)
+    anchor = find_anchor(observations, cadence_tuple, anchor_frames)
     anchor_capture = observations[anchor].capture
     first_captures = [anchor_capture]
     accepted = 1
@@ -303,11 +345,12 @@ def validate_observations(
             )
 
         delta = observation.capture - first_captures[-1]
-        if delta != vblanks:
-            timing = "early" if delta < vblanks else "late"
+        expected = _frame_interval(cadence_tuple, observation.frame)
+        if delta != expected:
+            timing = "early" if delta < expected else "late"
             raise CadenceError(
                 f"F{observation.frame:04X} first appeared {timing} at capture "
-                f"{observation.capture}: delta={delta}, expected {vblanks}"
+                f"{observation.capture}: delta={delta}, expected {expected}"
             )
         current += 1
         first_captures.append(observation.capture)
@@ -329,11 +372,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("recording", type=Path, help="native DEBUG lossless MKV")
     parser.add_argument(
         "--header", type=Path, required=True,
-        help="matching packed HEADER.DAT (supplies frame count and default N)",
+        help="matching packed HEADER.DAT (supplies frame count and cadence)",
     )
     parser.add_argument(
         "--vblanks", type=integer,
-        help="required capture-frame delta (default: HEADER.DAT vsync_n)",
+        help="override with one repeated capture-frame delta",
     )
     parser.add_argument(
         "--through-frame", type=integer,
@@ -371,7 +414,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     try:
         header = read_header(args.header)
-        vblanks = args.vblanks if args.vblanks is not None else header.vsync_n
+        if args.vblanks is not None:
+            cadence = (args.vblanks,)
+        else:
+            cadence = header.cadence
+            if not cadence:
+                raise CadenceError(
+                    "HEADER.DAT has no authoritative VBlank cadence; use --vblanks"
+                )
         final_frame = (
             header.frame_count - 1
             if args.through_frame is None
@@ -388,7 +438,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         anchor_frames = min(args.anchor_frames, header.frame_count)
         report = validate_observations(
-            observations, final_frame, vblanks, anchor_frames
+            observations, final_frame, cadence, anchor_frames
         )
     except CadenceError as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
@@ -405,7 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(
         f"header: TTRC v{header.version}, {header.frame_count} movie frames, "
-        f"N={header.vsync_n}; required={vblanks}"
+        f"{header.fps}fps, cadence={','.join(map(str, cadence))}"
     )
     print(
         f"PASS ({scope}): frame=0000..{final_frame:04X}; "

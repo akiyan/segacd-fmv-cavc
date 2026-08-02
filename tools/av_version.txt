@@ -13,6 +13,16 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p141: Keep the periodic 24 fps display clock phase-locked after a missed
+#         target. Whole-VBlank debt is repaid only by shortening a later
+#         nominal three-VBlank step to two, preventing permanent reader lead
+#         without introducing one-VBlank display intervals.
+#   p140: Add an authoritative periodic 24 fps display cadence. Main alternates
+#         two- and three-VBlank flip deadlines from frame 1 while preserving
+#         the compile-time fixed-N hot paths and binary sizes at 15/30 fps.
+#   e161: Add the matching 24 fps physical CD schedule with phase-specific
+#         2002/800 and 3003/800 steps, use the 24000/1001 effective playback
+#         rate for audio, and introduce TTRC v24 cadence semantics.
 #   p139: On specialized fixed-N H40 playback, issue CMD_SWAP immediately after
 #         the final Word-RAM pattern repair and status snapshot, then finish the
 #         handshake at the next Main loop head. This returns the consumed bank
@@ -1139,6 +1149,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260731
-e=160
-p=139
+date=20260802
+e=161
+p=141

@@ -94,12 +94,17 @@ class PlayerConstants:
     audio_preload_sec: int
     body_arm_sec: int
     features: int
+    cadence_period: int
+    vsync_alt: int
     pump_mask: int
     wave_pump_mask: int
     sec_num: int
     sec_mod: int
     sec_base: int
     sec_rem: int
+    sec_alt_num: int
+    sec_alt_base: int
+    sec_alt_rem: int
     prg_buf_cap_patterns: int
     prg_delivery_cap_patterns: int
     jitter_headroom_kb: int
@@ -194,10 +199,10 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             f"HEADER.DAT signature 0x{signature:08X} != expected "
             f"0x{expected_signature:08X}")
 
-    fixed_n = bool(features & ttrc_routing.FEATURE_FIXED_N)
+    vblank_cadence = bool(features & ttrc_routing.FEATURE_VBLANK_CADENCE)
     known_features = (
         ttrc_routing.FEATURE_COLD_RUNS
-        | ttrc_routing.FEATURE_FIXED_N
+        | ttrc_routing.FEATURE_VBLANK_CADENCE
         | ttrc_routing.FEATURE_PATTERN_SUPPLY
         | ttrc_routing.FEATURE_SHADOW_UPDATE_LISTS
         | ttrc_routing.FEATURE_VRAM_RAW_PREFETCH
@@ -216,16 +221,25 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     audio_control_bytes = ima_adpcm.encoded_bytes(audio_bytes)
     adpcm_table_sectors = (
         ima_adpcm.FULL_TABLE_BYTES + SECTOR - 1) // SECTOR
-    if fixed_n:
-        expected_n = av_config.fixed_vblank_interval(fps_int)
-        if expected_n != vsync_n:
+    if vblank_cadence:
+        cadence = av_config.vblank_cadence_pattern(fps_int)
+        if cadence is None:
             raise ValueError(
-                f"fixed-N header vsync_n={vsync_n} disagrees with "
-                f"fps={fps_int} (expected {expected_n})")
-        sec_num, sec_mod = av_config.fixed_cd_sector_rate(vsync_n)
+                f"VBlank-cadence header has no qualified schedule for fps={fps_int}")
+        if cadence[0] != vsync_n:
+            raise ValueError(
+                f"VBlank-cadence header vsync_n={vsync_n} disagrees with "
+                f"fps={fps_int} (expected {cadence[0]})")
+        sec_steps, sec_mod = av_config.cd_sector_rate_steps(fps_int)
     else:
-        sec_num, sec_mod = 75, fps_int
+        cadence = ()
+        sec_steps, sec_mod = (75,), fps_int
+    cadence_period = len(cadence)
+    vsync_alt = cadence[1] if len(cadence) > 1 else vsync_n
+    sec_num = sec_steps[0]
+    sec_alt_num = sec_steps[1] if len(sec_steps) > 1 else sec_num
     sec_base, sec_rem = divmod(sec_num, sec_mod)
+    sec_alt_base, sec_alt_rem = divmod(sec_alt_num, sec_mod)
     fast_poll = fps_int >= 24
 
     supply_values = PATTERN_SUPPLY_STRUCT.unpack_from(sector, PATTERN_SUPPLY_OFFSET)
@@ -314,12 +328,17 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         audio_preload_sec=audio_preload_sec,
         body_arm_sec=audio_preload_sec + f0_ctrl_sec + f0_pat_sec,
         features=features,
+        cadence_period=cadence_period,
+        vsync_alt=vsync_alt,
         pump_mask=0x03FF if fast_poll else 0x003F,
         wave_pump_mask=0x01FF if fast_poll else 0x00FF,
         sec_num=sec_num,
         sec_mod=sec_mod,
         sec_base=sec_base,
         sec_rem=sec_rem,
+        sec_alt_num=sec_alt_num,
+        sec_alt_base=sec_alt_base,
+        sec_alt_rem=sec_alt_rem,
         prg_buf_cap_patterns=(
             av_config.prg_buf_cap_kb(fps_int) * 1024 // 32),
         prg_delivery_cap_patterns=(
@@ -356,8 +375,10 @@ INCLUDE_ORDER = (
     "prebuf_pat", "routing_sec", "prebuf_sec", "ring_peak", "f0_ctrl_sec",
     "f0_pat_sec", "paltab_sec", "vsync_n", "audio_bytes",
     "audio_control_bytes", "adpcm_table_sectors", "fps_int",
-    "audio_fd", "audio_preload_sec", "body_arm_sec", "features", "pump_mask",
-    "wave_pump_mask", "sec_num", "sec_mod", "sec_base", "sec_rem",
+    "audio_fd", "audio_preload_sec", "body_arm_sec", "features",
+    "cadence_period", "vsync_alt", "pump_mask", "wave_pump_mask",
+    "sec_num", "sec_mod", "sec_base", "sec_rem",
+    "sec_alt_num", "sec_alt_base", "sec_alt_rem",
     "prg_buf_cap_patterns", "prg_delivery_cap_patterns",
     "jitter_headroom_kb",
     "wr0_patterns", "wr1_patterns", "dic_patterns",
@@ -404,7 +425,12 @@ def main() -> None:
     print(
         f"player_constants: {args.output} signature=0x{constants.signature:08X} "
         f"{constants.tcols}x{constants.trows} {constants.fps_int}fps "
-        f"audio={constants.audio_bytes} SP-rate={constants.sec_num}/{constants.sec_mod}")
+        f"audio={constants.audio_bytes} cadence={constants.cadence_period} "
+        f"SP-rate={constants.sec_num}/{constants.sec_mod}"
+        + (
+            f",{constants.sec_alt_num}/{constants.sec_mod}"
+            if constants.cadence_period > 1 else ""
+        ))
 
 
 if __name__ == "__main__":

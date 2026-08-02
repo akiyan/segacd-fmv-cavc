@@ -11,7 +11,7 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v23): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
+TTRCレイアウト(v24): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
               sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
@@ -97,7 +97,7 @@ RING_DELIVERY_CAP_PAT = RING_DELIVERY_CAP_KB * 1024 // PAT
 RING_JITTER_HEADROOM_KB = av_config.RING_JITTER_HEADROOM_KB
 
 FEATURE_COLD_RUNS = ttrc_routing.FEATURE_COLD_RUNS
-FEATURE_FIXED_N = ttrc_routing.FEATURE_FIXED_N
+FEATURE_VBLANK_CADENCE = ttrc_routing.FEATURE_VBLANK_CADENCE
 FEATURE_PATTERN_SUPPLY = ttrc_routing.FEATURE_PATTERN_SUPPLY
 FEATURE_SHADOW_UPDATE_LISTS = ttrc_routing.FEATURE_SHADOW_UPDATE_LISTS
 FEATURE_VRAM_RAW_PREFETCH = ttrc_routing.FEATURE_VRAM_RAW_PREFETCH
@@ -233,21 +233,21 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v23: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v24: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v23: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v24: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v23: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v24: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v23: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v24: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
 
 
@@ -867,7 +867,7 @@ def build_control(
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v23 keeps the 16-bit entry array word-aligned even when
+            # TTRC v24 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -944,10 +944,9 @@ def rate_deltas(nfr):
     """Return the CD-1x sector allowance for BODY frames 1..N-1.
 
     Frame 0 lives in HEADER.DAT, so its allowance is zero.  The accumulator is
-    intentionally identical to the player and to the BODY writer. Nominal
-    Fixed-N content uses the exact CD allowance for its integer NTSC VBlank
-    interval (1001/400 at N=2, 1001/200 at N=4). Delivery-paced content such
-    as 24fps retains the legacy 75/nominal-fps schedule.
+    intentionally identical to the player and to the BODY writer. Qualified
+    content uses the exact allowance of each VBlank interval, including the
+    24fps 2/3 pattern. Unqualified rates retain 75/nominal-fps pacing.
     """
     try:
         return stream_schedule.rate_deltas(nfr, FPS)
@@ -1170,7 +1169,7 @@ def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan,
         wordram_layout, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v23 split stream and a combined tooling container.
+    """Write the v24 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
@@ -1259,7 +1258,7 @@ def write_stream(
 
     control = b"".join(disc_blocks)
     # Split frame 0 from the timed stream. It remains an untimed exact
-    # construction, but v23 carries its bytes in the BODY arm rather than HEADER.
+    # construction, but v24 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1387,13 +1386,13 @@ def write_stream(
     # CDレート累積器が実際のfpsを決める。Nは整数VBlank cadenceのヒントで、24fpsのN2を
     # 29.97fpsへ丸める指定ではない。AUDIOも実効fps由来。FRAME_SECTORS(=5)は最大スロット。
     vsync_n = VSYNC_N                                  # N: 近似VBLANK間隔(30/24→2, 15→4)
-    fps_int = int(round(FPS))                         # 名目fps。FEATURE_FIXED_N時はvsync_n由来のCD rate
+    fps_int = int(round(FPS))                         # nominal fps; cadence bit derives the VBlank schedule
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v23 requires an untimed frame0 BODY arm")
+        raise SystemExit("pack v24 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
-    if av_config.uses_fixed_n_cadence(FPS):
-        features |= FEATURE_FIXED_N
+    if av_config.uses_vblank_cadence(FPS):
+        features |= FEATURE_VBLANK_CADENCE
     if supply_plan.enabled:
         features |= FEATURE_PATTERN_SUPPLY
     if any(struct.unpack_from(">H", block, 4)[0] & shadow_updates.LIST_TAG
@@ -1412,13 +1411,13 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v23 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v24 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
     header += struct.pack(">HH", audio_fd, audio_preload_sec)  # offset 58: RF5C164 FD; 60: prefetch sectors
     header += struct.pack(">H", features)          # offset 62: optional stream features
-    # v23: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
+    # v24: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
     # inside the player image, not a header field.
     header += b"\0" * (SECTOR - len(header))
     header = bytearray(header)
@@ -1643,7 +1642,7 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v23 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v24 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:

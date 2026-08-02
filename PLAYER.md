@@ -7,13 +7,28 @@ Word RAM 1M/1M, and Main RAM maps, the startup sequence, and the per-frame
 CPU handoff. Each map row carries a short range name (shown as `CODE`) so a
 range can be referenced unambiguously in issues, commits, and reviews.
 
-**fps dependence.** Between 15 fps and 30 fps content, the only address-map
+**fps dependence.** Across 15, 24, and 30 fps content, the only address-map
 difference is the `PRG-BUF` / `JITTER` split inside the fixed
 `0x0D800..0x74FFF` region; that split is the one place below where both
-values are listed side by side. Every other row of every map, and the whole
-startup / per-frame sequence, are identical at 15 fps and 30 fps, so a single
-value there applies to both rates. Word-RAM WordBuf and routing sizes vary by
+15 and 30 fps values are listed side by side. Every other row of every map,
+and the whole startup / per-frame sequence, apply at all three rates. Word-RAM
+WordBuf and routing sizes vary by
 profile (frame count, cell count, cold cap), not by fps.
+
+**Display cadence.** The player derives one authoritative repeating VBlank
+schedule from the packed header. The 15 fps path repeats `(4)`, 24 fps repeats
+`(2, 3)` beginning with two VBlanks from frame 0 to frame 1, and 30 fps repeats
+`(2)`. Main's display deadline and Sub's CD-sector allowance advance in the
+same phase. Their effective rates are 15000/1001, 24000/1001, and 30000/1001
+fps respectively.
+
+The 24 fps display controller remains phase-locked after a missed deadline.
+It counts whole-VBlank lateness as debt and repays that debt only by shortening
+a later nominal three-VBlank display step to two. It never shortens a
+two-VBlank step to one. The Sub CPU's physical `(2, 3)` sector schedule remains
+unchanged; the late frame has already given the reader the extra physical time
+that the compensating display step consumes. This prevents isolated display
+misses from becoming permanent reader lead and filling the APPLY queue.
 
 ## Unallocated Space Summary
 
@@ -303,9 +318,10 @@ further access to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
 the startup `CMD_STREAM` ownership through its flip, so frame 1 is acquired by
 the ordinary synchronous request. The final frame is also excluded: Main
 requests `STAT_END` only after that frame has become visible. H32,
-non-specialized, and non-fixed-N paths retain the synchronous handoff timing.
+non-specialized, periodic-cadence, and feature-clear paths retain the
+synchronous handoff timing.
 
-TTRC v23 controls store `n_runs` immediately followed by compact source-aware
+TTRC v24 controls store `n_runs` immediately followed by compact source-aware
 run descriptors. Sub keeps the existing CDC polling cadence while resolving
 those descriptors into `O_LOADS v2`; Main schedules the expanded records
 against the runtime residual budget. Fixed N is the healthy fresh-budget
@@ -389,12 +405,25 @@ Word RAM 1M/1M、Main RAMのmap、startup sequence、frameごとのCPU handoff�
 対象です。各map行には短いrange名（`CODE`表記）を付けており、issue・commit・
 reviewでrangeを曖昧さなく参照できます。
 
-**fps依存について。** 15 fpsと30 fpsのcontentの間でaddress mapが変わるのは、
+**fps依存について。** 15、24、30 fpsのcontent間でaddress mapが変わるのは、
 固定領域`0x0D800..0x74FFF`内部の`PRG-BUF` / `JITTER`分割だけです。その分割
-だけを後述の表で両値併記します。それ以外のすべてのmap行とstartup / per-frame
-sequence全体は15 fpsと30 fpsで同一なので、単一値はそのまま両方に適用されます。
+だけを後述の表で15 fpsと30 fpsの両値併記にします。それ以外のすべてのmap行と
+startup / per-frame sequence全体は3 rateすべてに適用されます。
 Word RAMのWordBufとrouting sizeはprofile（frame数、cell数、cold cap）で変わる
 ものであり、fpsでは変わりません。
+
+**Display cadence。** playerはpacked headerから正式な反復VBlank scheduleを1つ
+導出します。15 fps pathは`(4)`、24 fps pathはframe 0からframe 1までの2 VBlankで
+始まる`(2, 3)`、30 fps pathは`(2)`を反復します。Mainのdisplay deadlineとSubの
+CD-sector allowanceは同じ位相で進みます。実効rateは順に15000/1001、24000/1001、
+30000/1001 fpsです。
+
+24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
+debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
+2 VBlank stepを1へ短縮することはありません。Sub CPUの物理`(2, 3)` sector scheduleは
+変えません。遅れたframeがreaderへ追加の物理時間をすでに与えており、補償display stepは
+その時間を消費します。これにより、単発のdisplay missが恒久的なreader leadとなって
+APPLY queueを満たすことを防ぎます。
 
 ## 未割当領域の要約
 
@@ -675,10 +704,10 @@ sequenceDiagram
 `CMD_SWAP` assert後、返却したbankへアクセスしません。Frame 0はflipまで
 startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期requestで
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
-requestします。H32、non-specialized、non-fixed-N pathは同期handoff timingを
-維持します。
+requestします。H32、non-specialized、periodic-cadence、feature-clear pathは
+同期handoff timingを維持します。
 
-TTRC v23 controlは`n_runs`の直後にcompactなsource-aware run descriptorを
+TTRC v24 controlは`n_runs`の直後にcompactなsource-aware run descriptorを
 置きます。Subは既存のCDC polling cadenceを保ったままdescriptorを
 `O_LOADS v2`へ解決し、Mainがruntime残budgetに対して展開済みrecordをschedule
 します。Fixed Nはhealthyなfresh budget数で、N2は2本、N4は4本です。さらに

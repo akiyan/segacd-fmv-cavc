@@ -382,13 +382,13 @@ def select_shadow_update_lists(
 def rate_deltas(frame_count, fps):
     """Return the CD-1x sector allowance for BODY frames 1..N-1."""
     try:
-        rate_num, rate_mod = av_config.cd_sector_rate(fps)
+        rate_steps, rate_mod = av_config.cd_sector_rate_steps(fps)
     except ValueError as exc:
         raise ScheduleError(str(exc)) from exc
     out = np.zeros(int(frame_count), np.int64)
     acc = 0
     for i in range(1, len(out)):
-        acc += rate_num
+        acc += rate_steps[(i - 1) % len(rate_steps)]
         out[i] = acc // rate_mod
         acc -= int(out[i]) * rate_mod
     return out

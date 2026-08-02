@@ -31,7 +31,8 @@ For every case it requires:
   residual budget is split at that boundary;
 - removed split-off and short-run CPU-transfer symbols are absent from every
   linked player, and named live state ends exactly at the BSS section boundary;
-- the fixed cadence is generated as N2 at 30 fps and N4 at 15 fps, and the
+- the cadence is generated as N4 at 15 fps, periodic N2/N3 at 24 fps, and N2
+  at 30 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
 - the fixed-N H40 DEBUG reserve includes the complete 43-cell HUD staging

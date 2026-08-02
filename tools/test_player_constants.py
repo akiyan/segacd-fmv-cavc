@@ -14,14 +14,14 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
                 tcols=None, trows=28, cold_cap=190):
     if features is None:
         features = ttrc_routing.FEATURE_COLD_RUNS
-        if av_config.uses_fixed_n_cadence(fps):
-            features |= ttrc_routing.FEATURE_FIXED_N
+        if av_config.uses_vblank_cadence(fps):
+            features |= ttrc_routing.FEATURE_VBLANK_CADENCE
     if tcols is None:
         tcols = 32 if mode == 0 else 40
     cells = tcols * trows
     frames = 2714
     if audio_bytes is None:
-        audio_bytes = 736 if fps == 30 else 1472
+        audio_bytes = {15: 1472, 24: 920, 30: 736}.get(fps, 736)
     prefix = struct.pack(
         ">4s9H4LBB3L6H",
         b"TTRC", ttrc_routing.VERSION, frames, tcols, trows, cells,
@@ -70,6 +70,9 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual(values.body_arm_sec, 46)
         self.assertEqual((values.sec_num, values.sec_mod), (1001, 400))
         self.assertEqual((values.sec_base, values.sec_rem), (2, 201))
+        self.assertEqual(values.cadence_period, 1)
+        self.assertEqual(values.vsync_alt, 2)
+        self.assertEqual((values.sec_alt_base, values.sec_alt_rem), (2, 201))
         self.assertEqual(values.pump_mask, 0x03FF)
         self.assertEqual(values.wave_pump_mask, 0x01FF)
 
@@ -78,7 +81,7 @@ class PlayerConstantsTest(unittest.TestCase):
             make_header(
                 mode=1, fps=15,
                 features=(ttrc_routing.FEATURE_COLD_RUNS
-                          | ttrc_routing.FEATURE_FIXED_N)))
+                          | ttrc_routing.FEATURE_VBLANK_CADENCE)))
         self.assertEqual(values.screen_cols, 40)
         self.assertEqual(values.vsync_n, 4)
         self.assertEqual(values.vbudget, 3200)
@@ -90,6 +93,17 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual(values.prg_buf_cap_patterns, 374 * 1024 // 32)
         self.assertEqual(values.prg_delivery_cap_patterns, 374 * 1024 // 32)
         self.assertEqual(values.jitter_headroom_kb, 40)
+
+    def test_h32_24fps_uses_two_three_vblank_sector_steps(self):
+        values = player_constants.parse_header_sector(make_header(fps=24))
+        self.assertEqual(values.vsync_n, 2)
+        self.assertEqual(values.vsync_alt, 3)
+        self.assertEqual(values.cadence_period, 2)
+        self.assertEqual((values.sec_num, values.sec_mod), (2002, 800))
+        self.assertEqual((values.sec_base, values.sec_rem), (2, 402))
+        self.assertEqual(values.sec_alt_num, 3003)
+        self.assertEqual((values.sec_alt_base, values.sec_alt_rem), (3, 603))
+        self.assertEqual(values.audio_bytes, 920)
 
     def test_h40_centers_a_36x25_stream_without_expanding_its_grid(self):
         values = player_constants.parse_header_sector(
@@ -131,7 +145,7 @@ class PlayerConstantsTest(unittest.TestCase):
     def test_adpcm_derives_control_and_table_sizes(self):
         values = player_constants.parse_header_sector(make_header(
             features=(ttrc_routing.FEATURE_COLD_RUNS
-                      | ttrc_routing.FEATURE_FIXED_N),
+                      | ttrc_routing.FEATURE_VBLANK_CADENCE),
             audio_bytes=736,
         ))
         self.assertEqual(values.audio_bytes, 736)
@@ -149,7 +163,7 @@ class PlayerConstantsTest(unittest.TestCase):
             frames=2714, cells=32 * 28, cold_cap=190)
         values = player_constants.parse_header_sector(make_header(
             features=(ttrc_routing.FEATURE_COLD_RUNS
-                      | ttrc_routing.FEATURE_FIXED_N
+                      | ttrc_routing.FEATURE_VBLANK_CADENCE
                       | ttrc_routing.FEATURE_PATTERN_SUPPLY
                       | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
             supply_counts=(
@@ -176,7 +190,7 @@ class PlayerConstantsTest(unittest.TestCase):
             mode=1,
             fps=15,
             features=(ttrc_routing.FEATURE_COLD_RUNS
-                      | ttrc_routing.FEATURE_FIXED_N
+                      | ttrc_routing.FEATURE_VBLANK_CADENCE
                       | ttrc_routing.FEATURE_PATTERN_SUPPLY
                       | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
             supply_counts=(880, 880, 256),
@@ -188,18 +202,18 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual(values.wr0_patterns, 880)
         self.assertEqual(values.wr1_patterns, 880)
 
-    def test_fixed_n_rejects_a_stale_vsync_hint(self):
+    def test_vblank_cadence_rejects_a_stale_vsync_hint(self):
         header = bytearray(make_header(fps=15))
         header[52:54] = struct.pack(">H", 2)
         header = player_constants.stamp_header_sector(header)
-        with self.assertRaisesRegex(ValueError, "fixed-N header"):
+        with self.assertRaisesRegex(ValueError, "VBlank-cadence header"):
             player_constants.parse_header_sector(header)
 
     def test_pattern_supply_requires_indexed_dicbuf_feature(self):
         with self.assertRaisesRegex(ValueError, "indexed DicBuf"):
             player_constants.parse_header_sector(make_header(
                 features=(ttrc_routing.FEATURE_COLD_RUNS
-                          | ttrc_routing.FEATURE_FIXED_N
+                          | ttrc_routing.FEATURE_VBLANK_CADENCE
                           | ttrc_routing.FEATURE_PATTERN_SUPPLY),
                 supply_counts=(1, 1, 1),
             ))

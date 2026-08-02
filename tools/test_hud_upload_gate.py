@@ -160,7 +160,7 @@ class HudUploadGateTests(unittest.TestCase):
         )
 
         result = self.evaluate(all_rows, 4)
-        self.assertEqual(result["schema_version"], 15)
+        self.assertEqual(result["schema_version"], 16)
         self.assertEqual(result["gate_fields"], [
             "sector_slip", "control_desync", "audio_resync",
             "vblank_spill", "prgbuf_jitter_peak_kib",
@@ -226,11 +226,12 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertTrue(any(
             text.startswith("vblank_spill") for text in result["warnings"]))
 
-    def test_delivery_paced_24fps_uses_variable_slot_and_field_budget(self):
+    def test_periodic_24fps_uses_two_three_slot_and_field_budget(self):
         result = self.evaluate(groups(4, cd_wait_count=255, vblank_spill=3, prgbuf_jitter_peak_kib=30), 4, 24)
         self.assertTrue(result["pass"], result["failures"])
         self.assertNotIn("cd_wait_count", result["limits"])
-        self.assertEqual(result["limits"]["vblank_spill"], 3)
+        self.assertEqual(result["cadence"], "periodic_2_3")
+        self.assertEqual(result["limits"]["vblank_spill"], 2)
         self.assertEqual(result["limits"]["prgbuf_jitter_peak_kib"], 30)
         self.assertEqual(result["prg_buf_cap_kib"], 389)
         self.assertEqual(result["jitter_headroom_kib"], 25)
@@ -340,7 +341,7 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["display_vblank_histogram"], {"2": 2})
         self.assertEqual(result["display_vblank_violation_count"], 0)
 
-    def test_delivery_paced_cadence_is_recorded_but_not_exact_gated(self):
+    def test_24fps_two_three_cadence_is_exactly_gated(self):
         rows = groups(5)
         starts = (0, 2, 5, 7, 10)
         rows = [
@@ -353,9 +354,24 @@ class HudUploadGateTests(unittest.TestCase):
         ]
         result = self.evaluate(rows, 5, 24)
         self.assertTrue(result["pass"], result["failures"])
-        self.assertIsNone(result["display_vblank_expected"])
+        self.assertEqual(result["display_vblank_expected"], [2, 3])
         self.assertEqual(result["display_vblank_histogram"], {"2": 1, "3": 2})
         self.assertEqual(result["display_vblank_violation_count"], 0)
+
+    def test_24fps_wrong_phase_warns_outside_edge_exception(self):
+        rows = groups(12)
+        starts = [0]
+        for frame in range(1, 12):
+            # Deliberately reverse the authoritative 2/3 phase.
+            starts.append(starts[-1] + (3 if frame & 1 else 2))
+        rows = [
+            replace(row, capture_first=start, capture_last=start + 1)
+            for row, start in zip(rows, starts, strict=True)
+        ]
+        result = self.evaluate(rows, 12, 24)
+        self.assertEqual(result["display_vblank_expected"], [2, 3])
+        self.assertGreater(result["display_vblank_violation_count"], 0)
+        self.assertEqual(result["alert"], "WARNING")
 
     def test_missing_movie_frame_blocks_upload(self):
         rows = groups(4)

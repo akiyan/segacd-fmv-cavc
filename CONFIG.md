@@ -124,7 +124,7 @@ playback.
 
 ## Audio
 
-On-disc format version 23 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+On-disc format version 24 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
@@ -176,15 +176,25 @@ Back-pressure depends on the next sector's destination:
 | BODY arm boundary | audio preload + frame-0 control + frame-0 patterns | pack / sp | Read exactly this untimed prefix and stop before frame-0 expansion; start the continuous timed suffix only after frame 0 is visible. |
 | Word-RAM swap completion | DMNA bit 1 | sp | Hardware busy flag is polled until the 1M bank switch completes. |
 
-`FEATURE_FIXED_N` makes header `vsync_n` authoritative. Main displays every N
-VBlanks and Sub uses the matching reduced `1001*N/800` sector accumulator:
+`FEATURE_VBLANK_CADENCE` makes the header cadence authoritative. A one-step
+schedule displays every N VBlanks and uses the matching reduced `1001*N/800`
+sector accumulator:
 
 - N=2: 199 two-sector and 201 three-sector slots per 400 frames;
 - N=4: 199 five-sector and one six-sector slot per 200 frames.
 
 The N=4 sixth sector is physical pad only because the routing byte still caps
-useful data at five sectors. Rates without fixed-N use the delivery-paced
-`75 / fps_int` accumulator.
+useful data at five sectors. At 24 fps, frame 1 starts after two VBlanks and
+the player repeats `(2, 3)`; Sub uses matching `2002/800` and `3003/800` CD
+steps in that phase. The two-frame average is 24000/1001 fps. Rates without an
+authoritative cadence use the delivery-paced `75 / fps_int` accumulator.
+
+Main keeps the 24 fps display phase locked when work misses one target. Each
+whole late VBlank becomes recovery debt. A later nominal three-VBlank step may
+be shortened to two to repay one unit; a two-VBlank step is never shortened to
+one. Sub's physical sector accumulator does not change phase during recovery,
+because the late display already created the reader lead consumed by the
+shortened display step.
 
 `FEATURE_COLD_RUNS` appends four-byte source-aware run descriptors after one
 `n_runs` word. Sub validates and expands them into interleaved 22-byte
@@ -548,7 +558,7 @@ untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-On-disc format version 23のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+On-disc format version 24のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |
@@ -598,14 +608,23 @@ back-pressureは次sectorの行き先で決まります。
 | BODY arm境界 | audio preload + frame-0 control + frame-0 patterns | pack / sp | このuntimed prefixだけを読み、frame-0展開前に停止する。連続timed suffixはframe 0表示後にだけ開始する。 |
 | Word-RAM swap completion | DMNA bit 1 | sp | 1M bank switch完了までhardware busy flagをpollする。 |
 
-`FEATURE_FIXED_N` はheaderの `vsync_n` を正式なcadenceにします。MainはN VBlankごとに
-表示し、Subは対応する `1001*N/800` の約分sector accumulatorを使います。
+`FEATURE_VBLANK_CADENCE` はheader cadenceを正式なものにします。1-step scheduleでは
+MainがN VBlankごとに表示し、Subが対応する`1001*N/800`の約分sector accumulatorを
+使います。
 
 - N=2: 400 frame当たり2-sector slotが199個、3-sector slotが201個
 - N=4: 200 frame当たり5-sector slotが199個、6-sector slotが1個
 
 N=4の6個目はphysical padだけです。routing byteの有効data上限は5 sectorのままです。
-fixed-Nでないrateはdelivery-paced `75 / fps_int` accumulatorを使います。
+24 fpsではframe 1を2 VBlank後に表示して`(2, 3)`を反復し、Subも同じ位相の
+`2002/800`と`3003/800` CD stepを使います。2 frame平均は24000/1001 fpsです。
+正式なcadenceを持たないrateはdelivery-paced `75 / fps_int` accumulatorを使います。
+
+Mainはworkがtargetを1回外しても24 fps displayの位相を維持します。VBlank単位の遅れを
+recovery debtにし、後の名目3 VBlank stepを2へ短縮する場合だけ1単位を返済します。
+2 VBlank stepを1へ短縮することはありません。Recovery中もSubの物理sector accumulator
+の位相は変えません。遅れたdisplayが、短縮stepで消費するreader leadをすでに作って
+いるためです。
 
 `FEATURE_COLD_RUNS` は各controlへ1個の`n_runs` wordと、それに続く4-byte
 source-aware run descriptorを追加します。SubはCDC poll位置を保ちながら

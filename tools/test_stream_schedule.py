@@ -116,6 +116,11 @@ class ControlLengthTests(unittest.TestCase):
             schedule.max_run_control_reservation(-1, 1120)
 
 class BodyDeliveryRateTests(unittest.TestCase):
+    def test_24fps_follows_each_two_three_vblank_deadline(self) -> None:
+        deltas = schedule.rate_deltas(11, 24)[1:]
+        self.assertEqual(deltas.tolist(), [2, 4, 2, 4, 3, 3, 3, 4, 2, 4])
+        self.assertEqual(int(deltas.sum()), 31)
+
     def test_15fps_fixed_n4_includes_one_six_sector_slot_per_cycle(self) -> None:
         deltas = schedule.rate_deltas(201, 15)[1:]
         self.assertEqual(int(deltas.sum()), 1001)

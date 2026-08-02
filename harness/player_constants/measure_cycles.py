@@ -71,7 +71,11 @@ def main() -> None:
     constants = player_constants.parse_header_sector(
         args.header.read_bytes()[:player_constants.SECTOR]
     )
-    if not constants.features & ttrc_routing.FEATURE_FIXED_N2:
+    if (
+        not constants.features & ttrc_routing.FEATURE_VBLANK_CADENCE
+        or constants.cadence_period != 1
+        or constants.vsync_n != 2
+    ):
         parser.error("the current conservative model requires a fixed-N2 stream")
 
     stream = read_stream(args.header, args.body)

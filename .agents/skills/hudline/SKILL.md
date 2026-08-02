@@ -1,6 +1,6 @@
 ---
 name: hudline
-description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-15 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
+description: Render and inspect one whole-movie PNG from a descriptive DEBUG playback HUD TSV and matching schema-16 gate JSON, then combine it with the exact codec timeline. Use after a full recording, for frame-by-frame playback diagnostics, or when the user invokes /hudline.
 ---
 
 # Playback HUD Timeline
@@ -18,7 +18,7 @@ HUD OCR pass. Use descriptive field names throughout.
    logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud_gate.json
    ```
 
-   The gate must use schema 15. Render failed gates too. An incomplete loop may
+   The gate must use schema 16. Render failed gates too. An incomplete loop may
    be rendered only when the gate explicitly records that failure; keep the
    complete expected frame axis and shade the missing suffix.
 
@@ -79,10 +79,15 @@ HUD OCR pass. Use descriptive field names throughout.
 
 - Frame axis: `x = 220 + frame * pixels_per_frame`.
 - First row: derived displayed VBlanks per content frame. Frame 0 and the
-  terminal frame are unknown. Fixed 15 fps expects four VBlanks and fixed
-  30 fps expects two. Delivery-paced cadence has no fixed guide. At fixed
-  cadence, observations in the first/last four content frames at 30 fps and
-  two at 15 fps stay plotted as diagnostics but do not raise ALERT.
+  terminal frame are unknown. The authoritative cadence is four VBlanks at
+  15 fps, repeating 2/3 VBlanks at 24 fps, and two VBlanks at 30 fps;
+  unqualified delivery-paced rates have no guide. Each qualified frame is
+  checked against its exact phase. Observations in the first/last two content
+  frames at 15 fps, three at 24 fps, and four at 30 fps stay plotted as
+  diagnostics but do not raise ALERT.
+  Periodic 24 fps catch-up remains plotted phase-by-phase: both a late target
+  and a compensating two-VBlank long phase are warnings, while the complete
+  histogram shows whether the long-term clock recovered.
 - The next two rows are derived `pattern_dma_ready_pressure` and
   `name_table_dma_ready_pressure`. They are diagnostic-only and sit directly
   below VBLANK. Pattern ready is sampled immediately before Main waits for the
@@ -137,7 +142,7 @@ HUD OCR pass. Use descriptive field names throughout.
 
 ## Gate interpretation
 
-Schema 15 gate fields are:
+Schema 16 gate fields are:
 
 ```text
 sector_slip control_desync audio_resync vblank_spill

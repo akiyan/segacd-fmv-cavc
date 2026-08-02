@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v23 files and reconstructs every current control and payload byte. The
+TTRC v24 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -31,7 +31,7 @@ from pathlib import Path
 SECTOR = 2048
 PATTERN_BYTES = 32
 FEATURE_COLD_RUNS = 0x0001
-FEATURE_FIXED_N = 0x0002
+FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
@@ -51,7 +51,7 @@ RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 23
+VERSION = 24
 CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
@@ -107,15 +107,17 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Reproduce the v6+ bounded CD-1x BODY slot accumulator."""
-    if version >= 8 and features & FEATURE_FIXED_N:
-        rate_numerator, rate_modulus = 1001 * vsync_n, 800
+    if version >= 24 and features & FEATURE_VBLANK_CADENCE and fps == 24:
+        rate_numerators, rate_modulus = (2002, 3003), 800
+    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
+        rate_numerators, rate_modulus = (1001 * vsync_n,), 800
     else:
-        rate_numerator, rate_modulus = 75, fps
+        rate_numerators, rate_modulus = (75,), fps
     accumulator = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl, _n_word in routes[1:]:
-        accumulator += rate_numerator
+    for index, (n_pay, n_ctrl, _n_word) in enumerate(routes[1:]):
+        accumulator += rate_numerators[index % len(rate_numerators)]
         rated, accumulator = divmod(accumulator, rate_modulus)
         actual = n_pay + n_ctrl
         sectors = max(actual, rated - lead)
@@ -276,7 +278,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     audio_preload_sectors = struct.unpack_from(">H", header, 60)[0]
     features = struct.unpack_from(">H", header, 62)[0]
     unknown_features = features & ~(
-        FEATURE_COLD_RUNS | FEATURE_FIXED_N
+        FEATURE_COLD_RUNS | FEATURE_VBLANK_CADENCE
         | FEATURE_PATTERN_SUPPLY | FEATURE_SHADOW_UPDATE_LISTS
         | FEATURE_VRAM_RAW_PREFETCH | FEATURE_DICBUF_INDEXED_RUNS
         | FEATURE_BOOT_VRAM_SIDECAR | FEATURE_WORDBUF_RING)

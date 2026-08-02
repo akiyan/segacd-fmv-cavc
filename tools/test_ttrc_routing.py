@@ -9,10 +9,9 @@ import ttrc_routing as routing
 
 
 class RoutingEntryTests(unittest.TestCase):
-    def test_v18_feature_bits_are_stable(self) -> None:
+    def test_v24_feature_bits_are_stable(self) -> None:
         self.assertEqual(routing.FEATURE_COLD_RUNS, 0x0001)
-        self.assertEqual(routing.FEATURE_FIXED_N, 0x0002)
-        self.assertEqual(routing.FEATURE_FIXED_N2, routing.FEATURE_FIXED_N)
+        self.assertEqual(routing.FEATURE_VBLANK_CADENCE, 0x0002)
         self.assertEqual(routing.FEATURE_PATTERN_SUPPLY, 0x0008)
         self.assertEqual(routing.FEATURE_BOOT_VRAM_SIDECAR, 0x0080)
         self.assertEqual(routing.FEATURE_WORDBUF_RING, 0x0100)

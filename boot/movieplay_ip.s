@@ -109,7 +109,7 @@
 .equ VB_WORDS_H32, 2800		/* H32 V28 NTSC */
 .equ VB_WORDS_H40, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
-.equ FEATURE_FIXED_N_BIT, 1	/* header features bit 1 */
+.equ FEATURE_VBLANK_CADENCE_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
 .equ FEATURE_WORDBUF_RING_BIT, 8
@@ -134,6 +134,7 @@
 .equ WR1_OFF, PC_WR1_OFFSET
 .equ WR1_END, PC_WR1_END
 .equ PACE_FIXED_ARM_TICKS, PC_VSYNC_N*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS
+.equ PACE_ALT_ARM_TICKS, PC_VSYNC_ALT*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS
 .else
 .equ CTRL_SCR_OFF, 0x10000
 .equ STATUS_OFF, 0x0AF00
@@ -141,6 +142,16 @@
 .equ WR0_END, 0x1C000
 .equ WR1_OFF, 0x15200
 .equ WR1_END, 0x1C000
+.endif
+
+/* Generic builds must retain the runtime period-2 path. Specialized builds
+   omit its recovery helper completely unless this profile uses `(2, 3)`. */
+.ifndef PLAYER_SPECIALIZED
+.equ PERIODIC_CADENCE_RUNTIME, 1
+.elseif PC_CADENCE_PERIOD == 2
+.equ PERIODIC_CADENCE_RUNTIME, 1
+.else
+.equ PERIODIC_CADENCE_RUNTIME, 0
 .endif
 
 .ifdef HUD_HEX_TABLE
@@ -155,6 +166,7 @@
 
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
+.if PC_CADENCE_PERIOD == 1
 .if PC_MODE == 1
 /* Fixed-N specialized H40 builds copy the back name table with one linear
    Main-RAM DMA inside the flip VBlank (64-entry-pitch staging, ~18 blank
@@ -181,6 +193,7 @@
 .equ NT_FLIP_GUARD_WORDS, 128
 .equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
 .equ NT_CRAM_FLIP_RESERVE_WORDS, NT_FLIP_RESERVE_WORDS+(64*CPU_VDP_WORD_COST)
+.endif
 .endif
 .endif
 .endif
@@ -365,22 +378,29 @@ ip_entry:
 	moveq	#0, d0
 	move.b	38(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
 	move.w	d0, md_mode
-	/* v4: N(1コマの表示VBLANK数)@52。0(v2/v3ディスク)なら4(=15fps)。表示をN vblank間隔に */
+	/* The first cadence interval is stored at offset 52. TTRC v24 derives any
+	   later interval from nominal fps, so 24fps becomes the periodic 2/3 path. */
 	move.w	52(a0), d0
 	bne	1f
 	moveq	#4, d0
 1:
-	/* Feature bit 1 makes the header's N authoritative. Feature-clear N=2
-	   remains only a hint, so 24fps keeps its delivery-paced 2/3-VBlank loop. */
-	clr.w	md_fixed_n
-	btst	#FEATURE_FIXED_N_BIT, 63(a0)
+	clr.w	md_cadence_period
+	btst	#FEATURE_VBLANK_CADENCE_BIT, 63(a0)
 	beq	1f
-	move.w	#1, md_fixed_n
+	move.w	#1, md_cadence_period
+	cmpi.w	#24, 56(a0)
+	bne.s	1f
+	move.w	#2, md_cadence_period
 1:
 	move.w	d0, md_vsync_n
 	mulu.w	#PACE_VBLANK_TICKS, d0
 	subi.w	#PACE_ARM_BIAS_TICKS, d0
 	move.w	d0, md_pace_arm_ticks
+	move.w	d0, md_pace_alt_arm_ticks
+	cmpi.w	#2, md_cadence_period
+	bne.s	1f
+	move.w	#3*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS, md_pace_alt_arm_ticks
+1:
 	/* Select the VDP width from the stream's mode byte, not from N.
 	   N is the frame pacing interval (2 at 30fps, 4 at 15fps), so testing
 	   it here made every v4 stream fall through to H40. */
@@ -490,8 +510,8 @@ ip_entry:
 .endif
 .endif
 play_loop:
-	/* Feature bit 1 pairs the Main fixed-N flip deadline with the Sub's exact
-	   fixed-N CD rate. Feature-clear 24fps remains delivery paced. */
+	/* Feature bit 1 pairs the Main VBlank cadence with the Sub's exact
+	   per-interval CD deadline schedule. */
 	tst.w	started
 	beq	1f
 	tst.w	swap_request_pending
@@ -1152,7 +1172,7 @@ bf_flip:
 	bsr	wait_vb_start			/* 頭から使える新しいvblank(CRAM+flipが確実に収まる) */
 .endif
 .else
-	tst.w	md_fixed_n
+	tst.w	md_cadence_period
 	beq.s	1f
 	bsr	wait_fixed_palette_flip		/* cadence target plus a fresh CRAM VBlank */
 	bra.s	2f
@@ -1206,7 +1226,7 @@ bf_doflip:
 .endif
 .endif
 .else
-	tst.w	md_fixed_n
+	tst.w	md_cadence_period
 	beq.s	1f
 	bsr	wait_fixed_flip			/* normal frame: exactly N flip-to-flip VBlanks */
 1:
@@ -1428,18 +1448,37 @@ wait_vb_start:
 	rts
 
 /* Make frame 0 immediately eligible: its synthetic preceding flip is one
-   fixed-N arm threshold in the past. Trashes d0. */
+   first cadence interval in the past. The next real interval starts with the
+   short two-VBlank step for a periodic 24fps stream. Trashes d0. */
 prime_fixed_cadence:
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
+.if PC_CADENCE_PERIOD == 2
+	clr.w	pace_phase
+	clr.w	pace_cadence_debt
+	move.w	#PACE_FIXED_ARM_TICKS, pace_periodic_arm_ticks
+.endif
 	move.w	(GA_STOPWATCH).l, d0
+.if PC_CADENCE_PERIOD == 2
+	sub.w	pace_periodic_arm_ticks, d0
+.else
 	sub.w	#PACE_FIXED_ARM_TICKS, d0
+.endif
 	andi.w	#0x0FFF, d0
 	move.w	d0, pace_flip_tick
 .endif
 .else
-	tst.w	md_fixed_n
+	tst.w	md_cadence_period
 	beq.s	1f
+	clr.w	pace_phase
+	cmpi.w	#2, md_cadence_period
+	bne.s	2f
+	clr.w	pace_cadence_debt
+	move.w	md_vsync_n, d0
+	mulu.w	#PACE_VBLANK_TICKS, d0
+	subi.w	#PACE_ARM_BIAS_TICKS, d0
+	move.w	d0, md_pace_arm_ticks
+2:
 	move.w	(GA_STOPWATCH).l, d0
 	sub.w	md_pace_arm_ticks, d0
 	andi.w	#0x0FFF, d0
@@ -1456,7 +1495,15 @@ wait_fixed_flip:
 	move.w	(GA_STOPWATCH).l, d0
 	sub.w	pace_flip_tick, d0
 	andi.w	#0x0FFF, d0
+.ifdef PLAYER_SPECIALIZED
+.if PC_CADENCE_PERIOD == 2
+	cmp.w	pace_periodic_arm_ticks, d0
+.else
+	cmpi.w	#PACE_FIXED_ARM_TICKS, d0
+.endif
+.else
 	PC_CMP_W md_pace_arm_ticks, PACE_FIXED_ARM_TICKS, d0
+.endif
 	bcc.s	2f
 	bra.s	1b
 2:
@@ -1469,7 +1516,15 @@ wait_fixed_palette_flip:
 	move.w	(GA_STOPWATCH).l, d0
 	sub.w	pace_flip_tick, d0
 	andi.w	#0x0FFF, d0
+.ifdef PLAYER_SPECIALIZED
+.if PC_CADENCE_PERIOD == 2
+	cmp.w	pace_periodic_arm_ticks, d0
+.else
+	cmpi.w	#PACE_FIXED_ARM_TICKS, d0
+.endif
+.else
 	PC_CMP_W md_pace_arm_ticks, PACE_FIXED_ARM_TICKS, d0
+.endif
 	bcc.s	2f
 	bra.s	1b
 2:
@@ -1501,6 +1556,17 @@ do_flip:
 	eori.w	#1, back_idx			/* 裏を反転 */
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) != 0
+.if PC_CADENCE_PERIOD == 2
+.ifdef HUD_FLIP_FIELDS
+	/* Off the critical path, record the accepted flip V-counter. */
+	move.w	d1, -(sp)
+	move.w	(VDP_HV).l, d1
+	lsr.w	#8, d1
+	move.w	d1, flip_hv_v
+	move.w	(sp)+, d1
+.endif
+	bsr	pace_periodic_commit
+.else
 .ifdef HUD_FLIP_FIELDS
 	/* Off the critical path, record the accepted flip V-counter and make this
 	   exact flip the next fixed-N cadence origin. */
@@ -1515,13 +1581,85 @@ do_flip:
 	move.w	(GA_STOPWATCH).l, pace_flip_tick	/* exact flip-to-flip deadline */
 .endif
 .endif
+.endif
 .else
-	tst.w	md_fixed_n
+	tst.w	md_cadence_period
 	beq.s	1f
+	cmpi.w	#2, md_cadence_period
+	bne.s	2f
+	bsr	pace_periodic_commit
+	bra.s	1f
+2:
 	move.w	(GA_STOPWATCH).l, pace_flip_tick	/* exact flip-to-flip deadline */
 1:
 .endif
 	rts
+
+.if PERIODIC_CADENCE_RUNTIME
+/* Keep the 24fps display clock phase-locked when one frame misses its target.
+   A late flip creates whole-VBlank debt. The next nominal three-VBlank step
+   repays one debt unit by using two VBlanks; a nominal two-VBlank step is
+   never shortened. Thus isolated Main/Sub stalls cannot accumulate permanent
+   reader lead and eventually fill APPLY while ordinary `(2, 3)` frames keep
+   their exact phase. Frame 0 only establishes the real stopwatch origin.
+   Trashes d0-d2. */
+pace_periodic_commit:
+	move.w	(GA_STOPWATCH).l, d0
+	tst.w	frame_no
+	beq.s	4f
+	moveq	#0, d1
+	move.w	d0, d1
+	sub.w	pace_flip_tick, d1
+	andi.l	#0x00000FFF, d1
+	addi.l	#PACE_VBLANK_TICKS/2, d1
+	divu.w	#PACE_VBLANK_TICKS, d1	/* rounded whole VBlanks since prior flip */
+	moveq	#2, d2
+.ifdef PLAYER_SPECIALIZED
+	cmpi.w	#PACE_ALT_ARM_TICKS, pace_periodic_arm_ticks
+	bne.s	1f
+.else
+	move.w	md_pace_arm_ticks, d2
+	cmp.w	md_pace_alt_arm_ticks, d2
+	moveq	#2, d2
+	bne.s	1f
+.endif
+	moveq	#3, d2
+1:
+	sub.w	d2, d1
+	ble.s	4f
+	add.w	d1, pace_cadence_debt
+	cmpi.w	#0x00FF, pace_cadence_debt
+	bls.s	4f
+	move.w	#0x00FF, pace_cadence_debt
+4:
+	move.w	d0, pace_flip_tick
+	tst.w	frame_no
+	beq.s	9f				/* frame0 -> frame1 remains the short step */
+	eori.w	#1, pace_phase
+	tst.w	pace_phase
+	beq.s	7f
+	tst.w	pace_cadence_debt
+	beq.s	8f
+	subq.w	#1, pace_cadence_debt	/* repay only from a nominal long step */
+7:
+.ifdef PLAYER_SPECIALIZED
+	move.w	#PACE_FIXED_ARM_TICKS, pace_periodic_arm_ticks
+.else
+	move.w	md_vsync_n, d2
+	mulu.w	#PACE_VBLANK_TICKS, d2
+	subi.w	#PACE_ARM_BIAS_TICKS, d2
+	move.w	d2, md_pace_arm_ticks
+.endif
+	bra.s	9f
+8:
+.ifdef PLAYER_SPECIALIZED
+	move.w	#PACE_ALT_ARM_TICKS, pace_periodic_arm_ticks
+.else
+	move.w	md_pace_alt_arm_ticks, md_pace_arm_ticks
+.endif
+9:
+	rts
+.endif
 
 /* d6語を Word-RAM(a3) → VRAM(d3) へDMA。完了待ち。trashes d0,d2
    Word-RAM源はフェッチが1ワード遅延するため、src+2/full lengthを通常dstへDMAし、
@@ -2311,15 +2449,17 @@ md_mode:
 	.space 2
 md_vsync_n:
 	.space 2				/* v4: 1コマの表示VBLANK数(15fps=4, 30fps=2) */
-md_fixed_n:
-	.space 2				/* feature bit 1; 24fps N2 hint alone stays unpaced */
+md_cadence_period:
+	.space 2				/* feature bit 1: 1=fixed N, 2=24fps two/three */
 md_pace_arm_ticks:
-	.space 2				/* stopwatch arm point between VBlank N-1 and N */
+	.space 2				/* current stopwatch arm point before the target VBlank */
+md_pace_alt_arm_ticks:
+	.space 2				/* periodic cadence's alternate arm point */
 .endif
 vsync_acc:
 	.space 2				/* v4: 現コマで消費したVBLANK数(ペーシング用) */
 pace_flip_tick:
-	.space 2				/* GA stopwatch tick at preceding fixed-N flip */
+	.space 2				/* GA stopwatch tick at preceding cadence-controlled flip */
 .ifndef PLAYER_SPECIALIZED
 md_tcols:
 	.space 2
@@ -2398,3 +2538,19 @@ md_codegen_blit_addr:
 md_codegen_end:
 	.space 4				/* generated end address, including failed attempts */
 .endif
+.ifndef PLAYER_SPECIALIZED
+pace_periodic_arm_ticks:
+	.space 2				/* specialized period-2 current arm threshold */
+pace_phase:
+	.space 2				/* next periodic interval: 0=first, 1=alternate */
+pace_cadence_debt:
+	.space 2				/* late VBlanks awaiting long-step recovery */
+.elseif PC_CADENCE_PERIOD == 2
+pace_periodic_arm_ticks:
+	.space 2				/* specialized period-2 current arm threshold */
+pace_phase:
+	.space 2				/* next periodic interval: 0=first, 1=alternate */
+pace_cadence_debt:
+	.space 2				/* late VBlanks awaiting long-step recovery */
+.endif
+player_bss_end:

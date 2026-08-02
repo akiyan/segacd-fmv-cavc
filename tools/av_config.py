@@ -252,12 +252,10 @@ CD_SECTOR_BYTES = 2048
 CD_SECTORS_PER_SECOND = 75
 CD_BYTES_PER_SECOND = CD_SECTOR_BYTES * CD_SECTORS_PER_SECOND
 
-# The player is ultimately synchronized by the CD-1x rate-matched BODY stream.
-# Content close to an integer NTSC VBlank divisor (15/30/60 fps) settles on
-# that exact display cadence. Other rates such as 24 fps remain delivery-paced
-# at their nominal rate and naturally alternate the number of VBlanks between
-# frames. Keep this decision in one place so the sim's audio budget and the
-# packer's fixed PCM chunk cannot disagree.
+# The player is synchronized by an explicit VBlank cadence when the rate has a
+# qualified schedule. Integer NTSC divisors use one repeated interval, while
+# named 24 fps content alternates two and three VBlanks. Keep this decision in
+# one place so display pacing, CD deadlines, and fixed PCM chunks cannot drift.
 NTSC_VSYNC = 60_000 / 1001
 _INTEGER_VBLANK_TOLERANCE = 0.01
 # Fixed display pacing is currently practical through N=4.  Larger intervals
@@ -283,14 +281,13 @@ def vsync_n_for_fps(fps):
 def playback_fps_for_content(fps):
     """Effective long-term playback rate for audio chunk sizing.
 
-    Integer-VBlank rates use the exact NTSC-derived cadence. Delivery-paced
-    rates such as 24 fps use the content rate; they are not rounded to 29.97.
+    Qualified VBlank rates use the exact NTSC-derived cadence. Other rates use
+    the requested content rate and remain delivery-paced.
     """
     value = float(fps)
-    n = vsync_n_for_fps(value)
-    ratio = NTSC_VSYNC / value
-    if abs(ratio - n) <= _INTEGER_VBLANK_TOLERANCE:
-        return NTSC_VSYNC / n
+    cadence = vblank_cadence_pattern(value)
+    if cadence is not None:
+        return NTSC_VSYNC * len(cadence) / sum(cadence)
     return value
 
 
@@ -340,6 +337,29 @@ def uses_fixed_n2_cadence(fps):
     return fixed_vblank_interval(fps) == 2
 
 
+def vblank_cadence_pattern(fps):
+    """Return the authoritative repeating VBlank intervals, or ``None``.
+
+    Frame 1 uses element zero, frame 2 uses element one, and the pattern then
+    repeats. Named 24 fps content uses ``(2, 3)`` for an exact long-term
+    24000/1001 fps display rate. Unqualified rates remain delivery-paced.
+    """
+    value = float(fps)
+    if value <= 0:
+        raise ValueError(f"fps must be positive, got {fps!r}")
+    fixed_n = fixed_vblank_interval(value)
+    if fixed_n is not None:
+        return (fixed_n,)
+    if _nominal_content_fps(value) == 24.0:
+        return (2, 3)
+    return None
+
+
+def uses_vblank_cadence(fps):
+    """Whether the stream has an authoritative repeating VBlank schedule."""
+    return vblank_cadence_pattern(fps) is not None
+
+
 def fixed_cd_sector_rate(vsync_n):
     """Return reduced CD-1x sectors/frame for one fixed VBlank interval."""
     n = int(vsync_n)
@@ -354,24 +374,46 @@ def fixed_cd_sector_rate(vsync_n):
     return numerator // divisor, modulus // divisor
 
 
-def cd_sector_rate(fps):
-    """Return the integer accumulator numerator/modulus for CD-1x sectors.
+def cd_sector_rate_steps(fps):
+    """Return per-cadence-step CD numerators and their shared modulus.
 
-    A fixed-N frame lasts exactly N 60000/1001 Hz VBlanks, so CD-1x supplies
-    ``1001*N/800`` sectors per frame (reduced to 1001/400 at N=2 and 1001/200
-    at N=4). Other rates retain the delivery-paced ``75 / round(fps)``
-    schedule.
+    Each VBlank supplies 1001/800 of a CD sector. A periodic display cadence
+    therefore needs a periodic physical-deadline accumulator too; replacing a
+    2/3 pattern with its average would overfund the first short interval.
     """
     value = float(fps)
     if value <= 0:
         raise ValueError(f"fps must be positive, got {fps!r}")
-    fixed_n = fixed_vblank_interval(value)
-    if fixed_n is not None:
-        return fixed_cd_sector_rate(fixed_n)
+    cadence = vblank_cadence_pattern(value)
+    if cadence is not None:
+        numerators = tuple(1001 * interval for interval in cadence)
+        modulus = 800
+        divisor = modulus
+        for numerator in numerators:
+            divisor = math.gcd(divisor, numerator)
+        return (
+            tuple(numerator // divisor for numerator in numerators),
+            modulus // divisor,
+        )
     nominal = int(round(value))
     if nominal <= 0:
         raise ValueError(f"fps must round to a positive integer, got {fps!r}")
-    return 75, nominal
+    return (75,), nominal
+
+
+def cd_sector_rate(fps):
+    """Return the long-term average CD sectors per movie frame.
+
+    Use :func:`cd_sector_rate_steps` for deadline construction. The average is
+    retained for diagnostics and callers that do not construct frame slots.
+    """
+    numerators, modulus = cd_sector_rate_steps(fps)
+    if len(numerators) == 1:
+        return numerators[0], modulus
+    numerator = sum(numerators)
+    denominator = modulus * len(numerators)
+    divisor = math.gcd(numerator, denominator)
+    return numerator // divisor, denominator // divisor
 
 
 def audio_frame_samples(fps, audio_rate):

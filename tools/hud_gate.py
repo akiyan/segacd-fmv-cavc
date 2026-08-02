@@ -23,6 +23,7 @@ ALERT_BY_LEGACY_STATUS = {
 # those observations visible, but do not let them raise the cadence alert.
 CADENCE_ALERT_EDGE_FRAMES = {
     15: 2,
+    24: 3,
     30: 4,
 }
 

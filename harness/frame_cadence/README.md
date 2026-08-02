@@ -1,8 +1,8 @@
 # Strict playback-frame cadence verifier
 
 This harness proves that every movie frame in a native DEBUG playback recording
-first appears at one exact VBlank interval.  It is intended for fixed-cadence
-paths such as the 30 fps player's two-VBlank schedule.
+first appears at its exact step in an authoritative repeating VBlank cadence.
+It covers the 15 fps `(4)`, 24 fps `(2, 3)`, and 30 fps `(2)` schedules.
 
 `verify.py` decodes the recording sequentially at its native 256x224 or 320x224
 geometry.  It sends only the top-left 40x24 pixels to
@@ -16,8 +16,10 @@ From that point the verifier rejects:
   capture frames;
 - a recording that ends before the requested final F value.
 
-The complete proof uses the frame count and default VBlank interval (`N`) from
-the matching packed `HEADER.DAT`:
+The complete proof uses the frame count, nominal fps, feature bit, and first
+VBlank interval from the matching packed `HEADER.DAT`. For 24 fps, frame 1 must
+appear two capture frames after frame 0, frame 2 three later, then the pattern
+repeats:
 
 ```sh
 tools/python.sh harness/frame_cadence/verify.py \
@@ -25,7 +27,7 @@ tools/python.sh harness/frame_cadence/verify.py \
   --header out/bad-apple/HEADER.DAT
 ```
 
-Override the required interval explicitly when diagnosing a different target:
+Override the header with one repeated interval when diagnosing a fixed target:
 
 ```sh
 tools/python.sh harness/frame_cadence/verify.py RECORDING.mkv \

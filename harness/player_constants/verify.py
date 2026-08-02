@@ -64,8 +64,8 @@ def make_header(case: Case) -> bytes:
     cells = tcols * trows
     frames = TEST_FRAMES
     features = ttrc_routing.FEATURE_COLD_RUNS
-    if av_config.uses_fixed_n_cadence(case.fps):
-        features |= ttrc_routing.FEATURE_FIXED_N
+    if av_config.uses_vblank_cadence(case.fps):
+        features |= ttrc_routing.FEATURE_VBLANK_CADENCE
     _rate, audio, _control = av_config.audio_frame_layout(case.fps)
     if case.pattern_supply:
         features |= (
@@ -570,15 +570,15 @@ def verify_transfer_cleanup(objdump: Path, obj: Path) -> None:
     )
     end = re.search(
         r"^([0-9a-fA-F]+)\s+\w\s+\.bss\s+[0-9a-fA-F]+\s+"
-        r"md_codegen_end$",
+        r"player_bss_end$",
         symbols,
         re.MULTILINE,
     )
     if not bss or not end:
         raise AssertionError(f"{obj}: cannot prove named BSS boundary")
-    if int(end.group(1), 16) + 4 != int(bss.group(1), 16):
+    if int(end.group(1), 16) != int(bss.group(1), 16):
         raise AssertionError(
-            f"{obj}: unnamed trailing BSS remains after md_codegen_end")
+            f"{obj}: unnamed trailing BSS remains after player_bss_end")
 
 
 def verify_runtime_vblank_cadence(

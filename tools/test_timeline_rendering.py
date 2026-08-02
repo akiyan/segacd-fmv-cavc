@@ -89,7 +89,7 @@ class TimelineRenderingTests(unittest.TestCase):
             },
             "jitter_headroom_kib": 20,
         }
-        specs = hudline.row_specs(data, gate, 2)
+        specs = hudline.row_specs(data, gate, (2,))
         run = next(spec for spec in specs if spec.key == "cold_runs")
         self.assertEqual(run.maximum, 12)
 
@@ -112,7 +112,7 @@ class TimelineRenderingTests(unittest.TestCase):
             },
             "jitter_headroom_kib": 20,
         }
-        specs = hudline.row_specs(data, gate, 2)
+        specs = hudline.row_specs(data, gate, (2,))
         keys = [spec.key for spec in specs]
         self.assertEqual(
             keys[:4],
@@ -243,6 +243,21 @@ class TimelineRenderingTests(unittest.TestCase):
             [0, 0, 0xC1, 0x100, 0xE7],
         )
 
+    def test_nt_ready_pressure_follows_24fps_two_three_phase(self):
+        pressure = hudline.derive_name_table_ready_pressure({
+            "frame": np.arange(5, dtype=np.int64),
+            "name_table_dma_ready_vcounter": np.asarray(
+                [0, 0xD0, 0xD1, 0xD2, 0xD3], np.float64,
+            ),
+            "transfer_vblanks": np.asarray(
+                [0, 1, 1, 2, 2], np.float64,
+            ),
+        }, 24.0)
+        np.testing.assert_array_equal(
+            pressure,
+            [0, 0xD0, 0, 0x100, 0xD3],
+        )
+
     def test_nt_ready_pressure_is_absent_when_dma_path_is_absent(self):
         pressure = hudline.derive_name_table_ready_pressure({
             "name_table_dma_ready_vcounter": np.asarray(
@@ -312,7 +327,7 @@ class TimelineRenderingTests(unittest.TestCase):
             },
             "jitter_headroom_kib": 20,
         }
-        specs = hudline.row_specs(data, gate, 2)
+        specs = hudline.row_specs(data, gate, (2,))
         keys = [spec.key for spec in specs]
         gate_end = keys.index("prgbuf_jitter_peak_kib")
         self.assertEqual(
