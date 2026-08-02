@@ -226,8 +226,8 @@ def load_gate(path: Path) -> dict:
     for key in GATE_COLUMNS:
         if key not in gate["limits"] or key not in gate["maxima"]:
             raise SystemExit(f"gate JSON lacks {key} limit or maximum")
-    if int(gate.get("schema_version", 0)) != 15:
-        raise SystemExit("overage report requires descriptive HUD gate schema 15")
+    if int(gate.get("schema_version", 0)) != 16:
+        raise SystemExit("overage report requires descriptive HUD gate schema 16")
     if "cd_wait_count" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks diagnostic cd_wait_count maximum")
     if "cd_wait_count" in gate["limits"]:
@@ -350,14 +350,19 @@ def displayed_vblanks(rows: list[dict[str, str]]) -> list[int | None]:
     return values
 
 
-def cadence_normal_vblanks(content_fps: float) -> int | None:
-    """Return an exact integer cadence, or None for rates such as 24 fps."""
-    expected = av_config.vsync_n_for_fps(content_fps)
-    integer_rate = av_config.NTSC_VSYNC / expected
-    playback_rate = av_config.playback_fps_for_content(content_fps)
-    if math.isclose(playback_rate, integer_rate, abs_tol=1e-9):
-        return expected
-    return None
+def cadence_normal_vblanks(content_fps: float) -> tuple[int, ...] | None:
+    """Return the authoritative repeating cadence, when one is qualified."""
+    return av_config.vblank_cadence_pattern(content_fps)
+
+
+def cadence_target_for_display_frame(
+    frame: int,
+    cadence_pattern: tuple[int, ...] | None,
+) -> int | None:
+    """Return the phase target for the visible span stored at ``frame``."""
+    if cadence_pattern is None or frame <= 0:
+        return None
+    return cadence_pattern[frame % len(cadence_pattern)]
 
 
 def gate_overage_events(
@@ -395,11 +400,16 @@ def render_markdown(
     events = gate_overage_events(rows, gate)
     content_fps = float(gate["content_fps"])
     expected_frames = int(gate["expected_frames"])
-    normal_vblanks = cadence_normal_vblanks(content_fps)
+    cadence_pattern = cadence_normal_vblanks(content_fps)
     edge_frames = (
         hud_gate.cadence_alert_edge_frames(content_fps)
-        if normal_vblanks is not None else 0
+        if cadence_pattern is not None else 0
     )
+    vblank_targets = [
+        cadence_target_for_display_frame(
+            as_int(row, "frame"), cadence_pattern)
+        for row in rows
+    ]
     eligible_vblanks = [
         value is not None
         and not hud_gate.cadence_alert_frame_is_exempt(
@@ -412,22 +422,22 @@ def render_markdown(
     evaluated_vblanks = sum(eligible_vblanks)
     vblank_warning_count = (
         sum(
-            eligible and value != normal_vblanks
-            for eligible, value in zip(
-                eligible_vblanks, vblanks, strict=True)
+            eligible and value != target
+            for eligible, value, target in zip(
+                eligible_vblanks, vblanks, vblank_targets, strict=True)
         )
-        if normal_vblanks is not None
+        if cadence_pattern is not None
         else None
     )
     vblank_exempted_warning_count = (
         sum(
             value is not None
             and not eligible
-            and value != normal_vblanks
-            for eligible, value in zip(
-                eligible_vblanks, vblanks, strict=True)
+            and value != target
+            for eligible, value, target in zip(
+                eligible_vblanks, vblanks, vblank_targets, strict=True)
         )
-        if normal_vblanks is not None
+        if cadence_pattern is not None
         else None
     )
     if "display_vblank_edge_exempt_frames" in gate:
@@ -546,7 +556,7 @@ def render_markdown(
             f"Incomplete failed first loop: observed {len(rows)} / "
             f"expected {expected_frames} frames."
         )
-    if normal_vblanks is None:
+    if cadence_pattern is None:
         summary.append(
             f"VBLANK warning rule: deferred for "
             f"{float(gate['content_fps']):g} fps."
@@ -561,7 +571,9 @@ def render_markdown(
             f"VBLANK warning rate / count / total: "
             f"{warning_rate:.2f}% / {vblank_warning_count} / "
             f"{evaluated_vblanks} "
-            f"(normal {hex_value(normal_vblanks)}; first/last "
+            f"(normal phase "
+            f"{'/'.join(hex_value(value) for value in cadence_pattern)}; "
+            f"first/last "
             f"{edge_frames} content frames excluded from ALERT; "
             f"{vblank_exempted_warning_count} observed edge violation(s))."
         )

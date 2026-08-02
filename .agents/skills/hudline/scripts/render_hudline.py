@@ -63,6 +63,7 @@ class RowSpec:
     gate_key: str | None = None
     eight_bit_scale: bool = False
     normal_value: float | None = None
+    normal_key: str | None = None
     height: int = DEFAULT_ROW_HEIGHT
     point_plot: bool = False
     show_unit: bool = True
@@ -231,8 +232,8 @@ def load_gate(path: Path) -> dict:
     ):
         if key not in gate:
             raise SystemExit(f"gate JSON lacks {key}")
-    if int(gate.get("schema_version", 0)) != 15:
-        raise SystemExit("hudline requires descriptive HUD gate schema 15")
+    if int(gate.get("schema_version", 0)) != 16:
+        raise SystemExit("hudline requires descriptive HUD gate schema 16")
     if "cd_wait_count" not in gate["maxima"]:
         raise SystemExit("gate JSON lacks cd_wait_count maximum")
     if "cd_wait_count" in gate["limits"]:
@@ -307,7 +308,7 @@ def validate(
         "name_table_dma_ready_vcounter",
     ):
         if field not in data:
-            raise SystemExit(f"HUD TSV lacks required schema-15 field {field}")
+            raise SystemExit(f"HUD TSV lacks required schema-16 field {field}")
     if int(gate["observed_first_loop_frames"]) != frames:
         raise SystemExit(
             "gate observed_first_loop_frames does not match the HUD TSV")
@@ -437,7 +438,7 @@ def validate(
 def derive_display_vblanks(
     data: dict[str, np.ndarray],
     content_fps: float,
-) -> tuple[np.ndarray, int | None]:
+) -> tuple[np.ndarray, tuple[int, ...] | None]:
     """Return displayed VBlanks per content frame from capture-frame starts.
 
     ``frame`` is published atomically with the displayed movie frame.  The distance
@@ -460,15 +461,28 @@ def derive_display_vblanks(
         # Frame 0 is boot staging, not a timed playback frame.  Its long first
         # span must be absent both visually and statistically.
         displayed[0] = np.nan
-    expected = av_config.vsync_n_for_fps(content_fps)
-    integer_rate = av_config.NTSC_VSYNC / expected
-    playback_rate = av_config.playback_fps_for_content(content_fps)
-    normal = (
-        expected
-        if math.isclose(playback_rate, integer_rate, abs_tol=1e-9)
-        else None
-    )
-    return displayed, normal
+    return displayed, av_config.vblank_cadence_pattern(content_fps)
+
+
+def display_vblank_targets(
+    data: dict[str, np.ndarray],
+    cadence_pattern: tuple[int, ...] | None,
+) -> np.ndarray:
+    """Return the phase-correct expected visible duration for each frame.
+
+    A value stored at frame ``F`` measures the transition from ``F`` to
+    ``F+1``. Frame ``F+1`` uses cadence element ``F % period``; frame zero and
+    the terminal frame remain unmeasured in the companion display array.
+    """
+
+    targets = np.full(len(data["frame"]), np.nan, dtype=np.float64)
+    if cadence_pattern is None:
+        return targets
+    frames = data["frame"].astype(np.int64)
+    for index, frame in enumerate(frames):
+        if frame > 0:
+            targets[index] = cadence_pattern[frame % len(cadence_pattern)]
+    return targets
 
 
 def derive_pattern_ready_pressure(
@@ -587,8 +601,25 @@ def derive_name_table_ready_pressure(
     path_present = bool(np.any(raw[1:] != 0)) if raw.size > 1 else False
     if not path_present:
         return pressure
-    target_vblank = av_config.vsync_n_for_fps(content_fps)
-    final_preblank_budget = max(0, target_vblank - 1)
+    frames = np.asarray(
+        data.get("frame", np.arange(len(raw), dtype=np.int64)),
+        dtype=np.int64,
+    )
+    if frames.shape != raw.shape:
+        raise SystemExit("frame and name-table ready arrays have different lengths")
+    cadence_pattern = av_config.vblank_cadence_pattern(content_fps)
+    if cadence_pattern is None:
+        target_vblank = np.full(
+            raw.shape,
+            av_config.vsync_n_for_fps(content_fps),
+            dtype=np.int64,
+        )
+    else:
+        target_vblank = np.asarray([
+            cadence_pattern[(max(int(frame), 1) - 1) % len(cadence_pattern)]
+            for frame in frames
+        ], dtype=np.int64)
+    final_preblank_budget = np.maximum(0, target_vblank - 1)
     pressure[:] = 0
     final_preblank = opened == final_preblank_budget
     visible = raw < NT_READY_DEADLINE_SCANLINE
@@ -633,13 +664,13 @@ def display_vblank_alert_masks(
     displayed: np.ndarray,
     expected_frames: int,
     content_fps: float,
-    normal_vblanks: int | None,
+    cadence_pattern: tuple[int, ...] | None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Return alert-eligible and edge-exempt measured-frame masks."""
 
     eligible = np.zeros(len(displayed), dtype=bool)
     exempt = np.zeros(len(displayed), dtype=bool)
-    if normal_vblanks is None:
+    if cadence_pattern is None:
         return eligible, exempt, 0
     frames = data["frame"].astype(np.int64)
     measured = np.isfinite(displayed)
@@ -655,7 +686,7 @@ def display_vblank_alert_masks(
 def row_specs(
     data: dict[str, np.ndarray],
     gate: dict,
-    display_vblank_expected: int | None,
+    display_vblank_expected: tuple[int, ...] | None,
 ) -> list[RowSpec]:
     limits = {key: float(value) for key, value in gate["limits"].items()}
 
@@ -672,7 +703,7 @@ def row_specs(
     display_vblanks = data["display_vblanks"]
     finite_vblanks = display_vblanks[np.isfinite(display_vblanks)]
     capacity_floor = (
-        float(display_vblank_expected * 2)
+        float(max(display_vblank_expected) * 2)
         if display_vblank_expected is not None
         else 1.0
     )
@@ -686,9 +717,16 @@ def row_specs(
             max(capacity_floor, display_vblank_max),
             PASS_GUIDE,
             normal_value=(
-                float(display_vblank_expected)
-                if display_vblank_expected is not None
+                float(display_vblank_expected[0])
+                if (
+                    display_vblank_expected is not None
+                    and len(display_vblank_expected) == 1
+                )
                 else None
+            ),
+            normal_key=(
+                "display_vblank_target"
+                if display_vblank_expected is not None else None
             ),
         ),
         RowSpec(
@@ -924,16 +962,23 @@ def row_specs(
     return rows
 
 
-def value_color(value: float, spec: RowSpec, gate: dict) -> tuple[int, int, int]:
+def value_color(
+    value: float,
+    spec: RowSpec,
+    gate: dict,
+    *,
+    normal_value: float | None = None,
+) -> tuple[int, int, int]:
     if spec.deadline_value is not None:
         if value > spec.deadline_value:
             return FAIL
         if math.isclose(value, spec.deadline_value, abs_tol=0.01):
             return WARN
-    if spec.normal_value is not None:
+    normal = spec.normal_value if normal_value is None else normal_value
+    if normal is not None:
         if value <= 0:
             return FAIL
-        if math.isclose(value, spec.normal_value, abs_tol=0.01):
+        if math.isclose(value, normal, abs_tol=0.01):
             return spec.color
         return WARN
     if spec.gate_key is None:
@@ -1023,6 +1068,13 @@ def draw_rows(
             x0 = left + frame_index * ppf
             x1 = x0 + ppf - 1
             clipped = min(value, spec.maximum)
+            normal_value = None
+            if spec.normal_key is not None:
+                normal_values = data.get(spec.normal_key)
+                if normal_values is not None and frame_index < len(normal_values):
+                    candidate = float(normal_values[frame_index])
+                    if math.isfinite(candidate):
+                        normal_value = candidate
             bar = int(round((row_height - 1) * clipped / max(spec.maximum, 1e-9)))
             if spec.point_plot:
                 point_x = x0 + ppf // 2
@@ -1032,13 +1084,20 @@ def draw_rows(
                 ))
                 draw.point(
                     (point_x, point_y),
-                    fill=value_color(value, spec, gate),
+                    fill=value_color(
+                        value, spec, gate, normal_value=normal_value),
                 )
             elif bar:
                 draw.rectangle(
                     (x0, y1 - bar + 1, x1, y1),
-                    fill=value_color(value, spec, gate),
+                    fill=value_color(
+                        value, spec, gate, normal_value=normal_value),
                 )
+            if normal_value is not None:
+                normal_y = y1 - int(round(
+                    (row_height - 1) * min(normal_value, spec.maximum)
+                    / max(spec.maximum, 1e-9)))
+                draw.line((x0, normal_y, x1, normal_y), fill=PASS_GUIDE)
             if value > spec.maximum:
                 draw.line((x0, y0, x1, y0), fill=FAIL, width=2)
         draw_scale(
@@ -1181,11 +1240,29 @@ def main() -> None:
             load_gpgx_vdp_tsv(gpgx_vdp_path, tsv_path, data)
         )
         data.update(gpgx_data)
-    display_vblanks, display_vblank_expected = derive_display_vblanks(
+    display_vblanks, display_vblank_pattern = derive_display_vblanks(
         data,
         float(gate["content_fps"]),
     )
     data["display_vblanks"] = display_vblanks
+    display_vblank_targets_array = display_vblank_targets(
+        data,
+        display_vblank_pattern,
+    )
+    data["display_vblank_target"] = display_vblank_targets_array
+    display_vblank_expected = (
+        None
+        if display_vblank_pattern is None
+        else (
+            display_vblank_pattern[0]
+            if len(display_vblank_pattern) == 1
+            else list(display_vblank_pattern)
+        )
+    )
+    if gate.get("display_vblank_expected") != display_vblank_expected:
+        raise SystemExit(
+            "gate display_vblank_expected does not match the profile cadence"
+        )
     data["pattern_dma_ready_pressure"] = derive_pattern_ready_pressure(data)
     ready_pressure = pattern_ready_pressure_summary(
         data["pattern_dma_ready_pressure"]
@@ -1207,22 +1284,22 @@ def main() -> None:
         display_vblanks,
         int(gate["expected_frames"]),
         float(gate["content_fps"]),
-        display_vblank_expected,
+        display_vblank_pattern,
     )
     display_vblank_warning_count = (
         int(np.count_nonzero(
             display_vblank_alert_mask
-            & (display_vblanks != display_vblank_expected)
+            & (display_vblanks != display_vblank_targets_array)
         ))
-        if display_vblank_expected is not None
+        if display_vblank_pattern is not None
         else None
     )
     display_vblank_exempted_warning_count = (
         int(np.count_nonzero(
             display_vblank_exempt_mask
-            & (display_vblanks != display_vblank_expected)
+            & (display_vblanks != display_vblank_targets_array)
         ))
-        if display_vblank_expected is not None
+        if display_vblank_pattern is not None
         else None
     )
     display_vblank_total = int(np.count_nonzero(display_vblank_alert_mask))
@@ -1262,7 +1339,7 @@ def main() -> None:
     )
     if ppf <= 0:
         raise SystemExit("pixels per frame must be positive")
-    specs = row_specs(data, gate, display_vblank_expected)
+    specs = row_specs(data, gate, display_vblank_pattern)
     left = 220
     timeline_top = 172
     plot_width = axis_frames * ppf
@@ -1353,7 +1430,7 @@ def main() -> None:
         f"{display_vblank_warning_count} / {display_vblank_total}, "
         f"edge-exempt {display_vblank_exempted_warning_count} "
         f"(first/last {display_vblank_edge_frames}), "
-        if display_vblank_expected is not None
+        if display_vblank_pattern is not None
         else "VBlank warning rule deferred, "
     )
     pump_gap_stats_text = (
@@ -1573,6 +1650,7 @@ def main() -> None:
             "gate_key": spec.gate_key,
             "eight_bit_scale": spec.eight_bit_scale,
             "normal_value": spec.normal_value,
+            "normal_key": spec.normal_key,
             "top": receipt_row_top,
             "height": spec.height,
             "plot_style": "point" if spec.point_plot else "bar",
@@ -1744,7 +1822,7 @@ def main() -> None:
         "display_vblank_exempted_warning_count": (
             display_vblank_exempted_warning_count),
         "display_vblank_warning_supported": (
-            display_vblank_expected is not None
+            display_vblank_pattern is not None
         ),
         "display_vblank_min": int(finite_display_vblanks.min()),
         "display_vblank_max": int(finite_display_vblanks.max()),

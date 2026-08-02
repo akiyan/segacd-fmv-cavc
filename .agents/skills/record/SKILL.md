@@ -18,7 +18,7 @@ Use this skill to:
 - build a DEBUG disc by default, or release only when explicitly requested;
 - launch RetroArch, send START, and record synchronized A/V;
 - validate timing, video, audio, logs, and optional diagnostic counters;
-- run the mandatory descriptive schema-15 HUD upload gate for any capture
+- run the mandatory descriptive schema-16 HUD upload gate for any capture
   that may proceed to `compilation` or another upload step, while preserving
   `cd_wait_count` and `adpcm_decode_units` as diagnostics;
 - render the complete HUD TSV through the `hudline` skill, show it inline, and
@@ -277,14 +277,17 @@ Check the raw MKV and reports before trusting a capture:
    `vblank_spill` above the cadence-derived limit raises a warning.
    `prgbuf_jitter_peak_kib` must remain below its physical-ring-derived limit.
 
-   For fixed-N playback, compare consecutive first-capture positions for every
-   timed, nonterminal `frame`. A visible duration different from the cadence
-   raises alert `WARNING` while retaining gate `PASS`, except within the
-   first/last four content frames at 30 fps and two at 15 fps. Preserve those
-   edge observations as diagnostics together with the complete histogram and
-   affected frames. This exception applies only to derived display duration,
-   not gate fields or transfer diagnostics. At fixed cadence,
-   `transfer_vblanks` above the cadence interval is another warning.
+   For authoritative cadence playback, compare consecutive first-capture
+   positions for every timed, nonterminal `frame` against that frame's exact
+   cadence phase. This is four VBlanks at 15 fps, repeating 2/3 VBlanks at
+   24 fps, and two VBlanks at 30 fps. A different visible duration raises
+   alert `WARNING` while retaining gate `PASS`, except within the first/last
+   two content frames at 15 fps, three at 24 fps, and four at 30 fps. Preserve
+   those edge observations as diagnostics together with the complete
+   histogram and affected frames. This exception applies only to derived
+   display duration, not gate fields or transfer diagnostics. A
+   `transfer_vblanks` maximum above the cadence's largest interval is another
+   warning.
 
    Report distributions for `cd_wait_count`, `adpcm_decode_units`, and
    `pump_gap_ticks`; APPLY back-pressure frame count; cumulative
@@ -338,7 +341,7 @@ Confirm the Plane A HUD is visible before a long OCR scan. Read the complete
 loop. `transfer_ticks` is the Main pattern-transfer time in 30.72 us ticks,
 `cold_runs` is the packed run count's low byte, and
 `prgbuf_jitter_peak_kib` is sticky ceil-KiB excess above the cadence-derived
-normal ceiling. Gate `PASS` in the descriptive schema-15 result is the
+normal ceiling. Gate `PASS` in the descriptive schema-16 result is the
 required handoff condition; alert may be `NONE` or `WARNING`. Fixed-cadence
 visible-duration and transfer-budget excesses are warning-only. When the
 enclosing request already authorizes a full run, reviewing its maxima is not a

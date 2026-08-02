@@ -78,7 +78,7 @@ class HudlineFrameZeroTests(unittest.TestCase):
             "capture_first": np.asarray([10, 37, 41, 45], np.float64),
         }
         values, normal = render.derive_display_vblanks(data, 15)
-        self.assertEqual(normal, 4)
+        self.assertEqual(normal, (4,))
         self.assertTrue(math.isnan(float(values[0])))
         self.assertEqual(float(values[1]), 4)
         self.assertEqual(float(values[2]), 4)
@@ -109,7 +109,7 @@ class HudlineFrameZeroTests(unittest.TestCase):
             values,
             expected_frames=12,
             content_fps=30,
-            normal_vblanks=normal,
+            cadence_pattern=normal,
         )
         self.assertEqual(edge_frames, 4)
         self.assertEqual(int(np.count_nonzero(eligible)), 4)
@@ -121,6 +121,28 @@ class HudlineFrameZeroTests(unittest.TestCase):
             int(np.count_nonzero(exempt & (values != normal))),
             2,
         )
+
+    def test_24fps_render_targets_follow_the_two_three_phase(self):
+        starts = [0, 2]
+        for frame in range(1, 11):
+            starts.append(starts[-1] + (3 if frame & 1 else 2))
+        data = {
+            "frame": np.arange(12, dtype=np.int64),
+            "capture_first": np.asarray(starts, np.float64),
+        }
+        values, cadence = render.derive_display_vblanks(data, 24)
+        targets = render.display_vblank_targets(data, cadence)
+        self.assertEqual(cadence, (2, 3))
+        np.testing.assert_array_equal(values[1:-1], targets[1:-1])
+        eligible, _exempt, edge_frames = render.display_vblank_alert_masks(
+            data,
+            values,
+            expected_frames=12,
+            content_fps=24,
+            cadence_pattern=cadence,
+        )
+        self.assertEqual(edge_frames, 3)
+        self.assertEqual(int(np.count_nonzero(eligible)), 6)
 
     def test_report_counts_edge_holds_as_diagnostic_only(self):
         starts = list(range(0, 24, 2))
@@ -170,8 +192,57 @@ class HudlineFrameZeroTests(unittest.TestCase):
         text = report.render_markdown(rows, list(rows[0]), gate)
         self.assertIn(
             "0.00% / 0 / 4 "
-            "(normal 0x02; first/last 4 content frames excluded from ALERT; "
+            "(normal phase 0x02; first/last 4 content frames excluded from ALERT; "
             "2 observed edge violation(s)).",
+            text,
+        )
+
+    def test_report_uses_phase_correct_24fps_targets(self):
+        starts = [0, 2]
+        for frame in range(1, 11):
+            starts.append(starts[-1] + (3 if frame & 1 else 2))
+        rows = [
+            {
+                "frame": str(frame),
+                "capture_first": str(start),
+                "sector_slip": "0",
+                "control_desync": "0",
+                "audio_resync": "0",
+                "vblank_spill": "0",
+                "prgbuf_jitter_peak_kib": "0",
+                "cd_wait_count": "0",
+                "adpcm_decode_units": "0",
+            }
+            for frame, start in enumerate(starts)
+        ]
+        gate = {
+            "gate": "PASS",
+            "alert": "NONE",
+            "content_fps": 24,
+            "expected_frames": 12,
+            "limits": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 2,
+                "prgbuf_jitter_peak_kib": 30,
+            },
+            "maxima": {
+                "sector_slip": 0,
+                "control_desync": 0,
+                "audio_resync": 0,
+                "vblank_spill": 0,
+                "prgbuf_jitter_peak_kib": 0,
+                "cd_wait_count": 0,
+            },
+            "display_vblank_alert_evaluated_frames": 6,
+            "display_vblank_edge_exempt_frames": 3,
+            "display_vblank_exempted_violation_count": 0,
+            "display_vblank_violation_count": 0,
+        }
+        text = report.render_markdown(rows, list(rows[0]), gate)
+        self.assertIn(
+            "normal phase 0x02/0x03; first/last 3 content frames",
             text,
         )
 
