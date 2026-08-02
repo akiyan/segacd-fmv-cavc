@@ -199,7 +199,7 @@ class PackRawPrefetchTests(unittest.TestCase):
                 "enabled": True,
                 "requests": [
                     [],
-                    [(key_fade, 4, 1, True)],
+                    [(key_fade, 4, 1, True, True)],
                     [],
                     [],
                     [],

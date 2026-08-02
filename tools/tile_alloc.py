@@ -116,6 +116,39 @@ class TileAllocator:
             and self.slot_pin_until[slot] >= int(deadline)
         )
 
+    def least_live_contiguous_block(self, length, frame_idx):
+        """Return a linear slot block with the fewest live occupants.
+
+        Mandatory fade references use one shared edge block so their long-lived
+        pins do not split ordinary cold allocations into many one-tile DMA
+        runs.  Of the low and high edge blocks, current display occupancy is
+        the second tie-break after active mandatory pins; a stable low-edge
+        tie-break keeps sim replay deterministic.
+        """
+        length = int(length)
+        frame_idx = int(frame_idx)
+        if not 0 < length <= self.POOL:
+            raise ValueError("contiguous block length is outside the pool")
+        mandatory = np.logical_and(
+            self.slot_pin_mandatory,
+            self.slot_pin_until >= frame_idx,
+        ).astype(np.int64)
+        live = (self.slot_refs > 0).astype(np.int64)
+        mandatory_prefix = np.concatenate(([0], np.cumsum(mandatory)))
+        live_prefix = np.concatenate(([0], np.cumsum(live)))
+        best = None
+        starts = (0,) if length == self.POOL else (0, self.POOL - length)
+        for start in starts:
+            stop = start + length
+            score = (
+                int(mandatory_prefix[stop] - mandatory_prefix[start]),
+                int(live_prefix[stop] - live_prefix[start]),
+                start,
+            )
+            if best is None or score < best[0]:
+                best = score, start
+        return int(best[1])
+
     # ---- per-frame ----
     def begin_frame(self):
         """Compute which slots are protected (a cell showed them last frame)."""
@@ -226,7 +259,7 @@ class TileAllocator:
 
     def prefetch(
             self, key, frame_idx, deadline, forced_slot=None, avoid_keys=(),
-            mandatory=False):
+            mandatory=False, relocate=False):
         """Place one future pattern without changing any displayed cell.
 
         Returns ``(slot, cold)``.  ``cold`` is true only when a 32-byte VRAM
@@ -238,7 +271,10 @@ class TileAllocator:
         if deadline <= frame_idx:
             raise ValueError("prefetch deadline must be after the load frame")
         resident = self.key_slot.get(key)
-        if resident is not None:
+        if resident is not None and (
+                forced_slot is None
+                or int(forced_slot) == int(resident)
+                or not relocate):
             # Ordinary prediction does not pin cache data because changing its
             # eviction priority can make a baseline frame worse.  A fade
             # reference must survive until its CRAM-only sequence starts, so
@@ -266,7 +302,12 @@ class TileAllocator:
                        and self.slot_pin_until[slot] >= frame_idx):
                     return None
                 self._evict(slot)
-                self.hand = (slot + 1) % self.POOL
+                # A forced fade destination is part of a separately managed
+                # block.  Redirecting the ordinary allocation hand into that
+                # block would make the next visible frame consume its still
+                # empty destinations and split otherwise contiguous runs.
+                if not mandatory:
+                    self.hand = (slot + 1) % self.POOL
         elif self.free:
             slot = self.free.pop()
         else:
@@ -300,6 +341,19 @@ class TileAllocator:
                 break
             if slot is None:
                 return None
+
+        if resident is not None:
+            # Relocate a cache identity into its dedicated fade block.  The
+            # old physical bytes may still be on screen, so detach only the
+            # lookup identity; slot_refs keeps that old slot protected until
+            # every displayed cell has moved away from it.
+            if self.slot_key[resident] != key:
+                raise AssertionError("resident key/slot mapping diverged")
+            self.slot_key[resident] = None
+            if self.slot_pin_until[resident] >= 0:
+                self.pinned_count -= 1
+            self.slot_pin_until[resident] = -1
+            self.slot_pin_mandatory[resident] = False
 
         self.key_slot[key] = slot
         self.slot_key[slot] = key

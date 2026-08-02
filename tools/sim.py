@@ -1693,14 +1693,19 @@ def main():
     fade_prefetch_plan = {}
 
     def plan_fade_reference(
-            window, deadline, reference, *, request_limit=None):
+            window, deadline, reference, *, request_limit=None,
+            requested_keys=None):
         frames = tuple(int(frame) for frame in window)
         if not frames:
             return
-        keys = tuple(dict.fromkeys(
-            Q_pidx[int(reference)][cell].tobytes()
-            for cell in range(C_CELLS)
-        ))
+        keys = (
+            tuple(requested_keys)
+            if requested_keys is not None else
+            tuple(dict.fromkeys(
+                Q_pidx[int(reference)][cell].tobytes()
+                for cell in range(C_CELLS)
+            ))
+        )
         nominal_per_frame = (len(keys) + len(frames) - 1) // len(frames)
         nominal_remaining = len(keys)
         for offset, frame in enumerate(frames):
@@ -1720,12 +1725,25 @@ def main():
     for shot in fade_layout.shots:
         if shot.left_black is not None or shot.anchor == 0:
             continue
-        reference_keys = len(set(
+        reference_keys = tuple(dict.fromkeys(
             Q_pidx[int(shot.reference)][cell].tobytes()
             for cell in range(C_CELLS)
         ))
+        # The bright anchor can still install a conservative baseline batch.
+        # Prefetch only the remainder: dedicating the entire reference would
+        # leave too little working VRAM for the preceding moving frames and
+        # fragment their cold DMA runs.
+        anchor_capacity = max(
+            0,
+            min(MAX_COLD, RAW_PREFETCH_BUDGET_FLOOR_PATTERNS)
+            - 2 * RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
+        )
+        required_keys = max(0, len(reference_keys) - anchor_capacity)
+        reference_keys = reference_keys[:required_keys]
+        if not reference_keys:
+            continue
         window_frames = (
-            reference_keys + RAW_PREFETCH_MAX_REQUESTS_PER_FRAME - 1
+            len(reference_keys) + RAW_PREFETCH_MAX_REQUESTS_PER_FRAME - 1
         ) // RAW_PREFETCH_MAX_REQUESTS_PER_FRAME
         # Optional raw prediction can lose an entire busy frame's spare room.
         # Give mandatory one-sided fade preparation two equal-length recovery
@@ -1737,6 +1755,7 @@ def main():
             int(shot.anchor),
             int(shot.reference),
             request_limit=RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
+            requested_keys=reference_keys,
         )
 
     for group in fade_frames.connected_groups(fade_layout.shots):
@@ -2232,6 +2251,7 @@ def main():
         int(frame) for frame in fade_layout.preparation_frames)
     fade_prepare_deadlines = frozenset(
         int(frame) for frame in fade_layout.preparation_deadlines)
+    fade_prefetch_slots = {}
     cur_pals = np.asarray(segment_entry_cram[0], np.uint8).copy()
     for i in range(n):
         if _loop_profile:
@@ -3128,7 +3148,7 @@ def main():
                         "frame 0 boot prefetch did not use a free VRAM slot")
                 slot, _cold = result
                 frame_prefetch_requests.append(
-                    (key, deadline, slot, False))
+                    (key, deadline, slot, False, False))
                 frame_prefetch_physical.append(
                     (int(slot), True, key, int(deadline)))
                 cold_spent += 1
@@ -3158,6 +3178,13 @@ def main():
                     planned_requests = min(
                         int(request_limit), planned_requests)
                 prefetch_spend_limit = frame_total_budget
+                if int(deadline) not in fade_prefetch_slots:
+                    block_start = alloc.least_live_contiguous_block(
+                        len(requested_keys), i)
+                    fade_prefetch_slots[int(deadline)] = {
+                        key: block_start + offset
+                        for offset, key in enumerate(requested_keys)
+                    }
                 request_groups = ((int(deadline), requested_keys),)
                 request_room = int(planned_requests)
                 request_cap = int(planned_requests)
@@ -3230,14 +3257,19 @@ def main():
                             key,
                             i,
                             deadline,
+                            forced_slot=(
+                                fade_prefetch_slots[int(deadline)][key]
+                                if mandatory else None
+                            ),
                             avoid_keys=deadline_keys,
                             mandatory=mandatory,
+                            relocate=mandatory,
                         )
                         if result is None:
                             continue
                         slot, cold = result
                         frame_prefetch_requests.append(
-                            (key, deadline, slot, mandatory))
+                            (key, deadline, slot, mandatory, mandatory))
                         frame_prefetch_physical.append(
                             (int(slot), bool(cold), key, int(deadline)))
                         if cold:
@@ -4691,7 +4723,7 @@ def main():
                     np.int64),
             },
             "raw_prefetch": {
-                "schema_version": 4,
+                "schema_version": 5,
                 "enabled": bool(
                     BOOT_VRAM_PREFETCH_ON
                     or RAW_PREFETCH_ON

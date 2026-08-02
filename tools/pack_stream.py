@@ -389,11 +389,17 @@ def resolve(log, POOL, mode="lru"):
                     key, deadline = request
                     forced_slot = None
                     mandatory = False
+                    relocate = False
                 elif len(request) == 3:
                     key, deadline, forced_slot = request
                     mandatory = False
+                    relocate = False
                 elif len(request) == 4:
                     key, deadline, forced_slot, mandatory = request
+                    relocate = False
+                elif len(request) == 5:
+                    (key, deadline, forced_slot, mandatory,
+                     relocate) = request
                 else:
                     raise SystemExit(
                         f"pack: malformed raw-prefetch request at frame {i}")
@@ -403,6 +409,7 @@ def resolve(log, POOL, mode="lru"):
                     int(deadline),
                     forced_slot=forced_slot,
                     mandatory=bool(mandatory),
+                    relocate=bool(relocate),
                 )
                 if result is None:
                     raise SystemExit(
