@@ -204,7 +204,8 @@ build-time checked against the `M-STATE` base.
 |---|---|---:|---|
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated handlers and guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
-| `M-FREE` | `0xFF8800..0xFFB1FF` | 10.50 KiB | unallocated space released by in-place `O_LOADS v2` consumption |
+| `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | current inline fade CRAM image, copied before the consumed Word RAM bank is returned |
+| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | unallocated space released by in-place `O_LOADS v2` consumption |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table, 15 switches + sentinel (player-embedded palidx.bin) |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
@@ -294,6 +295,7 @@ sequenceDiagram
     and Main consumes frame N
         M->>W: Read O_LOADS v2 in place
         M->>M: Apply bitmap or update list
+        M->>M: Copy inline fade CRAM to M-FCRAM when present
         M->>V: Transfer the final cold run and repair its first word
     end
 
@@ -313,8 +315,9 @@ sequenceDiagram
 ```
 
 A zero residual wait means Sub completed the exchange during Main's remaining
-display work. It does not mean that the exchange itself was free. Main makes no
-further access to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
+display work. It does not mean that the exchange itself was free. Inline fade
+CRAM is copied to `M-FCRAM` before the request, so Main makes no further access
+to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
 the startup `CMD_STREAM` ownership through its flip, so frame 1 is acquired by
 the ordinary synchronous request. The final frame is also excluded: Main
 requests `STAT_END` only after that frame has become visible. H32,
@@ -592,7 +595,8 @@ build-time checkされます。
 |---|---|---:|---|
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated handler、guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
-| `M-FREE` | `0xFF8800..0xFFB1FF` | 10.50 KiB | `O_LOADS v2` in-place消費により解放された未割当領域 |
+| `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | 消費済みWord RAM bankを返す前にcopyする、現在のinline fade CRAM image |
+| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | `O_LOADS v2` in-place消費により解放された未割当領域 |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表、15切替+番兵（player内蔵palidx.bin） |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
@@ -681,6 +685,7 @@ sequenceDiagram
     and Mainがframe Nを消費
         M->>W: O_LOADS v2をin-placeで読む
         M->>M: bitmapまたはupdate listをapply
+        M->>M: inline fade CRAMがあればM-FCRAMへcopy
         M->>V: 最後のcold runをtransferして先頭wordを補修
     end
 
@@ -700,8 +705,9 @@ sequenceDiagram
 ```
 
 残り待ちがゼロなら、Mainの残るdisplay work中にSubの交換が完了したという
-意味です。交換自体の所要時間がゼロという意味ではありません。Mainは
-`CMD_SWAP` assert後、返却したbankへアクセスしません。Frame 0はflipまで
+意味です。交換自体の所要時間がゼロという意味ではありません。Inline fade
+CRAMはrequest前に`M-FCRAM`へcopyするため、Mainは`CMD_SWAP` assert後、返却した
+bankへアクセスしません。Frame 0はflipまで
 startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期requestで
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
 requestします。H32、non-specialized、periodic-cadence、feature-clear pathは
