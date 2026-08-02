@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Count CRAM (palette-segment) switches in a sim decision log.
+"""Count every CRAM replacement in a sim decision log.
 
-Each palette segment in the sim's decision log (`frame_seg`) is one CRAM swap.
+Palette-segment boundaries and automatic inline fade controls both replace all
+64 CRAM words. The initial palette is state 1; every later replacement starts
+the next state.
 Uploads state how many times the palette switches instead of marking those
 points as YouTube chapters (see AGENTS.md "YouTube Upload Style"): both the
 analysis and the real-playback description carry the count in the spec section.
@@ -30,12 +32,35 @@ def segment_starts(frame_seg):
     return [0] + [i for i in range(1, n) if fseg[i] != fseg[i - 1]]
 
 
+def switch_frames(frame_seg, frame_types=None):
+    """Return every post-frame-0 CRAM replacement frame exactly once."""
+
+    fseg = np.asarray(frame_seg)
+    if fseg.ndim != 1:
+        raise ValueError("frame_seg must be one-dimensional")
+    if frame_types is None:
+        types = np.zeros(len(fseg), np.uint8)
+    else:
+        types = np.asarray(frame_types)
+        if types.shape != fseg.shape:
+            raise ValueError("frame types must match frame_seg")
+    if not len(fseg):
+        return []
+    changed = np.zeros(len(fseg), bool)
+    changed[1:] = fseg[1:] != fseg[:-1]
+    changed |= types != 0
+    changed[0] = False
+    return np.flatnonzero(changed).astype(int).tolist()
+
+
 def counts(out_dir):
     """Return (segment count, switch count) for a completed sim output directory."""
     with open(Path(out_dir) / "decisions.pkl", "rb") as handle:
         log = pickle.load(handle)
-    segments = len(segment_starts(log["frame_seg"]))
-    return segments, max(0, segments - 1)
+    fade = log.get("fade") or {}
+    switches = len(switch_frames(
+        log["frame_seg"], fade.get("frame_types")))
+    return switches + 1, switches
 
 
 def main():

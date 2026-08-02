@@ -419,10 +419,27 @@ def md_rgb(w):
 
 PAL = [[md_rgb(pb[p, c]) for c in range(16)] for p in range(4)]
 
-# ---- 区間パレット(Prev/Current/Next 用) + カテゴリ合計(全編) ----
+# ---- 実CRAM状態(Prev/Current/Next とsim preview再生用) ----
 _SP = np.load(f"{SIM}/seg_palettes.npz")
 SEG_PALS = _SP["seg_pals"]                     # (nseg,4,15,3) rgb333(0-7)
 FRAME_SEG = _SP["frame_seg"]                   # (NF,)
+SEGMENT_ENTRY_CRAM = (
+    _SP["segment_entry_cram"]
+    if "segment_entry_cram" in _SP.files else SEG_PALS
+)
+FRAME_TYPES = (
+    _SP["frame_types"].astype(np.uint8)
+    if "frame_types" in _SP.files else np.zeros(NF, np.uint8)
+)
+ACTIVE_FRAME_CRAM = (
+    _SP["active_frame_cram"]
+    if "active_frame_cram" in _SP.files
+    else SEGMENT_ENTRY_CRAM[FRAME_SEG]
+)
+if (FRAME_TYPES.shape != (NF,)
+        or ACTIVE_FRAME_CRAM.shape != (NF, 4, 15, 3)
+        or SEGMENT_ENTRY_CRAM.shape != SEG_PALS.shape):
+    raise SystemExit("analysis CRAM state has an invalid shape; re-run sim")
 
 # ---- 音声波形 / spectrum panel用データ(sim OUT のplayback-model WAV) ----
 import wave as _wave  # noqa: E402
@@ -455,18 +472,22 @@ except Exception as _e:
     print("analysis audio: playback-model WAV unavailable ->", _e)
 
 
-def seg_pal_rgb(seg):
-    seg = int(np.clip(seg, 0, len(SEG_PALS) - 1))
-    p = SEG_PALS[seg].astype(int)              # (4,15,3) 0-7 -> *36 で表示
+def pal_rgb(palette):
+    p = np.asarray(palette).astype(int)        # (4,15,3) 0-7 -> *36 で表示
     return [[(int(p[pl][c][0]) * 36, int(p[pl][c][1]) * 36, int(p[pl][c][2]) * 36) for c in range(15)]
             for pl in range(4)]
+
+
+def seg_pal_rgb(seg):
+    seg = int(np.clip(seg, 0, len(SEGMENT_ENTRY_CRAM) - 1))
+    return pal_rgb(SEGMENT_ENTRY_CRAM[seg])
 
 
 def frame_palettes(i):
     s = int(FRAME_SEG[i]) if i < len(FRAME_SEG) else 0
     last = len(SEG_PALS) - 1
     return {"Prev": seg_pal_rgb(s - 1) if s > 0 else None,      # 前後にパレット無し=ブランク
-            "Current": seg_pal_rgb(s),
+            "Current": pal_rgb(ACTIVE_FRAME_CRAM[i]),
             "Next": seg_pal_rgb(s + 1) if s < last else None}
 
 
@@ -523,9 +544,8 @@ def materialize_analysis_panels(frames):
         if frame not in requested:
             continue
 
-        segment = int(FRAME_SEG[frame])
         full_palette = np.zeros((4, 16, 3), np.uint8)
-        full_palette[:, 1:] = SEG_PALS[segment]
+        full_palette[:, 1:] = ACTIVE_FRAME_CRAM[frame]
         cell_rgb = (
             full_palette[display_pal[:, None], display_idx] * 36
         ).reshape(C, 8, 8, 3).astype(np.uint8)
@@ -559,7 +579,11 @@ CAT_TOTALS = {k: int(FULL[k].sum()) for k, _ in style.CATS}
 
 # ---- 有効転送量(新規パターンのCDバイト) + CD1x/コマ + パレット切替フレーム ----
 Updated = col("updated")
-_cram = np.zeros(NF, np.int64); _cram[1:] = (FRAME_SEG[1:] != FRAME_SEG[:-1]).astype(np.int64) * 128
+_cram_write = FRAME_TYPES != 0
+if NF > 1:
+    _cram_write[1:] |= FRAME_SEG[1:] != FRAME_SEG[:-1]
+_cram_write[0] = False
+_cram = _cram_write.astype(np.int64) * 128
 FB = Raw * 32 + Buf * 32 + Updated * 2 + _cram        # 1コマの映像書込量(パターン+全ネーム+CRAM, タンク供給込み)
 # Band is useful BODY.DAT bytes in the physical delivery slot.  It excludes
 # Untimed BODY-arm/frame-0 bytes, stream-tail alignment zeros, and rate-match pad.
