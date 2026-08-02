@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e169: Include every distinct one-sided fade reference key in the automatic
+#         mandatory prefetch plan. Do not assume that the bright anchor can
+#         receive a fixed baseline batch before earlier control blocks have
+#         fixed its exact physical Prg ceiling.
 #   e168: Store the forced-vs-safe-search replay flag in raw-prefetch schema 6
 #         while retaining the independent O_LOADS-v2 pattern-supply schema 5.
 #         Pack reconstructs the same protected deadline-key set before replay
@@ -1179,5 +1183,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260802
-e=168
+e=169
 p=142

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 
 import numpy as np
 
@@ -26,6 +26,40 @@ class PrefetchForecast:
     requests: tuple[tuple[bytes, ...], ...]
     protected_cold: np.ndarray
     requested_patterns: np.ndarray
+
+
+def plan_mandatory_reference_window(
+    reference_keys: Iterable[bytes],
+    *,
+    deadline: int,
+    max_requests_per_frame: int,
+    recovery_windows: int = 3,
+) -> tuple[tuple[bytes, ...], tuple[int, ...]]:
+    """Return every distinct mandatory reference key and its retry window.
+
+    A one-sided fade cannot assume that its bright anchor will receive a
+    particular number of Prg payload sectors: the exact per-frame ceiling is
+    fixed only after earlier control blocks have been committed.  Therefore
+    every distinct reference key is eligible for advance placement.  Visible
+    work may reclaim those pins; repeated windows give the live allocator room
+    to restore them without writing a current or preceding display slot.
+    """
+    deadline = int(deadline)
+    request_limit = int(max_requests_per_frame)
+    retries = int(recovery_windows)
+    if deadline <= 0:
+        raise ValueError("mandatory prefetch deadline must be positive")
+    if request_limit <= 0:
+        raise ValueError("mandatory prefetch request limit must be positive")
+    if retries <= 0:
+        raise ValueError("mandatory prefetch recovery windows must be positive")
+
+    keys = tuple(dict.fromkeys(bytes(key) for key in reference_keys))
+    if not keys:
+        return (), ()
+    base_frames = (len(keys) + request_limit - 1) // request_limit
+    start = max(1, deadline - base_frames * retries)
+    return keys, tuple(range(start, deadline))
 
 
 def plan_boot_requests(

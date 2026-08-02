@@ -119,9 +119,10 @@ automatically sized earlier window and prefetches its bright reference into
 one contiguous block at the less-live edge of the VRAM pool. Already-resident
 reference keys remain in place instead of becoming redundant cold transfers;
 new keys prefer the block and may spill only to another safe slot while every
-block destination is still live. The block leaves a conservative exact-load
-batch for the anchor and does not redirect ordinary visible allocation into
-its future destinations. Prefetch never replaces a
+block destination is still live. Every distinct reference key is included in
+the advance plan because the exact anchor-frame Prg ceiling depends on earlier
+physical control blocks. The block does not redirect ordinary visible
+allocation into its future destinations. Prefetch never replaces a
 slot referenced by either the current or preceding display, because a pattern
 transfer may span multiple VBlanks before the name-table flip completes.
 Visible updates may reclaim a prefetched slot when the pool is temporarily
@@ -582,8 +583,9 @@ encoderは黒anchorで正確なindexed referenceをloadし、選択したfade fr
 変えます。通常映像から始まるfade-outは、自動算出した先行windowにquality、control、cold、
 Prg容量を予約します。明るいreferenceのうち既にresidentのkeyは不要なcold転送をせずその場に
 維持し、新しいkeyはVRAM poolのうち表示中slotが少ない端の連続blockを優先します。block内の
-全destinationがまだ表示中の場合だけ、別の安全なslotへ退避します。anchor自身には保守的な
-exact-load batchを残します。このblockの将来destinationへ
+全destinationがまだ表示中の場合だけ、別の安全なslotへ退避します。anchor自身に保守的な
+exact-load量を仮定せず、異なるreference keyをすべて先行planへ含めます。anchor frameの正確な
+Prg上限は、それ以前の物理control blockが確定して初めて決まるためです。このblockの将来destinationへ
 通常の表示allocationを誘導しません。pattern transferはname-table flipの完了前に複数VBlankへ
 またがる場合があるため、prefetchは現在または直前の表示が参照するslotを置き換えません。
 poolが一時的に満杯なら表示updateがprefetch済みslotを回収できますが、自動算出する準備windowは

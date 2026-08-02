@@ -1725,35 +1725,25 @@ def main():
     for shot in fade_layout.shots:
         if shot.left_black is not None or shot.anchor == 0:
             continue
-        reference_keys = tuple(dict.fromkeys(
-            Q_pidx[int(shot.reference)][cell].tobytes()
-            for cell in range(C_CELLS)
-        ))
-        # The bright anchor can still install a conservative baseline batch.
-        # Prefetch only the remainder: dedicating the entire reference would
-        # leave too little working VRAM for the preceding moving frames and
-        # fragment their cold DMA runs.
-        anchor_capacity = max(
-            0,
-            min(MAX_COLD, RAW_PREFETCH_BUDGET_FLOOR_PATTERNS)
-            - 2 * RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
+        reference_keys, window = raw_prefetch.plan_mandatory_reference_window(
+            (
+                Q_pidx[int(shot.reference)][cell].tobytes()
+                for cell in range(C_CELLS)
+            ),
+            deadline=int(shot.anchor),
+            max_requests_per_frame=RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
         )
-        required_keys = max(0, len(reference_keys) - anchor_capacity)
-        reference_keys = reference_keys[:required_keys]
         if not reference_keys:
             continue
-        window_frames = (
-            len(reference_keys) + RAW_PREFETCH_MAX_REQUESTS_PER_FRAME - 1
-        ) // RAW_PREFETCH_MAX_REQUESTS_PER_FRAME
         # Optional raw prediction can lose an entire busy frame's spare room,
         # and a forced destination may remain part of the preceding display
-        # while a multi-VBlank transfer finishes.  Give mandatory one-sided
-        # fade preparation two equal-length recovery windows; the live loop
-        # then recomputes the per-frame catch-up count from the patterns still
-        # missing, without any source-time override.
-        window_frames *= 3
+        # while a multi-VBlank transfer finishes.  The helper retains every
+        # distinct reference key and derives three equal retry windows.  The
+        # live loop recomputes each catch-up count from the patterns still
+        # missing, without assuming anchor-frame delivery or a source-time
+        # override.
         plan_fade_reference(
-            range(max(1, int(shot.anchor) - window_frames), int(shot.anchor)),
+            window,
             int(shot.anchor),
             int(shot.reference),
             request_limit=RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,

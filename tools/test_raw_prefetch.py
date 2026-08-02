@@ -9,11 +9,34 @@ import sys
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from raw_prefetch import PrefetchForecast, forecast_requests, plan_boot_requests
+from raw_prefetch import (
+    PrefetchForecast,
+    forecast_requests,
+    plan_boot_requests,
+    plan_mandatory_reference_window,
+)
 from upgrade_planner import DemandPrediction
 
 
 class RawPrefetchForecastTests(unittest.TestCase):
+    def test_mandatory_reference_keeps_every_unique_key(self) -> None:
+        keys, window = plan_mandatory_reference_window(
+            (b"a", b"b", b"a", b"c", b"d", b"e"),
+            deadline=20,
+            max_requests_per_frame=2,
+        )
+        self.assertEqual(keys, (b"a", b"b", b"c", b"d", b"e"))
+        self.assertEqual(window, tuple(range(11, 20)))
+
+    def test_mandatory_reference_window_starts_after_frame_zero(self) -> None:
+        keys, window = plan_mandatory_reference_window(
+            (b"a", b"b", b"c"),
+            deadline=3,
+            max_requests_per_frame=1,
+        )
+        self.assertEqual(keys, (b"a", b"b", b"c"))
+        self.assertEqual(window, (1, 2))
+
     def test_requests_shared_patterns_from_an_overfull_future_frame(self) -> None:
         a = np.zeros((4, 4), np.uint8)
         b = np.ones((4, 4), np.uint8)
