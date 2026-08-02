@@ -6,7 +6,14 @@ from dataclasses import dataclass
 
 
 LIST_TAG = 0x8000
-COUNT_MASK = 0x7FFF
+FRAME_TYPE_SHIFT = 13
+FRAME_TYPE_MASK = 0x6000
+COUNT_MASK = 0x1FFF
+FRAME_NORMAL = 0
+FRAME_FADE_IN = 1
+FRAME_FADE_OUT = 2
+FRAME_RESERVED = 3
+INLINE_CRAM_BYTES = 128
 SHADOW_ENTRY_BYTES = 2
 LIST_ITEM_BYTES = 4
 
@@ -47,11 +54,24 @@ class FrameCost:
     added_bytes: int
 
 
-def encode_count(count: int, use_list: bool) -> int:
+def encode_count(
+        count: int,
+        use_list: bool,
+        frame_type: int = FRAME_NORMAL,
+) -> int:
     value = int(count)
     if not 0 <= value <= COUNT_MASK:
         raise ValueError(f"shadow update count outside 0..{COUNT_MASK}: {count}")
-    return value | (LIST_TAG if use_list else 0)
+    kind = int(frame_type)
+    if kind not in (FRAME_NORMAL, FRAME_FADE_IN, FRAME_FADE_OUT):
+        raise ValueError(f"unsupported frame type: {frame_type}")
+    if kind != FRAME_NORMAL and value:
+        raise ValueError("fade frames cannot carry shadow updates")
+    return (
+        value
+        | kind << FRAME_TYPE_SHIFT
+        | (LIST_TAG if use_list else 0)
+    )
 
 
 def decode_count(raw: int) -> tuple[int, bool]:
@@ -59,6 +79,17 @@ def decode_count(raw: int) -> tuple[int, bool]:
     if not 0 <= value <= 0xFFFF:
         raise ValueError(f"raw shadow update count outside u16: {raw}")
     return value & COUNT_MASK, bool(value & LIST_TAG)
+
+
+def decode_frame_type(raw: int) -> int:
+    value = int(raw)
+    if not 0 <= value <= 0xFFFF:
+        raise ValueError(f"raw shadow update count outside u16: {raw}")
+    return (value & FRAME_TYPE_MASK) >> FRAME_TYPE_SHIFT
+
+
+def has_inline_cram(frame_type: int) -> bool:
+    return int(frame_type) in (FRAME_FADE_IN, FRAME_FADE_OUT)
 
 
 def bitmap_bytes(total_cells: int) -> int:

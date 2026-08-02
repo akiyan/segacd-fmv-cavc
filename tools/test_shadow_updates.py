@@ -43,8 +43,21 @@ class ShadowUpdateTests(unittest.TestCase):
                 shadow_updates.encode_count(1120, True)),
             (1120, True),
         )
+        raw = shadow_updates.encode_count(
+            0, False, shadow_updates.FRAME_FADE_OUT)
+        self.assertEqual(shadow_updates.decode_count(raw), (0, False))
+        self.assertEqual(
+            shadow_updates.decode_frame_type(raw),
+            shadow_updates.FRAME_FADE_OUT,
+        )
         with self.assertRaises(ValueError):
-            shadow_updates.encode_count(0x8000, False)
+            shadow_updates.encode_count(0x2000, False)
+        with self.assertRaisesRegex(ValueError, "cannot carry"):
+            shadow_updates.encode_count(
+                1, False, shadow_updates.FRAME_FADE_IN)
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            shadow_updates.encode_count(
+                0, False, shadow_updates.FRAME_RESERVED)
 
 
 if __name__ == "__main__":
