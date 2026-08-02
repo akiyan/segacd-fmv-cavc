@@ -218,7 +218,7 @@ per-frame source totals, and source-aware runs. It materializes:
 
 ## Player Path
 
-On-disc format version 24 carries the source in each cold run descriptor. The descriptor is
+On-disc format version 25 carries the source in each cold run descriptor. The descriptor is
 authoritative for physical pattern transfer. Source selection changes the
 32-byte read address, not the destination VRAM slot or displayed name value.
 
@@ -498,7 +498,7 @@ cold flag、frame-0 rule、preload capacity、frameごとのsource total、sourc
 
 ## Player経路
 
-On-disc format version 24は各cold run descriptorにsourceを持ちます。物理pattern transferではdescriptorが
+On-disc format version 25は各cold run descriptorにsourceを持ちます。物理pattern transferではdescriptorが
 正本です。Source choiceは32-byte read addressを変えますが、destination VRAM slotや
 表示name valueは変えません。
 
