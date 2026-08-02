@@ -14,10 +14,10 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | Stage | Processing |
 |---|---|
 | **Extract** | Decode the source into encoder frames, comparison frames, and mono audio. |
-| **Palette** | Divide the movie into palette segments, train each segment's CRAM palettes, and automatically detect static shots that fade through black without source-time inputs. |
+| **Palette** | Divide the movie into palette segments, train each segment's CRAM palettes, and automatically detect spatially static shots with a black-bounded fade on one or both sides, without source-time inputs. |
 | **Quantize** | Convert every frame into palette assignments and indexed 8x8 patterns; selected fades freeze one exact reference image and derive their inline CRAM steps. |
-| **Forecast** | Calculate one-pass future demand, physical delivery limits, quality reserves, and boot-preload use. |
-| **Decide** | Select each frame's exact or reused patterns, allocate VRAM slots, assign pattern sources, and commit the physical budget. |
+| **Forecast** | Calculate one-pass future demand, physical delivery limits, quality reserves, boot-preload use, and mandatory reference-prefetch room for one-sided fade-outs. |
+| **Decide** | Select each frame's exact or reused patterns, allocate VRAM slots, catch up any reclaimed fade-reference prefetch, assign pattern sources, and commit the physical budget. |
 | **Finalize** | Verify the complete physical schedule and write the numeric traces and decision log. |
 
 ## Measured Time
@@ -55,10 +55,10 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | 工程 | 処理 |
 |---|---|
 | **Extract** | ソースをエンコーダ用フレーム、比較用フレーム、モノラル音声へ展開します。 |
-| **Palette** | 映像をパレット区間に分け、区間ごとのCRAMパレットを学習し、sourceのtime指定なしで黒fadeする静止shotを自動検出します。 |
+| **Palette** | 映像をパレット区間に分け、区間ごとのCRAMパレットを学習し、sourceのtime指定なしで片側または両側が黒に接するfadeのうち、空間的に静止したshotを自動検出します。 |
 | **Quantize** | 全フレームをパレット割り当てとインデックス形式の8x8パターンへ変換し、選択したfadeは1枚の正確なreference imageを固定してinline CRAMの段階を決めます。 |
-| **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用を1パスで計算します。 |
-| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、VRAMスロットを割り当て、パターン供給元を決め、物理予算を確定します。 |
+| **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用、片側fade-outに必須のreference prefetch容量を1パスで計算します。 |
+| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、VRAMスロットを割り当て、回収されたfade reference prefetchを取り戻し、パターン供給元と物理予算を確定します。 |
 | **Finalize** | 全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
 
 ## 実測時間
