@@ -38,9 +38,198 @@ class FadeShot:
 
     @property
     def anchor(self) -> int:
-        """Black frame on which the encoder can prepare the reference image."""
+        """First black frame on which the encoder can prepare the reference."""
 
-        return self.left_black.end
+        return self.left_black.start
+
+
+@dataclass(frozen=True)
+class FadeLayout:
+    """Palette segments and per-frame targets for selected fade shots."""
+
+    shots: tuple[FadeShot, ...]
+    frame_segments: np.ndarray
+    palette_sources: tuple[int, ...]
+    entry_scales: tuple[float, ...]
+    reference_frames: np.ndarray
+    desired_scales: np.ndarray
+    phases: np.ndarray
+    anchors: tuple[int, ...]
+    preparation_frames: tuple[int, ...]
+    restorations: tuple[int, ...]
+
+
+def connected_groups(shots) -> tuple[tuple[FadeShot, ...], ...]:
+    """Group detected shots that share the intervening black run."""
+
+    ordered = sorted(shots, key=lambda shot: (shot.start, shot.end))
+    groups: list[list[FadeShot]] = []
+    for shot in ordered:
+        if (groups
+                and groups[-1][-1].right_black == shot.left_black):
+            groups[-1].append(shot)
+        else:
+            groups.append([shot])
+    return tuple(tuple(group) for group in groups)
+
+
+def select_groups_with_segment_capacity(
+        shots,
+        existing_boundaries,
+        *,
+        frame_count: int,
+        max_segments: int,
+) -> tuple[FadeShot, ...]:
+    """Keep complete fade groups that fit the fixed player palette tables.
+
+    Every shot needs a black preparation segment at its anchor.  The end of a
+    connected group needs one normal segment to restore the ordinary palette.
+    An unrelated pre-existing palette boundary inside such a group would make
+    the CRAM-only state ambiguous, so that group stays on the normal path.
+    """
+
+    count = int(frame_count)
+    capacity = int(max_segments)
+    boundaries = {int(frame) for frame in existing_boundaries}
+    if count < 0 or capacity <= 0:
+        raise ValueError("frame_count must be non-negative and max_segments positive")
+    if count:
+        boundaries.add(0)
+    if any(frame < 0 or frame >= count for frame in boundaries):
+        raise ValueError("existing palette boundary is outside the movie")
+
+    candidates = []
+    for group in connected_groups(shots):
+        restore = group[-1].right_black.end + 1
+        event_frames = {shot.anchor for shot in group}
+        if restore < count:
+            event_frames.add(restore)
+        benefit = sum(shot.end - shot.start + 1 for shot in group)
+        replaced = set(range(group[0].anchor, min(restore, count)))
+        candidates.append(
+            (benefit, group[0].start, group, event_frames, replaced))
+
+    selected: list[FadeShot] = []
+    for _benefit, _start, group, events, replaced in sorted(
+            candidates, key=lambda item: (-item[0], item[1])):
+        expanded = (boundaries - replaced) | events
+        if len(expanded) > capacity:
+            continue
+        boundaries = expanded
+        selected.extend(group)
+    return tuple(sorted(selected, key=lambda shot: shot.start))
+
+
+def scaled_palette(
+        palette,
+        scale: float,
+        *,
+        preserve=((0, 0), (0, 14)),
+) -> np.ndarray:
+    """Scale one ``(4, 15, 3)`` RGB333 palette while preserving HUD colours."""
+
+    source = np.asarray(palette, dtype=np.uint8)
+    if source.shape != (4, 15, 3):
+        raise ValueError("fade palette must have shape (4, 15, 3)")
+    value = float(scale)
+    if not np.isfinite(value) or value < 0:
+        raise ValueError("fade palette scale must be finite and non-negative")
+    result = np.clip(np.rint(source.astype(np.float64) * value), 0, 7).astype(np.uint8)
+    for line, index in preserve:
+        if not (0 <= int(line) < 4 and 0 <= int(index) < 15):
+            raise ValueError("preserved fade palette entry is outside the palette")
+        result[int(line), int(index)] = source[int(line), int(index)]
+    return result
+
+
+def build_layout(
+        shots,
+        original_frame_segments,
+        *,
+        max_segments: int,
+) -> FadeLayout:
+    """Select detected groups and overlay their black preparation segments."""
+
+    original = np.asarray(original_frame_segments, dtype=np.int64)
+    if original.ndim != 1:
+        raise ValueError("frame segments must be one-dimensional")
+    count = len(original)
+    if count:
+        if int(original[0]) != 0 or np.any(np.diff(original) < 0):
+            raise ValueError("frame segments must be forward-only from segment zero")
+        boundaries = np.flatnonzero(
+            np.r_[True, original[1:] != original[:-1]])
+    else:
+        boundaries = np.zeros(0, np.int64)
+    selected = select_groups_with_segment_capacity(
+        shots,
+        boundaries,
+        frame_count=count,
+        max_segments=max_segments,
+    )
+
+    events: dict[int, tuple[int, float]] = {
+        int(frame): (int(original[int(frame)]), 1.0)
+        for frame in boundaries
+    }
+    anchors = tuple(shot.anchor for shot in selected)
+    restorations = []
+    for group in connected_groups(selected):
+        restore = group[-1].right_black.end + 1
+        for frame in tuple(events):
+            if group[0].anchor <= frame < min(restore, count):
+                del events[frame]
+        if restore < count:
+            events[restore] = (int(original[restore]), 1.0)
+            restorations.append(restore)
+    for shot in selected:
+        events[shot.anchor] = (int(original[shot.reference]), 0.0)
+
+    frame_segments = np.zeros(count, np.int32)
+    palette_sources: list[int] = []
+    entry_scales: list[float] = []
+    ordered_events = sorted(events.items())
+    for segment, (frame, (source, scale)) in enumerate(ordered_events):
+        end = ordered_events[segment + 1][0] if segment + 1 < len(ordered_events) else count
+        frame_segments[frame:end] = segment
+        palette_sources.append(source)
+        entry_scales.append(scale)
+    if len(palette_sources) > int(max_segments):
+        raise AssertionError("selected fade layout exceeds palette capacity")
+
+    references = np.full(count, -1, np.int32)
+    desired = np.full(count, np.nan, np.float64)
+    phases = np.zeros(count, np.uint8)
+    preparation_frames = set()
+    for shot in selected:
+        references[shot.anchor:shot.right_black.end + 1] = shot.reference
+        desired[shot.start:shot.end + 1] = shot.scales
+        phases[shot.start:shot.peak + 1] = 1
+        phases[shot.peak + 1:shot.end + 1] = 2
+        desired[shot.right_black.start:shot.right_black.end + 1] = 0.0
+        phases[shot.right_black.start:shot.right_black.end + 1] = 2
+    # A shared black frame belongs to the next shot's ordinary preparation
+    # segment, not to the previous shot's CRAM-only fade-out control.
+    for shot in selected:
+        preparation_frames.update(
+            range(shot.left_black.start, shot.left_black.end + 1))
+        desired[shot.left_black.start:shot.left_black.end + 1] = np.nan
+        phases[shot.left_black.start:shot.left_black.end + 1] = 0
+        references[shot.left_black.start:shot.left_black.end + 1] = (
+            shot.reference)
+
+    return FadeLayout(
+        shots=selected,
+        frame_segments=frame_segments,
+        palette_sources=tuple(palette_sources),
+        entry_scales=tuple(entry_scales),
+        reference_frames=references,
+        desired_scales=desired,
+        phases=phases,
+        anchors=anchors,
+        preparation_frames=tuple(sorted(preparation_frames)),
+        restorations=tuple(restorations),
+    )
 
 
 def _black_runs(mask: np.ndarray) -> tuple[BlackRun, ...]:

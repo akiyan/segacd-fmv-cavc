@@ -49,6 +49,7 @@ from encode_config import consume_config_arg, profile_identity  # noqa: E402
 CONFIG_PROFILE = consume_config_arg(
     sys.argv, required=__name__ == "__main__")
 import av_config  # noqa: E402
+import fade_frames  # noqa: E402
 import ima_adpcm  # noqa: E402
 import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
@@ -718,9 +719,12 @@ def _frame_features(path):
     # Low-detail tiles are solid after flattening, so one RGB333 colour is
     # enough to reconstruct them without retaining a second full movie copy.
     flat_color = flattened[:, 0].copy()
+    fade_probe = image_u8.reshape(
+        TROWS, TILE, TCOLS, TILE, 3
+    ).mean(axis=(1, 3)).reshape(C_CELLS, 3).astype(np.float32)
     return (
         tiles, strengths, detail.astype(np.float32),
-        flatten_mask, flat_color, dark, uniform,
+        flatten_mask, flat_color, fade_probe, dark, uniform,
     )
 
 
@@ -735,6 +739,7 @@ class FrameFeatureCache:
         self.detail = np.empty((n, C_CELLS), dtype=np.float32)
         self.flatten_mask = np.empty((n, C_CELLS), dtype=bool)
         self.flat_color = np.empty((n, C_CELLS, 3), dtype=np.uint8)
+        self.fade_probe = np.empty((n, C_CELLS, 3), dtype=np.float32)
         dark = np.empty(n, dtype=np.float64)
         uniform = np.empty(n, dtype=np.float64)
 
@@ -755,6 +760,7 @@ class FrameFeatureCache:
             for index, result in enumerate(results):
                 (self.tiles[index], self.edge_strength[index], self.detail[index],
                  self.flatten_mask[index], self.flat_color[index],
+                 self.fade_probe[index],
                  dark[index], uniform[index]) = result
         finally:
             if pool is not None:
@@ -763,6 +769,7 @@ class FrameFeatureCache:
         resident = (
             self.tiles.nbytes + self.edge_strength.nbytes + self.detail.nbytes
             + self.flatten_mask.nbytes + self.flat_color.nbytes
+            + self.fade_probe.nbytes
             + dark.nbytes + uniform.nbytes)
         print(f"  palette frame cache: {resident / (1024 ** 2):.1f} MiB", flush=True)
 
@@ -818,6 +825,54 @@ def render_cells(idx, assign, pals_arr):
     full16[:, 1:] = pals_arr
     rgb333 = full16[assign[:, None], idx]                       # (C,64,3)
     return rgb333_to_rgb888(rgb333).reshape(C, TILE, TILE, 3)
+
+
+def reserve_fade_hud_colour(indices, assignments, palette):
+    """Keep P0/index15 out of movie pixels so DEBUG text stays visible."""
+
+    result = np.asarray(indices, np.uint8).copy()
+    assign = np.asarray(assignments)
+    pals = np.asarray(palette, np.int16)
+    if result.ndim != 2 or result.shape[1] != TILE * TILE:
+        raise ValueError("fade reference indices have an invalid shape")
+    if assign.shape != (len(result),) or pals.shape != (4, 15, 3):
+        raise ValueError("fade reference palette arrays have incompatible shapes")
+    replacement = 1 + int(np.argmin(np.sum(
+        (pals[0, :14] - pals[0, 14]) ** 2,
+        axis=1,
+    )))
+    p0 = assign == 0
+    result[p0] = np.where(result[p0] == 15, replacement, result[p0])
+    if np.any(result[p0] == 15):
+        raise AssertionError("fade reference still uses the DEBUG text colour")
+    return result
+
+
+def best_fade_palette(
+        palette, indices, assignments, target_rgb, preferred_scale):
+    """Choose the lowest-error RGB333 CRAM scale for one source frame."""
+
+    target = np.asarray(target_rgb, np.uint8)
+    best = None
+    seen = set()
+    for step in range(65):
+        scale = step / 64.0
+        candidate = fade_frames.scaled_palette(palette, scale)
+        key = candidate.tobytes()
+        if key in seen:
+            continue
+        seen.add(key)
+        rendered = render_cells(indices, assignments, candidate)
+        error = int(np.square(
+            rendered.astype(np.int32) - target.astype(np.int32),
+            dtype=np.int64,
+        ).sum())
+        score = (error, abs(scale - float(preferred_scale)), step)
+        if best is None or score < best[0]:
+            best = score, candidate
+    if best is None:
+        raise AssertionError("fade palette search produced no candidates")
+    return best[1]
 
 
 def own_pattern_cache_rgb(rgb):
@@ -1286,16 +1341,6 @@ def main():
     n = len(frames)
     wordram_layout = pattern_supply.word_ram_layout(
         n, C_CELLS, MAX_COLD)
-    body_fresh = stream_schedule.body_fresh_byte_supply(
-        n,
-        FPS,
-        cells=C_CELLS,
-        audio_frame_bytes=AUDIO_CONTROL_BYTES,
-    )
-    body_gross_bytes = np.asarray(body_fresh["gross"], np.int64)
-    body_fixed_control_bytes = np.asarray(
-        body_fresh["fixed_control"], np.int64)
-    body_variable_supply_bytes = np.asarray(body_fresh["variable"], np.int64)
     if ACTIVE_TILES < C_CELLS:
         ever_nonblack = np.zeros((TROWS, TCOLS), dtype=bool)
         for frame_path in frames:
@@ -1360,6 +1405,38 @@ def main():
         frame_cache = FrameFeatureCache(frames) if PAL_ALGO == MOSAIC_GM else None
         _global_pals, seg_pals, frame_seg, seg_bounds, palette_stats = segment_and_train(
             frames, frame_cache=frame_cache)
+    if frame_cache is not None:
+        fade_probes = frame_cache.fade_probe
+        fade_dark = frame_cache.segment_metrics[0]
+    else:
+        fade_probes = np.empty((n, C_CELLS, 3), np.float32)
+        fade_dark = np.empty(n, np.float64)
+        for frame, path in enumerate(frames):
+            features = _frame_features(path)
+            fade_probes[frame] = features[5]
+            fade_dark[frame] = features[6]
+    fade_candidates = fade_frames.detect_fade_shots(fade_probes, fade_dark)
+    fade_layout = fade_frames.build_layout(
+        fade_candidates,
+        frame_seg,
+        max_segments=av_config.PALTAB_MAX_SEG,
+    )
+    original_seg_pals = seg_pals
+    seg_pals = [
+        np.asarray(original_seg_pals[source], np.uint8).copy()
+        for source in fade_layout.palette_sources
+    ]
+    frame_seg = fade_layout.frame_segments
+    seg_bounds = [
+        frame for frame in range(1, n)
+        if frame_seg[frame] != frame_seg[frame - 1]
+    ]
+    palette_stats["fade_detection"] = {
+        "candidate_shots": len(fade_candidates),
+        "selected_shots": len(fade_layout.shots),
+        "anchors": list(fade_layout.anchors),
+        "restorations": list(fade_layout.restorations),
+    }
     palette_stats["spatial_assignment"] = {
         "enabled": bool(PAL_ALGO == MOSAIC_GM and PAL_SEAM_WEIGHT > 0),
         "seam_weight": float(PAL_SEAM_WEIGHT),
@@ -1368,6 +1445,13 @@ def main():
     if SEGPAL_ON:
         print(f"  per-segment palettes: {len(seg_pals)}区間, CRAM差替 {len(seg_bounds)}点 "
               f"(candidates={palette_stats['candidate_segments']})")
+    print(
+        "  automatic black fades: "
+        f"detected={len(fade_candidates)} selected={len(fade_layout.shots)} "
+        f"anchors={list(fade_layout.anchors)}; "
+        "no source time ranges",
+        flush=True,
+    )
     _t = _mark("Palette", _t)
 
     border_mask = border_weight_mask()
@@ -1514,25 +1598,154 @@ def main():
             "Quantize", use_gpu=True, gpu_worker_limit=4):
         Q_detail, Q_assign, Q_pidx = precompute_quant(
             frames, seg_pals, frame_seg, frame_cache=frame_cache)
-    del frame_cache
     # Both DEBUG extremes are pinned before quantization. Verify that the
     # lossless index-15 canonicalizer preserves rendered pixels.
     seg_pals, pal15_stats = canonicalize_p0_index15(
         seg_pals, frame_seg, Q_assign, Q_pidx)
+
+    # A black anchor is an ordinary full-refresh frame whose hidden indexed
+    # image is the following shot's bright reference.  Every fade frame then
+    # reuses that exact image and changes only CRAM.  P0/index15 remains
+    # reserved for DEBUG text, so fade references remap its movie pixels to the
+    # nearest other P0 colour before any frame is frozen to the reference.
+    fade_references = {}
+    for reference in sorted(set(
+            int(value) for value in fade_layout.reference_frames
+            if int(value) >= 0)):
+        segment = int(frame_seg[reference])
+        fade_references[reference] = (
+            reserve_fade_hud_colour(
+                Q_pidx[reference], Q_assign[reference], seg_pals[segment]),
+            np.asarray(Q_assign[reference], np.int8).copy(),
+            np.asarray(Q_detail[reference]).copy(),
+        )
+    for frame, raw_reference in enumerate(fade_layout.reference_frames):
+        reference = int(raw_reference)
+        if reference < 0:
+            continue
+        indices, assignments, detail = fade_references[reference]
+        Q_pidx[frame] = indices
+        Q_assign[frame] = assignments
+        Q_detail[frame] = detail
+
+    segment_entry_cram = np.asarray([
+        fade_frames.scaled_palette(palette, scale)
+        for palette, scale in zip(
+            seg_pals, fade_layout.entry_scales, strict=True)
+    ], np.uint8)
+    frame_types = np.full(n, shadow_updates.FRAME_NORMAL, np.uint8)
+    frame_cram = np.zeros((n, 4, 15, 3), np.uint8)
+    desired_cram = {}
+    for frame in np.flatnonzero(np.isfinite(fade_layout.desired_scales)):
+        reference = int(fade_layout.reference_frames[frame])
+        if reference < 0:
+            raise AssertionError(f"fade frame {frame} has no reference image")
+        if frame_cache is not None:
+            target_rgb = rgb333_to_rgb888(
+                frame_cache.tiles[frame]
+            ).reshape(C_CELLS, TILE, TILE, 3)
+        else:
+            source_rgb333 = tile_blocks(to_rgb333(np.asarray(
+                Image.open(frames[frame]).convert("RGB"), np.uint8)))
+            target_rgb = rgb333_to_rgb888(source_rgb333).reshape(
+                C_CELLS, TILE, TILE, 3)
+        indices, assignments, _detail = fade_references[reference]
+        segment = int(frame_seg[frame])
+        desired_cram[int(frame)] = best_fade_palette(
+            seg_pals[segment],
+            indices,
+            assignments,
+            target_rgb,
+            float(fade_layout.desired_scales[frame]),
+        )
+    del frame_cache
+    del fade_probes
+
+    active_cram = np.asarray(segment_entry_cram[0], np.uint8).copy()
+    active_frame_cram = np.empty((n, 4, 15, 3), np.uint8)
+    for frame in range(n):
+        if frame and int(frame_seg[frame]) != int(frame_seg[frame - 1]):
+            active_cram = np.asarray(
+                segment_entry_cram[int(frame_seg[frame])], np.uint8).copy()
+        target = desired_cram.get(frame)
+        if target is not None and not np.array_equal(target, active_cram):
+            phase = int(fade_layout.phases[frame])
+            if phase not in (
+                    shadow_updates.FRAME_FADE_IN,
+                    shadow_updates.FRAME_FADE_OUT):
+                raise AssertionError(f"fade frame {frame} has no direction")
+            frame_types[frame] = phase
+            frame_cram[frame] = target
+            active_cram = target.copy()
+        active_frame_cram[frame] = active_cram
+
+    # A one-frame black gap cannot necessarily install the next reference
+    # within the cold cap.  During a connected fade sequence, use the prior
+    # static shot's CRAM-only frames to preload the following reference into
+    # otherwise unreferenced VRAM slots.  This is derived entirely from the
+    # detected group; there is no timeline or profile-side range override.
+    fade_prefetch_plan = {}
+    for group in fade_frames.connected_groups(fade_layout.shots):
+        for previous_shot, next_shot in zip(group, group[1:]):
+            window = tuple(range(
+                int(previous_shot.start), int(next_shot.left_black.start)))
+            if not window:
+                continue
+            reference = int(next_shot.reference)
+            keys = tuple(dict.fromkeys(
+                Q_pidx[reference][cell].tobytes()
+                for cell in range(C_CELLS)
+            ))
+            per_frame = (len(keys) + len(window) - 1) // len(window)
+            remaining = len(keys)
+            for frame in window:
+                planned = min(per_frame, remaining)
+                fade_prefetch_plan[int(frame)] = (
+                    int(next_shot.left_black.start), keys, planned)
+                remaining -= planned
+            if remaining:
+                raise AssertionError(
+                    "fade prefetch window did not cover its reference keys")
+
     _t = _mark("Quantize", _t)
     # palettes.bin is the legacy fallback CRAM image.  In segmented mode the
     # separately trained global palette was never the actual initial CRAM, so
-    # write canonical segment 0 and keep every consumer aligned with PALTAB.
-    (OUT / "palettes.bin").write_bytes(pals_to_bytes(list(seg_pals[0])))
+    # write the actual entry palette and keep every consumer aligned with PALTAB.
+    (OUT / "palettes.bin").write_bytes(
+        pals_to_bytes(list(segment_entry_cram[0])))
     np.savez(OUT / "seg_palettes.npz",
              seg_pals=np.asarray(seg_pals, np.uint8),
-             frame_seg=np.asarray(frame_seg, np.int32))
+             segment_entry_cram=segment_entry_cram,
+             frame_seg=np.asarray(frame_seg, np.int32),
+             frame_types=frame_types,
+             frame_cram=frame_cram,
+             active_frame_cram=active_frame_cram)
     print(f"  P0 index15 globally brightest: row swaps "
           f"{pal15_stats['row_swapped_segments']}/{pal15_stats['segments']}, "
           f"index swaps {pal15_stats['index_swapped_segments']}/{pal15_stats['segments']}; "
           f"RGB identity verified for {pal15_stats['verified_pixels']} pixels "
           f"({pal15_stats['reassigned_tiles']} tile assignments and "
           f"{pal15_stats['reindexed_pixels']} indices remapped, frame0 included)")
+    print(
+        "  CRAM fade controls: "
+        f"in={int(np.count_nonzero(frame_types == shadow_updates.FRAME_FADE_IN))} "
+        f"out={int(np.count_nonzero(frame_types == shadow_updates.FRAME_FADE_OUT))}; "
+        f"frames={np.flatnonzero(frame_types).tolist()}; "
+        f"prefetch_frames={sorted(fade_prefetch_plan)}",
+        flush=True,
+    )
+
+    body_fresh = stream_schedule.body_fresh_byte_supply(
+        n,
+        FPS,
+        cells=C_CELLS,
+        audio_frame_bytes=AUDIO_CONTROL_BYTES,
+        frame_types=frame_types,
+    )
+    body_gross_bytes = np.asarray(body_fresh["gross"], np.int64)
+    body_fixed_control_bytes = np.asarray(
+        body_fresh["fixed_control"], np.int64)
+    body_variable_supply_bytes = np.asarray(body_fresh["variable"], np.int64)
 
     # Forecast: build future demand and physical-delivery limits.
     # Optional quality upgrades use a whole-movie reserve plan. The dry run
@@ -1549,6 +1762,10 @@ def main():
     cram_switch_frames = np.zeros(n, bool)
     if n > 1:
         cram_switch_frames[1:] = frame_seg[1:] != frame_seg[:-1]
+    fade_prepare_mask = np.zeros(n, bool)
+    if fade_layout.preparation_frames:
+        fade_prepare_mask[np.asarray(
+            fade_layout.preparation_frames, np.int64)] = True
     def build_forecast():
         """Build the Forecast stage's demand and boot-prefetch plan."""
         # Only changes that fit Near may degrade gracefully. Anything beyond
@@ -1557,7 +1774,7 @@ def main():
         main_protected = np.zeros((n, C_CELLS), bool)
         previous_target_rgb = None
         for i in range(n):
-            target_pals = seg_pals[int(frame_seg[i])]
+            target_pals = active_frame_cram[i]
             target_rgb = render_cells(Q_pidx[i], Q_assign[i], target_pals)
             if i == 0:
                 main_protected[i] = True
@@ -1742,10 +1959,15 @@ def main():
         0,
     )
     maximum_control_blocks = stream_schedule.control_block_lengths(
-        np.full(n, C_CELLS, np.int64),
+        np.where(
+            frame_types == shadow_updates.FRAME_NORMAL,
+            C_CELLS,
+            0,
+        ).astype(np.int64),
         np.full(n, MAX_COLD, np.int64),
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
+        frame_types=frame_types,
     )
     maximum_control_blocks[0] = 0
     physical_budget_state = physical_budget.SharedSectorPlanner(
@@ -1785,6 +2007,27 @@ def main():
         demand_prediction.exact_bytes - preload_credit_bytes, 0)
     main_demand = np.maximum(
         demand_prediction.protected_bytes - protected_credit_bytes, 0)
+    # The dry-run allocator advances to the complete exact target even when
+    # its per-frame cold count is clipped.  A multi-frame black preparation
+    # run deliberately does the opposite: it carries unfinished exact work
+    # into the next hidden frame.  Give every such frame its maximum legal
+    # exact-work allowance so the quality planner cannot reserve that budget
+    # for later optional updates.
+    fade_prepare_demand = np.where(
+        fade_prepare_mask,
+        C_CELLS * NAME_BYTES
+        + MAX_COLD * (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES),
+        0,
+    ).astype(np.int64)
+    fade_prefetch_demand = np.zeros(n, np.int64)
+    for frame, (_deadline, _keys, planned) in fade_prefetch_plan.items():
+        fade_prefetch_demand[int(frame)] = (
+            int(planned)
+            * (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES)
+        )
+    fade_mandatory_demand = np.maximum(
+        fade_prepare_demand, fade_prefetch_demand)
+    main_demand = np.maximum(main_demand, fade_mandatory_demand)
     cram_quality_risk_bytes = np.maximum(
         main_demand - upgrade_supply, 0)
     cram_quality_priority_frames = (
@@ -1794,23 +2037,26 @@ def main():
             CRAM_QUALITY_PRIORITY_SEARCH_FRAMES,
         )
     )
-    mandatory_main_demand = np.where(
+    mandatory_main_demand = np.maximum(np.where(
         cram_switch_frames,
         C_CELLS * NAME_BYTES,
         0,
-    ).astype(np.int64)
+    ).astype(np.int64), fade_mandatory_demand)
     main_reserve_plan = upgrade_planner.build_balanced_reserve_plan(
         main_demand,
         upgrade_supply,
         QUALITY_BUDGET_BYTES,
         minimum_demand=mandatory_main_demand,
     )
+    fade_prefetch_mask = fade_prefetch_demand > 0
+    mandatory_main_frames = (
+        cram_switch_frames | fade_prepare_mask | fade_prefetch_mask)
     if np.any(
-        main_reserve_plan.planned_demand[cram_switch_frames]
-        < mandatory_main_demand[cram_switch_frames]
+        main_reserve_plan.planned_demand[mandatory_main_frames]
+        < mandatory_main_demand[mandatory_main_frames]
     ):
         raise AssertionError(
-            "balanced quality plan diluted a mandatory CRAM refresh")
+            "balanced quality plan diluted mandatory CRAM/fade preparation")
     # Optional exact upgrades are not required to avoid Miss.  Keep their
     # complete-demand reserve strict: balancing this deliberately infeasible
     # all-exact trace spends too much saved allowance before unpredicted live
@@ -1928,6 +2174,11 @@ def main():
         _gc.collect()
         _gc.disable()
 
+    fade_prepare_frames = frozenset(
+        int(frame) for frame in fade_layout.preparation_frames)
+    fade_prepare_deadlines = frozenset(
+        int(shot.left_black.end) for shot in fade_layout.shots)
+    cur_pals = np.asarray(segment_entry_cram[0], np.uint8).copy()
     for i in range(n):
         if _loop_profile:
             _lp_frame = {name: 0.0 for name in _lp_sections}
@@ -1936,7 +2187,13 @@ def main():
         pal_swap = SEGPAL_ON and i > 0 and int(frame_seg[i]) != int(frame_seg[i - 1])
         if pal_swap:
             cur_pal[:] = -1                                     # CRAM総入替→全セルを再評価(暗転中で安価)
-        cur_pals = seg_pals[int(frame_seg[i])]
+            cur_pals = np.asarray(
+                segment_entry_cram[int(frame_seg[i])], np.uint8).copy()
+        if int(frame_types[i]) != shadow_updates.FRAME_NORMAL:
+            if pal_swap:
+                raise AssertionError(
+                    f"frame {i}: fade control coincides with a palette segment switch")
+            cur_pals = np.asarray(frame_cram[i], np.uint8).copy()
         cur_seg = int(frame_seg[i])                            # 現フレームのパレットエポック
         # CRAMエミュ: 表示中タイルを現区間パレットで引き直す(pal_swap時は全セルが新CRAMで再色付け
         # =区間跨ぎの旧タイルはここでゴミ色になる)。near/near_keep判定はこの実表示色に対して行う。
@@ -1953,6 +2210,12 @@ def main():
             (plain_keys[c] != committed_plain[c] for c in range(C_CELLS)), bool, C_CELLS)
         pal_changed = assign.astype(np.int16) != cur_pal
         changed = key_changed | pal_changed
+
+        if (int(frame_types[i]) != shadow_updates.FRAME_NORMAL
+                and changed.any()):
+            raise SystemExit(
+                f"automatic fade frame {i} was not fully prepared on its "
+                f"black anchor ({int(changed.sum())} cells still differ)")
 
         diff = np.abs(plain_rgb.astype(np.int32) - cur_rgb.astype(np.int32)).sum(axis=(1, 2, 3))
         detail_norm = detail / (detail.max() + 1e-6)
@@ -2533,6 +2796,36 @@ def main():
         if i == 0:
             for c in range(C_CELLS):
                 commit_frame0_exact(c)
+        elif i in fade_prepare_frames and MIDFAR_ON:
+            # The hidden reference can be larger than one frame's cold-load
+            # cap.  Spend every black frame in the detected run preparing it,
+            # and require exact completion only on that run's final frame.
+            # Retry blocked cells because a later cell can load a shared key
+            # that makes an earlier name-only update affordable.
+            pending = list(order)
+            while pending:
+                deferred = []
+                progressed = False
+                for c in pending:
+                    if commit_unified_exact(c, decision_budget):
+                        progressed = True
+                    else:
+                        deferred.append(c)
+                pending = deferred
+                if not progressed:
+                    break
+            if pending and i in fade_prepare_deadlines:
+                c = int(pending[0])
+                raise SystemExit(
+                    f"automatic fade preparation deadline {i} cannot "
+                    f"prepare exact cell {c} within its frozen "
+                    f"quality/cold limits "
+                    f"(remaining={len(pending)}, "
+                    f"cold={cold_spent}/{frame_max_cold}, "
+                    f"Prg={prg_spent}/{frame_max_prg}, "
+                    f"work={current_reserved_spend()}/{decision_budget}B, "
+                    f"control={int(body_fixed_control_bytes[i]) + name_recs * NAME_BYTES + cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES}/"
+                    f"{frame_control_block_limit}B)")
         elif MIDFAR_ON:
             # Phase 1: establish every free/cheap result without allowing a
             # cold load to consume a later cell's fallback entry.
@@ -2768,23 +3061,38 @@ def main():
             if len(frame0_keys) + boot_inline_requests > frame0_inline_pattern_limit:
                 raise AssertionError(
                     "frame 0 inline patterns exceed the boot staging path")
-        elif RAW_PREFETCH_ON and i > 0:
-            prefetch_spend_limit = min(
-                decision_budget,
-                max(
-                    current_reserved_spend(),
-                    quality_budget + frame_cd
-                    - RAW_PREFETCH_BUDGET_FLOOR_PATTERNS * PATTERN_BYTES,
-                ),
-            )
-            last_deadline = min(n, i + RAW_PREFETCH_LOOKAHEAD + 1)
-            request_room = sum(
-                len(prefetch_forecast.requests[deadline])
-                for deadline in range(i + 1, last_deadline))
+        elif i > 0 and (RAW_PREFETCH_ON or i in fade_prefetch_plan):
+            fade_request = fade_prefetch_plan.get(i)
+            if fade_request is not None:
+                deadline, requested_keys, planned_requests = fade_request
+                prefetch_spend_limit = decision_budget
+                request_groups = ((int(deadline), requested_keys),)
+                request_room = int(planned_requests)
+                request_cap = int(planned_requests)
+                minimum_batch = 1
+            else:
+                prefetch_spend_limit = min(
+                    decision_budget,
+                    max(
+                        current_reserved_spend(),
+                        quality_budget + frame_cd
+                        - RAW_PREFETCH_BUDGET_FLOOR_PATTERNS * PATTERN_BYTES,
+                    ),
+                )
+                last_deadline = min(
+                    n, i + RAW_PREFETCH_LOOKAHEAD + 1)
+                request_groups = tuple(
+                    (deadline, prefetch_forecast.requests[deadline])
+                    for deadline in range(i + 1, last_deadline)
+                )
+                request_room = sum(
+                    len(requests) for _deadline, requests in request_groups)
+                request_cap = RAW_PREFETCH_MAX_REQUESTS_PER_FRAME
+                minimum_batch = RAW_PREFETCH_MIN_BATCH
             cold_room = (
                 frame_max_cold - cold_spent
                 if cold_limit_active
-                else RAW_PREFETCH_MAX_REQUESTS_PER_FRAME)
+                else request_cap)
             prg_room = frame_max_prg - prg_spent
             body_room = max(
                 0,
@@ -2801,20 +3109,20 @@ def main():
                 ) // stream_schedule.RUN_DESCRIPTOR_BYTES,
             )
             capacity = min(
-                RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
+                request_cap,
                 request_room,
                 cold_room,
                 prg_room,
                 body_room,
                 control_room,
             )
-            if capacity >= RAW_PREFETCH_MIN_BATCH:
-                for deadline in range(i + 1, last_deadline):
+            if capacity >= minimum_batch:
+                for deadline, requests in request_groups:
                     deadline_keys = {
                         Q_pidx[deadline][cell].tobytes()
                         for cell in range(C_CELLS)
                     }
-                    for key in prefetch_forecast.requests[deadline]:
+                    for key in requests:
                         if len(frame_prefetch_requests) >= capacity:
                             break
                         if alloc.is_pinned(key, deadline):
@@ -3298,6 +3606,7 @@ def main():
         np.asarray(transfer_runs_log, np.int64),
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
+        frame_types=frame_types,
     )
     prg_limit_over = np.flatnonzero(
         np.arange(len(prg_loads)) > 0,
@@ -3349,6 +3658,7 @@ def main():
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             fill=av_config.PACK_FORWARD_FILL,
             control_sector_envelope=None,
+            frame_types=frame_types,
         ) if PATTERN_SUPPLY_ON else None
         shadow_list_flags = (
             np.asarray(shadow_plan["selected"], np.bool_)
@@ -3365,6 +3675,7 @@ def main():
             cells=C_CELLS,
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             update_lists=shadow_list_flags,
+            frame_types=frame_types,
         )
         fb = fb_baseline + control_lengths - legacy_lengths
         if not np.array_equal(fb.astype(np.int64), exact_body_work):
@@ -3451,6 +3762,7 @@ def main():
                 current_plan=current_supply,
                 n_updates=stats[:, 3].astype(np.int64),
                 update_lists=shadow_list_flags,
+                frame_types=frame_types,
                 fps=FPS,
                 cells=C_CELLS,
                 audio_frame_bytes=AUDIO_CONTROL_BYTES,
@@ -3517,6 +3829,7 @@ def main():
                 cells=C_CELLS,
                 audio_frame_bytes=AUDIO_CONTROL_BYTES,
                 update_lists=shadow_list_flags,
+                frame_types=frame_types,
             )
             physical_schedule = wordbuf_ring.schedule_dict(
                 ring_plan, control_lengths)
@@ -3668,7 +3981,9 @@ def main():
     r2v_palette_switch = np.zeros(n, np.int64)
     if n > 1:
         r2v_palette_switch[1:] = (
-            np.asarray(frame_seg[1:]) != np.asarray(frame_seg[:-1]))
+            (np.asarray(frame_seg[1:]) != np.asarray(frame_seg[:-1]))
+            | (np.asarray(frame_types[1:]) != shadow_updates.FRAME_NORMAL)
+        )
     r2v_nt_words = r2v_model.name_table_words(
         MODE, TCOLS, TROWS, FPS)
     r2v_components = r2v_model.calculate_words(
@@ -3929,6 +4244,7 @@ def main():
              r2v_cram_words=r2v_components["cram_words"],
              r2v_short_runs=r2v_short_runs,
              r2v_palette_switch=r2v_palette_switch,
+             frame_types=frame_types,
              cd1x=CD_RATE,
              body_gross_bytes=body_gross_bytes,
              body_fixed_control_bytes=body_fixed_control_bytes,
@@ -4120,7 +4436,33 @@ def main():
             "pal_algo": PAL_ALGO,
             "pal_stats": palette_stats,
             "seg_pals": [np.asarray(p, np.uint8) for p in seg_pals],  # list of (4,15,3)
+            "segment_entry_cram": np.asarray(segment_entry_cram, np.uint8),
             "frame_seg": np.asarray(frame_seg, np.int32),
+            "fade": {
+                "schema_version": 1,
+                "automatic": True,
+                "frame_types": np.asarray(frame_types, np.uint8),
+                "frame_cram": np.asarray(frame_cram, np.uint8),
+                "active_frame_cram": np.asarray(
+                    active_frame_cram, np.uint8),
+                "anchors": np.asarray(fade_layout.anchors, np.uint16),
+                "restorations": np.asarray(
+                    fade_layout.restorations, np.uint16),
+                "shots": [
+                    {
+                        "anchor": int(shot.anchor),
+                        "start": int(shot.start),
+                        "end": int(shot.end),
+                        "reference": int(shot.reference),
+                        "peak": int(shot.peak),
+                        "right_black_start": int(shot.right_black.start),
+                        "right_black_end": int(shot.right_black.end),
+                        "scales": tuple(float(value) for value in shot.scales),
+                        "fit_rmse": tuple(float(value) for value in shot.fit_rmse),
+                    }
+                    for shot in fade_layout.shots
+                ],
+            },
             "frames": dec_frames,                                     # [[(cell,pal,key),...], ...]
             "display_category_masks": {
                 "schema_version": 1,
