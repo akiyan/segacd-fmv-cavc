@@ -295,8 +295,8 @@ class TileAllocator:
             if slot in self.free:
                 self.free.remove(slot)
             else:
-                if self.slot_refs[slot] != 0 or (
-                   self._prev_protect[slot] and not mandatory) or \
+                if self.slot_refs[slot] != 0 or \
+                   self._prev_protect[slot] or \
                    (self._tfp is not None and self._tfp[slot]) or (
                        self.slot_pin_mandatory[slot]
                        and self.slot_pin_until[slot] >= frame_idx):
@@ -323,10 +323,12 @@ class TileAllocator:
                 candidate_key = self.slot_key[candidate]
                 if self.slot_refs[candidate] != 0:
                     continue
-                # Mandatory fade work runs after this frame's visible updates
-                # have finalized.  A slot used only by the preceding frame is
-                # now cache history, not live display, and may be replaced.
-                if self._prev_protect[candidate] and not mandatory:
+                # Pattern transfers can span multiple VBlanks.  The preceding
+                # frame therefore remains the live display until every
+                # pattern and name-table update for this frame has completed.
+                # Mandatory fade work must wait too; replacing one of these
+                # slots early produces transient 8x8 corruption on playback.
+                if self._prev_protect[candidate]:
                     continue
                 if candidate_key in avoid_keys:
                     continue

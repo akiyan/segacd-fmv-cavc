@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e164: Keep mandatory fade-reference prefetch out of both the current and
+#         preceding display's VRAM slots. Pattern transfers may span multiple
+#         VBlanks, so the preceding name table remains live until the whole
+#         transfer and flip complete; delayed requests catch up in later
+#         automatically derived preparation frames.
 #   e163: Extend automatic static black-fade detection to fade-in-only and
 #         fade-out-only shots at source and cut boundaries. Require correlated
 #         tile-grid edge positions to reject moving brightness ramps, and
@@ -1160,5 +1165,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260802
-e=163
+e=164
 p=142

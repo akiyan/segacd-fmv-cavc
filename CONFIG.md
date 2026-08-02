@@ -118,9 +118,12 @@ ordinary video reserves quality, control, cold, and Prg capacity across an
 automatically sized earlier window and prefetches its bright reference into
 one contiguous block at the less-live edge of the VRAM pool. The block leaves
 a conservative exact-load batch for the anchor and does not redirect ordinary
-visible allocation into its future destinations. Visible updates may reclaim
-a prefetched slot when the pool is temporarily full; the derived catch-up
-schedule restores it before the anchor or rejects the fade as infeasible.
+visible allocation into its future destinations. Prefetch never replaces a
+slot referenced by either the current or preceding display, because a pattern
+transfer may span multiple VBlanks before the name-table flip completes.
+Visible updates may reclaim a prefetched slot when the pool is temporarily
+full; the derived catch-up schedule restores it before the anchor or rejects
+the fade as infeasible.
 Connected shots similarly use the earlier static interval when a one-frame
 black gap is too short. Audio, prefetch/refill work, APPLY flow, physical
 pattern delivery, and the cold-run suffix continue on the update-free fade
@@ -575,8 +578,10 @@ encoderは黒anchorで正確なindexed referenceをloadし、選択したfade fr
 変えます。通常映像から始まるfade-outは、自動算出した先行windowにquality、control、cold、
 Prg容量を予約します。明るいreferenceは、VRAM poolのうち表示中slotが少ない端の連続blockへ
 prefetchし、anchor自身には保守的なexact-load batchを残します。このblockの将来destinationへ
-通常の表示allocationを誘導しません。poolが一時的に満杯なら表示updateがprefetch済みslotを回収できますが、
-自動catch-up scheduleがanchorまでに復元し、間に合わないfadeは不成立として退けます。
+通常の表示allocationを誘導しません。pattern transferはname-table flipの完了前に複数VBlankへ
+またがる場合があるため、prefetchは現在または直前の表示が参照するslotを置き換えません。
+poolが一時的に満杯なら表示updateがprefetch済みslotを回収できますが、自動catch-up scheduleが
+anchorまでに復元し、間に合わないfadeは不成立として退けます。
 1-frameの黒gapが短すぎる連続shotも同様に、前のstatic intervalを使って次のreferenceを
 prefetchします。このupdate-free fade controlでもaudio、prefetch/refill、
 APPLY flow、物理pattern delivery、cold-run suffixは継続します。
