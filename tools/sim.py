@@ -111,8 +111,8 @@ FPS_STR = os.environ.get("CBRSIM_FPS", "15").strip()
 FPS = (float(FPS_STR.split("/")[0]) / float(FPS_STR.split("/")[1])) if "/" in FPS_STR else float(FPS_STR)
 DURATION = os.environ.get("CBRSIM_DURATION", "152.866667")
 
-# Integer-VBlank rates use their exact NTSC cadence (N4=14.985, N2=29.97).
-# Delivery-paced rates such as 24 fps keep their nominal long-term rate.
+# Qualified rates use their exact NTSC cadence (N4=14.985, 2/3=23.976,
+# N2=29.97). Other rates keep their requested long-term rate.
 VSYNC_N = av_config.vsync_n_for_fps(FPS)
 PLAYBACK_FPS = av_config.playback_fps_for_content(FPS)
 CD_RATE = av_config.CD_BYTES_PER_SECOND
@@ -129,7 +129,7 @@ AUDIO_PLAYBACK_FILE = "audio_playback_adpcm22_rf5c.wav"
 # The packer shares these timing values through av_config.
 AUDIO_RATE, AUDIO_PCM_BYTES, AUDIO_CONTROL_BYTES = av_config.audio_frame_layout(
     FPS)
-AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * FPS))
+AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * PLAYBACK_FPS))
 DISPLAY_CATEGORY_MASK_ORDER = (
     "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
 )

@@ -944,10 +944,9 @@ def rate_deltas(nfr):
     """Return the CD-1x sector allowance for BODY frames 1..N-1.
 
     Frame 0 lives in HEADER.DAT, so its allowance is zero.  The accumulator is
-    intentionally identical to the player and to the BODY writer. Nominal
-    Fixed-N content uses the exact CD allowance for its integer NTSC VBlank
-    interval (1001/400 at N=2, 1001/200 at N=4). Delivery-paced content such
-    as 24fps retains the legacy 75/nominal-fps schedule.
+    intentionally identical to the player and to the BODY writer. Qualified
+    content uses the exact allowance of each VBlank interval, including the
+    24fps 2/3 pattern. Unqualified rates retain 75/nominal-fps pacing.
     """
     try:
         return stream_schedule.rate_deltas(nfr, FPS)
