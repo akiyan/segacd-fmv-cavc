@@ -2,10 +2,11 @@
 """Automatic black-fade shot detection for CRAM-only movie frames.
 
 The detector deliberately has no timeline or profile inputs.  It finds a
-bright interval between two black runs, fits every interval frame to one
+bright interval beside one or two black runs, fits every interval frame to one
 static reference image plus a single global brightness scale, and accepts the
-interval only when that scale rises and then falls.  Moving shots, hard cuts,
-and merely dark scenes therefore stay on the ordinary tile-update path.
+interval only when that scale moves monotonically in the direction implied by
+the black edge.  Moving shots, hard cuts, and merely dark scenes therefore
+stay on the ordinary tile-update path.
 """
 
 from __future__ import annotations
@@ -313,25 +314,93 @@ def _black_runs(mask: np.ndarray) -> tuple[BlackRun, ...]:
 def _fit_static_scale(
         samples: np.ndarray,
         black: np.ndarray,
+        *,
+        reference_local: int | None = None,
 ) -> tuple[int, np.ndarray, np.ndarray]:
     """Return the best bright reference and each frame's scale/error."""
 
     centered = samples - black[None, ...]
     energy = np.einsum("fsc,fsc->f", centered, centered)
-    # A fade reference is the brightest observed frame.  The final maximum is
-    # preferred so a two-frame peak naturally leaves its last frame as the
-    # unmodified reference/plateau frame.
-    maximum = float(energy.max(initial=0.0))
-    candidates = np.flatnonzero(np.isclose(energy, maximum, rtol=1e-6, atol=1e-6))
-    reference_local = int(candidates[-1]) if len(candidates) else 0
-    reference = centered[reference_local]
+    if reference_local is None:
+        # A complete fade reference is the brightest observed frame.  The
+        # final maximum is preferred so a two-frame peak naturally leaves its
+        # last frame as the unmodified reference/plateau frame.
+        maximum = float(energy.max(initial=0.0))
+        candidates = np.flatnonzero(
+            np.isclose(energy, maximum, rtol=1e-6, atol=1e-6))
+        selected_reference = int(candidates[-1]) if len(candidates) else 0
+    else:
+        selected_reference = int(reference_local)
+        if not 0 <= selected_reference < len(samples):
+            raise ValueError("fade reference is outside the sample interval")
+    reference = centered[selected_reference]
     denominator = float(np.sum(reference * reference))
     if denominator <= 1e-9:
-        return reference_local, np.zeros(len(samples)), np.full(len(samples), np.inf)
+        return (
+            selected_reference,
+            np.zeros(len(samples)),
+            np.full(len(samples), np.inf),
+        )
     scales = np.einsum("fsc,sc->f", centered, reference) / denominator
     prediction = black[None, ...] + scales[:, None, None] * reference[None, ...]
     rmse = np.sqrt(np.mean((samples - prediction) ** 2, axis=(1, 2)))
-    return reference_local, scales, rmse
+    return selected_reference, scales, rmse
+
+
+def _detect_rising_side(
+        samples: np.ndarray,
+        black: np.ndarray,
+        *,
+        min_frames: int,
+        maximum_frames: int,
+        min_scale_change: float,
+        monotonic_tolerance: float,
+        maximum_scale: float,
+        maximum_rmse: float,
+        maximum_relative_rmse: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """Return the longest static black-to-reference prefix, if one exists."""
+
+    best = None
+    limit = min(len(samples), int(maximum_frames))
+    for length in range(int(min_frames), limit + 1):
+        interval = samples[:length]
+        _reference, scales, rmse = _fit_static_scale(
+            interval, black, reference_local=length - 1)
+        reference_scale = float(scales[-1])
+        if reference_scale <= 0:
+            continue
+        relative_scales = scales / reference_scale
+        relative_error = rmse / np.maximum(
+            interval.mean(axis=(1, 2)), 16.0)
+        rising = np.diff(relative_scales)
+        if (
+            float(relative_scales.min(initial=1.0)) < -monotonic_tolerance
+            or float(relative_scales.max(initial=0.0)) > maximum_scale
+            or float(relative_scales[0]) > 1.0 - min_scale_change
+            or (len(rising) and float(rising.min()) < -monotonic_tolerance)
+            or float(rmse.max(initial=0.0)) > maximum_rmse
+            or float(relative_error.max(initial=0.0)) > maximum_relative_rmse
+        ):
+            continue
+        best = relative_scales.copy(), rmse.copy()
+    return best
+
+
+def _drop_overlapping_one_sided(
+        shots: list[FadeShot],
+) -> list[FadeShot]:
+    """Reject ambiguous one-sided fits that claim any common source frame."""
+
+    conflicted = set()
+    ordered = sorted(enumerate(shots), key=lambda item: item[1].start)
+    for position, (index, shot) in enumerate(ordered):
+        for other_index, other in ordered[position + 1:]:
+            if other.start > shot.end:
+                break
+            conflicted.add(index)
+            conflicted.add(other_index)
+    return [shot for index, shot in enumerate(shots) if index not in conflicted]
 
 
 def detect_fade_shots(
@@ -346,8 +415,9 @@ def detect_fade_shots(
         maximum_scale: float = 1.08,
         maximum_rmse: float = 10.0,
         maximum_relative_rmse: float = 0.18,
+        maximum_one_sided_frames: int = 240,
 ) -> tuple[FadeShot, ...]:
-    """Detect static fade-in/out shots without user-supplied frame ranges.
+    """Detect static one- or two-sided fades without source frame ranges.
 
     ``probes`` is ``(frames, samples, 3)`` RGB888 data.  One sample per source
     tile is enough; using a small spatial grid preserves motion and hard-cut
@@ -366,6 +436,9 @@ def detect_fade_shots(
         raise ValueError("fade probes and dark fractions must be finite")
     if min_frames < 1:
         raise ValueError("min_frames must be positive")
+    if maximum_one_sided_frames < min_frames:
+        raise ValueError(
+            "maximum_one_sided_frames must be at least min_frames")
 
     frame_mean = samples.mean(axis=(1, 2))
     black_mask = (
@@ -373,7 +446,7 @@ def detect_fade_shots(
         & (frame_mean <= float(black_mean_max))
     )
     runs = _black_runs(black_mask)
-    shots: list[FadeShot] = []
+    complete: list[FadeShot] = []
     for left, right in zip(runs, runs[1:]):
         start = left.end + 1
         end = right.start - 1
@@ -408,7 +481,7 @@ def detect_fade_shots(
             or float(relative_error.max(initial=0.0)) > maximum_relative_rmse
         ):
             continue
-        shots.append(FadeShot(
+        complete.append(FadeShot(
             left_black=left,
             start=start,
             end=end,
@@ -418,4 +491,77 @@ def detect_fade_shots(
             scales=tuple(float(value) for value in relative_scales),
             fit_rmse=tuple(float(value) for value in rmse),
         ))
-    return tuple(shots)
+
+    # A complete fit owns only the two black-run sides that bound it.  The
+    # opposite side of a shared black run can still be a different one-sided
+    # fade, such as a fade-out followed by a new shot fading in from black.
+    complete_left = {shot.left_black for shot in complete}
+    complete_right = {shot.right_black for shot in complete}
+    one_sided: list[FadeShot] = []
+    for run_index, black_run in enumerate(runs):
+        black = samples[black_run.start:black_run.end + 1].mean(axis=0)
+        previous_end = (
+            runs[run_index - 1].end + 1 if run_index else 0)
+        next_start = (
+            runs[run_index + 1].start
+            if run_index + 1 < len(runs) else len(samples))
+
+        if black_run not in complete_left:
+            start = black_run.end + 1
+            rising = _detect_rising_side(
+                samples[start:next_start],
+                black,
+                min_frames=min_frames,
+                maximum_frames=maximum_one_sided_frames,
+                min_scale_change=min_scale_change,
+                monotonic_tolerance=monotonic_tolerance,
+                maximum_scale=maximum_scale,
+                maximum_rmse=maximum_rmse,
+                maximum_relative_rmse=maximum_relative_rmse,
+            )
+            if rising is not None:
+                scales, rmse = rising
+                end = start + len(scales) - 1
+                one_sided.append(FadeShot(
+                    left_black=black_run,
+                    start=start,
+                    end=end,
+                    reference=end,
+                    peak=end,
+                    right_black=None,
+                    scales=tuple(float(value) for value in scales),
+                    fit_rmse=tuple(float(value) for value in rmse),
+                ))
+
+        if black_run not in complete_right:
+            end = black_run.start - 1
+            rising = _detect_rising_side(
+                samples[previous_end:black_run.start][::-1],
+                black,
+                min_frames=min_frames,
+                maximum_frames=maximum_one_sided_frames,
+                min_scale_change=min_scale_change,
+                monotonic_tolerance=monotonic_tolerance,
+                maximum_scale=maximum_scale,
+                maximum_rmse=maximum_rmse,
+                maximum_relative_rmse=maximum_relative_rmse,
+            )
+            if rising is not None:
+                reverse_scales, reverse_rmse = rising
+                start = end - len(reverse_scales) + 1
+                one_sided.append(FadeShot(
+                    left_black=None,
+                    start=start,
+                    end=end,
+                    reference=start,
+                    peak=start,
+                    right_black=black_run,
+                    scales=tuple(
+                        float(value) for value in reverse_scales[::-1]),
+                    fit_rmse=tuple(
+                        float(value) for value in reverse_rmse[::-1]),
+                ))
+
+    unambiguous = _drop_overlapping_one_sided(one_sided)
+    return tuple(sorted(
+        (*complete, *unambiguous), key=lambda shot: (shot.start, shot.end)))

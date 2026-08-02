@@ -17,6 +17,60 @@ def fade_frame(base: np.ndarray, scale: float, black: float = 6.0) -> np.ndarray
 
 
 class FadeFrameTests(unittest.TestCase):
+    def test_detects_fade_in_without_a_later_black_run(self) -> None:
+        black = np.full((24, 3), 6.0)
+        image = spatial_image(10)
+        probes = np.stack([
+            black,
+            fade_frame(image, 0.34),
+            fade_frame(image, 0.65),
+            image,
+            image,
+            spatial_image(11),
+            spatial_image(12),
+        ])
+        dark = np.asarray([1.0, *([0.0] * 6)])
+
+        shots = fade_frames.detect_fade_shots(probes, dark)
+
+        self.assertEqual(len(shots), 1)
+        shot = shots[0]
+        self.assertEqual(shot.kind, "in")
+        self.assertEqual(
+            (shot.anchor, shot.start, shot.end, shot.reference, shot.peak),
+            (0, 1, 4, 4, 4),
+        )
+        self.assertIsNone(shot.right_black)
+        self.assertAlmostEqual(shot.scales[0], 0.34, places=6)
+        self.assertAlmostEqual(shot.scales[-1], 1.0, places=6)
+
+    def test_detects_fade_out_without_an_earlier_black_run(self) -> None:
+        black = np.full((24, 3), 6.0)
+        image = spatial_image(20)
+        probes = np.stack([
+            image,
+            image,
+            fade_frame(image, 0.66),
+            fade_frame(image, 0.33),
+            black,
+            black,
+            spatial_image(21),
+        ])
+        dark = np.asarray([*([0.0] * 4), 1.0, 1.0, 0.0])
+
+        shots = fade_frames.detect_fade_shots(probes, dark)
+
+        self.assertEqual(len(shots), 1)
+        shot = shots[0]
+        self.assertEqual(shot.kind, "out")
+        self.assertEqual(
+            (shot.anchor, shot.start, shot.end, shot.reference, shot.peak),
+            (0, 0, 3, 0, 0),
+        )
+        self.assertIsNone(shot.left_black)
+        self.assertAlmostEqual(shot.scales[0], 1.0, places=6)
+        self.assertAlmostEqual(shot.scales[-1], 0.33, places=6)
+
     def test_detects_repeated_static_black_fades_without_a_range(self) -> None:
         black = np.full((24, 3), 6.0)
         first = spatial_image(1)
@@ -64,6 +118,31 @@ class FadeFrameTests(unittest.TestCase):
         image = spatial_image(1)
         probes = np.stack([black, image, image, image, black])
         dark = np.asarray([1.0, 0.0, 0.0, 0.0, 1.0])
+        self.assertEqual(fade_frames.detect_fade_shots(probes, dark), ())
+
+    def test_rejects_a_temporary_black_frame_between_hard_cuts(self) -> None:
+        black = np.full((24, 3), 6.0)
+        first = spatial_image(30)
+        second = spatial_image(31)
+        probes = np.stack([
+            first, first, first,
+            black,
+            second, second, second,
+        ])
+        dark = np.asarray([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0])
+        self.assertEqual(fade_frames.detect_fade_shots(probes, dark), ())
+
+    def test_rejects_a_mildly_changing_dark_scene(self) -> None:
+        black = np.full((24, 3), 6.0)
+        image = spatial_image(32) * 0.12 + 8.0
+        probes = np.stack([
+            black,
+            fade_frame(image, 0.90),
+            image,
+            fade_frame(image, 0.95),
+            spatial_image(33) * 0.12 + 8.0,
+        ])
+        dark = np.asarray([1.0, 0.6, 0.5, 0.55, 0.5])
         self.assertEqual(fade_frames.detect_fade_shots(probes, dark), ())
 
     def test_validates_shapes(self) -> None:
@@ -163,6 +242,41 @@ class FadeFrameTests(unittest.TestCase):
             layout.reference_frames[:2],
             np.full(2, shots[0].reference, np.int32),
         )
+
+    def test_layout_connects_one_sided_fades_to_ordinary_frames(self) -> None:
+        black = np.full((24, 3), 6.0)
+        first = spatial_image(40)
+        second = spatial_image(41)
+        probes = np.stack([
+            black,
+            fade_frame(first, 0.35),
+            fade_frame(first, 0.65),
+            first,
+            second,
+            fade_frame(second, 0.65),
+            fade_frame(second, 0.35),
+            black,
+        ])
+        dark = np.asarray([1.0, *([0.0] * 6), 1.0])
+        shots = fade_frames.detect_fade_shots(probes, dark)
+        self.assertEqual([shot.kind for shot in shots], ["in", "out"])
+
+        layout = fade_frames.build_layout(
+            shots, np.zeros(len(probes), np.int32), max_segments=4)
+
+        self.assertEqual(layout.anchors, (0, 4))
+        self.assertEqual(layout.preparation_frames, (0, 4))
+        self.assertEqual(layout.preparation_deadlines, (0, 4))
+        self.assertEqual(layout.restorations, (4,))
+        self.assertEqual(layout.entry_scales, (0.0, 1.0))
+        self.assertEqual(layout.frame_segments.tolist(), [
+            0, 0, 0, 0,
+            1, 1, 1, 1,
+        ])
+        self.assertTrue(np.isnan(layout.desired_scales[0]))
+        self.assertEqual(layout.phases[1:4].tolist(), [1, 1, 1])
+        self.assertTrue(np.isnan(layout.desired_scales[4]))
+        self.assertEqual(layout.phases[5:].tolist(), [2, 2, 2])
 
 
 if __name__ == "__main__":
