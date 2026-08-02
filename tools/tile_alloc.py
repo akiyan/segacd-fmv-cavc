@@ -84,8 +84,15 @@ class TileAllocator:
         # until the first planned use so the ordinary clock hand does not
         # immediately recycle it.  The feature is inert when every value is -1.
         self.slot_pin_until = np.full(self.POOL, -1, np.int64)
+        # Ordinary prediction is deliberately speculative: visible work may
+        # reclaim it.  A detected fade reference is different because its
+        # later CRAM-only frames cannot repair missing pattern data.  Mark
+        # those pins mandatory so normal allocation preserves them through
+        # the reference frame's first real use.
+        self.slot_pin_mandatory = np.zeros(self.POOL, bool)
         self.pinned_count = 0
         self.prefetch_evictions = 0
+        self.mandatory_prefetch_evictions = 0
         self.prefetch_cache_evictions = 0
 
     # ---- residency query (used by the sim for cold/reuse + resident matching) ----
@@ -99,6 +106,15 @@ class TileAllocator:
         """Return whether ``key`` is protected through ``deadline``."""
         slot = self.key_slot.get(key)
         return slot is not None and self.slot_pin_until[slot] >= int(deadline)
+
+    def is_mandatory_pinned(self, key, deadline):
+        """Return whether ``key`` has a catch-up-protected fade pin."""
+        slot = self.key_slot.get(key)
+        return (
+            slot is not None
+            and bool(self.slot_pin_mandatory[slot])
+            and self.slot_pin_until[slot] >= int(deadline)
+        )
 
     # ---- per-frame ----
     def begin_frame(self):
@@ -115,6 +131,7 @@ class TileAllocator:
         if self.slot_pin_until[s] >= 0:
             self.pinned_count -= 1
         self.slot_pin_until[s] = -1
+        self.slot_pin_mandatory[s] = False
 
     def _alloc_slot_contig(self, frame_idx):
         # Clock hand: free slot first. A visible update then reclaims a
@@ -128,7 +145,8 @@ class TileAllocator:
                 self.hand = (self.hand + 1) % self.POOL
                 if self.slot_refs[s] == 0 and not self._prev_protect[s] and \
                    (self._tfp is None or not self._tfp[s]) and \
-                   self.slot_pin_until[s] >= frame_idx:
+                   self.slot_pin_until[s] >= frame_idx and \
+                   not self.slot_pin_mandatory[s]:
                     self.prefetch_evictions += 1
                     self._evict(s)
                     return s
@@ -136,17 +154,44 @@ class TileAllocator:
             s = self.hand
             self.hand = (self.hand + 1) % self.POOL
             if self.slot_refs[s] == 0 and not self._prev_protect[s] and \
-               (self._tfp is None or not self._tfp[s]):
+               (self._tfp is None or not self._tfp[s]) and not (
+                   self.slot_pin_mandatory[s]
+                   and self.slot_pin_until[s] >= frame_idx):
                 self._evict(s)
                 return s
+        # Keep fade-reference pins ahead of ordinary cache history, but never
+        # sacrifice a visible update or a key reused later in this same frame.
+        # If the moving display temporarily needs the whole pool, release one
+        # pin and let the fade catch-up queue restore it after the visible
+        # updates have finalized.
+        if self.pinned_count:
+            for _ in range(self.POOL):
+                s = self.hand
+                self.hand = (self.hand + 1) % self.POOL
+                if self.slot_refs[s] == 0 and \
+                   (self._tfp is None or not self._tfp[s]) and \
+                   self.slot_pin_mandatory[s] and \
+                   self.slot_pin_until[s] >= frame_idx:
+                    self.mandatory_prefetch_evictions += 1
+                    self._evict(s)
+                    return s
         self.tearing += 1
         for _ in range(self.POOL):
             s = self.hand
             self.hand = (self.hand + 1) % self.POOL
-            if self.slot_refs[s] == 0:
+            if self.slot_refs[s] == 0 and not (
+                    self.slot_pin_mandatory[s]
+                    and self.slot_pin_until[s] >= frame_idx):
                 self._evict(s)
                 return s
-        s = int(np.argmin(self.slot_lastuse))
+        candidates = np.flatnonzero(np.logical_not(np.logical_and(
+            self.slot_pin_mandatory,
+            self.slot_pin_until >= frame_idx,
+        )))
+        if not len(candidates):
+            raise RuntimeError(
+                "VRAM has no slot outside mandatory fade prefetch")
+        s = int(candidates[np.argmin(self.slot_lastuse[candidates])])
         self._evict(s)
         return s
 
@@ -162,9 +207,15 @@ class TileAllocator:
             slot = self.key_slot[key]
             # The prefetched pattern has reached a real display use.  Ordinary
             # current/previous-frame reference protection takes over now.
-            if self.slot_pin_until[slot] >= 0:
-                self.pinned_count -= 1
-            self.slot_pin_until[slot] = -1
+            keep_mandatory = (
+                bool(self.slot_pin_mandatory[slot])
+                and frame_idx < int(self.slot_pin_until[slot])
+            )
+            if not keep_mandatory:
+                if self.slot_pin_until[slot] >= 0:
+                    self.pinned_count -= 1
+                self.slot_pin_until[slot] = -1
+                self.slot_pin_mandatory[slot] = False
         oldc = self.cur_slot[cell]
         if oldc >= 0:
             self.slot_refs[oldc] -= 1
@@ -174,7 +225,8 @@ class TileAllocator:
         return int(slot), bool(cold)
 
     def prefetch(
-            self, key, frame_idx, deadline, forced_slot=None, avoid_keys=()):
+            self, key, frame_idx, deadline, forced_slot=None, avoid_keys=(),
+            mandatory=False):
         """Place one future pattern without changing any displayed cell.
 
         Returns ``(slot, cold)``.  ``cold`` is true only when a 32-byte VRAM
@@ -187,9 +239,16 @@ class TileAllocator:
             raise ValueError("prefetch deadline must be after the load frame")
         resident = self.key_slot.get(key)
         if resident is not None:
-            # Already-resident data needs no speculative transfer. Do not pin
-            # an ordinary cache entry: changing its eviction priority can make
-            # a baseline frame worse without moving any work earlier.
+            # Ordinary prediction does not pin cache data because changing its
+            # eviction priority can make a baseline frame worse.  A fade
+            # reference must survive until its CRAM-only sequence starts, so
+            # upgrade even an already-resident key to a mandatory pin.
+            if mandatory:
+                if self.slot_pin_until[resident] < 0:
+                    self.pinned_count += 1
+                self.slot_pin_until[resident] = max(
+                    int(self.slot_pin_until[resident]), deadline)
+                self.slot_pin_mandatory[resident] = True
             return int(resident), False
 
         avoid_keys = set(avoid_keys)
@@ -200,8 +259,11 @@ class TileAllocator:
             if slot in self.free:
                 self.free.remove(slot)
             else:
-                if self.slot_refs[slot] != 0 or self._prev_protect[slot] or \
-                   (self._tfp is not None and self._tfp[slot]):
+                if self.slot_refs[slot] != 0 or (
+                   self._prev_protect[slot] and not mandatory) or \
+                   (self._tfp is not None and self._tfp[slot]) or (
+                       self.slot_pin_mandatory[slot]
+                       and self.slot_pin_until[slot] >= frame_idx):
                     return None
                 self._evict(slot)
                 self.hand = (slot + 1) % self.POOL
@@ -218,12 +280,20 @@ class TileAllocator:
                 candidate = self.hand
                 self.hand = (self.hand + 1) % self.POOL
                 candidate_key = self.slot_key[candidate]
-                if self.slot_refs[candidate] != 0 or self._prev_protect[candidate]:
+                if self.slot_refs[candidate] != 0:
                     continue
-                if self.slot_pin_until[candidate] >= frame_idx:
+                # Mandatory fade work runs after this frame's visible updates
+                # have finalized.  A slot used only by the preceding frame is
+                # now cache history, not live display, and may be replaced.
+                if self._prev_protect[candidate] and not mandatory:
                     continue
                 if candidate_key in avoid_keys:
                     continue
+                if self.slot_pin_until[candidate] >= frame_idx:
+                    if (not mandatory
+                            or self.slot_pin_mandatory[candidate]):
+                        continue
+                    self.prefetch_evictions += 1
                 slot = candidate
                 self._evict(slot)
                 self.prefetch_cache_evictions += 1
@@ -235,6 +305,7 @@ class TileAllocator:
         self.slot_key[slot] = key
         self.slot_lastuse[slot] = frame_idx
         self.slot_pin_until[slot] = deadline
+        self.slot_pin_mandatory[slot] = bool(mandatory)
         self.pinned_count += 1
         return int(slot), True
 

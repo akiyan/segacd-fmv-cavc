@@ -36,6 +36,7 @@ class FadeShot:
     right_black: BlackRun | None
     scales: tuple[float, ...]
     fit_rmse: tuple[float, ...]
+    spatial_correlation: tuple[float, ...]
 
     @property
     def anchor(self) -> int:
@@ -347,10 +348,56 @@ def _fit_static_scale(
     return selected_reference, scales, rmse
 
 
+def _spatial_correlations(
+        samples: np.ndarray,
+        black: np.ndarray,
+        reference_local: int,
+        spatial_shape: tuple[int, int],
+) -> np.ndarray:
+    """Compare colour-edge positions independently of overall brightness."""
+
+    rows, columns = (int(value) for value in spatial_shape)
+    centered = samples - black[None, ...]
+    grid = centered.reshape(len(samples), rows, columns, 3)
+    vertical = np.linalg.norm(np.diff(grid, axis=1), axis=3)
+    horizontal = np.linalg.norm(np.diff(grid, axis=2), axis=3)
+    signatures = np.concatenate(
+        (vertical.reshape(len(samples), -1),
+         horizontal.reshape(len(samples), -1)),
+        axis=1,
+    )
+    reference = signatures[int(reference_local)]
+    reference_norm = float(np.linalg.norm(reference))
+    norms = np.linalg.norm(signatures, axis=1)
+    if reference_norm <= 1e-9:
+        return np.where(norms <= 1e-9, 1.0, 0.0)
+    result = np.einsum("fs,s->f", signatures, reference)
+    result /= np.maximum(norms * reference_norm, 1e-12)
+    return np.clip(result, -1.0, 1.0)
+
+
+def _spatial_fit_is_static(
+        correlations: np.ndarray,
+        scales: np.ndarray,
+        *,
+        minimum_scale: float,
+        minimum_correlation: float,
+) -> bool:
+    """Require two visible frames with the same colour-edge placement."""
+
+    visible = np.asarray(scales) >= float(minimum_scale)
+    return (
+        int(np.count_nonzero(visible)) >= 2
+        and float(correlations[visible].min(initial=1.0))
+        >= float(minimum_correlation)
+    )
+
+
 def _detect_rising_side(
         samples: np.ndarray,
         black: np.ndarray,
         *,
+        spatial_shape: tuple[int, int],
         min_frames: int,
         maximum_frames: int,
         min_scale_change: float,
@@ -358,7 +405,9 @@ def _detect_rising_side(
         maximum_scale: float,
         maximum_rmse: float,
         maximum_relative_rmse: float,
-) -> tuple[np.ndarray, np.ndarray] | None:
+        minimum_spatial_scale: float,
+        minimum_spatial_correlation: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Return the longest static black-to-reference prefix, if one exists."""
 
     best = None
@@ -374,6 +423,8 @@ def _detect_rising_side(
         relative_error = rmse / np.maximum(
             interval.mean(axis=(1, 2)), 16.0)
         rising = np.diff(relative_scales)
+        spatial = _spatial_correlations(
+            interval, black, length - 1, spatial_shape)
         if (
             float(relative_scales.min(initial=1.0)) < -monotonic_tolerance
             or float(relative_scales.max(initial=0.0)) > maximum_scale
@@ -381,9 +432,15 @@ def _detect_rising_side(
             or (len(rising) and float(rising.min()) < -monotonic_tolerance)
             or float(rmse.max(initial=0.0)) > maximum_rmse
             or float(relative_error.max(initial=0.0)) > maximum_relative_rmse
+            or not _spatial_fit_is_static(
+                spatial,
+                relative_scales,
+                minimum_scale=minimum_spatial_scale,
+                minimum_correlation=minimum_spatial_correlation,
+            )
         ):
             continue
-        best = relative_scales.copy(), rmse.copy()
+        best = relative_scales.copy(), rmse.copy(), spatial.copy()
     return best
 
 
@@ -407,6 +464,7 @@ def detect_fade_shots(
         probes,
         dark_fraction,
         *,
+        spatial_shape: tuple[int, int],
         black_fraction_min: float = 0.98,
         black_mean_max: float = 16.0,
         min_frames: int = 3,
@@ -416,6 +474,8 @@ def detect_fade_shots(
         maximum_rmse: float = 10.0,
         maximum_relative_rmse: float = 0.18,
         maximum_one_sided_frames: int = 240,
+        minimum_spatial_scale: float = 0.35,
+        minimum_spatial_correlation: float = 0.95,
 ) -> tuple[FadeShot, ...]:
     """Detect static one- or two-sided fades without source frame ranges.
 
@@ -434,6 +494,11 @@ def detect_fade_shots(
         raise ValueError("fade probes and dark fractions must have equal frame counts")
     if not np.isfinite(samples).all() or not np.isfinite(dark).all():
         raise ValueError("fade probes and dark fractions must be finite")
+    shape = tuple(int(value) for value in spatial_shape)
+    if (len(shape) != 2 or min(shape, default=0) <= 0
+            or shape[0] * shape[1] != samples.shape[1]):
+        raise ValueError(
+            "fade spatial shape must exactly cover the probe samples")
     if min_frames < 1:
         raise ValueError("min_frames must be positive")
     if maximum_one_sided_frames < min_frames:
@@ -470,6 +535,8 @@ def detect_fade_shots(
         relative_error = rmse / np.maximum(interval.mean(axis=(1, 2)), 16.0)
         rising = np.diff(relative_scales[:peak_local + 1])
         falling = np.diff(relative_scales[peak_local:])
+        spatial = _spatial_correlations(
+            interval, black, reference_local, shape)
         if (
             float(relative_scales.min(initial=1.0)) < -monotonic_tolerance
             or float(relative_scales.max(initial=0.0)) > maximum_scale
@@ -479,6 +546,12 @@ def detect_fade_shots(
             or (len(falling) and float(falling.max()) > monotonic_tolerance)
             or float(rmse.max(initial=0.0)) > maximum_rmse
             or float(relative_error.max(initial=0.0)) > maximum_relative_rmse
+            or not _spatial_fit_is_static(
+                spatial,
+                relative_scales,
+                minimum_scale=minimum_spatial_scale,
+                minimum_correlation=minimum_spatial_correlation,
+            )
         ):
             continue
         complete.append(FadeShot(
@@ -490,6 +563,7 @@ def detect_fade_shots(
             right_black=right,
             scales=tuple(float(value) for value in relative_scales),
             fit_rmse=tuple(float(value) for value in rmse),
+            spatial_correlation=tuple(float(value) for value in spatial),
         ))
 
     # A complete fit owns only the two black-run sides that bound it.  The
@@ -511,6 +585,7 @@ def detect_fade_shots(
             rising = _detect_rising_side(
                 samples[start:next_start],
                 black,
+                spatial_shape=shape,
                 min_frames=min_frames,
                 maximum_frames=maximum_one_sided_frames,
                 min_scale_change=min_scale_change,
@@ -518,9 +593,11 @@ def detect_fade_shots(
                 maximum_scale=maximum_scale,
                 maximum_rmse=maximum_rmse,
                 maximum_relative_rmse=maximum_relative_rmse,
+                minimum_spatial_scale=minimum_spatial_scale,
+                minimum_spatial_correlation=minimum_spatial_correlation,
             )
             if rising is not None:
-                scales, rmse = rising
+                scales, rmse, spatial = rising
                 end = start + len(scales) - 1
                 one_sided.append(FadeShot(
                     left_black=black_run,
@@ -531,6 +608,8 @@ def detect_fade_shots(
                     right_black=None,
                     scales=tuple(float(value) for value in scales),
                     fit_rmse=tuple(float(value) for value in rmse),
+                    spatial_correlation=tuple(
+                        float(value) for value in spatial),
                 ))
 
         if black_run not in complete_right:
@@ -538,6 +617,7 @@ def detect_fade_shots(
             rising = _detect_rising_side(
                 samples[previous_end:black_run.start][::-1],
                 black,
+                spatial_shape=shape,
                 min_frames=min_frames,
                 maximum_frames=maximum_one_sided_frames,
                 min_scale_change=min_scale_change,
@@ -545,9 +625,11 @@ def detect_fade_shots(
                 maximum_scale=maximum_scale,
                 maximum_rmse=maximum_rmse,
                 maximum_relative_rmse=maximum_relative_rmse,
+                minimum_spatial_scale=minimum_spatial_scale,
+                minimum_spatial_correlation=minimum_spatial_correlation,
             )
             if rising is not None:
-                reverse_scales, reverse_rmse = rising
+                reverse_scales, reverse_rmse, reverse_spatial = rising
                 start = end - len(reverse_scales) + 1
                 one_sided.append(FadeShot(
                     left_black=None,
@@ -560,6 +642,8 @@ def detect_fade_shots(
                         float(value) for value in reverse_scales[::-1]),
                     fit_rmse=tuple(
                         float(value) for value in reverse_rmse[::-1]),
+                    spatial_correlation=tuple(
+                        float(value) for value in reverse_spatial[::-1]),
                 ))
 
     unambiguous = _drop_overlapping_one_sided(one_sided)

@@ -388,13 +388,22 @@ def resolve(log, POOL, mode="lru"):
                 if len(request) == 2:
                     key, deadline = request
                     forced_slot = None
+                    mandatory = False
                 elif len(request) == 3:
                     key, deadline, forced_slot = request
+                    mandatory = False
+                elif len(request) == 4:
+                    key, deadline, forced_slot, mandatory = request
                 else:
                     raise SystemExit(
                         f"pack: malformed raw-prefetch request at frame {i}")
                 result = alloc.prefetch(
-                    key, i, int(deadline), forced_slot=forced_slot)
+                    key,
+                    i,
+                    int(deadline),
+                    forced_slot=forced_slot,
+                    mandatory=bool(mandatory),
+                )
                 if result is None:
                     raise SystemExit(
                         f"pack: raw-prefetch allocation diverged at frame {i}")

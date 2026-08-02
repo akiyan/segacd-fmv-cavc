@@ -33,6 +33,75 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
         self.assertEqual(alloc.prefetch_evictions, 1)
         self.assertEqual(alloc.tearing, 0)
 
+    def test_normal_update_preserves_a_mandatory_fade_pin(self) -> None:
+        alloc = TileAllocator(1, 3)
+        alloc.place_frame([(0, b"shown")], 0)
+        fade_slot, cold = alloc.prefetch(
+            b"fade", 0, 5, mandatory=True)
+        self.assertTrue(cold)
+        cache_slot, cache_cold = alloc.prefetch(b"cache", 0, 4)
+        self.assertTrue(cache_cold)
+
+        result = alloc.place_frame([(0, b"replacement")], 1)
+
+        self.assertTrue(result[0][1])
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 5))
+        self.assertEqual(alloc.key_slot[b"fade"], fade_slot)
+        self.assertFalse(alloc.is_resident(b"cache"))
+        self.assertNotEqual(result[0][0], fade_slot)
+        self.assertEqual(cache_slot, result[0][0])
+
+    def test_resident_key_can_be_upgraded_to_a_mandatory_pin(self) -> None:
+        alloc = TileAllocator(1, 3)
+        shown_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+        slot, cold = alloc.prefetch(b"fade", 1, 4, mandatory=True)
+
+        self.assertFalse(cold)
+        self.assertEqual(slot, shown_slot)
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 4))
+        self.assertEqual(alloc.pinned_count, 1)
+
+        alloc.place_frame([(0, b"fade")], 4)
+        self.assertFalse(alloc.is_mandatory_pinned(b"fade", 4))
+        self.assertEqual(alloc.pinned_count, 0)
+
+    def test_mandatory_prefetch_may_replace_previous_frame_cache(self) -> None:
+        alloc = TileAllocator(1, 2)
+        alloc.place_frame([(0, b"previous")], 0)
+        alloc.place_frame([(0, b"current")], 1)
+
+        self.assertIsNone(alloc.prefetch(b"soft", 1, 2))
+        result = alloc.prefetch(b"fade", 1, 2, mandatory=True)
+
+        self.assertIsNotNone(result)
+        self.assertTrue(result[1])
+        self.assertFalse(alloc.is_resident(b"previous"))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 2))
+
+    def test_visible_work_reclaims_fade_pin_before_tearing(self) -> None:
+        alloc = TileAllocator(1, 2)
+        alloc.place_frame([(0, b"shown")], 0)
+        alloc.prefetch(b"fade", 0, 4, mandatory=True)
+
+        result = alloc.place_frame([(0, b"replacement")], 1)
+
+        self.assertTrue(result[0][1])
+        self.assertFalse(alloc.is_resident(b"fade"))
+        self.assertEqual(alloc.mandatory_prefetch_evictions, 1)
+        self.assertEqual(alloc.tearing, 0)
+
+    def test_fade_prefetch_replaces_a_soft_prefetch_first(self) -> None:
+        alloc = TileAllocator(1, 2)
+        alloc.place_frame([(0, b"shown")], 0)
+        alloc.prefetch(b"soft", 0, 4)
+
+        result = alloc.prefetch(b"fade", 0, 3, mandatory=True)
+
+        self.assertIsNotNone(result)
+        self.assertFalse(alloc.is_resident(b"soft"))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+        self.assertEqual(alloc.prefetch_evictions, 1)
+
     def test_prefetch_skips_when_only_a_displayed_slot_exists(self) -> None:
         alloc = TileAllocator(1, 1)
         alloc.place_frame([(0, b"shown")], 0)

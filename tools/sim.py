@@ -1415,7 +1415,8 @@ def main():
             features = _frame_features(path)
             fade_probes[frame] = features[5]
             fade_dark[frame] = features[6]
-    fade_candidates = fade_frames.detect_fade_shots(fade_probes, fade_dark)
+    fade_candidates = fade_frames.detect_fade_shots(
+        fade_probes, fade_dark, spatial_shape=(TROWS, TCOLS))
     fade_layout = fade_frames.build_layout(
         fade_candidates,
         frame_seg,
@@ -1434,6 +1435,10 @@ def main():
     palette_stats["fade_detection"] = {
         "candidate_shots": len(fade_candidates),
         "selected_shots": len(fade_layout.shots),
+        "kinds": {
+            kind: sum(shot.kind == kind for shot in fade_layout.shots)
+            for kind in ("in", "out", "in_out")
+        },
         "anchors": list(fade_layout.anchors),
         "restorations": list(fade_layout.restorations),
     }
@@ -1448,6 +1453,7 @@ def main():
     print(
         "  automatic black fades: "
         f"detected={len(fade_candidates)} selected={len(fade_layout.shots)} "
+        f"kinds={palette_stats['fade_detection']['kinds']} "
         f"anchors={list(fade_layout.anchors)}; "
         "no source time ranges",
         flush=True,
@@ -1679,33 +1685,71 @@ def main():
             active_cram = target.copy()
         active_frame_cram[frame] = active_cram
 
-    # A one-frame black gap cannot necessarily install the next reference
-    # within the cold cap.  During a connected fade sequence, use the prior
-    # static shot's CRAM-only frames to preload the following reference into
-    # otherwise unreferenced VRAM slots.  This is derived entirely from the
-    # detected group; there is no timeline or profile-side range override.
+    # A one-frame black gap or the bright entrance of a fade-out cannot
+    # necessarily install its reference within the cold cap.  Preload those
+    # references into otherwise unreferenced VRAM slots.  Every window is
+    # derived from the detected shot and the normal runtime-prefetch batch
+    # limit; there is no timeline or profile-side range override.
     fade_prefetch_plan = {}
+
+    def plan_fade_reference(
+            window, deadline, reference, *, request_limit=None):
+        frames = tuple(int(frame) for frame in window)
+        if not frames:
+            return
+        keys = tuple(dict.fromkeys(
+            Q_pidx[int(reference)][cell].tobytes()
+            for cell in range(C_CELLS)
+        ))
+        nominal_per_frame = (len(keys) + len(frames) - 1) // len(frames)
+        nominal_remaining = len(keys)
+        for offset, frame in enumerate(frames):
+            if frame in fade_prefetch_plan:
+                raise AssertionError(
+                    f"fade prefetch plans overlap at frame {frame}")
+            nominal_requests = min(nominal_per_frame, nominal_remaining)
+            fade_prefetch_plan[frame] = (
+                int(deadline),
+                keys,
+                len(frames) - offset,
+                None if request_limit is None else int(request_limit),
+                nominal_requests,
+            )
+            nominal_remaining -= nominal_requests
+
+    for shot in fade_layout.shots:
+        if shot.left_black is not None or shot.anchor == 0:
+            continue
+        reference_keys = len(set(
+            Q_pidx[int(shot.reference)][cell].tobytes()
+            for cell in range(C_CELLS)
+        ))
+        window_frames = (
+            reference_keys + RAW_PREFETCH_MAX_REQUESTS_PER_FRAME - 1
+        ) // RAW_PREFETCH_MAX_REQUESTS_PER_FRAME
+        # Optional raw prediction can lose an entire busy frame's spare room.
+        # Give mandatory one-sided fade preparation two equal-length recovery
+        # windows; the live loop then recomputes the per-frame catch-up count
+        # from the patterns still missing, without any source-time override.
+        window_frames *= 3
+        plan_fade_reference(
+            range(max(1, int(shot.anchor) - window_frames), int(shot.anchor)),
+            int(shot.anchor),
+            int(shot.reference),
+            request_limit=RAW_PREFETCH_MAX_REQUESTS_PER_FRAME,
+        )
+
     for group in fade_frames.connected_groups(fade_layout.shots):
         for previous_shot, next_shot in zip(group, group[1:]):
             window = tuple(range(
                 int(previous_shot.start), int(next_shot.left_black.start)))
             if not window:
                 continue
-            reference = int(next_shot.reference)
-            keys = tuple(dict.fromkeys(
-                Q_pidx[reference][cell].tobytes()
-                for cell in range(C_CELLS)
-            ))
-            per_frame = (len(keys) + len(window) - 1) // len(window)
-            remaining = len(keys)
-            for frame in window:
-                planned = min(per_frame, remaining)
-                fade_prefetch_plan[int(frame)] = (
-                    int(next_shot.left_black.start), keys, planned)
-                remaining -= planned
-            if remaining:
-                raise AssertionError(
-                    "fade prefetch window did not cover its reference keys")
+            plan_fade_reference(
+                window,
+                int(next_shot.left_black.start),
+                int(next_shot.reference),
+            )
 
     _t = _mark("Quantize", _t)
     # palettes.bin is the legacy fallback CRAM image.  In segmented mode the
@@ -2020,14 +2064,21 @@ def main():
         0,
     ).astype(np.int64)
     fade_prefetch_demand = np.zeros(n, np.int64)
-    for frame, (_deadline, _keys, planned) in fade_prefetch_plan.items():
+    for frame, (_deadline, _keys, _frames_remaining, _request_limit,
+                planned) in fade_prefetch_plan.items():
         fade_prefetch_demand[int(frame)] = (
             int(planned)
             * (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES)
         )
-    fade_mandatory_demand = np.maximum(
-        fade_prepare_demand, fade_prefetch_demand)
-    main_demand = np.maximum(main_demand, fade_mandatory_demand)
+    # Hidden-anchor preparation replaces ordinary visible demand, while
+    # one-sided-reference prefetch is additional work performed after the
+    # visible updates.  Reserve the latter additively so a busy normal frame
+    # cannot spend its bytes before the mandatory prefetch runs.
+    fade_mandatory_demand = (
+        fade_prepare_demand + fade_prefetch_demand)
+    main_demand = (
+        np.maximum(main_demand, fade_prepare_demand)
+        + fade_prefetch_demand)
     cram_quality_risk_bytes = np.maximum(
         main_demand - upgrade_supply, 0)
     cram_quality_priority_frames = (
@@ -2037,11 +2088,14 @@ def main():
             CRAM_QUALITY_PRIORITY_SEARCH_FRAMES,
         )
     )
-    mandatory_main_demand = np.maximum(np.where(
-        cram_switch_frames,
-        C_CELLS * NAME_BYTES,
-        0,
-    ).astype(np.int64), fade_mandatory_demand)
+    mandatory_main_demand = np.maximum(
+        np.where(
+            cram_switch_frames,
+            C_CELLS * NAME_BYTES,
+            0,
+        ).astype(np.int64),
+        fade_prepare_demand,
+    ) + fade_prefetch_demand
     main_reserve_plan = upgrade_planner.build_balanced_reserve_plan(
         main_demand,
         upgrade_supply,
@@ -2265,6 +2319,12 @@ def main():
             decision_budget = funded_limit
         else:
             decision_budget = frame_cd
+        frame_total_budget = int(decision_budget)
+        frame_fade_prefetch_patterns = int(
+            fade_prefetch_plan.get(i, (None, None, None, None, 0))[4])
+        frame_fade_prefetch_bytes = int(fade_prefetch_demand[i])
+        decision_budget = max(
+            0, frame_total_budget - frame_fade_prefetch_bytes)
         frame_patch = (frozenset() if QUALITY_BUDGET_ON
                        else prg_patch.get(i, frozenset()))
 
@@ -2293,6 +2353,16 @@ def main():
         frame_max_prg = int(physical_frame_limit.prg_patterns)
         frame_control_block_limit = int(
             physical_frame_limit.control_block_bytes)
+        visible_frame_max_cold = max(
+            0, frame_max_cold - frame_fade_prefetch_patterns)
+        visible_frame_max_prg = max(
+            0, frame_max_prg - frame_fade_prefetch_patterns)
+        visible_control_block_limit = max(
+            int(body_fixed_control_bytes[i]),
+            frame_control_block_limit
+            - frame_fade_prefetch_patterns
+            * stream_schedule.RUN_DESCRIPTOR_BYTES,
+        )
 
         def reserved_variable_spend(
             decision_spent=0,
@@ -2318,7 +2388,7 @@ def main():
                 + (cold_spent + int(extra_cold))
                 * stream_schedule.RUN_DESCRIPTOR_BYTES
             )
-            return funded and control <= frame_control_block_limit
+            return funded and control <= visible_control_block_limit
 
         def current_reserved_spend():
             return reserved_variable_spend(spent_tiles, cold_spent)
@@ -2342,16 +2412,24 @@ def main():
                 raise AssertionError("Prg is not a preload source")
             preload_sources[key] = source
 
-        def prg_source_fits(source, cell=None):
+        def prg_source_fits(
+                source, cell=None, *, preserve_fade_prefetch=True):
+            limit = (
+                visible_frame_max_prg
+                if preserve_fade_prefetch else frame_max_prg)
             return (
                 source != pattern_supply.SOURCE_PRG
-                or prg_spent < frame_max_prg
+                or prg_spent < limit
             )
 
-        def commit_prg_source(source, cell=None):
+        def commit_prg_source(
+                source, cell=None, *, preserve_fade_prefetch=True):
             nonlocal prg_spent
             if source == pattern_supply.SOURCE_PRG:
-                if not prg_source_fits(source, cell):
+                if not prg_source_fits(
+                        source,
+                        cell,
+                        preserve_fade_prefetch=preserve_fade_prefetch):
                     raise AssertionError("per-frame cold cap exceeded by Prg")
                 prg_spent += 1
         # Candidate eligibility is shared by every cell in one mean-colour
@@ -2457,7 +2535,8 @@ def main():
                 dedup_saved += 1; dedup_mask[c] = True
                 activate_exact_pattern(key, c)
             elif in_prg:
-                if ((cold_limit_active and cold_spent >= frame_max_cold)
+                if ((cold_limit_active
+                     and cold_spent >= visible_frame_max_cold)
                         or not prg_source_fits(source, c)):
                     return False
                 cold_spent += 1
@@ -2466,7 +2545,8 @@ def main():
             elif in_l3:
                 l3_hits += 1; loaded_keys.add(key); l3.pop(key, None)
             else:                                                # cold: exact pattern load (Raw or saved/preload-funded Buf)
-                if ((cold_limit_active and cold_spent >= frame_max_cold)
+                if ((cold_limit_active
+                     and cold_spent >= visible_frame_max_cold)
                         or not prg_source_fits(source, c)):
                     return False
                 cold_spent += 1
@@ -2697,7 +2777,7 @@ def main():
                         and prg_source_fits(source, c)
                         and not (
                             cold_limit_active
-                            and cold_spent >= frame_max_cold)):
+                            and cold_spent >= visible_frame_max_cold)):
                     cold_spent += 1
                     commit_prg_source(source, c)
                     loaded_keys.add(key)
@@ -2894,7 +2974,7 @@ def main():
                     if ((not in_vram)
                             and (
                                 (cold_limit_active
-                                 and cold_spent >= frame_max_cold)
+                                 and cold_spent >= visible_frame_max_cold)
                                 or not prg_source_fits(source, c))):
                         return
                     near_mask[c] = False; flbk_mask[c] = False   # 近似を取消
@@ -3048,7 +3128,7 @@ def main():
                         "frame 0 boot prefetch did not use a free VRAM slot")
                 slot, _cold = result
                 frame_prefetch_requests.append(
-                    (key, deadline, slot))
+                    (key, deadline, slot, False))
                 frame_prefetch_physical.append(
                     (int(slot), True, key, int(deadline)))
                 cold_spent += 1
@@ -3063,9 +3143,21 @@ def main():
                     "frame 0 inline patterns exceed the boot staging path")
         elif i > 0 and (RAW_PREFETCH_ON or i in fade_prefetch_plan):
             fade_request = fade_prefetch_plan.get(i)
+            mandatory = fade_request is not None
             if fade_request is not None:
-                deadline, requested_keys, planned_requests = fade_request
-                prefetch_spend_limit = decision_budget
+                (deadline, requested_keys, frames_remaining,
+                 request_limit, _nominal_requests) = fade_request
+                missing_requests = sum(
+                    not alloc.is_mandatory_pinned(key, deadline)
+                    for key in requested_keys
+                )
+                planned_requests = (
+                    missing_requests + frames_remaining - 1
+                ) // frames_remaining
+                if request_limit is not None:
+                    planned_requests = min(
+                        int(request_limit), planned_requests)
+                prefetch_spend_limit = frame_total_budget
                 request_groups = ((int(deadline), requested_keys),)
                 request_room = int(planned_requests)
                 request_cap = int(planned_requests)
@@ -3125,24 +3217,35 @@ def main():
                     for key in requests:
                         if len(frame_prefetch_requests) >= capacity:
                             break
-                        if alloc.is_pinned(key, deadline):
+                        already_pinned = (
+                            alloc.is_mandatory_pinned(key, deadline)
+                            if mandatory else alloc.is_pinned(key, deadline)
+                        )
+                        if already_pinned:
                             continue
                         resident = alloc.is_resident(key)
-                        if resident:
+                        if resident and not mandatory:
                             continue
                         result = alloc.prefetch(
-                            key, i, deadline, avoid_keys=deadline_keys)
+                            key,
+                            i,
+                            deadline,
+                            avoid_keys=deadline_keys,
+                            mandatory=mandatory,
+                        )
                         if result is None:
                             continue
                         slot, cold = result
                         frame_prefetch_requests.append(
-                            (key, deadline, slot))
+                            (key, deadline, slot, mandatory))
                         frame_prefetch_physical.append(
                             (int(slot), bool(cold), key, int(deadline)))
                         if cold:
                             cold_spent += 1
                             commit_prg_source(
-                                pattern_supply.SOURCE_PRG)
+                                pattern_supply.SOURCE_PRG,
+                                preserve_fade_prefetch=False,
+                            )
                             spent_tiles += PATTERN_BYTES
                             prefetch_cold_slots.append(int(slot))
                     if len(frame_prefetch_requests) >= capacity:
@@ -4151,10 +4254,12 @@ def main():
         f"boot_vram_prefetch={int(BOOT_VRAM_PREFETCH_ON)} "
         f"boot_loads={int(prefetch_cold_log[0]) if prefetch_cold_log else 0} "
         f"runtime_raw_vram_prefetch={int(RAW_PREFETCH_ON)} "
+        f"fade_vram_prefetch={int(bool(fade_prefetch_plan))} "
         f"total_loads={int(np.sum(prefetch_cold_log))} "
         f"request_events={sum(len(items) for items in prefetch_requests_log)} "
         f"cache_evictions={alloc.prefetch_cache_evictions} "
-        f"pin_evictions={alloc.prefetch_evictions}",
+        f"pin_evictions={alloc.prefetch_evictions} "
+        f"fade_pin_reclaims={alloc.mandatory_prefetch_evictions}",
         f"boot_preload_patterns=Wr0:"
         f"{int(ring_plan.boot_patterns[0]) if ring_enabled else int(wr0_loads.sum())} "
         f"Wr1:"
@@ -4470,6 +4575,9 @@ def main():
                             if shot.right_black is not None else -1),
                         "scales": tuple(float(value) for value in shot.scales),
                         "fit_rmse": tuple(float(value) for value in shot.fit_rmse),
+                        "spatial_correlation": tuple(
+                            float(value)
+                            for value in shot.spatial_correlation),
                     }
                     for shot in fade_layout.shots
                 ],
@@ -4583,10 +4691,17 @@ def main():
                     np.int64),
             },
             "raw_prefetch": {
-                "schema_version": 3,
-                "enabled": bool(BOOT_VRAM_PREFETCH_ON or RAW_PREFETCH_ON),
+                "schema_version": 4,
+                "enabled": bool(
+                    BOOT_VRAM_PREFETCH_ON
+                    or RAW_PREFETCH_ON
+                    or fade_prefetch_plan
+                ),
                 "boot_enabled": bool(BOOT_VRAM_PREFETCH_ON),
                 "runtime_enabled": bool(RAW_PREFETCH_ON),
+                "fade_enabled": bool(fade_prefetch_plan),
+                "fade_pin_reclaims": int(
+                    alloc.mandatory_prefetch_evictions),
                 "boot_capacity": int(boot_prefetch_capacity),
                 "boot_requests": int(len(boot_prefetch_plan)),
                 "boot_inline_capacity": int(boot_inline_capacity),

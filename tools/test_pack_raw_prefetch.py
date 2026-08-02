@@ -180,6 +180,47 @@ class PackRawPrefetchTests(unittest.TestCase):
         np.testing.assert_array_equal(packed_loads, loads)
         np.testing.assert_array_equal(packed_runs, [1, 1, 0])
 
+    def test_mandatory_prefetch_survives_intervening_visible_updates(self):
+        key_a = bytes([1] * 64)
+        key_b = bytes([2] * 64)
+        key_c = bytes([3] * 64)
+        key_fade = bytes([4] * 64)
+        log = {
+            "frames": [
+                [(0, 0, key_a)],
+                [],
+                [(0, 0, key_b)],
+                [(0, 0, key_c)],
+                [(0, 0, key_fade)],
+            ],
+            "frame_seg": np.zeros(5, np.int64),
+            "raw_prefetch": {
+                "schema_version": 4,
+                "enabled": True,
+                "requests": [
+                    [],
+                    [(key_fade, 4, 1, True)],
+                    [],
+                    [],
+                    [],
+                ],
+                "cold": np.array([0, 1, 0, 0, 0], np.uint16),
+            },
+        }
+
+        old_cells = pack_stream.C_CELLS
+        pack_stream.C_CELLS = 1
+        try:
+            (per, _prefetch, _orders, loads, _updates, _pal,
+             _patterns, tearing) = pack_stream.resolve(
+                log, 3, mode="contig")
+        finally:
+            pack_stream.C_CELLS = old_cells
+
+        self.assertEqual(tearing, 0)
+        np.testing.assert_array_equal(loads, [1, 1, 1, 1, 0])
+        self.assertFalse(per[4][2][0])
+
 
 if __name__ == "__main__":
     unittest.main()
