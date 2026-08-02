@@ -99,6 +99,10 @@ class TileAllocator:
     def is_resident(self, key):
         return key in self.key_slot
 
+    def resident_slot(self, key):
+        """Return the physical slot for ``key``, or ``None``."""
+        return self.key_slot.get(key)
+
     def resident_keys(self):
         return self.key_slot.keys()
 
@@ -121,9 +125,9 @@ class TileAllocator:
 
         Mandatory fade references use one shared edge block so their long-lived
         pins do not split ordinary cold allocations into many one-tile DMA
-        runs.  Of the low and high edge blocks, current display occupancy is
-        the second tie-break after active mandatory pins; a stable low-edge
-        tie-break keeps sim replay deterministic.
+        runs.  Of the low and high edge blocks, current plus preceding display
+        occupancy is the second tie-break after active mandatory pins; a
+        stable low-edge tie-break keeps sim replay deterministic.
         """
         length = int(length)
         frame_idx = int(frame_idx)
@@ -133,7 +137,10 @@ class TileAllocator:
             self.slot_pin_mandatory,
             self.slot_pin_until >= frame_idx,
         ).astype(np.int64)
-        live = (self.slot_refs > 0).astype(np.int64)
+        live = np.logical_or(
+            self.slot_refs > 0,
+            self._prev_protect,
+        ).astype(np.int64)
         mandatory_prefix = np.concatenate(([0], np.cumsum(mandatory)))
         live_prefix = np.concatenate(([0], np.cumsum(live)))
         best = None
@@ -148,6 +155,116 @@ class TileAllocator:
             if best is None or score < best[0]:
                 best = score, start
         return int(best[1])
+
+    def _forced_prefetch_slot_available(
+            self, slot, frame_idx, avoid_keys=()):
+        """Return whether a cold prefetch may replace ``slot`` now."""
+        slot = int(slot)
+        frame_idx = int(frame_idx)
+        if not 0 <= slot < self.POOL:
+            raise ValueError("forced prefetch slot is outside the pool")
+        if slot in self.free:
+            return True
+        if not isinstance(avoid_keys, (set, frozenset)):
+            avoid_keys = set(avoid_keys)
+        return not (
+            self.slot_refs[slot] != 0
+            or self._prev_protect[slot]
+            or (self._tfp is not None and self._tfp[slot])
+            or self.slot_key[slot] in avoid_keys
+            or (
+                self.slot_pin_mandatory[slot]
+                and self.slot_pin_until[slot] >= frame_idx
+            )
+        )
+
+    def find_prefetch_slot_in_block(
+            self, key, frame_idx, block_start, block_length,
+            assigned_slots=(), avoid_keys=()):
+        """Choose a safe destination inside a reserved contiguous block.
+
+        A reference key already resident inside the block stays in place,
+        including while displayed, because upgrading its pin writes no VRAM.
+        New or relocated keys use the first currently safe unassigned slot.
+        This preserves one compact fade region without making each key wait
+        for one fixed destination that may still belong to the live display.
+        """
+        block_start = int(block_start)
+        block_length = int(block_length)
+        block_stop = block_start + block_length
+        if block_length <= 0 or block_start < 0 or block_stop > self.POOL:
+            raise ValueError("prefetch block is outside the pool")
+        assigned = set(int(slot) for slot in assigned_slots)
+        resident = self.key_slot.get(key)
+        if (resident is not None
+                and block_start <= int(resident) < block_stop
+                and int(resident) not in assigned):
+            return int(resident)
+        for slot in range(block_start, block_stop):
+            if slot in assigned:
+                continue
+            if self._forced_prefetch_slot_available(
+                    slot, frame_idx, avoid_keys=avoid_keys):
+                return int(slot)
+        return None
+
+    def prefetch_mandatory_in_block(
+            self, key, frame_idx, deadline, block_start, block_length,
+            assigned_slots=(), avoid_keys=()):
+        """Pin a fade key, preferring cold placement in one shared block.
+
+        Moving an already-resident reference would turn a free warm pin into a
+        redundant cold transfer, so keep it in place.  A new key uses the
+        first safe unassigned slot in the block.  If every block destination
+        is still part of a live display, fall back to the allocator's normal
+        safe cache search rather than waiting or overwriting visible VRAM.
+
+        Returns ``(slot, cold, relocate, forced)`` or ``None``.  The last two
+        values reproduce the exact allocator operation during pack replay.
+        """
+        resident = self.key_slot.get(key)
+        if resident is not None:
+            slot, cold = self.prefetch(
+                key,
+                frame_idx,
+                deadline,
+                mandatory=True,
+            )
+            return int(slot), bool(cold), False, False
+
+        forced_slot = self.find_prefetch_slot_in_block(
+            key,
+            frame_idx,
+            block_start,
+            block_length,
+            assigned_slots=assigned_slots,
+            avoid_keys=avoid_keys,
+        )
+        if forced_slot is not None:
+            result = self.prefetch(
+                key,
+                frame_idx,
+                deadline,
+                forced_slot=forced_slot,
+                avoid_keys=avoid_keys,
+                mandatory=True,
+                relocate=True,
+            )
+            if result is not None:
+                slot, cold = result
+                return int(slot), bool(cold), True, True
+
+        result = self.prefetch(
+            key,
+            frame_idx,
+            deadline,
+            avoid_keys=avoid_keys,
+            mandatory=True,
+        )
+        if result is None:
+            return None
+        slot, cold = result
+        return int(slot), bool(cold), False, False
 
     # ---- per-frame ----
     def begin_frame(self):
@@ -290,17 +407,12 @@ class TileAllocator:
         avoid_keys = set(avoid_keys)
         if forced_slot is not None:
             slot = int(forced_slot)
-            if not 0 <= slot < self.POOL:
-                raise ValueError("forced prefetch slot is outside the pool")
+            if not self._forced_prefetch_slot_available(
+                    slot, frame_idx, avoid_keys=avoid_keys):
+                return None
             if slot in self.free:
                 self.free.remove(slot)
             else:
-                if self.slot_refs[slot] != 0 or \
-                   self._prev_protect[slot] or \
-                   (self._tfp is not None and self._tfp[slot]) or (
-                       self.slot_pin_mandatory[slot]
-                       and self.slot_pin_until[slot] >= frame_idx):
-                    return None
                 self._evict(slot)
                 # A forced fade destination is part of a separately managed
                 # block.  Redirecting the ordinary allocation hand into that

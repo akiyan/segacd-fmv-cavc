@@ -14,6 +14,37 @@ import pattern_supply
 
 
 class PackRawPrefetchTests(unittest.TestCase):
+    def test_schema6_replays_an_unforced_destination_and_checks_its_slot(self):
+        key_a = bytes([1] * 64)
+        key_b = bytes([2] * 64)
+        log = {
+            "frames": [[(0, 0, key_a)], [], [(0, 0, key_b)]],
+            "frame_seg": np.zeros(3, np.int64),
+            "raw_prefetch": {
+                "schema_version": 6,
+                "enabled": True,
+                "requests": [
+                    [],
+                    [(key_b, 2, 1, True, False, False)],
+                    [],
+                ],
+                "cold": np.array([0, 1, 0], np.uint16),
+            },
+        }
+
+        old_cells = pack_stream.C_CELLS
+        pack_stream.C_CELLS = 1
+        try:
+            (per, _prefetch, _orders, loads, _updates, _pal,
+             _patterns, tearing) = pack_stream.resolve(
+                log, 4, mode="contig")
+        finally:
+            pack_stream.C_CELLS = old_cells
+
+        self.assertEqual(tearing, 0)
+        np.testing.assert_array_equal(loads, [1, 1, 0])
+        self.assertFalse(per[2][2][0])
+
     def test_boot_prefetch_shares_frame0_payload_without_a_name_update(self):
         key_a = bytes([1] * 64)
         key_b = bytes([2] * 64)

@@ -17,7 +17,7 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Palette** | Divide the movie into palette segments, train each segment's CRAM palettes, and automatically detect spatially static shots with a black-bounded fade on one or both sides, without source-time inputs. |
 | **Quantize** | Convert every frame into palette assignments and indexed 8x8 patterns; selected fades freeze one exact reference image and derive their inline CRAM steps. |
 | **Forecast** | Calculate one-pass future demand, physical delivery limits, quality reserves, boot-preload use, and mandatory reference-prefetch room for one-sided fade-outs. |
-| **Decide** | Select each frame's exact or reused patterns, allocate VRAM slots, collect one-sided fade references into a contiguous edge block and catch up any reclaimed entries, assign pattern sources, and commit the physical budget. |
+| **Decide** | Select each frame's exact or reused patterns, allocate VRAM slots, retain resident one-sided fade references and collect their cold preloads into a contiguous edge block, catch up any reclaimed entries, assign pattern sources, and commit the physical budget. |
 | **Finalize** | Verify the complete physical schedule and write the numeric traces and decision log. |
 
 ## Measured Time
@@ -58,7 +58,7 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Palette** | 映像をパレット区間に分け、区間ごとのCRAMパレットを学習し、sourceのtime指定なしで片側または両側が黒に接するfadeのうち、空間的に静止したshotを自動検出します。 |
 | **Quantize** | 全フレームをパレット割り当てとインデックス形式の8x8パターンへ変換し、選択したfadeは1枚の正確なreference imageを固定してinline CRAMの段階を決めます。 |
 | **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用、片側fade-outに必須のreference prefetch容量を1パスで計算します。 |
-| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、VRAMスロットを割り当て、片側fade referenceを端の連続blockへ集約して回収されたentryを取り戻し、パターン供給元と物理予算を確定します。 |
+| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、VRAMスロットを割り当て、片側fade referenceのresident分を維持しながらcold preloadを端の連続blockへ集約して回収されたentryを取り戻し、パターン供給元と物理予算を確定します。 |
 | **Finalize** | 全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
 
 ## 実測時間

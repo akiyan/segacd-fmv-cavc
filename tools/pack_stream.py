@@ -387,27 +387,40 @@ def resolve(log, POOL, mode="lru"):
             for request in raw_requests[i]:
                 if len(request) == 2:
                     key, deadline = request
+                    expected_slot = None
                     forced_slot = None
                     mandatory = False
                     relocate = False
                 elif len(request) == 3:
-                    key, deadline, forced_slot = request
+                    key, deadline, expected_slot = request
+                    forced_slot = expected_slot
                     mandatory = False
                     relocate = False
                 elif len(request) == 4:
-                    key, deadline, forced_slot, mandatory = request
+                    key, deadline, expected_slot, mandatory = request
+                    forced_slot = expected_slot
                     relocate = False
                 elif len(request) == 5:
-                    (key, deadline, forced_slot, mandatory,
+                    (key, deadline, expected_slot, mandatory,
                      relocate) = request
+                    forced_slot = expected_slot
+                elif len(request) == 6:
+                    (key, deadline, expected_slot, mandatory,
+                     relocate, force_destination) = request
+                    forced_slot = (
+                        expected_slot if bool(force_destination) else None)
                 else:
                     raise SystemExit(
                         f"pack: malformed raw-prefetch request at frame {i}")
+                deadline_keys = {
+                    item[2] for item in frames[int(deadline)]
+                }
                 result = alloc.prefetch(
                     key,
                     i,
                     int(deadline),
                     forced_slot=forced_slot,
+                    avoid_keys=deadline_keys,
                     mandatory=bool(mandatory),
                     relocate=bool(relocate),
                 )
@@ -415,6 +428,11 @@ def resolve(log, POOL, mode="lru"):
                     raise SystemExit(
                         f"pack: raw-prefetch allocation diverged at frame {i}")
                 physical_slot, cold = result
+                if (expected_slot is not None
+                        and int(physical_slot) != int(expected_slot)):
+                    raise SystemExit(
+                        f"pack: raw-prefetch slot diverged at frame {i}: "
+                        f"sim={int(expected_slot)} pack={int(physical_slot)}")
                 if cold:
                     n_load[i] += 1
                     physical_patterns[physical_slot] = key

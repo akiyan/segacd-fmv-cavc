@@ -13,11 +13,25 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e168: Store the forced-vs-safe-search replay flag in raw-prefetch schema 6
+#         while retaining the independent O_LOADS-v2 pattern-supply schema 5.
+#         Pack reconstructs the same protected deadline-key set before replay
+#         and verifies every resulting physical slot.
+#   e167: Record whether each fade-reference prefetch used a forced block slot
+#         or the allocator's normal safe search. Pack replay now repeats that
+#         exact operation and verifies the resulting physical slot.
+#   e166: Keep already-resident one-sided fade-reference keys in place instead
+#         of turning warm pins into redundant cold relocations. New keys prefer
+#         the shared contiguous block and spill only to another display-safe
+#         slot while every block target is live.
+#   e165: Assign one-sided fade-reference keys to whichever safe unassigned
+#         slot is available inside their shared contiguous VRAM block instead
+#         of freezing one destination per key, and choose the block using
+#         current plus preceding display occupancy.
 #   e164: Keep mandatory fade-reference prefetch out of both the current and
 #         preceding display's VRAM slots. Pattern transfers may span multiple
 #         VBlanks, so the preceding name table remains live until the whole
-#         transfer and flip complete; delayed requests catch up in later
-#         automatically derived preparation frames.
+#         transfer and flip complete.
 #   e163: Extend automatic static black-fade detection to fade-in-only and
 #         fade-out-only shots at source and cut boundaries. Require correlated
 #         tile-grid edge positions to reject moving brightness ramps, and
@@ -1165,5 +1179,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260802
-e=164
+e=168
 p=142

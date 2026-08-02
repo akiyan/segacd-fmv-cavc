@@ -115,6 +115,75 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
         self.assertEqual(result, (previous_slot, True))
         self.assertFalse(alloc.is_resident(b"previous"))
 
+    def test_fade_block_uses_an_available_slot_instead_of_waiting(self) -> None:
+        alloc = TileAllocator(1, 4)
+        blocked_slot = alloc.place_frame([(0, b"previous")], 0)[0][0]
+        alloc.place_frame([(0, b"current")], 1)
+
+        slot = alloc.find_prefetch_slot_in_block(
+            b"fade",
+            1,
+            0,
+            3,
+            avoid_keys={b"current"},
+        )
+
+        self.assertNotEqual(slot, blocked_slot)
+        self.assertEqual(slot, 2)
+        self.assertEqual(
+            alloc.prefetch(
+                b"fade",
+                1,
+                3,
+                forced_slot=slot,
+                avoid_keys={b"current"},
+                mandatory=True,
+                relocate=True,
+            ),
+            (2, True),
+        )
+
+    def test_fade_block_keeps_a_resident_reference_in_place(self) -> None:
+        alloc = TileAllocator(1, 4)
+        resident_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+
+        slot = alloc.find_prefetch_slot_in_block(
+            b"fade", 0, 0, 3, assigned_slots={1})
+
+        self.assertEqual(slot, resident_slot)
+        self.assertEqual(
+            alloc.prefetch(
+                b"fade",
+                0,
+                3,
+                forced_slot=slot,
+                mandatory=True,
+                relocate=True,
+            ),
+            (resident_slot, False),
+        )
+
+    def test_mandatory_block_keeps_a_resident_key_outside_block(self) -> None:
+        alloc = TileAllocator(1, 4)
+        resident_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+
+        result = alloc.prefetch_mandatory_in_block(
+            b"fade", 0, 3, 2, 2)
+
+        self.assertEqual(result, (resident_slot, False, False, False))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+
+    def test_mandatory_block_spills_only_to_a_safe_slot(self) -> None:
+        alloc = TileAllocator(1, 4)
+        alloc.place_frame([(0, b"previous")], 0)
+        alloc.place_frame([(0, b"current")], 1)
+
+        result = alloc.prefetch_mandatory_in_block(
+            b"fade", 1, 3, 0, 2, avoid_keys={b"current"})
+
+        self.assertEqual(result, (2, True, False, False))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+
     def test_visible_work_reclaims_fade_pin_before_tearing(self) -> None:
         alloc = TileAllocator(1, 2)
         alloc.place_frame([(0, b"shown")], 0)
@@ -163,6 +232,13 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
     def test_fade_block_minimizes_live_slots(self) -> None:
         alloc = TileAllocator(2, 6)
         alloc.place_frame([(0, b"a"), (1, b"b")], 0)
+
+        self.assertEqual(alloc.least_live_contiguous_block(2, 1), 4)
+
+    def test_fade_block_counts_the_preceding_display(self) -> None:
+        alloc = TileAllocator(2, 6)
+        alloc.place_frame([(0, b"previous-a"), (1, b"previous-b")], 0)
+        alloc.place_frame([(0, b"current-a"), (1, b"current-b")], 1)
 
         self.assertEqual(alloc.least_live_contiguous_block(2, 1), 4)
 

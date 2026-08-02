@@ -1745,10 +1745,12 @@ def main():
         window_frames = (
             len(reference_keys) + RAW_PREFETCH_MAX_REQUESTS_PER_FRAME - 1
         ) // RAW_PREFETCH_MAX_REQUESTS_PER_FRAME
-        # Optional raw prediction can lose an entire busy frame's spare room.
-        # Give mandatory one-sided fade preparation two equal-length recovery
-        # windows; the live loop then recomputes the per-frame catch-up count
-        # from the patterns still missing, without any source-time override.
+        # Optional raw prediction can lose an entire busy frame's spare room,
+        # and a forced destination may remain part of the preceding display
+        # while a multi-VBlank transfer finishes.  Give mandatory one-sided
+        # fade preparation two equal-length recovery windows; the live loop
+        # then recomputes the per-frame catch-up count from the patterns still
+        # missing, without any source-time override.
         window_frames *= 3
         plan_fade_reference(
             range(max(1, int(shot.anchor) - window_frames), int(shot.anchor)),
@@ -3148,7 +3150,7 @@ def main():
                         "frame 0 boot prefetch did not use a free VRAM slot")
                 slot, _cold = result
                 frame_prefetch_requests.append(
-                    (key, deadline, slot, False, False))
+                    (key, deadline, slot, False, False, False))
                 frame_prefetch_physical.append(
                     (int(slot), True, key, int(deadline)))
                 cold_spent += 1
@@ -3182,9 +3184,20 @@ def main():
                     block_start = alloc.least_live_contiguous_block(
                         len(requested_keys), i)
                     fade_prefetch_slots[int(deadline)] = {
-                        key: block_start + offset
-                        for offset, key in enumerate(requested_keys)
+                        "start": int(block_start),
+                        "length": len(requested_keys),
+                        "key_slots": {},
+                        "slot_keys": {},
                     }
+                block_state = fade_prefetch_slots[int(deadline)]
+                for assigned_key, assigned_slot in tuple(
+                        block_state["key_slots"].items()):
+                    if (alloc.is_mandatory_pinned(assigned_key, deadline)
+                            and alloc.resident_slot(assigned_key)
+                            == assigned_slot):
+                        continue
+                    del block_state["key_slots"][assigned_key]
+                    block_state["slot_keys"].pop(assigned_slot, None)
                 request_groups = ((int(deadline), requested_keys),)
                 request_room = int(planned_requests)
                 request_cap = int(planned_requests)
@@ -3253,23 +3266,43 @@ def main():
                         resident = alloc.is_resident(key)
                         if resident and not mandatory:
                             continue
-                        result = alloc.prefetch(
-                            key,
-                            i,
-                            deadline,
-                            forced_slot=(
-                                fade_prefetch_slots[int(deadline)][key]
-                                if mandatory else None
-                            ),
-                            avoid_keys=deadline_keys,
-                            mandatory=mandatory,
-                            relocate=mandatory,
-                        )
+                        if mandatory:
+                            block_state = fade_prefetch_slots[int(deadline)]
+                            mandatory_result = alloc.prefetch_mandatory_in_block(
+                                key,
+                                i,
+                                deadline,
+                                block_state["start"],
+                                block_state["length"],
+                                assigned_slots=block_state["slot_keys"],
+                                avoid_keys=deadline_keys,
+                            )
+                            if mandatory_result is None:
+                                continue
+                            (slot, cold, request_relocate,
+                             request_forced) = mandatory_result
+                            result = (slot, cold)
+                        else:
+                            request_relocate = False
+                            request_forced = False
+                            result = alloc.prefetch(
+                                key,
+                                i,
+                                deadline,
+                                avoid_keys=deadline_keys,
+                            )
                         if result is None:
                             continue
                         slot, cold = result
+                        if mandatory:
+                            block_start = int(block_state["start"])
+                            block_stop = block_start + int(block_state["length"])
+                            if block_start <= int(slot) < block_stop:
+                                block_state["key_slots"][key] = int(slot)
+                                block_state["slot_keys"][int(slot)] = key
                         frame_prefetch_requests.append(
-                            (key, deadline, slot, mandatory, mandatory))
+                            (key, deadline, slot, mandatory,
+                             request_relocate, request_forced))
                         frame_prefetch_physical.append(
                             (int(slot), bool(cold), key, int(deadline)))
                         if cold:
@@ -4723,7 +4756,7 @@ def main():
                     np.int64),
             },
             "raw_prefetch": {
-                "schema_version": 5,
+                "schema_version": 6,
                 "enabled": bool(
                     BOOT_VRAM_PREFETCH_ON
                     or RAW_PREFETCH_ON
