@@ -33,6 +33,234 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
         self.assertEqual(alloc.prefetch_evictions, 1)
         self.assertEqual(alloc.tearing, 0)
 
+    def test_normal_update_preserves_a_mandatory_fade_pin(self) -> None:
+        alloc = TileAllocator(1, 3)
+        alloc.place_frame([(0, b"shown")], 0)
+        fade_slot, cold = alloc.prefetch(
+            b"fade", 0, 5, mandatory=True)
+        self.assertTrue(cold)
+        cache_slot, cache_cold = alloc.prefetch(b"cache", 0, 4)
+        self.assertTrue(cache_cold)
+
+        result = alloc.place_frame([(0, b"replacement")], 1)
+
+        self.assertTrue(result[0][1])
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 5))
+        self.assertEqual(alloc.key_slot[b"fade"], fade_slot)
+        self.assertFalse(alloc.is_resident(b"cache"))
+        self.assertNotEqual(result[0][0], fade_slot)
+        self.assertEqual(cache_slot, result[0][0])
+
+    def test_resident_key_can_be_upgraded_to_a_mandatory_pin(self) -> None:
+        alloc = TileAllocator(1, 3)
+        shown_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+        slot, cold = alloc.prefetch(b"fade", 1, 4, mandatory=True)
+
+        self.assertFalse(cold)
+        self.assertEqual(slot, shown_slot)
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 4))
+        self.assertEqual(alloc.pinned_count, 1)
+
+        alloc.place_frame([(0, b"fade")], 4)
+        self.assertFalse(alloc.is_mandatory_pinned(b"fade", 4))
+        self.assertEqual(alloc.pinned_count, 0)
+
+    def test_mandatory_prefetch_preserves_previous_display(self) -> None:
+        alloc = TileAllocator(1, 2)
+        alloc.place_frame([(0, b"previous")], 0)
+        alloc.place_frame([(0, b"current")], 1)
+
+        self.assertIsNone(alloc.prefetch(b"soft", 1, 2))
+        result = alloc.prefetch(b"fade", 1, 2, mandatory=True)
+
+        self.assertIsNone(result)
+        self.assertTrue(alloc.is_resident(b"previous"))
+        self.assertFalse(alloc.is_resident(b"fade"))
+
+        # Once another frame has completed, the old slot is cache history and
+        # can safely receive the delayed mandatory prefetch.
+        alloc.place_frame([(0, b"current")], 2)
+        result = alloc.prefetch(b"fade", 2, 3, mandatory=True)
+        self.assertIsNotNone(result)
+        self.assertTrue(result[1])
+        self.assertFalse(alloc.is_resident(b"previous"))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+
+    def test_forced_fade_slot_preserves_previous_display(self) -> None:
+        alloc = TileAllocator(1, 3)
+        previous_slot = alloc.place_frame([(0, b"previous")], 0)[0][0]
+        alloc.place_frame([(0, b"current")], 1)
+
+        result = alloc.prefetch(
+            b"fade",
+            1,
+            3,
+            forced_slot=previous_slot,
+            mandatory=True,
+            relocate=True,
+        )
+
+        self.assertIsNone(result)
+        self.assertTrue(alloc.is_resident(b"previous"))
+
+        alloc.place_frame([(0, b"current")], 2)
+        result = alloc.prefetch(
+            b"fade",
+            2,
+            3,
+            forced_slot=previous_slot,
+            mandatory=True,
+            relocate=True,
+        )
+        self.assertEqual(result, (previous_slot, True))
+        self.assertFalse(alloc.is_resident(b"previous"))
+
+    def test_fade_block_uses_an_available_slot_instead_of_waiting(self) -> None:
+        alloc = TileAllocator(1, 4)
+        blocked_slot = alloc.place_frame([(0, b"previous")], 0)[0][0]
+        alloc.place_frame([(0, b"current")], 1)
+
+        slot = alloc.find_prefetch_slot_in_block(
+            b"fade",
+            1,
+            0,
+            3,
+            avoid_keys={b"current"},
+        )
+
+        self.assertNotEqual(slot, blocked_slot)
+        self.assertEqual(slot, 2)
+        self.assertEqual(
+            alloc.prefetch(
+                b"fade",
+                1,
+                3,
+                forced_slot=slot,
+                avoid_keys={b"current"},
+                mandatory=True,
+                relocate=True,
+            ),
+            (2, True),
+        )
+
+    def test_fade_block_keeps_a_resident_reference_in_place(self) -> None:
+        alloc = TileAllocator(1, 4)
+        resident_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+
+        slot = alloc.find_prefetch_slot_in_block(
+            b"fade", 0, 0, 3, assigned_slots={1})
+
+        self.assertEqual(slot, resident_slot)
+        self.assertEqual(
+            alloc.prefetch(
+                b"fade",
+                0,
+                3,
+                forced_slot=slot,
+                mandatory=True,
+                relocate=True,
+            ),
+            (resident_slot, False),
+        )
+
+    def test_mandatory_block_keeps_a_resident_key_outside_block(self) -> None:
+        alloc = TileAllocator(1, 4)
+        resident_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+
+        result = alloc.prefetch_mandatory_in_block(
+            b"fade", 0, 3, 2, 2)
+
+        self.assertEqual(result, (resident_slot, False, False, False))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+
+    def test_mandatory_block_spills_only_to_a_safe_slot(self) -> None:
+        alloc = TileAllocator(1, 4)
+        alloc.place_frame([(0, b"previous")], 0)
+        alloc.place_frame([(0, b"current")], 1)
+
+        result = alloc.prefetch_mandatory_in_block(
+            b"fade", 1, 3, 0, 2, avoid_keys={b"current"})
+
+        self.assertEqual(result, (2, True, False, False))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+
+    def test_visible_work_reclaims_fade_pin_before_tearing(self) -> None:
+        alloc = TileAllocator(1, 2)
+        alloc.place_frame([(0, b"shown")], 0)
+        alloc.prefetch(b"fade", 0, 4, mandatory=True)
+
+        result = alloc.place_frame([(0, b"replacement")], 1)
+
+        self.assertTrue(result[0][1])
+        self.assertFalse(alloc.is_resident(b"fade"))
+        self.assertEqual(alloc.mandatory_prefetch_evictions, 1)
+        self.assertEqual(alloc.tearing, 0)
+
+    def test_fade_prefetch_replaces_a_soft_prefetch_first(self) -> None:
+        alloc = TileAllocator(1, 2)
+        alloc.place_frame([(0, b"shown")], 0)
+        alloc.prefetch(b"soft", 0, 4)
+
+        result = alloc.prefetch(b"fade", 0, 3, mandatory=True)
+
+        self.assertIsNotNone(result)
+        self.assertFalse(alloc.is_resident(b"soft"))
+        self.assertTrue(alloc.is_mandatory_pinned(b"fade", 3))
+        self.assertEqual(alloc.prefetch_evictions, 1)
+
+    def test_fade_reference_can_relocate_from_a_displayed_slot(self) -> None:
+        alloc = TileAllocator(1, 3)
+        old_slot = alloc.place_frame([(0, b"fade")], 0)[0][0]
+
+        new_slot, cold = alloc.prefetch(
+            b"fade",
+            0,
+            2,
+            forced_slot=2,
+            mandatory=True,
+            relocate=True,
+        )
+
+        self.assertTrue(cold)
+        self.assertEqual(new_slot, 2)
+        self.assertEqual(alloc.key_slot[b"fade"], 2)
+        self.assertIsNone(alloc.slot_key[old_slot])
+        self.assertEqual(int(alloc.slot_refs[old_slot]), 1)
+        self.assertEqual(alloc.place_frame([(0, b"fade")], 2), [(2, False)])
+        self.assertEqual(int(alloc.slot_refs[old_slot]), 0)
+
+    def test_fade_block_minimizes_live_slots(self) -> None:
+        alloc = TileAllocator(2, 6)
+        alloc.place_frame([(0, b"a"), (1, b"b")], 0)
+
+        self.assertEqual(alloc.least_live_contiguous_block(2, 1), 4)
+
+    def test_fade_block_counts_the_preceding_display(self) -> None:
+        alloc = TileAllocator(2, 6)
+        alloc.place_frame([(0, b"previous-a"), (1, b"previous-b")], 0)
+        alloc.place_frame([(0, b"current-a"), (1, b"current-b")], 1)
+
+        self.assertEqual(alloc.least_live_contiguous_block(2, 1), 4)
+
+    def test_forced_fade_block_does_not_redirect_visible_hand(self) -> None:
+        alloc = TileAllocator(1, 3)
+        alloc.place_frame([(0, b"shown")], 0)
+        alloc.prefetch(b"cache-a", 0, 3)
+        alloc.prefetch(b"cache-b", 0, 3)
+        alloc.hand = 1
+
+        result = alloc.prefetch(
+            b"fade",
+            1,
+            4,
+            forced_slot=2,
+            mandatory=True,
+            relocate=True,
+        )
+
+        self.assertIsNotNone(result)
+        self.assertEqual(alloc.hand, 1)
+
     def test_prefetch_skips_when_only_a_displayed_slot_exists(self) -> None:
         alloc = TileAllocator(1, 1)
         alloc.place_frame([(0, b"shown")], 0)

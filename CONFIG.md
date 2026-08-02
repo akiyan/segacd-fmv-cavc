@@ -106,13 +106,33 @@ change the 60-colour multiset, and transparent index 0 remains zero in all four
 palette lines.
 
 Black-fade detection is fixed encoder behavior and has no profile option or
-source-time input. The encoder looks for a static image whose pixels fit one
-global brightness scale while rising and falling between black runs. It loads
-the exact indexed reference during the black anchor and then changes only CRAM
-on the selected fade frames. Connected shots use the earlier static interval
-to prefetch the next reference when a one-frame black gap is too short. Audio,
-physical pattern delivery, and the cold-run suffix continue on these
-update-free controls.
+source-time input. A black run may bound the static shot on the fade-in side,
+the fade-out side, or both. In addition to fitting the colour and brightness
+progression to one reference image, the detector requires the tile-grid edge
+positions to stay correlated. Camera or object motion, hard cuts, merely dark
+scenes, and transient black frames therefore remain on the ordinary path.
+
+The encoder loads the exact indexed reference at the black anchor and then
+changes only CRAM on the selected fade frames. A fade-out that starts in
+ordinary video reserves quality, control, cold, and Prg capacity across an
+automatically sized earlier window and prefetches its bright reference into
+one contiguous block at the less-live edge of the VRAM pool. Already-resident
+reference keys remain in place instead of becoming redundant cold transfers;
+new keys prefer the block and may spill only to another safe slot while every
+block destination is still live. Every distinct reference key is included in
+the advance plan because the exact anchor-frame Prg ceiling depends on earlier
+physical control blocks. The block does not redirect ordinary visible
+allocation into its future destinations. Prefetch never replaces a
+slot referenced by either the current or preceding display, because a pattern
+transfer may span multiple VBlanks before the name-table flip completes.
+Visible updates may reclaim a prefetched slot when the pool is temporarily
+full; the automatically sized preparation window includes retry room for both
+display protection and reclaimed entries. The derived catch-up schedule
+restores them before the anchor or rejects the fade as infeasible.
+Connected shots similarly use the earlier static interval when a one-frame
+black gap is too short. Audio, prefetch/refill work, APPLY flow, physical
+pattern delivery, and the cold-run suffix continue on the update-free fade
+controls.
 
 ## Cold cap
 
@@ -554,11 +574,26 @@ encoderは量子化前に既存色の順序だけを変えます。60色の集�
 palette lineでtransparent index 0をzeroのままにします。
 
 黒fade検出は固定encoder behaviorで、profile optionやsourceのtime指定を持ちません。
-encoderは黒runの間で、1枚の静止画像の画素が単一のbrightness scaleに当てはまり、
-そのscaleが上がって下がる区間を探します。黒anchor中に正確なindexed referenceをloadし、
-選択したfade frameではCRAMだけを変えます。1-frameの黒gapが短すぎる連続shotは、
-前のstatic intervalを使って次のreferenceをprefetchします。このupdate-free controlでもaudio、
-物理pattern delivery、cold-run suffixは継続します。
+黒runは静止shotのfade-in側、fade-out側、または両側にあれば対象になります。色と明るさの
+変化が1枚のreference imageに当てはまることに加え、tile grid上のedge位置が高い相関を
+保つことも必須です。このためcameraやobjectの動き、hard cut、単に暗いscene、一時的な
+黒frameは通常経路のままです。
+
+encoderは黒anchorで正確なindexed referenceをloadし、選択したfade frameではCRAMだけを
+変えます。通常映像から始まるfade-outは、自動算出した先行windowにquality、control、cold、
+Prg容量を予約します。明るいreferenceのうち既にresidentのkeyは不要なcold転送をせずその場に
+維持し、新しいkeyはVRAM poolのうち表示中slotが少ない端の連続blockを優先します。block内の
+全destinationがまだ表示中の場合だけ、別の安全なslotへ退避します。anchor自身に保守的な
+exact-load量を仮定せず、異なるreference keyをすべて先行planへ含めます。anchor frameの正確な
+Prg上限は、それ以前の物理control blockが確定して初めて決まるためです。このblockの将来destinationへ
+通常の表示allocationを誘導しません。pattern transferはname-table flipの完了前に複数VBlankへ
+またがる場合があるため、prefetchは現在または直前の表示が参照するslotを置き換えません。
+poolが一時的に満杯なら表示updateがprefetch済みslotを回収できますが、自動算出する準備windowは
+表示保護とentry回収の両方にretry容量を持ちます。catch-up scheduleがanchorまでに復元し、
+間に合わないfadeは不成立として退けます。
+1-frameの黒gapが短すぎる連続shotも同様に、前のstatic intervalを使って次のreferenceを
+prefetchします。このupdate-free fade controlでもaudio、prefetch/refill、
+APPLY flow、物理pattern delivery、cold-run suffixは継続します。
 
 ## Cold cap
 
