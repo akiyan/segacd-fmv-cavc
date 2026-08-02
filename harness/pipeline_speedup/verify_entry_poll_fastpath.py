@@ -8,7 +8,7 @@ therefore perform the same single poll after consuming its runs. H40 can
 contain up to 1120 cells, so the fallback retains its possible short-prefix
 poll followed by the final poll.
 
-This checker reads the real split TTRC v24 stream, compares the fallback DBRA
+This checker reads the real split TTRC v25 stream, compares the fallback DBRA
 countdown with an equivalent grouped model for every frame, and confirms that
 entry order and cold-slot run grouping are unchanged.  It additionally checks
 every synthetic update count up to the format's H40 maximum.
@@ -29,10 +29,14 @@ ROUTING_TOTAL_MAX = 5
 FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 SHADOW_UPDATE_LIST_TAG = 0x8000
-SHADOW_UPDATE_COUNT_MASK = 0x7FFF
+SHADOW_FRAME_TYPE_MASK = 0x6000
+SHADOW_FRAME_TYPE_SHIFT = 13
+SHADOW_FRAME_TYPE_RESERVED = 3
+SHADOW_UPDATE_COUNT_MASK = 0x1FFF
+INLINE_CRAM_BYTES = 128
 ADPCM_TABLE_SECTORS = 5
 PATTERN_SUPPLY_OFFSET = 196
-VERSION = 24
+VERSION = 25
 
 
 @dataclass(frozen=True)
@@ -137,12 +141,22 @@ def parse_entries(block: bytes, seq: int, cells: int) -> tuple[int, ...]:
     total_len, packed_seq, raw_count = struct.unpack_from(">HHH", block)
     n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
     use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
+    frame_type = (
+        raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(block):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(block)}")
     if packed_seq != seq:
         raise AssertionError(f"frame {seq}: packed sequence is {packed_seq}")
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: {n_upd} updates exceed {cells} cells")
+    if frame_type == SHADOW_FRAME_TYPE_RESERVED:
+        raise AssertionError(f"frame {seq}: reserved frame type")
+    if frame_type:
+        if n_upd or use_list:
+            raise AssertionError(f"frame {seq}: fade control carries updates")
+        if 6 + INLINE_CRAM_BYTES > len(block):
+            raise AssertionError(f"frame {seq}: inline CRAM exceeds the control block")
+        return ()
 
     if use_list:
         list_start = 6

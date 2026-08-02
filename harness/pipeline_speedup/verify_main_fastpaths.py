@@ -33,8 +33,12 @@ ADPCM_TABLE_SECTORS = 5
 PATTERN_SUPPLY_OFFSET = 196
 NAME_ENTRY_MASK = 0x67FF
 SHADOW_UPDATE_LIST_TAG = 0x8000
-SHADOW_UPDATE_COUNT_MASK = 0x7FFF
-VERSION = 24
+SHADOW_FRAME_TYPE_MASK = 0x6000
+SHADOW_FRAME_TYPE_SHIFT = 13
+SHADOW_FRAME_TYPE_RESERVED = 3
+SHADOW_UPDATE_COUNT_MASK = 0x1FFF
+INLINE_CRAM_BYTES = 128
+VERSION = 25
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,8 @@ def parse_control(raw: bytes, seq: int, cells: int) -> ControlBlock:
     total_len, packed_seq, raw_count = struct.unpack_from(">HHH", raw)
     n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
     use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
+    frame_type = (
+        raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(raw):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(raw)}")
     if packed_seq != seq:
@@ -157,6 +163,15 @@ def parse_control(raw: bytes, seq: int, cells: int) -> ControlBlock:
 
     bitmap_start = 6
     bitmap_len = (cells + 7) // 8
+    if frame_type == SHADOW_FRAME_TYPE_RESERVED:
+        raise AssertionError(f"frame {seq}: reserved frame type")
+    if frame_type:
+        if n_upd or use_list:
+            raise AssertionError(f"frame {seq}: fade control carries updates")
+        if bitmap_start + INLINE_CRAM_BYTES > len(raw):
+            raise AssertionError(f"frame {seq}: inline CRAM exceeds the control block")
+        return ControlBlock(
+            seq, bytes(bitmap_len), (), False, total_len)
     bitmap_end = bitmap_start + bitmap_len
     entries_start = (bitmap_end + 1) & ~1
     entries_end = entries_start + n_upd * 2

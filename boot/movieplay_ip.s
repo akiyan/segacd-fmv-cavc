@@ -45,11 +45,13 @@
 /* 0xFF2100..0xFF66FF is no longer a tile staging buffer: streamed pattern DMA
    reads Word RAM directly and repairs the first destination word on the CPU.
    Keep this range for boot-time Main-CPU code generation. O_LOADS v2 also
-   removes the former 0xFF8800 run table; that interval is unallocated. The
+   removes the former 0xFF8800 run table. Its first 128 bytes retain one
+   inline fade CRAM image across the early Word-RAM return. The
    complete fixed Main-RAM map is:
      M-CODE   0xFF0000..0xFF66FF  resident IP + generated handlers/blitters
      M-STATE  0xFF6700..0xFF87FF  runtime .bss (8.25 KiB worst-case reserve)
-     free      0xFF8800..0xFFB1FF
+     M-FCRAM  0xFF8800..0xFF887F  current inline fade palette
+     free      0xFF8880..0xFFB1FF
      M-PALTAB 0xFFB200..0xFFB9FF  16 x 128B palette segments
      M-PALIDX 0xFFBA00..0xFFBA3F  16 x 4B palette-switch entries
      M-DIC    0xFFBA40..0xFFFA3F  512-pattern persistent dictionary
@@ -102,6 +104,7 @@
 .equ PALIDX_RAM, 0x00FFBA00		/* M-PALIDX 0xFFBA00..0xFFBA3F */
 .equ BOOT_VRAM_DIR_OFF, 0x0FC0
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
+.equ FADE_CRAM_RAM, 0x00FF8800		/* 128B copy kept after early Word-RAM return */
 .equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
 /* 1VBLANKで安全に使えるDMA相当word budgetはモード別(md_vbudget)。
    Word-RAM DMAの先頭word補修など、CPUによるVDP word writeはDMAの4倍で
@@ -114,7 +117,11 @@
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
 .equ FEATURE_WORDBUF_RING_BIT, 8
 .equ SHADOW_UPDATE_LIST_BIT, 15
-.equ SHADOW_UPDATE_COUNT_MASK, 0x7FFF
+.equ FRAME_TYPE_MASK, 0x6000
+.equ FRAME_TYPE_NORMAL, 0x0000
+.equ FRAME_TYPE_FADE_IN, 0x2000
+.equ FRAME_TYPE_FADE_OUT, 0x4000
+.equ SHADOW_UPDATE_COUNT_MASK, 0x1FFF
 .equ SHADOW_OFFSET_MASK, 0x0FFE	/* 4KB physical shadow, even word offsets */
 .equ PACE_VBLANK_TICKS, 543	/* one NTSC VBlank in 30.72us stopwatch ticks */
 .equ PACE_ARM_BIAS_TICKS, 286	/* preserves the proven N2 arm point: 2*543-286=800 */
@@ -378,7 +385,7 @@ ip_entry:
 	moveq	#0, d0
 	move.b	38(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
 	move.w	d0, md_mode
-	/* The first cadence interval is stored at offset 52. TTRC v24 derives any
+	/* The first cadence interval is stored at offset 52. TTRC v25 derives any
 	   later interval from nominal fps, so 24fps becomes the periodic 2/3 path. */
 	move.w	52(a0), d0
 	bne	1f
@@ -744,8 +751,23 @@ bf_upd:
 	   Word-RAM bank.  The Sub already walks them to build cold runs; rewriting
 	   every (cell,entry) pair was duplicate work on the bottleneck CPU. */
 	lea	(PROBE_BANK+CTRL_SCR_OFF+4), a0	/* skip total_len + frame_seq */
-	move.w	(a0)+, d7			/* bit15=list format, low15=n_upd */
+	move.w	(a0)+, d7			/* bit15=list, bits14..13=type, low13=n_upd */
 	move.w	d7, d6			/* preserve format tag */
+	andi.w	#FRAME_TYPE_MASK, d6
+	move.w	d6, frame_type
+	move.w	d7, d6			/* preserve list tag */
+	tst.w	frame_type
+	beq.s	1f
+	/* NT_DMA_FLIP returns this bank before the final CRAM write. Preserve the
+	   complete inline image in Main RAM while the bank is still owned here. */
+	lea	FADE_CRAM_RAM, a1
+	moveq	#16-1, d0			/* 16 * two longs = 128 bytes */
+2:
+	move.l	(a0)+, (a1)+
+	move.l	(a0)+, (a1)+
+	dbra	d0, 2b
+	clr.w	d7				/* every special type is update-free */
+1:
 	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
 	beq	bf_blit
 	btst	#SHADOW_UPDATE_LIST_BIT, d6
@@ -942,12 +964,15 @@ bf_dma:
 .ifdef NT_DMA_FLIP
 	clr.w	vbudget_held_reserve
 	move.w	#NT_FLIP_RESERVE_WORDS, d0
+	tst.w	frame_type
+	bne.s	7f
 	movea.l	palidx_ptr, a0
 	move.w	frame_no, d1
 	cmp.w	(a0), d1
-	blo.s	7f
-	addi.w	#64*CPU_VDP_WORD_COST, d0
+	blo.s	8f
 7:
+	addi.w	#64*CPU_VDP_WORD_COST, d0
+8:
 	move.w	d0, pattern_final_reserve_words
 .endif
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
@@ -1130,6 +1155,8 @@ bf_flip:
 	   跨いだentryの区間を採用=絶対値の自己修復性を維持。表は15切替+0xFFFF番兵
 	   で必ず終端されるためadvanceは有界。CRAM本体はboot時に積んだMain-RAMの
 	   PALTAB表から引く(ストリーム到着タイミング非依存)。 */
+	tst.w	frame_type
+	bne	bf_inline_cram
 	movea.l	palidx_ptr, a0
 	move.w	frame_no, d1
 	cmp.w	(a0), d1
@@ -1141,11 +1168,14 @@ bf_flip:
 	bhs.s	1b				/* 複数跨ぎは最後のentryを採用 */
 	move.l	a0, palidx_ptr
 	move.w	d0, dbg_seg			/* 絶対値で更新(増分でなく自己修復) */
-.ifndef NT_DMA_FLIP
 	lsl.w	#7, d0				/* *128B */
 	lea	PALTAB_RAM, a0
 	adda.w	d0, a0				/* src = 表[区間] (最大15*128=1920でadda.w可) */
-.endif
+	bra.s	bf_cram_source_ready
+bf_inline_cram:
+	lea	FADE_CRAM_RAM, a0		/* safe copy after early Word-RAM bank return */
+bf_cram_source_ready:
+	move.l	a0, cram_source			/* DEBUG/NT staging may reuse a0 before the flip */
 .ifdef DEBUG
 .ifndef NT_DMA_FLIP
 	bsr	prepare_dbg			/* build the inactive HUD row before the deadline */
@@ -1182,11 +1212,8 @@ bf_flip:
 .endif
 .ifdef NT_DMA_FLIP
 	bsr	nt_dma_flip			/* whole back NT in ~11 blank lines */
-	move.w	dbg_seg, d0
-	lsl.w	#7, d0
-	lea	PALTAB_RAM, a0
-	adda.w	d0, a0				/* recover CRAM source after DEBUG stage patch */
 .endif
+	movea.l	cram_source, a0			/* recover embedded-table or inline CRAM source */
 	move.l	#0xC0000000, (VDP_CTRL).l	/* CRAM addr 0 */
 	move.w	#64-1, d1
 1:
@@ -2486,8 +2513,12 @@ swap_request_pending:
 	.space 2				/* CMD_SWAP is asserted; finish it at the next loop head */
 n_runs:
 	.space 2
+frame_type:
+	.space 2				/* masked bits14..13 from the current control */
 dbg_seg:
 	.space 2
+cram_source:
+	.space 4				/* PALTAB entry or inline CRAM source for atomic flip */
 palidx_ptr:
 	.space 4				/* next unconsumed M-PALIDX switch entry */
 sub_wait_lines:

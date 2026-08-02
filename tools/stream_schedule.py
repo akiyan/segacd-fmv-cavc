@@ -21,7 +21,7 @@ CD_BYTES_PER_SECOND = av_config.CD_BYTES_PER_SECOND
 PATTERN_BYTES = 32
 PATTERNS_PER_SECTOR = SECTOR_BYTES // PATTERN_BYTES
 RUN_DESCRIPTOR_BYTES = 4
-STREAM_SCHEDULE_SCHEMA_VERSION = 8
+STREAM_SCHEDULE_SCHEMA_VERSION = 9
 
 
 class ScheduleError(ValueError):
@@ -66,7 +66,8 @@ def average_body_delivery_rate_bps(useful_bytes, physical_bytes):
 
 
 def control_block_lengths(
-        updates, runs, *, cells, audio_frame_bytes, update_lists=None):
+        updates, runs, *, cells, audio_frame_bytes, update_lists=None,
+        frame_types=None):
     """Return the exact packed control length for every frame.
 
     This mirrors ``pack_stream.build_control`` without constructing audio or
@@ -85,23 +86,39 @@ def control_block_lengths(
         use_lists = np.asarray(update_lists, np.bool_)
         if use_lists.shape != n_upd.shape:
             raise ValueError("update-list flags must match update counts")
+    if frame_types is None:
+        types = np.zeros(n_upd.shape, np.int64)
+    else:
+        types = np.asarray(frame_types, np.int64)
+        if types.shape != n_upd.shape:
+            raise ValueError("frame types must match update counts")
+    if np.any((types < shadow_updates.FRAME_NORMAL)
+              | (types > shadow_updates.FRAME_FADE_OUT)):
+        raise ValueError("frame types contain an unsupported value")
+    special = types != shadow_updates.FRAME_NORMAL
+    if np.any(special & (n_upd != 0)):
+        frame = int(np.flatnonzero(special & (n_upd != 0))[0])
+        raise ValueError(f"fade frame {frame} carries shadow updates")
     update_bytes = np.where(
         use_lists,
         n_upd * shadow_updates.LIST_ITEM_BYTES,
         shadow_updates.aligned_bitmap_bytes(cells)
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES,
     )
-    # body prefix: frame_seq and n_upd = 4 bytes (palette switches are
-    # player-embedded PALIDX data, not stream bytes). Entry words and the run
-    # suffix are even-sized; only the pre-suffix body may need a byte.
-    pre_suffix = 4 + update_bytes + int(audio_frame_bytes)
+    update_bytes = np.where(special, 0, update_bytes)
+    inline_cram = special.astype(np.int64) * shadow_updates.INLINE_CRAM_BYTES
+    # Body prefix: frame_seq and type|n_upd = 4 bytes. Ordinary palette
+    # switches are player-embedded PALIDX data; typed fade controls carry the
+    # exact inline CRAM counted above. Entry words and the run suffix are
+    # even-sized; only the pre-suffix body may need a byte.
+    pre_suffix = 4 + update_bytes + inline_cram + int(audio_frame_bytes)
     pre_suffix += pre_suffix & 1
     # total_len word + aligned body + n_runs word + four bytes per run.
     return (2 + pre_suffix + 2 + n_runs * RUN_DESCRIPTOR_BYTES).astype(np.int64)
 
 
 def body_fresh_byte_supply(
-        frame_count, fps, *, cells, audio_frame_bytes):
+        frame_count, fps, *, cells, audio_frame_bytes, frame_types=None):
     """Return BODY bytes left after reserving fixed control data first.
 
     The gross allowance follows the player's exact integer sector cadence, not
@@ -118,6 +135,7 @@ def body_fresh_byte_supply(
         zeros, zeros,
         cells=cells,
         audio_frame_bytes=audio_frame_bytes,
+        frame_types=frame_types,
     )
     if count:
         fixed[0] = 0
@@ -221,7 +239,7 @@ def control_sector_schedule(block_lengths, *, sector_capacity=None):
 
 def body_funded_work_bytes(
         pattern_loads, updates, runs, *, cells, audio_frame_bytes,
-        update_lists=None):
+        update_lists=None, frame_types=None):
     """Return exact control plus Prg-pattern work attributed to each frame.
 
     This is encoder funding demand, not the physical BODY delivery trace: the
@@ -241,6 +259,7 @@ def body_funded_work_bytes(
         cells=cells,
         audio_frame_bytes=audio_frame_bytes,
         update_lists=update_lists,
+        frame_types=frame_types,
     )
     useful = control + n_load * PATTERN_BYTES
     if len(useful):
@@ -253,7 +272,7 @@ def select_shadow_update_lists(
         frame_sectors, audio_frame_bytes, fill=True,
         prebuffer_capacity_patterns=None,
         max_control_bytes=0x2000, allow_control_growth=False,
-        control_sector_envelope=None):
+        control_sector_envelope=None, frame_types=None):
     """Select faster lists without reducing physical delivery margins.
 
     Positive control growth is disabled in the qualified path. Full Bad Apple
@@ -266,13 +285,20 @@ def select_shadow_update_lists(
     loads = np.asarray(pattern_loads, np.int64)
     if n_runs.shape != n_upd.shape or loads.shape != n_upd.shape:
         raise ValueError("shadow cells, runs and pattern loads must have equal lengths")
+    if frame_types is None:
+        types = np.zeros(n_upd.shape, np.int64)
+    else:
+        types = np.asarray(frame_types, np.int64)
+        if types.shape != n_upd.shape:
+            raise ValueError("frame types must match shadow cells")
 
     costs = tuple(shadow_updates.frame_cost(frame, cells) for frame in frames)
     legacy_lengths = control_block_lengths(
-        n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes)
+        n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
+        frame_types=types)
     all_list_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
-        update_lists=np.ones(n_upd.shape, np.bool_))
+        update_lists=np.ones(n_upd.shape, np.bool_), frame_types=types)
     eligible = np.asarray([
         index > 0 and cost.saved_cycles > 0
         and int(all_list_lengths[index]) <= int(max_control_bytes)
@@ -282,7 +308,7 @@ def select_shadow_update_lists(
     def run_schedule(flags):
         lengths = control_block_lengths(
             n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
-            update_lists=flags)
+            update_lists=flags, frame_types=types)
         scheduled = schedule_payload_ring(
             loads, lengths, fps=fps,
             ring_capacity_patterns=ring_capacity_patterns,

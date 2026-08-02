@@ -11,7 +11,7 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v24): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
+TTRCレイアウト(v25): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
               sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
@@ -20,10 +20,11 @@ TTRCレイアウト(v24): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-V
 MOVIE.DAT はツール互換用の HEADER.DAT || BODY.DAT 連結コンテナ。
 パレット(PALTAB全区間)と切替表(PALIDX)はディスクに載せず、pack が
 paltab.bin / palidx.bin としてplayerビルド入力へ書き、Main-IPイメージが内蔵する。
-control block: >H total_len >H frame_seq >H n_upd
-               ceil(cells/8) bitmap n_upd*(>H entry) audio [even pad]
+control block: >H total_len >H frame_seq >H type|n_upd
+               normal: aligned bitmap/list + entries; fade: 128-byte inline CRAM
+               audio [even pad]
                >H n_runs n_runs*(>H slot_start >H count)
-  palette切替はboot搭載のM-PALIDX表起点(controlに切替バイトは無い)。
+  通常palette切替はboot搭載のM-PALIDX表起点。自動fadeはcontrol内の128-byte CRAM。
 """
 import argparse
 import dataclasses
@@ -233,28 +234,96 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v24: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v25: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v24: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v25: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v24: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v25: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v24: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v25: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
+
+    frame_types, frame_cram = fade_control_arrays(
+        log, len(log.get("frames", ())))
+    for frame in np.flatnonzero(frame_types):
+        a = frame_cram[int(frame)]
+        brightness = a.astype(np.int16).sum(axis=2)
+        if (int(brightness[0, 0]) != int(brightness.min())
+                or int(brightness[0, 14]) != int(brightness.max())):
+            raise SystemExit(
+                f"pack v25: fade frame {int(frame)} does not preserve the "
+                "DEBUG palette endpoints; re-run sim")
 
 
 def pals_to_bytes_128(pal_4x15):
     b = pals_to_bytes([np.asarray(pal_4x15[p], np.uint8) for p in range(4)])
     assert len(b) == 128, len(b)
     return b
+
+
+def bytes_128_to_pals(data):
+    """Decode one complete MD CRAM image into four 15-colour RGB333 lines."""
+
+    raw = bytes(data)
+    if len(raw) != shadow_updates.INLINE_CRAM_BYTES:
+        raise ValueError(
+            f"inline CRAM is {len(raw)} bytes, expected "
+            f"{shadow_updates.INLINE_CRAM_BYTES}")
+    words = np.frombuffer(raw, ">u2").reshape(4, 16)[:, 1:]
+    result = np.empty((4, 15, 3), np.uint8)
+    result[..., 0] = (words >> 1) & 7
+    result[..., 1] = (words >> 5) & 7
+    result[..., 2] = (words >> 9) & 7
+    return result
+
+
+def fade_control_arrays(log, frame_count):
+    """Return validated per-frame control types and inline CRAM images."""
+
+    count = int(frame_count)
+    meta = log.get("fade") or {}
+    if not meta:
+        return (
+            np.zeros(count, np.uint8),
+            np.zeros((count, 4, 15, 3), np.uint8),
+        )
+    if int(meta.get("schema_version", 0)) != 1:
+        raise SystemExit("pack: unsupported automatic-fade decision schema")
+    types = np.asarray(meta.get("frame_types", ()), np.uint8)
+    crams = np.asarray(meta.get("frame_cram", ()), np.uint8)
+    if types.shape != (count,):
+        raise SystemExit("pack: fade frame-type count differs from decisions")
+    if crams.shape != (count, 4, 15, 3):
+        raise SystemExit("pack: fade CRAM array has an invalid shape")
+    if np.any(types > shadow_updates.FRAME_FADE_OUT):
+        raise SystemExit("pack: fade metadata contains a reserved frame type")
+    if count and int(types[0]) != shadow_updates.FRAME_NORMAL:
+        raise SystemExit("pack: frame 0 cannot be a streamed fade control")
+    if np.any(crams > 7):
+        raise SystemExit("pack: fade CRAM contains a value outside RGB333")
+    return types, crams
+
+
+def segment_entry_palettes(log):
+    """Return the CRAM image installed at each PALIDX segment boundary."""
+
+    source = log.get("segment_entry_cram")
+    if source is None:
+        source = log["seg_pals"]
+    entries = np.asarray(source, np.uint8)
+    expected = (len(log["seg_pals"]), 4, 15, 3)
+    if entries.shape != expected:
+        raise SystemExit(
+            f"pack: segment-entry CRAM shape is {entries.shape}, expected {expected}")
+    return entries
 
 
 def build_bitmap(cells):
@@ -270,6 +339,7 @@ def resolve(log, POOL, mode="lru"):
     frames = log["frames"]
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     nfr = len(frames)
+    frame_types, _frame_cram = fade_control_arrays(log, nfr)
     alloc = TileAllocator(C_CELLS, POOL, BASE)   # 共有割り当て(連続)。sim も同一 = cap=realized
     per = []
     transfer_orders = []
@@ -292,7 +362,11 @@ def resolve(log, POOL, mode="lru"):
         results = alloc.place_frame(
             [(int(cell), key) for (cell, pal, key) in fr], i)
         transfer_order = cold_transfer_order(results)
-        pal_w[i] = 1 if (i == 0 or frame_seg[i] != frame_seg[i - 1]) else 0
+        pal_w[i] = 1 if (
+            i == 0
+            or frame_seg[i] != frame_seg[i - 1]
+            or frame_types[i] != shadow_updates.FRAME_NORMAL
+        ) else 0
         cells, entries, colds = [], [], []
         for (cell, pal, key), (slot, cold) in zip(fr, results):
             if cold:
@@ -301,6 +375,10 @@ def resolve(log, POOL, mode="lru"):
             entries.append((int(pal) << 13) | (BASE + slot))
             colds.append(cold)
             n_upd[i] += 1
+        if (frame_types[i] != shadow_updates.FRAME_NORMAL
+                and n_upd[i] != 0):
+            raise SystemExit(
+                f"pack: fade frame {i} carries {int(n_upd[i])} name updates")
         Plist.extend(pack_key(fr[index][2]) for index in transfer_order)
         for index in transfer_order:
             physical_patterns[results[index][0]] = fr[index][2]
@@ -820,7 +898,9 @@ def build_control(
         prefetch_per=None, dic_indices=None, transfer_orders=None,
         word_capacities=None):
     """Build control blocks and return their reconstructed source PCM chunks."""
-    seg_cram = [pals_to_bytes_128(p) for p in log["seg_pals"]]
+    segment_entries = segment_entry_palettes(log)
+    seg_cram = [pals_to_bytes_128(p) for p in segment_entries]
+    frame_types, frame_cram = fade_control_arrays(log, len(per))
     audio_chunks, pcm_chunks = build_audio_chunks(audio_path, len(per))
     # CRAM pre-load(PALTAB): パレット本体はplayerイメージ内蔵(paltab.bin)で、実機は
     # boot時にMain-RAM表へコピー済み。切替トリガも内蔵のPALIDX表(frame番号+区間番号)で、
@@ -857,17 +937,26 @@ def build_control(
         # 照合し、ズレたら desync 検知(CDCセクタ落ち等)して復帰できる。total_len に含む。
         body += struct.pack(">H", i & 0xFFFF)
         use_list = bool(update_lists[i])
-        body += struct.pack(">H", shadow_updates.encode_count(n_upd[i], use_list))
+        frame_type = int(frame_types[i])
+        if frame_type != shadow_updates.FRAME_NORMAL and use_list:
+            raise ValueError(f"fade frame {i} cannot use a shadow update list")
+        body += struct.pack(">H", shadow_updates.encode_count(
+            n_upd[i], use_list, frame_type))
         sourced_entries = []
         for e, cold, source in zip(entries, colds, frame_sources):
             sourced_entry = pattern_supply.encode_entry_source(
                 e, source if cold else pattern_supply.SOURCE_PRG)
             sourced_entries.append((0x8000 if cold else 0) | sourced_entry)
-        if use_list:
+        if shadow_updates.has_inline_cram(frame_type):
+            if cells or entries or colds:
+                raise ValueError(
+                    f"fade frame {i} must not carry name-table updates")
+            body += pals_to_bytes_128(frame_cram[i])
+        elif use_list:
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v24 keeps the 16-bit entry array word-aligned even when
+            # TTRC v25 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -905,12 +994,20 @@ def build_control(
 
 def control_audio_bounds(block):
     """Return the fixed-size on-disc audio slice in one control block."""
-    n_upd, use_list = shadow_updates.decode_count(
-        struct.unpack_from(">H", block, 4)[0])
-    update_bytes = (
-        n_upd * shadow_updates.LIST_ITEM_BYTES if use_list
-        else shadow_updates.aligned_bitmap_bytes(C_CELLS)
-        + n_upd * shadow_updates.SHADOW_ENTRY_BYTES)
+    raw_count = struct.unpack_from(">H", block, 4)[0]
+    n_upd, use_list = shadow_updates.decode_count(raw_count)
+    frame_type = shadow_updates.decode_frame_type(raw_count)
+    if frame_type == shadow_updates.FRAME_RESERVED:
+        raise ValueError("reserved frame type in control block")
+    if shadow_updates.has_inline_cram(frame_type):
+        if n_upd or use_list:
+            raise ValueError("fade control carries shadow updates")
+        update_bytes = shadow_updates.INLINE_CRAM_BYTES
+    else:
+        update_bytes = (
+            n_upd * shadow_updates.LIST_ITEM_BYTES if use_list
+            else shadow_updates.aligned_bitmap_bytes(C_CELLS)
+            + n_upd * shadow_updates.SHADOW_ENTRY_BYTES)
     pos = 6 + update_bytes
     return pos, pos + AUDIO_CONTROL
 
@@ -993,7 +1090,9 @@ def decode_verify(
     Model that live order so the physical PrgBuf peak includes the overlap.
     """
     frame_seg = np.asarray(log["frame_seg"], np.int64)
-    seg_pals = log["seg_pals"]
+    segment_entries = segment_entry_palettes(log)
+    expected_types, expected_frame_cram = fade_control_arrays(log, len(per))
+    active_cram = np.asarray(segment_entries[0], np.uint8).copy()
     n_pay_sec = sc["n_pay_sec"]; blk_len = sc["blk_len"]; B = sc["prebuf_pat"]
     word_stage_sec = np.asarray(
         sc.get("word_stage_sectors", np.zeros(len(per), np.int64)),
@@ -1037,6 +1136,11 @@ def decode_verify(
     nt_slot = np.zeros(C_CELLS, np.int64); nt_pal = np.zeros(C_CELLS, np.int64)
     diffs = []; ring_peak = len(ring); bad = 0
     for i in range(len(per)):
+        segment_switch = bool(
+            i and int(frame_seg[i]) != int(frame_seg[i - 1]))
+        if segment_switch:
+            active_cram = np.asarray(
+                segment_entries[int(frame_seg[i])], np.uint8).copy()
         parity = i & 1
         stage = int(word_stage_sec[i]) * PAT_PER_SEC
         if stage:
@@ -1062,9 +1166,29 @@ def decode_verify(
         blk = ctrl[cc:cc + int(blk_len[i])]; cc += int(blk_len[i])
         p = 2                                         # skip total_len
         p += 2                                        # skip frame_seq(同期マーカー)
-        nupd, use_list = shadow_updates.decode_count(
-            struct.unpack(">H", blk[p:p + 2])[0]); p += 2
-        if use_list:
+        raw_count = struct.unpack(">H", blk[p:p + 2])[0]; p += 2
+        nupd, use_list = shadow_updates.decode_count(raw_count)
+        frame_type = shadow_updates.decode_frame_type(raw_count)
+        if frame_type == shadow_updates.FRAME_RESERVED:
+            raise ValueError(f"reserved frame type in frame {i}")
+        if frame_type != int(expected_types[i]):
+            raise ValueError(
+                f"frame {i}: packed type {frame_type} differs from sim "
+                f"type {int(expected_types[i])}")
+        if segment_switch and frame_type != shadow_updates.FRAME_NORMAL:
+            raise ValueError(
+                f"frame {i}: PALIDX switch and inline CRAM coincide")
+        if shadow_updates.has_inline_cram(frame_type):
+            if nupd or use_list:
+                raise ValueError(f"fade frame {i} carries shadow updates")
+            inline_end = p + shadow_updates.INLINE_CRAM_BYTES
+            active_cram = bytes_128_to_pals(blk[p:inline_end])
+            p = inline_end
+            if not np.array_equal(active_cram, expected_frame_cram[i]):
+                raise ValueError(
+                    f"frame {i}: packed inline CRAM differs from simulation")
+            update_items = []
+        elif use_list:
             update_items = []
             for _ in range(nupd):
                 offset, ent = struct.unpack_from(">HH", blk, p); p += 4
@@ -1123,7 +1247,7 @@ def decode_verify(
         if not need_img:
             continue
         full16 = np.zeros((4, 16, 3), np.uint8)
-        full16[:, 1:] = np.asarray(seg_pals[int(frame_seg[i])], np.uint8)
+        full16[:, 1:] = active_cram
         img = np.zeros((C_CELLS, TILE, TILE, 3), np.uint8)
         for c in range(C_CELLS):
             pat = tile[int(nt_slot[c]) + BASE]
@@ -1169,7 +1293,7 @@ def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan,
         wordram_layout, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v24 split stream and a combined tooling container.
+    """Write the v25 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
@@ -1258,7 +1382,7 @@ def write_stream(
 
     control = b"".join(disc_blocks)
     # Split frame 0 from the timed stream. It remains an untimed exact
-    # construction, but v24 carries its bytes in the BODY arm rather than HEADER.
+    # construction, but v25 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1306,7 +1430,7 @@ def write_stream(
     # WordBuf. Palette data does not ride the disc: the full segment table and
     # the switch table are player-image build inputs (paltab.bin/palidx.bin).
     palette_table = b"".join(
-        pals_to_bytes_128(p) for p in log["seg_pals"])
+        pals_to_bytes_128(p) for p in segment_entry_palettes(log))
     # PALIDX: player-embedded palette-switch table. frame_seg is forward-only,
     # so each (frame.u16, segment.u16) entry advances to a strictly later
     # frame. The player advances while next_switch <= frame_no; the 0xFFFF
@@ -1389,7 +1513,7 @@ def write_stream(
     fps_int = int(round(FPS))                         # nominal fps; cadence bit derives the VBlank schedule
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v24 requires an untimed frame0 BODY arm")
+        raise SystemExit("pack v25 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
     if av_config.uses_vblank_cadence(FPS):
         features |= FEATURE_VBLANK_CADENCE
@@ -1411,13 +1535,13 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v24 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v25 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
     header += struct.pack(">HH", audio_fd, audio_preload_sec)  # offset 58: RF5C164 FD; 60: prefetch sectors
     header += struct.pack(">H", features)          # offset 62: optional stream features
-    # v24: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
+    # v25: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
     # inside the player image, not a header field.
     header += b"\0" * (SECTOR - len(header))
     header = bytearray(header)
@@ -1642,7 +1766,7 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v24 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v25 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:
@@ -1754,12 +1878,21 @@ def main():
             "pack: independently recomputed O_LOADS peaks differ from sim: "
             f"pack={packed_peaks} sim={frozen_peaks}; re-run sim")
     shadow_meta = log.get("shadow_updates") or {}
+    frame_types, _frame_cram = fade_control_arrays(log, len(per))
     update_lists = np.asarray(
         shadow_meta.get("selected", np.zeros(len(per), np.bool_)), np.bool_)
     if update_lists.shape != (len(per),):
         raise SystemExit("pack: frozen shadow update-list flags have wrong frame count")
     if len(update_lists) and bool(update_lists[0]):
         raise SystemExit("pack: frame 0 must retain the legacy bitmap format")
+    if np.any(
+            update_lists
+            & (frame_types != shadow_updates.FRAME_NORMAL)):
+        frame = int(np.flatnonzero(
+            update_lists
+            & (frame_types != shadow_updates.FRAME_NORMAL))[0])
+        raise SystemExit(
+            f"pack: fade frame {frame} cannot use a shadow update list")
     raw_prefetch_enabled = bool(
         (log.get("raw_prefetch") or {}).get("enabled", False))
     if update_lists.any() and not (
@@ -1792,7 +1925,7 @@ def main():
     print(
         f"  shadow updates: list={int(update_lists.sum())}/{len(update_lists)} "
         f"Main saved={int(((recomputed_legacy - recomputed_list) * update_lists).sum())} cycles "
-        f"control delta={sum(len(block) for block in blocks) - int(stream_schedule.control_block_lengths(n_upd, packed_runs, cells=C_CELLS, audio_frame_bytes=AUDIO_CONTROL).sum())}B")
+        f"control delta={sum(len(block) for block in blocks) - int(stream_schedule.control_block_lengths(n_upd, packed_runs, cells=C_CELLS, audio_frame_bytes=AUDIO_CONTROL, frame_types=frame_types).sum())}B")
     frozen_physical_budget = log.get("physical_budget") or {}
     frozen_control_envelope = None
     if frozen_physical_budget:

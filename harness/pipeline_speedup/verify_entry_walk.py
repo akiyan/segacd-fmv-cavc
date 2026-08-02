@@ -6,7 +6,7 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For current v24 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+For current v25 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
 that each frame's control block and cold patterns are ready before that frame
 can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
@@ -35,8 +35,14 @@ SOURCE_WR = 1
 SOURCE_DIC = 2
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 24
+VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
+SHADOW_UPDATE_LIST_TAG = 0x8000
+SHADOW_FRAME_TYPE_MASK = 0x6000
+SHADOW_FRAME_TYPE_SHIFT = 13
+SHADOW_FRAME_TYPE_RESERVED = 3
+SHADOW_UPDATE_COUNT_MASK = 0x1FFF
+INLINE_CRAM_BYTES = 128
 
 
 def frame_sectors(
@@ -161,30 +167,41 @@ def verify_block(
     if len(block) < 8:
         raise AssertionError(f"frame {seq}: short control block")
     total_len, frame_seq, raw_count = struct.unpack_from(">HHH", block)
-    n_upd = raw_count & 0x7FFF
-    use_list = bool(raw_count & 0x8000)
+    n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
+    use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
+    frame_type = (
+        raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(block):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(block)}")
     if frame_seq != seq:
         raise AssertionError(f"frame {seq}: frame_seq is {frame_seq}")
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells} cells")
+    if frame_type == SHADOW_FRAME_TYPE_RESERVED:
+        raise AssertionError(f"frame {seq}: reserved frame type")
+    if frame_type and (n_upd or use_list):
+        raise AssertionError(f"frame {seq}: fade control carries updates")
 
     bitmap_off = 6
-    if use_list:
-        list_end = bitmap_off + n_upd * 4
-        if list_end > len(block):
-            raise AssertionError(f"frame {seq}: shadow list exceeds control block")
+    if use_list or frame_type:
+        update_end = (
+            bitmap_off + INLINE_CRAM_BYTES
+            if frame_type else bitmap_off + n_upd * 4)
+        if update_end > len(block):
+            label = "inline CRAM" if frame_type else "shadow list"
+            raise AssertionError(f"frame {seq}: {label} exceeds control block")
         previous = -1
-        for index in range(n_upd):
-            offset = struct.unpack_from(">H", block, bitmap_off + index * 4)[0]
-            if offset & 1 or offset >= cells * 2 or offset <= previous:
-                raise AssertionError(f"frame {seq}: invalid shadow-list offset {offset}")
-            previous = offset
+        if use_list:
+            for index in range(n_upd):
+                offset = struct.unpack_from(">H", block, bitmap_off + index * 4)[0]
+                if offset & 1 or offset >= cells * 2 or offset <= previous:
+                    raise AssertionError(f"frame {seq}: invalid shadow-list offset {offset}")
+                previous = offset
         # v11 list frames bypass the legacy Sub entry walk and consume the
-        # authoritative run suffix instead. Count that suffix so the delivery
-        # proof below retains its exact Prg demand.
-        suffix = list_end + audio_bytes
+        # authoritative run suffix instead. Fade frames use that same suffix
+        # after their inline CRAM. Count it so the delivery proof retains its
+        # exact Prg demand.
+        suffix = update_end + audio_bytes
         suffix = (suffix + 1) & ~1
         if suffix + CONTROL_SUFFIX_HEADER_BYTES > len(block):
             raise AssertionError(f"frame {seq}: missing run suffix")

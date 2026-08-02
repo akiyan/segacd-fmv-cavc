@@ -82,13 +82,14 @@ allowance or a boot-preload credit. It is not a physical buffer.
 
 ## Palette table
 
-All segment palettes and the switch schedule are player-embedded build
+All ordinary segment palettes and their switch schedule are player-embedded build
 inputs: pack writes `paltab.bin` / `palidx.bin` beside the split stream, the
 Main-IP image incbins both, and the player copies them to Main RAM at entry.
 The PALIDX table lists every switch as `(frame, segment)` and the player
-advances through it while `next_switch <= frame_no`. Neither `HEADER.DAT`
-nor timed controls carry palette bytes at all, so a palette switch consumes
-no same-frame stream payload.
+advances through it while `next_switch <= frame_no`. `HEADER.DAT` carries no
+palette bytes, and an ordinary PALIDX switch consumes no same-frame stream
+payload. An automatically detected black-fade frame is the exception: its
+timed control carries one exact 128-byte CRAM image.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
@@ -96,12 +97,22 @@ no same-frame stream payload.
 | PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`. |
 | `PALIDX_ENTRIES` | 16 (15 switches + sentinel) | cfg / ip | Player-embedded switch table at Main RAM `0xFFBA00..0xFFBA3F`. |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size (boot-VRAM sidecar records only). |
+| inline fade CRAM | 128 B | sim / pack / sp / ip | Full CRAM replacement carried by each selected fade control and copied to `M-FCRAM` before the Word-RAM handoff. |
 | P0/index1 | darkest usable RGB333 colour | sim / pack / ip | Opaque DEBUG HUD background. |
 | P0/index15 | brightest usable RGB333 colour | sim / pack / ip | DEBUG HUD text. |
 
 The encoder reorders only existing colours before quantisation. It does not
 change the 60-colour multiset, and transparent index 0 remains zero in all four
 palette lines.
+
+Black-fade detection is fixed encoder behavior and has no profile option or
+source-time input. The encoder looks for a static image whose pixels fit one
+global brightness scale while rising and falling between black runs. It loads
+the exact indexed reference during the black anchor and then changes only CRAM
+on the selected fade frames. Connected shots use the earlier static interval
+to prefetch the next reference when a one-frame black gap is too short. Audio,
+physical pattern delivery, and the cold-run suffix continue on these
+update-free controls.
 
 ## Cold cap
 
@@ -124,7 +135,7 @@ playback.
 
 ## Audio
 
-On-disc format version 24 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+On-disc format version 25 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
@@ -521,12 +532,13 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 
 ## Palette table
 
-全segment paletteと切替スケジュールはplayer内蔵のビルド入力です: packが
+通常の全segment paletteとその切替scheduleはplayer内蔵のbuild入力です: packが
 split streamの隣に `paltab.bin` / `palidx.bin` を書き、Main-IP imageが両方を
 incbinし、playerがentry直後にMain RAMへcopyします。PALIDX表が全切替を
 `(frame, segment)` で列挙し、playerは `next_switch <= frame_no` の間advance
-します。`HEADER.DAT` もtimed controlもpalette byteを一切持たないため、
-palette switchは同frameのstream payloadを消費しません。
+します。`HEADER.DAT` はpalette byteを持たず、通常のPALIDX switchは同frameの
+stream payloadを消費しません。自動検出した黒fade frameだけが例外で、
+timed controlが正確な128-byte CRAM imageを1個持ちます。
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
@@ -534,11 +546,19 @@ palette switchは同frameのstream payloadを消費しません。
 | PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`。 |
 | `PALIDX_ENTRIES` | 16（15切替+番兵） | cfg / ip | player内蔵切替表。Main RAM `0xFFBA00..0xFFBA3F`。 |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size（boot-VRAM sidecar record専用）。 |
+| inline fade CRAM | 128 B | sim / pack / sp / ip | 選択した各fade controlが運ぶCRAM総入替。Word-RAM handoff前に`M-FCRAM`へcopyする。 |
 | P0/index1 | 使用可能な最暗RGB333色 | sim / pack / ip | 不透明DEBUG HUD background。 |
 | P0/index15 | 使用可能な最明RGB333色 | sim / pack / ip | DEBUG HUD text。 |
 
 encoderは量子化前に既存色の順序だけを変えます。60色の集合は変えず、4本すべての
 palette lineでtransparent index 0をzeroのままにします。
+
+黒fade検出は固定encoder behaviorで、profile optionやsourceのtime指定を持ちません。
+encoderは黒runの間で、1枚の静止画像の画素が単一のbrightness scaleに当てはまり、
+そのscaleが上がって下がる区間を探します。黒anchor中に正確なindexed referenceをloadし、
+選択したfade frameではCRAMだけを変えます。1-frameの黒gapが短すぎる連続shotは、
+前のstatic intervalを使って次のreferenceをprefetchします。このupdate-free controlでもaudio、
+物理pattern delivery、cold-run suffixは継続します。
 
 ## Cold cap
 
@@ -558,7 +578,7 @@ untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-On-disc format version 24のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+On-disc format version 25のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |

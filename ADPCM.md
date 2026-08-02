@@ -2,7 +2,7 @@ EN / [JP](#jp)
 
 # 22.05 kHz IMA ADPCM playback
 
-On-disc format version 24 uses 22.05 kHz mono IMA ADPCM as its only audio format. The Sub CPU
+On-disc format version 25 uses 22.05 kHz mono IMA ADPCM as its only audio format. The Sub CPU
 decodes each timed control chunk and writes the reconstructed 8-bit
 sign-magnitude samples to the RF5C164.
 
@@ -24,7 +24,7 @@ player therefore keeps decode and RF5C164 output on the Sub CPU.
 - The untimed `BODY.DAT` arm audio is already reconstructed RF5C164 data, one
   chunk per sector. Timed control blocks carry future checkpointed ADPCM
   chunks so the wave-RAM write reserve remains persistent.
-- Header offset 54 is the decoded RF5C164 sample count per frame. Format version 24
+- Header offset 54 is the decoded RF5C164 sample count per frame. Format version 25
   derives the control size as `4 + decoded_samples / 2`.
 - Header offset 58 stores the RF5C164 frequency delta calculated from the fixed
   chunk size and actual playback cadence.
@@ -115,7 +115,7 @@ broader portability checks rather than alternate-codec fallbacks.
 
 # 22.05 kHz IMA ADPCM再生
 
-On-disc format version 24の音声形式は、22.05 kHz mono IMA ADPCMのみです。Sub CPUが時刻指定された
+On-disc format version 25の音声形式は、22.05 kHz mono IMA ADPCMのみです。Sub CPUが時刻指定された
 各control chunkをdecodeし、復元した8-bit sign-magnitude sampleをRF5C164へ
 書き込みます。
 
@@ -136,7 +136,7 @@ Sub CPU上で行います。
 - untimed `BODY.DAT` armのaudioは、すでに復元済みのRF5C164 dataで、1 sectorに
   1 chunkを格納します。時刻指定control blockには将来分のcheckpoint付きADPCM
   chunkを格納し、wave-RAM write reserveを維持します。
-- Header offset 54は、frameごとのdecode済みRF5C164 sample数です。Format version 24の
+- Header offset 54は、frameごとのdecode済みRF5C164 sample数です。Format version 25の
   control sizeは`4 + decoded_samples / 2`で求めます。
 - Header offset 58は、固定chunk sizeと実際のplayback cadenceから求めたRF5C164
   frequency deltaを格納します。

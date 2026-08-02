@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 24
+VERSION        = 25
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 24. Bitmap controls insert one zero byte after an
+The player accepts version 25. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -109,7 +109,7 @@ The first 22 bytes are `struct ">4sHHHHHHHHH"`.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | exactly `23` |
+| 4 | 2 | version | exactly `25` |
 | 6 | 2 | frames | total frame count (`nfr`) |
 | 8 | 2 | tcols | tile-grid columns |
 | 10 | 2 | trows | tile-grid rows |
@@ -203,7 +203,7 @@ rejects a mismatch with the decision log.
 
 ## Player-embedded palette tables
 
-Palette data does not ride the disc. The packer writes two build inputs
+Ordinary segment-palette data does not ride the disc. The packer writes two build inputs
 beside the split stream and the Main-IP player image embeds both in its
 transient `.startup` section, copying them to Main RAM at entry before
 generated code reuses that area:
@@ -224,6 +224,12 @@ generated code reuses that area:
   CRAM total-replace when its frame counter reaches the next entry, so
   palette data and switch timing are both independent of same-frame CD
   delivery.
+
+Typed fade controls are separate from PALIDX. Each selected fade frame carries
+one exact 128-byte CRAM image inside its timed control. Main copies that image
+to `M-FCRAM` before returning Word RAM, then performs the full CRAM replacement
+atomically with the display flip. These inline images do not occupy PALTAB or
+PALIDX entries.
 
 ## Boot stage
 
@@ -445,8 +451,9 @@ payload.
 |---:|---|---|
 | 2 | total_len | complete even block length, including this word |
 | 2 | frame_seq | expected frame sequence, low 16 bits |
-| 2 | n_upd/format | bits 0-14 update count; bit 15 selects completed list |
-| variable | shadow updates | bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
+| 2 | n_upd/format | bit 15 selects a completed list; bits 14-13 are frame type; bits 12-0 are the update count |
+| variable | normal shadow updates | type 0: bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
+| 128 | inline CRAM | type 1/2: four complete 16-word CRAM lines; replaces the shadow-update field |
 | `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
 | 0/1 | audio pad | zero byte when needed for word alignment |
 | 2 | n_runs | cold-run count |
@@ -455,6 +462,14 @@ payload.
 `frame_seq` detects a shifted control stream. Sector MSF continuity is checked
 at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
+
+Frame type 0 is normal, 1 is fade-in, 2 is fade-out, and 3 is reserved. Types
+1 and 2 require an update count of zero and a clear list bit. They leave the
+name table unchanged while replacing all 64 CRAM words from the inline image.
+Audio decoding and the cold-run suffix still run, so future patterns can be
+prefetched during a static fade. The two fade directions have the same player
+operation; the tag preserves the encoder's detected direction for validation
+and analysis.
 
 The run descriptors immediately follow `n_runs`. Sub resolves them into
 `O_LOADS v2` while preserving its CDC polling cadence. Main schedules those
@@ -536,13 +551,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 24
+VERSION        = 25
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は24です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は25です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -621,7 +636,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | 必ず `23` |
+| 4 | 2 | version | 必ず `25` |
 | 6 | 2 | frames | 総frame数（`nfr`） |
 | 8 | 2 | tcols | tile gridの列数 |
 | 10 | 2 | trows | tile gridの行数 |
@@ -712,7 +727,7 @@ player constantsがpreload値、routing allocation、compact-tail offset、parit
 
 ## Player内蔵palette table
 
-palette dataはdiscに載せません。packerがsplit streamの隣に2つのビルド入力を
+通常のsegment palette dataはdiscに載せません。packerがsplit streamの隣に2つのbuild入力を
 書き、Main-IP player imageが両方を一時`.startup` sectionへ内蔵します。生成
 codeがその領域を再利用する前に、entry直後にMain RAMへcopyします。
 
@@ -729,6 +744,11 @@ codeがその領域を再利用する前に、entry直後にMain RAMへcopyし�
   segment番号は1ずつ進みます。playerは表を `0xFFBA00..0xFFBA3F` へcopyし、
   frame counterが次のentryへ達したときにCRAM総入替を実行します。palette data
   と切替タイミングの両方が同じframeのCD deliveryに依存しません。
+
+typed fade controlはPALIDXと別物です。選択した各fade frameは、timed control内に
+正確な128-byte CRAM imageを1個持ちます。MainはWord RAMを返却する前にそのimageを
+`M-FCRAM`へcopyし、display flipと同じ原子的な処理でCRAMを総入替します。
+これらのinline imageはPALTABやPALIDX entryを使いません。
 
 ## Boot stage
 
@@ -932,8 +952,9 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 |---:|---|---|
 | 2 | total_len | このwordを含むblock全体の偶数長 |
 | 2 | frame_seq | 期待frame sequenceの下位16 bit |
-| 2 | n_upd/format | bits 0-14はupdate数、bit 15はcompleted list |
-| variable | shadow updates | bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
+| 2 | n_upd/format | bit 15はcompleted list、bits 14-13はframe type、bits 12-0はupdate数 |
+| variable | 通常shadow updates | type 0: bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
+| 128 | inline CRAM | type 1/2: 完全な16-word CRAM line×4。shadow-update fieldの代わりに置く |
 | `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
 | 0/1 | audio pad | word alignmentに必要なzero byte |
 | 2 | n_runs | cold-run数 |
@@ -942,6 +963,12 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 `frame_seq` はcontrol streamのずれを検出します。readerはsector MSFの連続性を確認し、
 gapがあればre-seekして正確に読み直します。それでもsequenceが一致しない場合は
 前frameを保持し、desync counterを増やします。
+
+frame type 0はnormal、1はfade-in、2はfade-out、3はreservedです。Type 1と2は
+update数0かつlist bit clearが必須です。Name tableは変えず、inline imageからCRAMの
+64 word全てを入れ替えます。Audio decodeとcold-run suffixは続くため、static fade中に
+将来patternをprefetchできます。2つのfade方向のplayer操作は同じで、tagはencoderが
+検出した方向をvalidationとanalysisのために保存します。
 
 Run descriptorは`n_runs`の直後に続きます。SubがCDC polling cadenceを保ちながら
 `O_LOADS v2`へ解決し、Mainはguard付き残余VBlank budgetでその展開済みrecordを

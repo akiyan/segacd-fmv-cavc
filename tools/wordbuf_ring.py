@@ -1100,6 +1100,7 @@ def plan(
     current_plan: pattern_supply.SupplyPlan,
     n_updates: Sequence[int] | np.ndarray,
     update_lists: Sequence[bool] | np.ndarray | None = None,
+    frame_types: Sequence[int] | np.ndarray | None = None,
     fps: float,
     cells: int,
     audio_frame_bytes: int,
@@ -1182,6 +1183,7 @@ def plan(
         cells=int(cells),
         audio_frame_bytes=int(audio_frame_bytes),
         update_lists=update_lists,
+        frame_types=frame_types,
     )
     control_sectors = stream_schedule.control_sector_schedule(block_lengths)
     physical_sectors = stream_schedule.rate_deltas(frame_count, float(fps))
@@ -1367,6 +1369,7 @@ def plan(
         cells=int(cells),
         audio_frame_bytes=int(audio_frame_bytes),
         update_lists=update_lists,
+        frame_types=frame_types,
     )
     model_control_sectors = stream_schedule.control_sector_schedule(
         model_block_lengths)

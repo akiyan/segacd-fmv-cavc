@@ -238,6 +238,11 @@ the Sub iterate the header's validated `n_upd` entries directly instead of
 scanning all 896 bitmap cells a second time. The old bitmap walk remains on the
 Main CPU unchanged.
 
+TTRC v25 typed fade controls have `n_upd=0` and replace the bitmap/list field
+with 128 bytes of inline CRAM. Both independent walkers skip that image and
+continue at the fixed-size audio chunk; their descriptor proof still includes
+any future-pattern prefetch runs in the ordinary suffix.
+
 The same pass removes fixed work from the 75 Hz CDC path:
 
 - cache the current routing counts across the BIOS transfer;
@@ -325,8 +330,10 @@ every control; feature-zero legacy streams remain supported by constructing the 
 suffix hypothetically. Display entries stay in cell order, while the packed suffix
 and payload follow ascending physical VRAM-slot order. Across the complete supplied
 profile the checker rebuilds those two orders independently, including run grouping
-and 32-byte payload consumption. For v24 it independently walks frame 0, Prg, Wr0,
+and 32-byte payload consumption. For v25 it independently walks frame 0, Prg, Wr0,
 Wr1, and indexed Dic payloads and proves every physical source is reproduced exactly.
+Typed fade controls contribute no display entries; the checker skips their inline
+CRAM, then validates audio alignment and the same source-aware run suffix.
 It also matches bitmap cells, entry palettes and every physical cold pattern to
 `decisions.pkl`. Timed raw-prefetch runs are verified as the separately
 slot-sorted Prg suffix after visible cold records. Because they have no

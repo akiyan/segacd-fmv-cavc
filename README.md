@@ -44,7 +44,10 @@ frames that need new patterns.
 - **Time-slice the CRAM constraint.** The encoder trains 60 colours within the
   VDP's four palette lines of 15 usable colours each. The movie is segmented at
   safe transitions, every segment palette is preloaded into Main RAM, and
-  timed playback switches palettes using only a small reference.
+  timed playback switches palettes using only a small reference. It also
+  automatically detects static shots that fade in and out through black,
+  freezes each shot's indexed image, and reproduces the brightness steps with
+  exact inline CRAM replacements. No source-time range is configured.
 - **Allocate quality backwards from the movie end.** A dry run predicts future
   exact and Miss-risk demand, then works backwards to reserve quality allowance
   and boot-preload credits for difficult frames. Control, run descriptors,
@@ -105,7 +108,7 @@ defines the values-only hardware/emulator DEBUG HUD.
   outputs, and a versioned full-encode timing example.
 - [`CONFIG.md`](CONFIG.md): profile schema, encoder settings, throttles,
   capacities, physical limits, and DEBUG gate thresholds.
-- [`MOVIE.md`](MOVIE.md): the exact version 24 `HEADER.DAT` and `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): the exact version 25 `HEADER.DAT` and `BODY.DAT`
   on-disc binary format.
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
   assignment plus whole-movie quality planning.
@@ -385,7 +388,9 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
   cold loadします。
 - **CRAM制約を時分割する。** VDPの4 palette lines、各15 usable coloursの範囲で60色を
   学習します。安全なtransitionでmovieをsegment化し、全segment paletteをMain RAMへ
-  preloadして、再生中は小さな参照だけで時限切替します。
+  preloadして、再生中は小さな参照だけで時限切替します。また、黒の間で
+  brightnessが上下する静止shotを自動検出し、各shotのindexed imageを固定して、
+  正確なinline CRAM総入替で明るさの段階を再現します。sourceのtime range設定はありません。
 - **Movie後方からqualityを配分する。** dry runで将来のexact demandとMiss-risk demandを
   予測し、重いframeのためのquality allowanceとboot-preload creditを逆算します。
   control、run descriptor、CRAM switch、audio、Prg payload、padを同じphysical-sector
@@ -439,7 +444,7 @@ timed-work valueとgraph maximumから除外します。
   version付き全編encode実測例。
 - [`CONFIG.md`](CONFIG.md): profile schema、encoder設定、throttle、容量、
   物理limit、DEBUG gate threshold。
-- [`MOVIE.md`](MOVIE.md): version 24の正確なon-disc `HEADER.DAT` / `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): version 25の正確なon-disc `HEADER.DAT` / `BODY.DAT`
   binary format。
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
   割り当てとmovie全体quality planning。

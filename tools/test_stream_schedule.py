@@ -91,6 +91,25 @@ class ControlLengthTests(unittest.TestCase):
             [0, 17], [0, 3], cells=1120, audio_frame_bytes=888)
         self.assertEqual(lengths.tolist(), [1036, 1082])
 
+    def test_fade_control_replaces_updates_with_inline_cram(self) -> None:
+        lengths = schedule.control_block_lengths(
+            [0, 0, 0], [0, 2, 0], cells=760,
+            audio_frame_bytes=1472,
+            frame_types=[
+                shadow_updates.FRAME_NORMAL,
+                shadow_updates.FRAME_FADE_IN,
+                shadow_updates.FRAME_FADE_OUT,
+            ],
+        )
+        # Normal zero-update H40/760 carries a 96-byte aligned bitmap.  A fade
+        # omits it, adds the complete 128-byte CRAM image, and retains runs.
+        self.assertEqual(lengths.tolist(), [1576, 1616, 1608])
+        with self.assertRaisesRegex(ValueError, "carries shadow updates"):
+            schedule.control_block_lengths(
+                [1], [0], cells=760, audio_frame_bytes=1472,
+                frame_types=[shadow_updates.FRAME_FADE_IN],
+            )
+
     def test_body_supply_reserves_fixed_control_before_variable_work(self) -> None:
         supply = schedule.body_fresh_byte_supply(
             5, 30,
