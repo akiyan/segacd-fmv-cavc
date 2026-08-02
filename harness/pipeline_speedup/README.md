@@ -325,7 +325,7 @@ every control; feature-zero legacy streams remain supported by constructing the 
 suffix hypothetically. Display entries stay in cell order, while the packed suffix
 and payload follow ascending physical VRAM-slot order. Across the complete supplied
 profile the checker rebuilds those two orders independently, including run grouping
-and 32-byte payload consumption. For v23 it independently walks frame 0, Prg, Wr0,
+and 32-byte payload consumption. For v24 it independently walks frame 0, Prg, Wr0,
 Wr1, and indexed Dic payloads and proves every physical source is reproduced exactly.
 It also matches bitmap cells, entry palettes and every physical cold pattern to
 `decisions.pkl`. Timed raw-prefetch runs are verified as the separately

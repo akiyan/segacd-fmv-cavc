@@ -154,7 +154,7 @@ unchanged in the TSV and gate JSON.
 
 ## Upload gate
 
-`harness/startup_resync/analyze.py` writes descriptive gate schema 15. The
+`harness/startup_resync/analyze.py` writes descriptive gate schema 16. The
 binary `gate` is `PASS` or `FAIL`; `alert` is `NONE`, `WARNING`, or `FAIL`.
 `NONE` and `WARNING` remain upload-capable.
 
@@ -165,17 +165,19 @@ The five gate fields are:
 | `sector_slip` | 0 |
 | `control_desync` | 0 |
 | `audio_resync` | 0 |
-| `vblank_spill` | Fixed cadence: one less than the VBlank interval; delivery-paced cadence: the available fields per content frame |
+| `vblank_spill` | Authoritative cadence: one less than its largest interval; delivery-paced cadence: the available fields per content frame |
 | `prgbuf_jitter_peak_kib` | Physical ring size minus the cadence-derived normal PrgBuf ceiling minus 1 KiB |
 
 An excess in `vblank_spill` is a warning. An excess in the other four fields
-is a failure. At fixed cadence, a `transfer_vblanks` value larger than the
-cadence interval is also a warning. The analyzer derives each timed frame's
-visible duration from consecutive `capture_first` values; a duration different
-from the fixed cadence is a warning outside the cadence edge exception. The
-first and last four content frames at 30 fps and two at 15 fps remain in the
-measurements but do not raise this derived ALERT. This exception does not apply
-to gate fields or `transfer_vblanks`.
+is a failure. At an authoritative cadence, a `transfer_vblanks` value larger
+than the schedule's largest interval is also a warning. The analyzer derives
+each timed frame's visible duration from consecutive `capture_first` values
+and compares it with that frame's schedule step. For 24 fps the expected steps
+are exactly `2, 3, 2, 3, ...`; the expected pattern is stored in
+`display_vblank_expected`. A mismatch is a warning outside the cadence edge
+exception. The first and last four content frames at 30 fps, three at 24 fps,
+and two at 15 fps remain in the measurements but do not raise this derived
+ALERT. This exception does not apply to gate fields or `transfer_vblanks`.
 
 Frame 0 and the terminal hold are excluded from gate maxima, statistics,
 events, dynamic scales, and cadence measurements. `cd_wait_count` and
@@ -399,7 +401,7 @@ gate JSONのraw `name_table_dma_ready_vcounter`は変更しません。
 
 ## Upload gate
 
-`harness/startup_resync/analyze.py` は descriptive gate schema 15 を書きます。
+`harness/startup_resync/analyze.py` は descriptive gate schema 16 を書きます。
 Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` です。
 `NONE` と `WARNING` は upload 可能です。
 
@@ -410,16 +412,17 @@ Binary `gate` は `PASS` / `FAIL`、`alert` は `NONE` / `WARNING` / `FAIL` で�
 | `sector_slip` | 0 |
 | `control_desync` | 0 |
 | `audio_resync` | 0 |
-| `vblank_spill` | Fixed cadence では VBlank interval より 1 少ない値。Delivery-paced cadence では 1 content frame に使える field 数 |
+| `vblank_spill` | 正式なcadenceでは最大VBlank intervalより1少ない値。Delivery-paced cadenceでは1 content frameに使えるfield数 |
 | `prgbuf_jitter_peak_kib` | Physical ring size から cadence-derived normal PrgBuf ceiling と 1 KiB を引いた値 |
 
-`vblank_spill` 超過は warning、ほか 4 field の超過は failure です。Fixed cadence
-では `transfer_vblanks` が cadence interval を超えた場合も warning です。
-Analyzer は連続する `capture_first` から各 timed frame の表示時間を求め、
-fixed cadence と異なる表示時間を cadence edge exception の外側で warning に
-します。30 fps では先頭と末尾の各 4 content frame、15 fps では各 2 content
-frame を measurement には残しますが、この derived ALERT の対象外にします。
-この例外は gate field と `transfer_vblanks` には適用しません。
+`vblank_spill` 超過は warning、ほか 4 field の超過は failure です。正式なcadence
+では`transfer_vblanks`がscheduleの最大intervalを超えた場合もwarningです。
+Analyzerは連続する`capture_first`から各timed frameの表示時間を求め、そのframeの
+schedule stepと比較します。24 fpsの期待stepは厳密に`2, 3, 2, 3, ...`で、
+`display_vblank_expected`にpatternを保存します。不一致はcadence edge exceptionの
+外側でwarningになります。30 fpsでは先頭と末尾の各4 content frame、24 fpsでは
+各3 frame、15 fpsでは各2 frameをmeasurementには残しますが、このderived ALERTの
+対象外にします。この例外はgate fieldと`transfer_vblanks`には適用しません。
 
 Frame 0 と terminal hold は gate maximum、statistics、event、dynamic scale、
 cadence measurement から除外します。`cd_wait_count` と `adpcm_decode_units` は

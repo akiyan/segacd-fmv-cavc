@@ -61,8 +61,8 @@ Each source has a strict TOML profile.
 
 - **Display:** H32, H40, or mode4; tile-aligned output geometry and
   aspect-aware pad/crop conversion.
-- **Frame rate:** the source's native rate, including delivery-paced rates
-  such as 24 fps.
+- **Frame rate:** the source's native rate; 24 fps uses a qualified repeating
+  two/three-VBlank cadence at 24000/1001 fps.
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM.
 - **Cold cap:** a required per-source profile value, changed and qualified
   through that profile.
@@ -105,7 +105,7 @@ defines the values-only hardware/emulator DEBUG HUD.
   outputs, and a versioned full-encode timing example.
 - [`CONFIG.md`](CONFIG.md): profile schema, encoder settings, throttles,
   capacities, physical limits, and DEBUG gate thresholds.
-- [`MOVIE.md`](MOVIE.md): the exact version 23 `HEADER.DAT` and `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): the exact version 24 `HEADER.DAT` and `BODY.DAT`
   on-disc binary format.
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
   assignment plus whole-movie quality planning.
@@ -399,7 +399,8 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
 sourceごとにstrict TOML profileを使います。
 
 - **Display:** H32、H40、mode4。tile-aligned output geometryとaspect-awareなpad/crop。
-- **Frame rate:** 24 fpsのようなdelivery-paced rateも含むsource native rate。
+- **Frame rate:** source native rate。24 fpsは認定済みの2/3 VBlank反復cadenceを
+  使い、実効24000/1001 fpsで再生。
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
@@ -438,7 +439,7 @@ timed-work valueとgraph maximumから除外します。
   version付き全編encode実測例。
 - [`CONFIG.md`](CONFIG.md): profile schema、encoder設定、throttle、容量、
   物理limit、DEBUG gate threshold。
-- [`MOVIE.md`](MOVIE.md): version 23の正確なon-disc `HEADER.DAT` / `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): version 24の正確なon-disc `HEADER.DAT` / `BODY.DAT`
   binary format。
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
   割り当てとmovie全体quality planning。

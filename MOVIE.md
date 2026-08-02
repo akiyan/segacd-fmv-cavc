@@ -19,13 +19,13 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 23
+VERSION        = 24
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 23. Bitmap controls insert one zero byte after an
+The player accepts version 24. Bitmap controls insert one zero byte after an
 odd-sized bitmap so the following 16-bit entry array is word-aligned. List
 controls are already word-aligned. This pad does not change the run-suffix
 alignment or the complete even control length.
@@ -137,7 +137,7 @@ The remaining fields are:
 | 40 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sectors |
 | 44 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sectors |
 | 48 | 4 | paltab_sec | BOOT_STAGE sectors |
-| 52 | 2 | vsync_n | nearest display-VBlank interval |
+| 52 | 2 | vsync_n | first authoritative display-VBlank interval, or a hint when bit 1 is clear |
 | 54 | 2 | audio_bytes | even decoded samples per effective playback frame |
 | 56 | 2 | fps_int | nominal content rate |
 | 58 | 2 | audio_fd | RF5C164 frequency delta |
@@ -148,10 +148,13 @@ The remaining fields are:
 | 196 | 26 | PSUP | pattern-supply extension when feature bit 3 is set |
 | 222 | 1826 | pad | zero |
 
-`vsync_n` is authoritative when `FEATURE_FIXED_N` is set. Otherwise it is a
-display hint and delivery follows `75 / fps_int`. `audio_bytes` is normally
-1472 at 15 fps, 920 at 24 fps, and 736 at 30 fps. A live ADPCM chunk occupies
-`4 + audio_bytes / 2` bytes before alignment.
+When `FEATURE_VBLANK_CADENCE` is set, `fps_int` selects a qualified repeating
+schedule and `vsync_n` must equal its first interval: 15 fps is `(4)`, 24 fps
+is `(2, 3)`, 30 fps is `(2)`, and 60 fps is `(1)`. Frame 1 uses the first
+interval. When the bit is clear, `vsync_n` is only a display hint and delivery
+follows `75 / fps_int`. `audio_bytes` is normally 1472 at 15 fps, 920 at 24
+fps, and 736 at 30 fps. A live ADPCM chunk occupies `4 + audio_bytes / 2`
+bytes before alignment.
 
 The player signature is generated from the same header sector as
 `player_constants.inc` and baked into both player objects. A player/header
@@ -162,7 +165,7 @@ mismatch stops with a diagnostic.
 | Bit | Name | Meaning |
 |---:|---|---|
 | 0 | `FEATURE_COLD_RUNS` | every control ends with the cold-run suffix |
-| 1 | `FEATURE_FIXED_N` | `vsync_n` controls display and CD cadence |
+| 1 | `FEATURE_VBLANK_CADENCE` | `fps_int` and `vsync_n` select an authoritative repeating display/CD cadence |
 | 2 | reserved | must be clear |
 | 3 | `FEATURE_PATTERN_SUPPLY` | source bits, PSUP, and boot preload regions are active |
 | 4 | `FEATURE_SHADOW_UPDATE_LISTS` | completed shadow-update lists may occur |
@@ -369,10 +372,17 @@ The physical slot size is:
 fsec = max(n_ctrl_sec + n_pay_sec, ratedelta - lead)
 ```
 
-For fixed-N playback, packer and player use the reduced `1001*N/800` CD-sector
-accumulator. N=2 produces 199 two-sector and 201 three-sector slots per cycle.
-N=4 produces 199 five-sector and one six-sector slot; the sixth sector can only
-be pad because the routing byte caps useful data at five sectors.
+For a one-interval cadence, packer and player use the reduced `1001*N/800`
+CD-sector accumulator. N=2 produces 199 two-sector and 201 three-sector slots
+per cycle. N=4 produces 199 five-sector and one six-sector slot; the sixth
+sector can only be pad because the routing byte caps useful data at five
+sectors.
+
+The 24 fps cadence starts with two VBlanks for frame 1 and alternates `(2, 3)`.
+Its CD accumulator uses matching numerators `(2002, 3003)` with modulus 800,
+in the same phase. This is 24000/1001 fps over each two-frame cycle. Using only
+the average `1001/320` would incorrectly give the first short interval more
+physical CD time than it has.
 
 For delivery-paced playback:
 
@@ -383,7 +393,7 @@ acc %= fps_int
 ```
 
 `lead` increases by `fsec - ratedelta`. The accumulator is shared with the
-player, but a qualified fixed-cadence stream keeps its peak at zero. A slot
+player, but a qualified VBlank-cadence stream keeps its peak at zero. A slot
 cannot exceed its fresh allowance because the resulting elapsed display delay
 cannot be recovered by a later light slot. Before image decisions, the encoder
 limits every control/Prg prefix by both cumulative CD-1x time and the
@@ -519,13 +529,13 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
 MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 23
+VERSION        = 24
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は23です。bitmap controlではbitmapサイズが奇数byteの
+player が受け付ける version は24です。bitmap controlではbitmapサイズが奇数byteの
 ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
 controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
 偶数長を変えません。
@@ -632,7 +642,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 40 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sector数 |
 | 44 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sector数 |
 | 48 | 4 | paltab_sec | BOOT_STAGE sector数 |
-| 52 | 2 | vsync_n | 最も近いdisplay VBlank間隔 |
+| 52 | 2 | vsync_n | 最初の正式なdisplay VBlank間隔。bit 1 clear時はhint |
 | 54 | 2 | audio_bytes | 実効playback frameごとの偶数decoded sample数 |
 | 56 | 2 | fps_int | nominal content rate |
 | 58 | 2 | audio_fd | RF5C164 frequency delta |
@@ -643,10 +653,12 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 196 | 26 | PSUP | feature bit 3がsetのときのpattern-supply extension |
 | 222 | 1826 | pad | zero |
 
-`FEATURE_FIXED_N` がsetなら `vsync_n` が正式なcadenceです。clearならdisplay
-hintとして使い、deliveryは `75 / fps_int` に従います。`audio_bytes` は通常、
-15 fpsで1472、24 fpsで920、30 fpsで736です。live ADPCM chunkはalignment前で
-`4 + audio_bytes / 2` byteです。
+`FEATURE_VBLANK_CADENCE` がsetなら、`fps_int` が認定済みの反復scheduleを選び、
+`vsync_n` はその最初の間隔と一致しなければなりません。15 fpsは`(4)`、24 fpsは
+`(2, 3)`、30 fpsは`(2)`、60 fpsは`(1)`で、frame 1が最初の間隔を使います。
+bitがclearなら`vsync_n`はdisplay hintだけになり、deliveryは`75 / fps_int`に
+従います。`audio_bytes`は通常、15 fpsで1472、24 fpsで920、30 fpsで736です。
+live ADPCM chunkはalignment前で`4 + audio_bytes / 2` byteです。
 
 player signatureは同じheader sectorから生成する `player_constants.inc` とともに
 両player objectへ埋め込みます。playerとheaderが不一致なら診断表示で停止します。
@@ -656,7 +668,7 @@ player signatureは同じheader sectorから生成する `player_constants.inc` 
 | Bit | Name | 意味 |
 |---:|---|---|
 | 0 | `FEATURE_COLD_RUNS` | 各control末尾にcold-run suffixがある |
-| 1 | `FEATURE_FIXED_N` | `vsync_n` がdisplayとCD cadenceを決める |
+| 1 | `FEATURE_VBLANK_CADENCE` | `fps_int`と`vsync_n`が正式な反復display/CD cadenceを選ぶ |
 | 2 | reserved | clearでなければならない |
 | 3 | `FEATURE_PATTERN_SUPPLY` | source bit、PSUP、boot preload領域が有効 |
 | 4 | `FEATURE_SHADOW_UPDATE_LISTS` | completed shadow-update listを使用できる |
@@ -849,10 +861,15 @@ controlとpayloadはsector境界で分割した連続streamです。1個のcontr
 fsec = max(n_ctrl_sec + n_pay_sec, ratedelta - lead)
 ```
 
-fixed-N playbackではpackerとplayerが `1001*N/800` を約分したCD-sector accumulator
+単一間隔cadenceではpackerとplayerが`1001*N/800`を約分したCD-sector accumulator
 を使います。N=2は1周期に2-sector slotを199個、3-sector slotを201個生成します。
 N=4は5-sector slotを199個、6-sector slotを1個生成します。routing byteの有効data
 上限は5 sectorなので、6個目はpadだけに使えます。
+
+24 fps cadenceはframe 1を2 VBlankで始め、`(2, 3)`を交互に繰り返します。CD
+accumulatorも同じ位相でmodulus 800、numerator `(2002, 3003)`を使います。2 frame
+周期の実効速度は24000/1001 fpsです。平均`1001/320`だけを使うと、最初の短い
+間隔へ実在しないCD時間を与えるため使用しません。
 
 delivery-paced playbackでは次を使います。
 
@@ -863,7 +880,7 @@ acc %= fps_int
 ```
 
 `lead` は `fsec - ratedelta` だけ増えます。このaccumulatorはplayerと共有しますが、
-認定済みfixed-cadence streamではpeakをzeroに保ちます。slotが新規allowanceを超えると
+認定済みVBlank-cadence streamではpeakをzeroに保ちます。slotが新規allowanceを超えると
 経過済みの表示遅延になり、後の軽いslotでは取り戻せないためです。encoderは画像決定前に、
 control/Prgの全prefixを累積CD-1x時間とrouting-byte上限の両方で制限し、有限PrgBufを
 含む正確なscheduleでも同じproofを繰り返します。packerはPrgBuf空きと全deadlineが
