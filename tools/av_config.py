@@ -402,7 +402,7 @@ def cd_sector_rate_steps(fps):
 
 
 def cd_sector_rate(fps):
-    """Return the reduced long-term average CD sectors per movie frame.
+    """Return the long-term average CD sectors per movie frame.
 
     Use :func:`cd_sector_rate_steps` for deadline construction. The average is
     retained for diagnostics and callers that do not construct frame slots.

@@ -5,12 +5,9 @@ from __future__ import annotations
 import operator
 
 
-VERSION = 23
+VERSION = 24
 FEATURE_COLD_RUNS = 0x0001
-FEATURE_FIXED_N = 0x0002
-# Source compatibility for older tools/tests. The on-disc bit is unchanged;
-# The on-disc bit retains the v16 interpretation of header vsync_n.
-FEATURE_FIXED_N2 = FEATURE_FIXED_N
+FEATURE_VBLANK_CADENCE = 0x0002
 # 0x0004 was the removed optional-audio-codec flag. TTRC v17 is ADPCM-only.
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010

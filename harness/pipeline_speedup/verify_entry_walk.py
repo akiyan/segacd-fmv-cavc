@@ -6,7 +6,7 @@ needs cold entries in stream order to pop patterns and build DMA runs.  This
 checker walks every real control block in the packed TTRC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
-For current v23 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
+For current v24 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
 that each frame's control block and cold patterns are ready before that frame
 can run, and also accepts the off-disc MOVIE.DAT compatibility concatenation.
 """
@@ -27,7 +27,7 @@ import player_constants  # noqa: E402
 
 SECTOR = 2048
 ROUTING_TOTAL_MAX = 5
-FEATURE_FIXED_N = 0x0002
+FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 ADPCM_TABLE_SECTORS = 5
 SOURCE_PRG = 0
@@ -35,7 +35,7 @@ SOURCE_WR = 1
 SOURCE_DIC = 2
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 23
+VERSION = 24
 CONTROL_SUFFIX_HEADER_BYTES = 2
 
 
@@ -44,15 +44,18 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Return the v4+ bounded-accumulator sector schedule for frames 1+."""
-    if version >= 8 and features & FEATURE_FIXED_N:
+    if version >= 24 and features & FEATURE_VBLANK_CADENCE:
+        rate_numerators, rate_modulus = av_config.cd_sector_rate_steps(fps)
+    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
         rate_numerator, rate_modulus = av_config.fixed_cd_sector_rate(vsync_n)
+        rate_numerators = (rate_numerator,)
     else:
-        rate_numerator, rate_modulus = 75, fps
+        rate_numerators, rate_modulus = (75,), fps
     acc = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl, _n_word in routes[1:]:
-        acc += rate_numerator
+    for index, (n_pay, n_ctrl, _n_word) in enumerate(routes[1:]):
+        acc += rate_numerators[index % len(rate_numerators)]
         ratedelta, acc = divmod(acc, rate_modulus)
         actual = n_pay + n_ctrl
         fsec = max(actual, ratedelta - lead)

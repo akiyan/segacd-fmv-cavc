@@ -8,7 +8,7 @@ therefore perform the same single poll after consuming its runs. H40 can
 contain up to 1120 cells, so the fallback retains its possible short-prefix
 poll followed by the final poll.
 
-This checker reads the real split TTRC v23 stream, compares the fallback DBRA
+This checker reads the real split TTRC v24 stream, compares the fallback DBRA
 countdown with an equivalent grouped model for every frame, and confirms that
 entry order and cold-slot run grouping are unchanged.  It additionally checks
 every synthetic update count up to the format's H40 maximum.
@@ -26,13 +26,13 @@ SECTOR = 2048
 POLL_CHUNK_30FPS = 1024
 MAX_H40_CELLS = 40 * 28
 ROUTING_TOTAL_MAX = 5
-FEATURE_FIXED_N = 0x0002
+FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 ADPCM_TABLE_SECTORS = 5
 PATTERN_SUPPLY_OFFSET = 196
-VERSION = 23
+VERSION = 24
 
 
 @dataclass(frozen=True)
@@ -47,15 +47,17 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Reproduce the packer's versioned bounded BODY schedule."""
-    if version >= 8 and features & FEATURE_FIXED_N:
-        rate_numerator, rate_modulus = 1001 * vsync_n, 800
+    if version >= 24 and features & FEATURE_VBLANK_CADENCE and fps == 24:
+        rate_numerators, rate_modulus = (2002, 3003), 800
+    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
+        rate_numerators, rate_modulus = (1001 * vsync_n,), 800
     else:
-        rate_numerator, rate_modulus = 75, fps
+        rate_numerators, rate_modulus = (75,), fps
     accumulator = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl, _n_word in routes[1:]:
-        accumulator += rate_numerator
+    for index, (n_pay, n_ctrl, _n_word) in enumerate(routes[1:]):
+        accumulator += rate_numerators[index % len(rate_numerators)]
         rated, accumulator = divmod(accumulator, rate_modulus)
         actual = n_pay + n_ctrl
         sectors = max(actual, rated - lead)

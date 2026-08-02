@@ -26,7 +26,7 @@ from pathlib import Path
 
 SECTOR = 2048
 ROUTING_TOTAL_MAX = 5
-FEATURE_FIXED_N = 0x0002
+FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 ADPCM_TABLE_SECTORS = 5
@@ -34,7 +34,7 @@ PATTERN_SUPPLY_OFFSET = 196
 NAME_ENTRY_MASK = 0x67FF
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
-VERSION = 23
+VERSION = 24
 
 
 @dataclass(frozen=True)
@@ -59,15 +59,17 @@ def frame_sectors(
     features: int,
 ) -> list[int]:
     """Reproduce the packer's versioned bounded accumulator for BODY slots."""
-    if version >= 8 and features & FEATURE_FIXED_N:
-        rate_numerator, rate_modulus = 1001 * vsync_n, 800
+    if version >= 24 and features & FEATURE_VBLANK_CADENCE and fps == 24:
+        rate_numerators, rate_modulus = (2002, 3003), 800
+    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
+        rate_numerators, rate_modulus = (1001 * vsync_n,), 800
     else:
-        rate_numerator, rate_modulus = 75, fps
+        rate_numerators, rate_modulus = (75,), fps
     accumulator = 0
     lead = 0
     out = [0]
-    for n_pay, n_ctrl, _n_word in routes[1:]:
-        accumulator += rate_numerator
+    for index, (n_pay, n_ctrl, _n_word) in enumerate(routes[1:]):
+        accumulator += rate_numerators[index % len(rate_numerators)]
         rated, accumulator = divmod(accumulator, rate_modulus)
         actual = n_pay + n_ctrl
         sectors = max(actual, rated - lead)

@@ -632,12 +632,16 @@ def upload_gate_limits(content_fps: float) -> tuple[dict[str, int], str]:
     fps = float(content_fps)
     if fps <= 0:
         raise ValueError(f"content fps must be positive, got {content_fps!r}")
-    fixed_n = av_config.fixed_vblank_interval(fps)
-    if fixed_n is not None:
-        cadence = f"fixed_n{fixed_n}"
-        # Pattern work may consume the N-1 intervening VBlanks; the Nth is the
-        # fixed display-flip deadline.
-        m_limit = fixed_n - 1
+    pattern = av_config.vblank_cadence_pattern(fps)
+    if pattern is not None:
+        cadence = (
+            f"fixed_n{pattern[0]}"
+            if len(pattern) == 1
+            else "periodic_" + "_".join(map(str, pattern))
+        )
+        # Pattern work may consume the intervening VBlanks; the last one is
+        # the display-flip deadline. Exact per-frame cadence is checked below.
+        m_limit = max(pattern) - 1
     else:
         cadence = "delivery_paced"
         # The Main path may use the complete number of display fields
@@ -667,7 +671,12 @@ def display_vblank_cadence(
 ) -> dict:
     """Measure display cadence while keeping edge observations diagnostic."""
     first_loop = [group for group in groups if group.loop == 0]
-    expected = av_config.fixed_vblank_interval(float(content_fps))
+    pattern = av_config.vblank_cadence_pattern(float(content_fps))
+    expected = (
+        None
+        if pattern is None
+        else pattern[0] if len(pattern) == 1 else list(pattern)
+    )
     histogram: Counter[int] = Counter()
     observations: list[dict[str, int]] = []
     for current, following in zip(first_loop, first_loop[1:]):
@@ -678,6 +687,10 @@ def display_vblank_cadence(
         if frame == 0 or next_frame != frame + 1:
             continue
         actual = following.capture_first - current.capture_first
+        target = (
+            pattern[(next_frame - 1) % len(pattern)]
+            if pattern is not None else None
+        )
         histogram[actual] += 1
         observations.append({
             "frame": frame,
@@ -685,17 +698,18 @@ def display_vblank_cadence(
             "capture_first": current.capture_first,
             "next_capture_first": following.capture_first,
             "display_vblanks": actual,
+            "expected_vblanks": target,
         })
     measured_violations = (
         [
             observation for observation in observations
-            if observation["display_vblanks"] != expected
+            if observation["display_vblanks"] != observation["expected_vblanks"]
         ]
-        if expected is not None else []
+        if pattern is not None else []
     )
     edge_frames = (
         hud_gate.cadence_alert_edge_frames(content_fps)
-        if expected is not None else 0
+        if pattern is not None else 0
     )
     alert_observations = (
         [
@@ -706,7 +720,7 @@ def display_vblank_cadence(
                 content_fps,
             )
         ]
-        if expected is not None else []
+        if pattern is not None else []
     )
     exempted_violations = [
         observation for observation in measured_violations
@@ -799,7 +813,7 @@ def evaluate_upload_gate(
                 f"limit {limit:02X}"
             )
             (warnings if field == "vblank_spill" else failures).append(message)
-    fixed_n = av_config.fixed_vblank_interval(float(content_fps))
+    cadence_pattern = av_config.vblank_cadence_pattern(float(content_fps))
     transfer_vblank_max = (
         max(
             (group.values.get("transfer_vblanks", 0) for group in timed_loop),
@@ -808,15 +822,21 @@ def evaluate_upload_gate(
         if first_loop and "transfer_vblanks" in first_loop[0].values else None
     )
     if (
-        fixed_n is not None
+        cadence_pattern is not None
         and transfer_vblank_max is not None
-        and transfer_vblank_max > fixed_n
+        and transfer_vblank_max > max(cadence_pattern)
     ):
-        warnings.append(
-            f"transfer_vblanks peak {transfer_vblank_max:X} exceeds fixed-N "
-            "transfer "
-            f"window count {fixed_n:X}"
-        )
+        if len(cadence_pattern) == 1:
+            warnings.append(
+                f"transfer_vblanks peak {transfer_vblank_max:X} exceeds fixed-N "
+                "transfer "
+                f"window count {cadence_pattern[0]:X}"
+            )
+        else:
+            warnings.append(
+                f"transfer_vblanks peak {transfer_vblank_max:X} exceeds periodic "
+                f"transfer window maximum {max(cadence_pattern):X}"
+            )
     display_cadence = display_vblank_cadence(
         groups,
         content_fps,
@@ -824,7 +844,8 @@ def evaluate_upload_gate(
     )
     if display_cadence["violation_count"]:
         examples = ", ".join(
-            f"frame={row['frame']:04d}:{row['display_vblanks']}"
+            f"frame={row['frame']:04d}:"
+            f"{row['display_vblanks']}/{row['expected_vblanks']}"
             for row in display_cadence["violations"][:8]
         )
         remaining = display_cadence["violation_count"] - 8
@@ -841,7 +862,7 @@ def evaluate_upload_gate(
     gate = hud_gate.gate_for_alert(alert)
     status = hud_gate.legacy_status_for_alert(alert)
     result = {
-        "schema_version": 15,
+        "schema_version": 16,
         "gate": gate,
         "alert": alert,
         "pass": gate == "PASS",
@@ -959,7 +980,11 @@ def write_gate_json(path: Path, result: dict) -> None:
     print(f"HUD gate JSON: {path.resolve()}")
     expected_vblanks = result["display_vblank_expected"]
     cadence_rule = (
-        f"expected={expected_vblanks}"
+        "expected=" + (
+            ",".join(map(str, expected_vblanks))
+            if isinstance(expected_vblanks, list)
+            else str(expected_vblanks)
+        )
         if expected_vblanks is not None else "variable delivery-paced"
     )
     print(

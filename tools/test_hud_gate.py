@@ -18,7 +18,7 @@ class HudGateTests(unittest.TestCase):
             (29.97, 4),
             (15, 2),
             (14.985, 2),
-            (24, 0),
+            (24, 3),
         ):
             with self.subTest(fps=fps):
                 self.assertEqual(

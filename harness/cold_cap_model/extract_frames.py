@@ -7,7 +7,7 @@ VBlank cadence: cell updates, physical pattern loads by source
 runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
 CD slot schedule (control/payload sectors, rate lead).
 
-Supports the current TTRC v23 stream, including PSUP v4 variable Word-RAM
+Supports the current TTRC v24 stream, including PSUP v4 variable Word-RAM
 preload capacities.  The fixed per-frame audio size from HEADER.DAT locates
 the cold-run suffix: `n_runs`, then the run descriptors. The descriptors are
 cross-validated against the update entries. The low byte of `n_runs` can also
@@ -38,7 +38,7 @@ import player_constants  # noqa: E402
 SECTOR = 2048
 ROUTING_TOTAL_MAX = 5
 FEATURE_COLD_RUNS = 0x0001
-FEATURE_FIXED_N = 0x0002
+FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
@@ -47,7 +47,7 @@ SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_UPDATE_COUNT_MASK = 0x7FFF
 WORDS_PER_PATTERN = 16
 SHORT_RUN_MAX_WORDS = 32
-VERSION = 23
+VERSION = 24
 CONTROL_SUFFIX_HEADER_BYTES = 2
 
 SOURCE_NAMES = ("prg", "wr", "dic")
@@ -244,7 +244,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         features, audio_control_bytes)
     rows_out = [row0]
 
-    # v23: palette switches are the player-embedded PALIDX table written by
+    # v24: palette switches are the player-embedded PALIDX table written by
     # pack as palidx.bin beside the split stream (frame.u16, segment.u16
     # entries terminated by a 0xFFFF frame sentinel).
     palidx_switches: dict[int, int] = {}
@@ -263,9 +263,9 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     routes = decode_routes(
         header[routing_offset:routing_offset + routing_sec * SECTOR], nfr)
 
-    if not (version >= 8 and features & FEATURE_FIXED_N):
-        die("only fixed-N v8+ rate accumulation is supported")
-    rate_numerator, rate_modulus = av_config.fixed_cd_sector_rate(vsync_n)
+    if not (version >= 24 and features & FEATURE_VBLANK_CADENCE):
+        die("only authoritative v24 VBlank cadence is supported")
+    rate_numerators, rate_modulus = av_config.cd_sector_rate_steps(fps)
 
     accumulator = 0
     lead = 0
@@ -276,7 +276,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     schedule = [(0, 0, 0, 0, 0)]
     for seq in range(1, nfr):
         n_pay, n_ctrl = routes[seq]
-        accumulator += rate_numerator
+        accumulator += rate_numerators[(seq - 1) % len(rate_numerators)]
         rated, accumulator = divmod(accumulator, rate_modulus)
         actual = n_pay + n_ctrl
         sectors = max(actual, rated - lead)

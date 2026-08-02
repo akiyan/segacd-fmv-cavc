@@ -20,10 +20,10 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 23
+VERSION = 24
 CONTROL_SUFFIX_HEADER_BYTES = 2
 FEATURE_COLD_RUNS = 0x0001
-FEATURE_FIXED_N2 = 0x0002
+FEATURE_VBLANK_CADENCE = 0x0002
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
@@ -450,10 +450,12 @@ def body_streams(
 
     Each timed slot is [n_ctrl control][n_word WordBuf refill for the frame's
     parity bank][n_pay - n_word Prg payload][rate pad]."""
-    numerator, modulus = (
-        (1001 * vsync_n, 800)
-        if features & FEATURE_FIXED_N2 else (75, fps)
-    )
+    if features & FEATURE_VBLANK_CADENCE and fps == 24:
+        numerators, modulus = (2002, 3003), 800
+    elif features & FEATURE_VBLANK_CADENCE:
+        numerators, modulus = (1001 * vsync_n,), 800
+    else:
+        numerators, modulus = (75,), fps
     accumulator = 0
     lead = 0
     cursor = 0
@@ -461,7 +463,7 @@ def body_streams(
     payload = bytearray()
     word_refill = [bytearray(), bytearray()]
     for frame, (n_pay, n_ctrl, n_word) in enumerate(routes[1:], start=1):
-        accumulator += numerator
+        accumulator += numerators[(frame - 1) % len(numerators)]
         rated, accumulator = divmod(accumulator, modulus)
         actual = n_pay + n_ctrl
         sectors = max(actual, rated - lead)
@@ -520,7 +522,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v23 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v24 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -571,7 +573,7 @@ def main() -> None:
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]
     if len(boot_stage) != paltab_sectors * SECTOR:
         raise AssertionError("boot stage is truncated")
-    # v23: no palette rides the boot stage; the sidecar regions are fixed.
+    # v24: no palette rides the boot stage; the sidecar regions are fixed.
     sidecar_vram = {}
     if boot_stage[0x0FC0:0x0FC4] == b"BVRM":
         region_counts = struct.unpack_from(">3H", boot_stage, 0x0FC4)

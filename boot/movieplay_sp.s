@@ -125,7 +125,7 @@
 .equ DIC_BUF_END, 0x00FFFA40
 
 /* --- TTRC BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       23
+.equ ROUTING_VERSION,       24
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -144,7 +144,7 @@
 .equ ROUTING_WORD_MASK,     0x00C0
 .equ ROUTING_MAX_ENTRY,     0x00ED
 .equ FEATURE_COLD_RUNS_BIT, 0
-.equ FEATURE_FIXED_N_BIT,   1
+.equ FEATURE_VBLANK_CADENCE_BIT, 1
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
 .equ FEATURE_SHADOW_UPDATE_LISTS_BIT, 4
 .equ FEATURE_VRAM_RAW_PREFETCH_BIT, 5
@@ -370,7 +370,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v23ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v24ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -499,6 +499,9 @@ bad_header:
 	bra	bad_header
 1:
 	clr.w	sec_acc
+.if PC_CADENCE_PERIOD == 2
+	clr.w	sec_phase
+.endif
 	clr.w	lead
 .else
 	lea	PAD_SCR, a0
@@ -523,11 +526,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v23: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v24: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v23: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v24: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -557,9 +560,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v23 optional stream features */
+	move.w	62(a0), h_features		/* v24 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v23 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v24 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -574,29 +577,50 @@ pm_set:
 	lsr.w	#1, d1
 	addq.w	#4, d1				/* predictor.w + index.b + reserved.b */
 	move.w	d1, h_audio_control_bytes
-	/* Feature bit 1 selects the exact fixed-N NTSC display cadence:
-	   75 * N * 1001/60000 = 1001*N/800 sectors/frame.  The unreduced
-	   runtime fraction produces the same accumulator sequence as the packer's
-	   reduced N2=1001/400 or N4=1001/200 form. Feature-clear 24fps keeps
-	   75/fps delivery pacing. */
+	/* Feature bit 1 selects an exact NTSC VBlank cadence. Fixed-N streams use
+	   1001*N/800 sectors per frame. Nominal 24fps uses two steps, 2002/800
+	   then 3003/800, in the same phase as Main's 2/3-VBlank display cadence. */
+	clr.w	sec_cadence_period
 	move.w	56(a0), d0			/* nominal fps */
 	move.w	d0, d2				/* legacy modulus = nominal fps */
 	move.w	#75, d1				/* precompute 75/fps quotient+remainder once */
-	btst	#FEATURE_FIXED_N_BIT, 63(a0)
+	btst	#FEATURE_VBLANK_CADENCE_BIT, 63(a0)
 	beq	2f
-	move.w	52(a0), d1			/* authoritative fixed VBlank interval N */
-	tst.w	d1
+	move.w	#1, sec_cadence_period
+	move.w	52(a0), d3			/* first authoritative VBlank interval */
+	tst.w	d3
 	beq	bad_header
-	cmpi.w	#4, d1				/* current routing/stopwatch contract supports N1..N4 */
+	cmpi.w	#4, d3				/* current routing/stopwatch contract supports N1..N4 */
 	bhi	bad_header
+	cmpi.w	#24, d0
+	beq.s	1f
+	move.w	d0, d4				/* fixed cadence must be a named divisor of 60 */
+	mulu.w	d3, d4
+	cmpi.l	#60, d4
+	bne	bad_header
+	move.w	d3, d1
 	mulu.w	#1001, d1
 	move.w	#800, d2
+	bra.s	2f
+1:
+	cmpi.w	#2, d3				/* 24fps cadence is specifically 2,3 */
+	bne	bad_header
+	move.w	#2, sec_cadence_period
+	move.w	#2002, d1
+	move.w	#800, d2
+	move.w	#3, sec_alt_base
+	move.w	#603, sec_alt_rem
 2:
 	move.w	d2, sec_mod
 	divu.w	d2, d1
 	move.w	d1, sec_base
 	swap	d1
 	move.w	d1, sec_rem
+	cmpi.w	#2, sec_cadence_period
+	beq.s	1f
+	move.w	sec_base, sec_alt_base
+	move.w	sec_rem, sec_alt_rem
+1:
 	/* Controls carry future chunks, so no live audio write is skipped. */
 	move.w	60(a0), h_audio_pre_sec
 	beq	bad_header
@@ -605,6 +629,7 @@ pm_set:
 	add.w	h_f0_pat_sec, d0
 	move.w	d0, h_body_arm_sec
 	clr.w	sec_acc
+	clr.w	sec_phase
 	clr.w	lead
 .endif
 	/* MDへヘッダ写しを渡す(frame0と同じバンクに書く=swap後にMDが読める) */
@@ -1283,9 +1308,9 @@ dls_loop:
    BODYの control→payload→pad 順に apply/PRG ring/捨て場へ振り分け。
    (CDC_TRN→PRG直行はリトライ中にセクタが滑る事故が起きる: 実測+1/2フレーム) */
 /* v4+ レートマッチpadding。各フレーム = fsec = max(n_pay+n_ctrl, ratedelta-lead) セクタ。
-   ratedelta はfeature bit 1で固定N由来、それ以外は75/fpsの整数割当(累積器sec_acc)。
-   固定N4は200コマに5×199+6×1、24fpsは75/24、固定N2は400コマに
-   2×199+3×201。n_pay+n_ctrl を超える
+   ratedelta はfeature bit 1のVBlank cadence由来、それ以外は75/fpsの整数割当。
+   固定N4は200コマに5×199+6×1、24fpsは2/3 VBlankごとの別step、固定N2は
+   400コマに2×199+3×201。n_pay+n_ctrl を超える
    ぶん(pad)は読んで捨てる。fsec はコマ先頭(drain_k==0)で1回計算し cur_fsec に保持。
 	   routingはコマ先頭でcacheし、drain1(BIOS呼びでd1等破壊)後はcacheから復元。 */
 /* Non-preserving sector pump. Every caller either reloads its live state from
@@ -1317,15 +1342,58 @@ p1_top:
 	andi.w	#ROUTING_TOTAL_MASK, d2
 	lsr.w	#ROUTING_TOTAL_SHIFT, d2
 	move.w	d2, cur_total
-	/* ratedelta = base + carry(acc+rem, mod). Numerator/modulus quotient and
-	   remainder were computed once at header load, so this path needs no DIVU. */
-	PC_MOVE_W sec_base, PC_SEC_BASE, d5	/* d5 = base quotient */
+	/* ratedelta = selected base + carry(acc+selected remainder, modulus).
+	   The 24fps build alternates the two steps; fixed 15/30fps builds retain
+	   their original straight-line accumulator instructions. */
+.ifdef PLAYER_SPECIALIZED
+.if PC_CADENCE_PERIOD == 2
+	tst.w	sec_phase
+	bne.s	8f
+	move.w	#PC_SEC_BASE, d5
+	move.w	#PC_SEC_REM, d4
+	move.w	#1, sec_phase
+	bra.s	7f
+8:
+	move.w	#PC_SEC_ALT_BASE, d5
+	move.w	#PC_SEC_ALT_REM, d4
+	clr.w	sec_phase
+7:
 	move.w	sec_acc, d0
-	PC_ADD_W sec_rem, PC_SEC_REM, d0
-	PC_CMP_W sec_mod, PC_SEC_MOD, d0
+	add.w	d4, d0
+	cmpi.w	#PC_SEC_MOD, d0
 	blo.s	1f
-	PC_SUB_W sec_mod, PC_SEC_MOD, d0
+	subi.w	#PC_SEC_MOD, d0
 	addq.w	#1, d5
+.else
+	move.w	#PC_SEC_BASE, d5		/* unchanged fixed-N hot path */
+	move.w	sec_acc, d0
+	addi.w	#PC_SEC_REM, d0
+	cmpi.w	#PC_SEC_MOD, d0
+	blo.s	1f
+	subi.w	#PC_SEC_MOD, d0
+	addq.w	#1, d5
+.endif
+.else
+	move.w	sec_base, d5
+	move.w	sec_rem, d4
+	cmpi.w	#2, sec_cadence_period
+	bne.s	7f
+	tst.w	sec_phase
+	bne.s	8f
+	move.w	#1, sec_phase
+	bra.s	7f
+8:
+	move.w	sec_alt_base, d5
+	move.w	sec_alt_rem, d4
+	clr.w	sec_phase
+7:
+	move.w	sec_acc, d0
+	add.w	d4, d0
+	cmp.w	sec_mod, d0
+	blo.s	1f
+	sub.w	sec_mod, d0
+	addq.w	#1, d5
+.endif
 1:
 	move.w	d0, sec_acc			/* accumulator remainder */
 	move.w	d5, d6				/* delta = ratedelta - lead(先行ぶん, 負可) */
@@ -1993,7 +2061,7 @@ ef_bm:
 .equ ISO_DUMP_OFF, 0
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	/* v23 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v24 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2410,7 +2478,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v23 streams use run descriptors above. Retain a final-balance
+	/* Canonical v24 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2897,17 +2965,23 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v23: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v24: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:
-	.space 2				/* offset 62: bit0 cold runs, bit1 authoritative fixed N */
+	.space 2				/* offset 62: bit1 authoritative VBlank cadence */
+sec_cadence_period:
+	.space 2				/* 0=delivery-paced, 1=fixed N, 2=24fps two/three */
 sec_base:
 	.space 2				/* floor(rate numerator/sec_mod), precomputed at header load */
 sec_rem:
 	.space 2				/* rate numerator mod sec_mod, precomputed at header load */
+sec_alt_base:
+	.space 2				/* periodic cadence's alternate quotient */
+sec_alt_rem:
+	.space 2				/* periodic cadence's alternate remainder */
 sec_mod:
-	.space 2				/* rate accumulator modulus: fixed N uses 800, otherwise fps */
+	.space 2				/* rate accumulator modulus: cadence uses 800, otherwise fps */
 .endif
 sec_acc:
 	.space 2				/* v4: CD 1x レート累積器の余り(0..sec_mod-1) */
@@ -2998,4 +3072,11 @@ ring_frame_min:
 .endif
 .endif
 
+.ifndef PLAYER_SPECIALIZED
+sec_phase:
+	.space 2				/* next periodic sector step: 0=first, 1=alternate */
+.elseif PC_CADENCE_PERIOD == 2
+sec_phase:
+	.space 2				/* next periodic sector step: 0=first, 1=alternate */
+.endif
 sp_end:

@@ -27,15 +27,38 @@ class HeaderTest(unittest.TestCase):
     def test_reads_frame_count_and_vsync(self) -> None:
         data = bytearray(2048)
         data[:4] = b"TTRC"
-        struct.pack_into(">HH", data, 4, 8, 6576)
+        struct.pack_into(">HH", data, 4, verify.ttrc_routing.VERSION, 6576)
         struct.pack_into(">H", data, 52, 2)
+        struct.pack_into(">H", data, 56, 30)
+        struct.pack_into(
+            ">H", data, 62, verify.ttrc_routing.FEATURE_VBLANK_CADENCE)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "HEADER.DAT"
             path.write_bytes(data)
             self.assertEqual(
-                verify.HeaderInfo(version=8, frame_count=6576, vsync_n=2),
+                verify.HeaderInfo(
+                    version=verify.ttrc_routing.VERSION,
+                    frame_count=6576,
+                    vsync_n=2,
+                    fps=30,
+                    features=verify.ttrc_routing.FEATURE_VBLANK_CADENCE,
+                    cadence=(2,),
+                ),
                 verify.read_header(path),
             )
+
+    def test_reads_24fps_two_three_cadence(self) -> None:
+        data = bytearray(2048)
+        data[:4] = b"TTRC"
+        struct.pack_into(">HH", data, 4, verify.ttrc_routing.VERSION, 100)
+        struct.pack_into(">H", data, 52, 2)
+        struct.pack_into(">H", data, 56, 24)
+        struct.pack_into(
+            ">H", data, 62, verify.ttrc_routing.FEATURE_VBLANK_CADENCE)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "HEADER.DAT"
+            path.write_bytes(data)
+            self.assertEqual(verify.read_header(path).cadence, (2, 3))
 
     def test_rejects_wrong_magic(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -51,6 +74,17 @@ class CadenceTest(unittest.TestCase):
         report = verify.validate_observations(source, 4, 2)
         self.assertEqual((0, 2, 4, 6, 8), report.first_captures)
         self.assertEqual((2, 2, 2, 2), report.deltas)
+
+    def test_exact_two_three_vblank_cadence(self) -> None:
+        source = observations([0, 0, 1, 1, 1, 2, 2, 3, 3, 3, 4, 4])
+        report = verify.validate_observations(source, 4, (2, 3))
+        self.assertEqual((0, 2, 5, 7, 10), report.first_captures)
+        self.assertEqual((2, 3, 2, 3), report.deltas)
+
+    def test_wrong_two_three_phase_is_rejected(self) -> None:
+        source = observations([0, 0, 0, 1, 1, 2, 2, 2, 3])
+        with self.assertRaisesRegex(verify.CadenceError, "could not find"):
+            verify.validate_observations(source, 3, (2, 3), anchor_frames=3)
 
     def test_anchor_skips_false_startup_zero(self) -> None:
         source = [verify.Observation(3, 0), verify.Observation(8, 0)]
