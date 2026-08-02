@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e163: Extend automatic static black-fade detection to fade-in-only and
+#         fade-out-only shots at source and cut boundaries. Keep the bright
+#         ordinary endpoint as the unique indexed reference while preserving
+#         the existing paired fade path and typed inline-CRAM controls.
 #   e162/p142: Advance to TTRC v25. Detect static shots that fade in and out
 #         through black without timeline/profile hints, freeze each reference
 #         image, and carry exact 128-byte CRAM replacements in typed controls.
@@ -1155,5 +1159,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260802
-e=162
+e=163
 p=142
