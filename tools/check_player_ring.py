@@ -281,7 +281,7 @@ for removed in (
             f"check_player_ring: removed Main O_LOADS-v1 state returned: {removed}")
 
 
-# TTRC v24 has one startup command. HEADER contains only static boot state;
+# TTRC v25 has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # frame=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
@@ -343,7 +343,7 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v24 BODY arm and one-command "
+    "check_player_ring: OK  v25 BODY arm and one-command "
     "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
     "and PCM begins on its first control sector")
 

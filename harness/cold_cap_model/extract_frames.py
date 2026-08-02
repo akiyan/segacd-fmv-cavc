@@ -7,7 +7,7 @@ VBlank cadence: cell updates, physical pattern loads by source
 runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
 CD slot schedule (control/payload sectors, rate lead).
 
-Supports the current TTRC v24 stream, including PSUP v4 variable Word-RAM
+Supports the current TTRC v25 stream, including PSUP v4 variable Word-RAM
 preload capacities.  The fixed per-frame audio size from HEADER.DAT locates
 the cold-run suffix: `n_runs`, then the run descriptors. The descriptors are
 cross-validated against the update entries. The low byte of `n_runs` can also
@@ -44,10 +44,14 @@ FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020
 ADPCM_TABLE_SECTORS = 5
 SHADOW_UPDATE_LIST_TAG = 0x8000
-SHADOW_UPDATE_COUNT_MASK = 0x7FFF
+SHADOW_FRAME_TYPE_MASK = 0x6000
+SHADOW_FRAME_TYPE_SHIFT = 13
+SHADOW_FRAME_TYPE_RESERVED = 3
+SHADOW_UPDATE_COUNT_MASK = 0x1FFF
+INLINE_CRAM_BYTES = 128
 WORDS_PER_PATTERN = 16
 SHORT_RUN_MAX_WORDS = 32
-VERSION = 24
+VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 
 SOURCE_NAMES = ("prg", "wr", "dic")
@@ -58,7 +62,7 @@ class FrameRow:
     frame: int
     n_upd: int
     use_list: bool
-    pal_switch: int          # 0 = none, else segment index + 1
+    pal_switch: int          # 0 = none; nonzero = full CRAM replacement
     cold_entries: int        # legacy entries with bit15 (0 for list frames)
     n_runs: int
     loads_total: int         # sum of run counts (= physical pattern loads)
@@ -164,10 +168,20 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
         die(f"frame {seq}: packed sequence is {packed_seq}")
     n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
     use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
+    frame_type = (
+        raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
+    if n_upd > cells:
+        die(f"frame {seq}: n_upd {n_upd} exceeds {cells} cells")
+    if frame_type == SHADOW_FRAME_TYPE_RESERVED:
+        die(f"frame {seq}: reserved frame type")
+    if frame_type and (n_upd or use_list):
+        die(f"frame {seq}: fade control carries updates")
     pos = 6
 
     cold_entries: int | None = None
-    if use_list:
+    if frame_type:
+        pos += INLINE_CRAM_BYTES
+    elif use_list:
         pos += n_upd * 4
     else:
         bitmap_len = (cells + 7) // 8
@@ -185,7 +199,7 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
         suffix_pos += 1
     runs = parse_runs_at(raw, seq, pool, suffix_pos)
 
-    if (not use_list
+    if (not frame_type and not use_list
             and not features & FEATURE_VRAM_RAW_PREFETCH
             and sum(r[1] for r in runs) != cold_entries):
         die(f"frame {seq}: run loads disagree with {cold_entries} cold entries")
@@ -201,7 +215,8 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
             short_runs += 1
     loads_total = sum(loads)
     row = FrameRow(
-        frame=seq, n_upd=n_upd, use_list=use_list, pal_switch=0,
+        frame=seq, n_upd=n_upd, use_list=use_list,
+        pal_switch=int(bool(frame_type)),
         cold_entries=cold_entries if cold_entries is not None else -1,
         n_runs=len(runs),
         loads_total=loads_total,
@@ -244,7 +259,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         features, audio_control_bytes)
     rows_out = [row0]
 
-    # v24: palette switches are the player-embedded PALIDX table written by
+    # v25: segment palette switches are the player-embedded PALIDX table written by
     # pack as palidx.bin beside the split stream (frame.u16, segment.u16
     # entries terminated by a 0xFFFF frame sentinel).
     palidx_switches: dict[int, int] = {}
@@ -264,7 +279,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         header[routing_offset:routing_offset + routing_sec * SECTOR], nfr)
 
     if not (version >= 24 and features & FEATURE_VBLANK_CADENCE):
-        die("only authoritative v24 VBlank cadence is supported")
+        die("only authoritative v25 VBlank cadence is supported")
     rate_numerators, rate_modulus = av_config.cd_sector_rate_steps(fps)
 
     accumulator = 0
@@ -298,7 +313,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         row = parse_frame(
             bytes(control_stream[control_pos:control_pos + block_len]),
             seq, cells, pool, features, audio_control_bytes)
-        row.pal_switch = palidx_switches.get(seq, 0)
+        row.pal_switch = palidx_switches.get(seq, row.pal_switch)
         (row.n_pay_sec, row.n_ctrl_sec, row.slot_sec, row.rated_sec,
          row.lead_sec) = schedule[seq]
         rows_out.append(row)

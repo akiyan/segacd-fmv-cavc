@@ -5,7 +5,7 @@ from __future__ import annotations
 import operator
 
 
-VERSION = 24
+VERSION = 25
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_VBLANK_CADENCE = 0x0002
 # 0x0004 was the removed optional-audio-codec flag. TTRC v17 is ADPCM-only.

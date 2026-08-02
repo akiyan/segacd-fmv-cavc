@@ -385,7 +385,7 @@ ip_entry:
 	moveq	#0, d0
 	move.b	38(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
 	move.w	d0, md_mode
-	/* The first cadence interval is stored at offset 52. TTRC v24 derives any
+	/* The first cadence interval is stored at offset 52. TTRC v25 derives any
 	   later interval from nominal fps, so 24fps becomes the periodic 2/3 path. */
 	move.w	52(a0), d0
 	bne	1f

@@ -11,7 +11,7 @@ B方式の狙い: 連続CD読み(シーク無し=絶対ルール)を保ったま
   control: 毎フレーム apply-list+audio 可変長ブロック連続 -> apply-bufferへDMA(CPUはカーソルで処理)
 control連続化でセクタ整列の無駄を回避 -> 149フル画質でPRGに収まる(A方式のセクタ整列は256/枚<消費で不可)。
 
-TTRCレイアウト(v24): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
+TTRCレイアウト(v25): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-VRAM
               sidecar) + Dic + [ADPCM/WR0/WR1 preloads]
               + routing(1B/frame: total<<3 | n_ctrl_sec)
               + prebuffer(payload先頭Bpat)
@@ -20,10 +20,11 @@ TTRCレイアウト(v24): HEADER.DAT = Header(1sec) + BOOT_STAGE(optional boot-V
 MOVIE.DAT はツール互換用の HEADER.DAT || BODY.DAT 連結コンテナ。
 パレット(PALTAB全区間)と切替表(PALIDX)はディスクに載せず、pack が
 paltab.bin / palidx.bin としてplayerビルド入力へ書き、Main-IPイメージが内蔵する。
-control block: >H total_len >H frame_seq >H n_upd
-               ceil(cells/8) bitmap n_upd*(>H entry) audio [even pad]
+control block: >H total_len >H frame_seq >H type|n_upd
+               normal: aligned bitmap/list + entries; fade: 128-byte inline CRAM
+               audio [even pad]
                >H n_runs n_runs*(>H slot_start >H count)
-  palette切替はboot搭載のM-PALIDX表起点(controlに切替バイトは無い)。
+  通常palette切替はboot搭載のM-PALIDX表起点。自動fadeはcontrol内の128-byte CRAM。
 """
 import argparse
 import dataclasses
@@ -233,21 +234,21 @@ def require_canonical_p0_debug_colours(log):
     """Reject stale logs without the fixed dark background and bright text."""
     seg_pals = log.get("seg_pals")
     if not seg_pals:
-        raise SystemExit("pack v24: decision log has no segment palettes; re-run sim")
+        raise SystemExit("pack v25: decision log has no segment palettes; re-run sim")
     for seg, pals in enumerate(seg_pals):
         a = np.asarray(pals, np.uint8)
         if a.shape != (4, 15, 3):
             raise SystemExit(
-                f"pack v24: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
+                f"pack v25: segment {seg} palette shape is {a.shape}, expected (4, 15, 3); "
                 "re-run sim")
         brightness = a.astype(np.int16).sum(axis=2)
         if int(brightness[0, 0]) != int(brightness.min()):
             raise SystemExit(
-                f"pack v24: decision log segment {seg} P0 index1 is not tied for globally "
+                f"pack v25: decision log segment {seg} P0 index1 is not tied for globally "
                 "darkest usable CRAM colour (RGB sum); re-run sim with the current encoder")
         if int(brightness[0, 14]) != int(brightness.max()):
             raise SystemExit(
-                f"pack v24: decision log segment {seg} P0 index15 is not tied for globally "
+                f"pack v25: decision log segment {seg} P0 index15 is not tied for globally "
                 "brightest usable CRAM colour (RGB sum); re-run sim with the current encoder")
 
     frame_types, frame_cram = fade_control_arrays(
@@ -258,7 +259,7 @@ def require_canonical_p0_debug_colours(log):
         if (int(brightness[0, 0]) != int(brightness.min())
                 or int(brightness[0, 14]) != int(brightness.max())):
             raise SystemExit(
-                f"pack v24: fade frame {int(frame)} does not preserve the "
+                f"pack v25: fade frame {int(frame)} does not preserve the "
                 "DEBUG palette endpoints; re-run sim")
 
 
@@ -955,7 +956,7 @@ def build_control(
             body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
         else:
             body += build_bitmap(cells)
-            # TTRC v24 keeps the 16-bit entry array word-aligned even when
+            # TTRC v25 keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
             if len(body) & 1:
                 body += b"\0"
@@ -1292,7 +1293,7 @@ def write_stream(
         path, log, per, blocks, source_pcm_chunks, supply_plan,
         wordram_layout, sc, POOL,
         boot_sidecar=(), sp_extension_bytes=b""):
-    """Write the v24 split stream and a combined tooling container.
+    """Write the v25 split stream and a combined tooling container.
 
     HEADER.DAT:
       Header(1sec) | BOOT_STAGE | [Dic] | [ADPCM_TABLE] | [WR0] | [WR1]
@@ -1381,7 +1382,7 @@ def write_stream(
 
     control = b"".join(disc_blocks)
     # Split frame 0 from the timed stream. It remains an untimed exact
-    # construction, but v24 carries its bytes in the BODY arm rather than HEADER.
+    # construction, but v25 carries its bytes in the BODY arm rather than HEADER.
     if f0_header:
         f0_ctrl = control[:f0_ctrl_len]
         f0_pat = payload[:f0_inline * PAT]
@@ -1512,7 +1513,7 @@ def write_stream(
     fps_int = int(round(FPS))                         # nominal fps; cadence bit derives the VBlank schedule
     audio_fd = av_config.rf5c164_fd(AUDIO_PCM, PLAYBACK_FPS)
     if not f0_header:
-        raise SystemExit("pack v24 requires an untimed frame0 BODY arm")
+        raise SystemExit("pack v25 requires an untimed frame0 BODY arm")
     features = FEATURE_COLD_RUNS | FEATURE_DICBUF_INDEXED_RUNS
     if av_config.uses_vblank_cadence(FPS):
         features |= FEATURE_VBLANK_CADENCE
@@ -1534,13 +1535,13 @@ def write_stream(
     header += b"\0"                                   # offset 39: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 40,44: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 48: boot-stage sectors(v13)
-    # Offset 54 is the decoded RF5C164 sample count. TTRC v24 always derives
+    # Offset 54 is the decoded RF5C164 sample count. TTRC v25 always derives
     # the control size as checkpoint(4) + AUDIO_PCM/2.
     header += struct.pack(">HH", vsync_n, AUDIO_PCM)
     header += struct.pack(">H", fps_int)             # offset 56: 名目fps(レートマッチpadding用) (v4)
     header += struct.pack(">HH", audio_fd, audio_preload_sec)  # offset 58: RF5C164 FD; 60: prefetch sectors
     header += struct.pack(">H", features)          # offset 62: optional stream features
-    # v24: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
+    # v25: offset 64..191 is pad. The initial CRAM image is paltab.bin entry 0
     # inside the player image, not a header field.
     header += b"\0" * (SECTOR - len(header))
     header = bytearray(header)
@@ -1765,7 +1766,7 @@ def main():
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
         raise SystemExit(
-            "pack v24 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
+            "pack v25 requires the unified Prg/Wr0/Wr1/Dic pattern supply; "
             "re-run sim with the current encoder")
     frozen_layout = supply_meta.get("word_ram_layout")
     if frozen_layout is None:

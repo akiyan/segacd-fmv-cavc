@@ -21,7 +21,7 @@ CD_BYTES_PER_SECOND = av_config.CD_BYTES_PER_SECOND
 PATTERN_BYTES = 32
 PATTERNS_PER_SECTOR = SECTOR_BYTES // PATTERN_BYTES
 RUN_DESCRIPTOR_BYTES = 4
-STREAM_SCHEDULE_SCHEMA_VERSION = 8
+STREAM_SCHEDULE_SCHEMA_VERSION = 9
 
 
 class ScheduleError(ValueError):
@@ -107,9 +107,10 @@ def control_block_lengths(
     )
     update_bytes = np.where(special, 0, update_bytes)
     inline_cram = special.astype(np.int64) * shadow_updates.INLINE_CRAM_BYTES
-    # body prefix: frame_seq and n_upd = 4 bytes (palette switches are
-    # player-embedded PALIDX data, not stream bytes). Entry words and the run
-    # suffix are even-sized; only the pre-suffix body may need a byte.
+    # Body prefix: frame_seq and type|n_upd = 4 bytes. Ordinary palette
+    # switches are player-embedded PALIDX data; typed fade controls carry the
+    # exact inline CRAM counted above. Entry words and the run suffix are
+    # even-sized; only the pre-suffix body may need a byte.
     pre_suffix = 4 + update_bytes + inline_cram + int(audio_frame_bytes)
     pre_suffix += pre_suffix & 1
     # total_len word + aligned body + n_runs word + four bytes per run.

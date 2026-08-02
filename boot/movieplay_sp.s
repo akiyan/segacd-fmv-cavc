@@ -125,7 +125,7 @@
 .equ DIC_BUF_END, 0x00FFFA40
 
 /* --- TTRC BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       24
+.equ ROUTING_VERSION,       25
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -373,7 +373,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v24ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   v25ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -529,11 +529,11 @@ bad_header:
 	move.l	30(a0), d0
 	move.w	d0, h_prebuf_sec
 	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v24: BODY-arm frame0 control sectors @offset40 */
+	move.l	40(a0), d0			/* v25: BODY-arm frame0 control sectors @offset40 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v24: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	44(a0), d0			/* v25: BODY-arm frame0 pattern sectors @offset44 */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
@@ -563,9 +563,9 @@ pm_set:
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v24 optional stream features */
+	move.w	62(a0), h_features		/* v25 optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v24 */
+	bne	bad_header			/* removed audio-codec flag is reserved in v25 */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -2074,7 +2074,7 @@ ef_bm:
 	bne.s	ef_list_audio
 	cmpi.w	#FRAME_TYPE_FADE_IN, d7		/* first non-normal type */
 	bhs.s	ef_inline_audio
-	/* v24 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* v25 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2494,7 +2494,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v24 streams use run descriptors above. Retain a final-balance
+	/* Canonical v25 streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2981,7 +2981,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v24: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* v25: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:

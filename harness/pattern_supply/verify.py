@@ -20,7 +20,7 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 24
+VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_VBLANK_CADENCE = 0x0002
@@ -40,7 +40,11 @@ DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
 ENTRY_DISPLAY_MASK = 0x67FF
 SHADOW_UPDATE_LIST_TAG = 0x8000
-SHADOW_UPDATE_COUNT_MASK = 0x7FFF
+SHADOW_FRAME_TYPE_MASK = 0x6000
+SHADOW_FRAME_TYPE_SHIFT = 13
+SHADOW_FRAME_TYPE_RESERVED = 3
+SHADOW_UPDATE_COUNT_MASK = 0x1FFF
+INLINE_CRAM_BYTES = 128
 WORD_RAM_BANK_BYTES = 0x20000
 OUTPUT_HEADER_BYTES = 4
 OUTPUT_RUN_RECORD_BYTES = 22
@@ -145,11 +149,17 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
     total, packed_seq, raw_count = struct.unpack_from(">HHH", raw)
     n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
     use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
+    frame_type = (
+        raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total != len(raw) or total & 1:
         raise AssertionError(f"frame {seq}: invalid total_len {total}/{len(raw)}")
     if packed_seq != seq or n_upd > cells:
         raise AssertionError(
             f"frame {seq}: packed seq/count is {packed_seq}/{n_upd}, cells={cells}")
+    if frame_type == SHADOW_FRAME_TYPE_RESERVED:
+        raise AssertionError(f"frame {seq}: reserved frame type")
+    if frame_type and (n_upd or use_list):
+        raise AssertionError(f"frame {seq}: fade control carries updates")
 
     bitmap_start = 6
     bitmap_bytes = (cells + 7) // 8
@@ -159,6 +169,9 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
     if use_list:
         entries_start = bitmap_start
         entries_end = entries_start + n_upd * 4
+    elif frame_type:
+        entries_start = bitmap_start
+        entries_end = entries_start + INLINE_CRAM_BYTES
     audio_end = entries_end + audio_bytes
     suffix_start = (audio_end + 1) & ~1
     if suffix_start + CONTROL_SUFFIX_HEADER_BYTES > len(raw):
@@ -166,7 +179,10 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
     if raw[audio_end:suffix_start] != (b"\0" if audio_end & 1 else b""):
         raise AssertionError(f"frame {seq}: invalid audio alignment byte")
 
-    if use_list:
+    if frame_type:
+        bitmap = bytes(bitmap_bytes)
+        entries = ()
+    elif use_list:
         bitmap_mut = bytearray(bitmap_bytes)
         entries_mut = []
         previous_cell = -1
@@ -522,7 +538,7 @@ def main() -> None:
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v24 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected v25 cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -573,7 +589,7 @@ def main() -> None:
     boot_stage = header[cursor:cursor + paltab_sectors * SECTOR]
     if len(boot_stage) != paltab_sectors * SECTOR:
         raise AssertionError("boot stage is truncated")
-    # v24: no palette rides the boot stage; the sidecar regions are fixed.
+    # v25: no palette rides the boot stage; the sidecar regions are fixed.
     sidecar_vram = {}
     if boot_stage[0x0FC0:0x0FC4] == b"BVRM":
         region_counts = struct.unpack_from(">3H", boot_stage, 0x0FC4)

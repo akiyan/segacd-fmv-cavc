@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v24 files and reconstructs every current control and payload byte. The
+TTRC v25 files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -51,10 +51,14 @@ RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 24
+VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
-SHADOW_UPDATE_COUNT_MASK = 0x7FFF
+SHADOW_FRAME_TYPE_MASK = 0x6000
+SHADOW_FRAME_TYPE_SHIFT = 13
+SHADOW_FRAME_TYPE_RESERVED = 3
+SHADOW_UPDATE_COUNT_MASK = 0x1FFF
+INLINE_CRAM_BYTES = 128
 
 
 @dataclass(frozen=True)
@@ -187,12 +191,18 @@ def parse_control(
     total_len, packed_seq, raw_count = struct.unpack_from(">HHH", raw)
     n_upd = raw_count & SHADOW_UPDATE_COUNT_MASK
     use_list = bool(raw_count & SHADOW_UPDATE_LIST_TAG)
+    frame_type = (
+        raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(raw):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(raw)}")
     if packed_seq != seq:
         raise AssertionError(f"frame {seq}: packed sequence is {packed_seq}")
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells}")
+    if frame_type == SHADOW_FRAME_TYPE_RESERVED:
+        raise AssertionError(f"frame {seq}: reserved frame type")
+    if frame_type and (n_upd or use_list):
+        raise AssertionError(f"frame {seq}: fade control carries updates")
 
     bitmap_start = 6
     bitmap_bytes = (cells + 7) // 8
@@ -202,10 +212,16 @@ def parse_control(
     if use_list:
         entries_start = bitmap_start
         entries_end = entries_start + 4 * n_upd
+    elif frame_type:
+        entries_start = bitmap_start
+        entries_end = entries_start + INLINE_CRAM_BYTES
     audio_end = entries_end + audio_bytes
     if audio_end > len(raw):
         raise AssertionError(f"frame {seq}: audio extends beyond the control")
-    if use_list:
+    if frame_type:
+        bitmap = bytes(bitmap_bytes)
+        entries = ()
+    elif use_list:
         bitmap_mut = bytearray(bitmap_bytes)
         entries_mut = []
         previous_cell = -1

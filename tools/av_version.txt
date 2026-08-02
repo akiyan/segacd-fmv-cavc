@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e162/p142: Advance to TTRC v25. Detect static shots that fade in and out
+#         through black without timeline/profile hints, freeze each reference
+#         image, and carry exact 128-byte CRAM replacements in typed controls.
+#         The player keeps audio and cold-run prefetch active while applying
+#         each inline CRAM image atomically with the display flip.
 #   p141: Keep the periodic 24 fps display clock phase-locked after a missed
 #         target. Whole-VBlank debt is repaid only by shortening a later
 #         nominal three-VBlank step to two, preventing permanent reader lead
@@ -1150,5 +1155,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260802
-e=161
-p=141
+e=162
+p=142
