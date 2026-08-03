@@ -102,7 +102,7 @@ Keep these parts in every image:
   mode/grid/cadence-specific name-table and DEBUG HUD words, and add 64 CRAM
   words on palette-switch frames. Frame 0 remains untimed. Set the row maximum
   to the largest calculated total among timed frames. VDP setup-register writes
-  and the reg2 flip are control operations rather than VDP-memory payload.
+  are control operations rather than VDP-memory payload.
   `--r2v-workload-tsv` accepts a matching packed-stream extraction from
   `harness/cold_cap_model/extract_frames.py` as an independent cross-check.
   This trace must not steer encoder or player work.

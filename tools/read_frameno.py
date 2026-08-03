@@ -37,7 +37,7 @@ _T = {
 
 # --- HUD layout (must match prepare_dbg in boot/movieplay_ip.s) ---
 CELL = 8                 # one HUD cell = 8 px
-HUD_ROW = 0              # inactive Plane A movie table's top row
+HUD_ROW = 0              # fixed Window row; overflow digits use row-1 sprites
 HUD_FIELD_DIGITS = (     # physical value cells; no separators
     ("frame", 4),
     ("palette_segment", 1),

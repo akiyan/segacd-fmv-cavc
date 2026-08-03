@@ -121,7 +121,7 @@ Follow `sim` source inspection exactly:
 Create or update one strict `schema_version = 4` profile under `profiles/`. Put
 the exact full duration, source timing and aspect, mode raster, output path,
 required qualified `cold_cap`, optional timed `raw_prefetch`, and palette
-algorithm in the profile. ADPCM22, the 1,535-tile VRAM pool, GPU, Bayer
+algorithm in the profile. ADPCM22, the 1,663-tile VRAM pool, GPU, Bayer
 dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
 pattern supply, forward fill, and startup-audio policy are fixed pipeline
 behavior and must not be repeated as TOML keys. Use the filename-derived
@@ -213,7 +213,7 @@ reuse files left by an older format.
 The protected pipeline invokes `record` with the same profile and the exact
 DEBUG disc just proved in Stage 3. Its `--no-build` refers only to that exact
 current disc so the recorder does not repeat the already-completed verified
-pack. Keep the Plane A HUD and retain the full Mega-CD startup. Choose a
+pack. Keep the Window-row/SAT HUD and retain the full Mega-CD startup. Choose a
 launch-to-tail duration at least 30 seconds longer than the source when using
 the default `original/jp_mcd2_9212.bin`, so its measured 14.9 second startup
 before the visible frame-0 flip plus an ending margin covering the player's

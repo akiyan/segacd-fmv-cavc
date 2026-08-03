@@ -53,9 +53,21 @@ class SingleNameTableTearingTests(unittest.TestCase):
                 [detector.HudSpan(0, 0, 1), detector.HudSpan(1, 2, 3)],
                 skip_top_rows=16,
             )
-            self.assertEqual([row["status"] for row in rows], ["PASS", "TEAR"])
+            self.assertEqual(
+                [row["visual_status"] for row in rows],
+                ["STABLE", "CHANGED"],
+            )
             self.assertEqual(rows[1]["unique_rasters"], 2)
             self.assertEqual(rows[1]["max_changed_pixels"], 32 * 16)
+
+            detector.attach_name_table_transfers(
+                rows, {0: (1192, 0), 1: (1192, 7)})
+            self.assertEqual([row["status"] for row in rows], ["PASS", "TEAR"])
+
+    def test_rejects_mismatched_transfer_axis(self) -> None:
+        rows = [{"frame": 0}, {"frame": 1}]
+        with self.assertRaisesRegex(ValueError, "frame axes differ"):
+            detector.attach_name_table_transfers(rows, {0: (1760, 0)})
 
 
 if __name__ == "__main__":
