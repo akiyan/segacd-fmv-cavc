@@ -273,6 +273,11 @@ def replay_frozen_schedule(
     boots = tuple(int(value) for value in boot_patterns)
     if not 0 <= prebuffer <= prg_capacity:
         raise ValueError("frozen Prg prebuffer exceeds its capacity")
+    if prebuffer % PATTERNS_PER_SECTOR:
+        raise ValueError(
+            "frozen Prg prebuffer must be a whole number of CD sectors; "
+            f"{prebuffer} patterns is fractional and would misalign the "
+            "player's ring tail")
     if any(
             boot < 0 or boot > capacity
             for boot, capacity in zip(boots, capacities, strict=True)):
@@ -1197,17 +1202,30 @@ def plan(
         failure = f"frame {frame}: control exceeds fixed CD time"
 
     transaction = _Transaction(state)
+    # The player prefills the ring with prebuf_pat*32 bytes and the timed
+    # BODY payload continues from that exact byte offset, so the prebuffer
+    # must be a whole number of CD sectors. A fractional-sector prebuffer
+    # (e.g. the 24 fps 389 KiB ceiling = 194.5 sectors) leaves ring_tail
+    # permanently half-sector-misaligned: every ring lap one sector store
+    # straddles RING_END, its tail bytes land outside the ring, and the pop
+    # stream gains a permanent half-sector lead that scrambles every later
+    # cold tile.
+    prebuffer_target = (
+        int(prg_capacity_patterns)
+        // PATTERNS_PER_SECTOR
+        * PATTERNS_PER_SECTOR
+    )
     prebuffer = _deliver_prg(
         items,
         state,
         int(prg_capacity_patterns),
-        int(prg_capacity_patterns),
+        prebuffer_target,
         transaction,
     )
-    if prebuffer != int(prg_capacity_patterns) and not failure:
+    if prebuffer != prebuffer_target and not failure:
         failure = (
             f"Prg prebuffer reached {prebuffer}, "
-            f"expected {int(prg_capacity_patterns)}")
+            f"expected {prebuffer_target}")
 
     prg_trace = np.zeros(frame_count, np.int64)
     word_trace = np.zeros((frame_count, 2), np.int64)
@@ -1437,7 +1455,7 @@ def plan(
                 control_sectors=control_sectors,
                 word_stage_sectors=word_stage_sectors,
                 fps=float(fps),
-                prebuffer_patterns=int(prg_capacity_patterns),
+                prebuffer_patterns=prebuffer_target,
                 prg_capacity_patterns=int(prg_capacity_patterns),
                 word_capacities=capacities,
                 boot_patterns=boot,
@@ -1467,7 +1485,7 @@ def plan(
         prg_occupancy=prg_trace,
         word_occupancy=word_trace,
         evaluation_end_frame=evaluation_end,
-        prebuffer_patterns=int(prg_capacity_patterns),
+        prebuffer_patterns=prebuffer_target,
         current_runs=int(current_runs),
         source_merged_runs=int(merged_runs.sum()),
         model_runs=int(model_runs.sum()),

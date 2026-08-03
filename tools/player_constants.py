@@ -150,6 +150,10 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             f"HEADER.DAT version {version} != player routing version {ttrc_routing.VERSION}")
     if pad != 0:
         raise ValueError(f"HEADER.DAT offset 39 must be zero, got {pad}")
+    if (prebuf_pat * 32) % SECTOR:
+        raise ValueError(
+            f"prebuffer {prebuf_pat} patterns is not a whole number of CD "
+            "sectors; the player's ring tail would be half-sector-misaligned")
     if not 0 < frames <= ttrc_routing.MAX_FRAMES:
         raise ValueError(f"invalid frame count: {frames}")
     if tcols <= 0 or trows <= 0 or cells != tcols * trows:

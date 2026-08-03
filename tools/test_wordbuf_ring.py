@@ -369,6 +369,18 @@ class WordBufRingTest(unittest.TestCase):
                 payload_sectors=[0, 6, 5, 5, 5, 5],
             )
 
+    def test_replay_rejects_fractional_sector_prebuffer(self):
+        # The player prefills prebuf_pat*32 bytes and continues the timed
+        # BODY payload from that byte offset. A fractional-sector prebuffer
+        # (e.g. the 24 fps 389 KiB ceiling = 12,448 patterns = 194.5 sectors)
+        # misaligns the ring tail so every ring lap loses half a sector of
+        # payload past RING_END.
+        with self.assertRaisesRegex(
+                ValueError, "whole number of CD sectors"):
+            self._replay(
+                prebuffer_patterns=96,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

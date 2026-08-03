@@ -1348,6 +1348,13 @@ def write_stream(
         np.int64,
     )
     Bpat = int(sc["prebuf_pat"])
+    if (Bpat * PAT) % SECTOR:
+        raise SystemExit(
+            f"pack: prebuffer {Bpat} patterns is not a whole number of CD "
+            "sectors; the player's ring tail would be permanently "
+            "half-sector-misaligned and every ring lap would lose the bytes "
+            "a straddling sector store writes past RING_END. Re-run sim with "
+            "the sector-aligned scheduler.")
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     if int(frame_seg[0]) != 0:
         raise SystemExit(

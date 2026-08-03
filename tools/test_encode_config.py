@@ -123,7 +123,9 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             {
                 "bad-apple.toml",
                 "lunar-sss-op-h32.toml",
+                "lunar-sss-op-h32-nodither.toml",
                 "lunar-sss-op-h40.toml",
+                "lunar-sss-op-h40-nodither.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
                 "ps2-sakura-op-h32.toml",
