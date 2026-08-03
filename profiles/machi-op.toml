@@ -10,6 +10,12 @@ sar = "32:35"
 # -1 dB limiter lands near -10 LUFS integrated).
 audio_filter = "aformat=channel_layouts=mono,volume=8.8dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
+# The source's effective black sits at level 8 and its effective white at 239
+# (whole-movie histogram spikes), so large flat areas dither between the
+# outermost MD levels without the automatic range expansion.
+[source.preprocess]
+auto_range = true
+
 [video]
 mode = "H40"
 width = 320
