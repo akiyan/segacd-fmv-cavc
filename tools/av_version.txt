@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e174: Record the displayed fallback pattern, not the ideal target, as the
+#         committed content of a Flbk cell. Static cells that settled for an
+#         approximation stay "changed" every frame, so spare cold budget on
+#         later frames replaces them with the exact pattern instead of leaving
+#         them crushed until the end of the shot.
 #   e173: Make output dithering a per-profile choice. Standard Bayer remains
 #         the default; edge-attenuated-bayer is selected only by the Bad Apple
 #         profile and spreads strong-edge attenuation one pixel into the
@@ -1202,5 +1207,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
-e=173
+e=174
 p=144
