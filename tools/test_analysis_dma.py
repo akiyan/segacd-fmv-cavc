@@ -11,7 +11,7 @@ from tile_alloc import count_slot_runs, slot_runs
 
 class AnalysisDmaTests(unittest.TestCase):
     def test_r2v_digits_follow_the_observed_maximum(self) -> None:
-        self.assertEqual(layout.r2v_value_digits(1792), 4)
+        self.assertEqual(layout.r2v_value_digits(1820), 4)
         self.assertEqual(layout.r2v_label_template(5183), "R2V:0000")
 
     def test_frame0_is_excluded_from_timed_metrics(self) -> None:
@@ -24,31 +24,40 @@ class AnalysisDmaTests(unittest.TestCase):
         self.assertEqual(layout.DMA_RUN_DIGITS, 4)
         self.assertEqual(layout.run_label_template(), "Run:0000")
 
-    def test_dma_tile_capacity_pays_for_the_full_name_table(self) -> None:
-        # H40/24: 2.5 VBLANKs * 7790 B - 1120 * 2 B, then / 32 B.
-        self.assertEqual(layout.dma_tile_capacity("H40", 24, 1120), 538)
+    def test_dma_tile_capacity_pays_for_current_display_publication(self) -> None:
+        # H40/24: 2.5 VBLANKs * 7790 B - (1768 + 52) * 2 B, then / 32 B.
+        self.assertEqual(layout.dma_tile_capacity("H40", 24, 40, 28), 494)
 
-    def test_r2v_name_table_words_are_mode_grid_and_cadence_aware(self) -> None:
+    def test_r2v_name_table_words_match_single_nt_and_debug_routes(self) -> None:
         self.assertEqual(
             r2v_model.name_table_words("H40", 40, 28, 30),
-            64 * 28,
+            1768 + 52,
         )
         self.assertEqual(
             r2v_model.name_table_words("H40", 40, 28, 24),
-            40 * 28 + r2v_model.DEBUG_HUD_WORDS,
+            1768 + 52,
+        )
+        self.assertEqual(
+            r2v_model.name_table_words("H40", 40, 19, 15),
+            1192 + 52,
         )
         self.assertEqual(
             r2v_model.name_table_words("H32", 32, 18, 30),
-            32 * 18 + r2v_model.DEBUG_HUD_WORDS,
+            1120 + 76,
+        )
+        self.assertEqual(
+            r2v_model.name_table_words(
+                "H32", 32, 28, 24, debug_hud_words=0),
+            1760,
         )
 
     def test_r2v_components_repair_every_dma_run(self) -> None:
         components = r2v_model.calculate_words(
-            [210], [20], [1], [1792])
+            [210], [20], [1], [1820])
         self.assertEqual(int(components["pattern_words"][0]), 3360)
         self.assertEqual(int(components["repair_words"][0]), 20)
         self.assertEqual(int(components["cram_words"][0]), 64)
-        self.assertEqual(int(components["words"][0]), 5236)
+        self.assertEqual(int(components["words"][0]), 5264)
 
     def test_slot_run_count_matches_packed_order(self) -> None:
         self.assertEqual(count_slot_runs([]), 0)

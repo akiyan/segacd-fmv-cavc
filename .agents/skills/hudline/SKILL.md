@@ -102,8 +102,9 @@ HUD OCR pass. Use descriptive field names throughout.
   an order for the NTSC V-counter's repeated `E5..EA` values.
 
   NT ready is sampled before the cadence-final VBlank wait. Its pressure
-  targets the VBlank head that carries the H40 name-table DMA: VBlank 2 at
-  30 fps and VBlank 4 at 15 fps. Use `transfer_vblanks` to identify the opened
+  targets the VBlank head that carries the single-table DMA: VBlank 4 at
+  15 fps, alternating VBlank 2/3 at 24 fps, and VBlank 2 at 30 fps. Use
+  `transfer_vblanks` to identify the opened
   pattern budget. Readiness before the final active raster clamps to zero;
   within that raster, `00..DF` maps directly to pressure. If PT splits into the
   target budget, NT can begin only after PT2, so a target-blank sample retains
@@ -111,9 +112,8 @@ HUD OCR pass. Use descriptive field names throughout.
   a later PT budget, maps to the `0x100` escaped-target-blank sentinel. A blank
   sample before the target belongs to the preceding budget and clamps to zero,
   so the repeated `E5..EA` range is never ordered speculatively. Draw an orange
-  `E0` guide and colour values after it red. A movie without the H40 name-table
-  DMA path has no NT pressure points. Each row uses three times the standard
-  row height so small phase differences remain visible in the whole-movie image.
+  `E0` guide and colour values after it red. Each row uses three times the
+  standard row height so small phase differences remain visible in the whole-movie image.
   Plot each frame as an unconnected point; do not fill bars or connect points.
 - Gate rows, in descriptive order:
   `sector_slip`, `control_desync`, `audio_resync`, `vblank_spill`,

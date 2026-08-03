@@ -88,7 +88,7 @@ Defaults and rules:
 - Pass the same `--config profiles/PROFILE.toml` used by sim and pack. The
   harness derives `out/PROFILE.cue` from the TOML filename.
 - Use an explicit `--disc CUE --no-build` only for a previously verified image.
-- Build with `DEBUG=1` by default. The Plane A HUD is part of the normal recording artifact.
+- Build with `DEBUG=1` by default. The Window-row/SAT HUD is part of the normal recording artifact.
 - Use `--release-build` only when the user explicitly asks for a release build. It changes the
   harness build to `make disc CONFIG=profiles/PROFILE.toml DEBUG=0`.
 - Keep the startup sequence. The default is `--trim 0`; omitting `--trim` has the same result.
@@ -237,7 +237,7 @@ Check the raw MKV and reports before trusting a capture:
    sample-jump, clipping, or RMS threshold gate: legitimate source transients
    and lossy preview encoding made those tests content-dependent.
 5. Inspect frames from the MKV and confirm that the Mega-CD startup appears first, playback
-   begins later, the DEBUG Plane A HUD is visible, and the movie advances. Do not use the HUD
+   begins later, the DEBUG Window-row/SAT HUD is visible, and the movie advances. Do not use the HUD
    to seek the movie start. Extract these stills with
    `tools/extract_verification_frames.sh`; give it a `$(dirname "$LOSSLESS")/record_check` base and
    named `LABEL=SECONDS` samples. It creates a never-reused source-specific directory,
@@ -342,7 +342,7 @@ tools/python.sh tools/tmpfs_workspace.py run-directory \
     --record-size 256x224 --shots 68 --interval 2
 ```
 
-Confirm the Plane A HUD is visible before a long OCR scan. Read the complete
+Confirm the Window-row/SAT HUD is visible before a long OCR scan. Read the complete
 loop. `transfer_ticks` is the Main pattern-transfer time in 30.72 us ticks,
 `cold_runs` is the packed run count's low byte, and
 `prgbuf_jitter_peak_kib` is sticky ceil-KiB excess above the cadence-derived

@@ -9,22 +9,21 @@ specialized DEBUG players.
 For every case it requires:
 
 - specialized IP and SP binaries do not grow relative to the generic build;
-- the specialized resident SP binary stays within the 8,192-byte disc-system
+- the specialized resident SP binary stays within the 5-KiB disc-system
   allocation and the boot header names its exact linked size;
 - the extension is linked into the boot-only timed-ring tail, its generated
   size/hash/address contract matches, and its bytes fit after the 8,800-byte
   ADPCM table inside the existing five-sector HEADER preload;
 - the specialized SP contains the exact HEADER signature immediate and the
   `0xBAD1` mismatch diagnostic;
-- Main's specialized flip branches stay inside their local regions, and the
-  final guard performs status, V-counter tail, second-status, fresh-wait, then
-  the Plane A reg2 write in that order;
-- fixed-N H40 name-table DMA stages only the encoded row width at the
-  generated center offset and transfers the complete zero-bordered 40x28
-  visible aperture;
-- fixed-N H40 starts each 3,200-unit weighted transfer budget only at a proven
-  VBlank head, withholds the cadence-final name-table/CRAM/flip reserve before
-  pattern work, and retains status, terminal-line, and fresh-VBlank fallback
+- every player publishes one staged movie table without a Plane A reg2 write,
+  with NT DMA, DEBUG HUD DMA, optional CRAM, and cadence commit in order;
+- every specialized geometry stages only the encoded row width and transfers
+  the exact centered 64-pitch band, including 1,192 words for 40x19, 1,768 for
+  full H40, and 1,760 for full H32;
+- H32 and H40 start each weighted transfer budget only at a proven
+  VBlank head, withhold the cadence-final name-table/HUD/CRAM reserve before
+  pattern work, and retain status, terminal-line, and fresh-VBlank fallback
   guards;
 - CPU-written VDP words cost four DMA-word units, including Word-RAM DMA
   first-word repairs; every pattern run uses DMA and every run crossing the
@@ -35,8 +34,10 @@ For every case it requires:
   at 30 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
-- the fixed-N H40 DEBUG reserve includes the complete 43-cell HUD staging
-  allowance;
+- the DEBUG reserve includes the 76-word H32 or 52-word H40 Window/SAT HUD
+  workload, while release omits it;
+- generic and specialized builds begin the next bank exchange after their last
+  Word-RAM access and before every display-deadline wait;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;
 - all geometry/timing/audio/supply combinations assemble and link

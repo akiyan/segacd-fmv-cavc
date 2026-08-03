@@ -125,14 +125,14 @@ def generated_byte_cycles(mask: int) -> int:
 def frame_cycles(bitmap: bytes, has_entries: bool) -> tuple[int, int]:
     """Return reference/generated cycles for the complete bitmap-byte loop."""
     if not has_entries:
-        # build_frame branches to bf_blit before either bitmap loop is entered.
+        # build_frame branches to bf_stage_nt before either bitmap loop is entered.
         return 0, 0
 
     outer_loop = DBRA_CONTINUE * (len(bitmap) - 1) + DBRA_EXPIRED
     reference = sum(reference_byte_cycles(mask) for mask in bitmap) + outer_loop
 
     # Once per non-empty frame: check the success flag, load the table base and
-    # shared cold-flag mask.  The generated loop falls directly into bf_blit.
+    # shared cold-flag mask. The generated loop falls directly into bf_stage_nt.
     generated_setup = (
         MOVE_W_PC_DISP_DN
         + BCC_W_TAKEN
@@ -145,83 +145,6 @@ def frame_cycles(bitmap: bytes, has_entries: bool) -> tuple[int, int]:
         + outer_loop
     )
     return reference, generated
-
-
-def set_vram_write_cycles() -> int:
-    """Cycles for BSR set_vram_write through its RTS."""
-    return (
-        BSR_W
-        + MOVE_L_DN_DN
-        + ANDI_L_DN
-        + SWAP_DN
-        + 16                 # ORI.L #data,Dn, Table 8-5
-        + 2 * LSL_W_SEVEN    # LSR has the same Table 8-7 timing
-        + ANDI_W_DN
-        + OR_W_DN_DN
-        + 20                 # MOVE.L Dn,(xxx).L, Table 8-3
-        + RTS
-    )
-
-
-def reference_blit_cycles(tcols: int, trows: int) -> int:
-    """Cycles from the generic shadow LEA through the final row DBRA."""
-    if tcols <= 0 or trows <= 0:
-        raise ValueError("blit geometry must be positive")
-    cycles = LEA_ABS_LONG + 2 * MOVE_W_ABS_LONG_DN + SUBQ_W_DN
-    for row in range(trows):
-        cycles += (
-            MOVE_W_DN_DN
-            + LSL_W_SEVEN
-            + 2 * ADD_W_ABS_LONG_DN
-            + MOVE_L_DN_DN
-            + ANDI_L_DN
-            + ADD_L_DN_DN
-            + set_vram_write_cycles()
-            + MOVE_W_ABS_LONG_DN
-            + MOVE_W_DN_DN
-            + LSR_W_THREE
-        )
-
-        groups = tcols // 8
-        if groups:
-            cycles += BCC_B_NOT_TAKEN + SUBQ_W_DN
-            cycles += groups * 4 * MOVE_L_POSTINC_ABS_LONG
-            cycles += (groups - 1) * DBRA_CONTINUE + DBRA_EXPIRED
-        else:
-            cycles += BCC_B_TAKEN
-
-        tail = tcols & 7
-        cycles += ANDI_W_DN
-        if tail:
-            cycles += BCC_B_NOT_TAKEN + SUBQ_W_DN
-            cycles += tail * MOVE_W_POSTINC_ABS_LONG
-            cycles += (tail - 1) * DBRA_CONTINUE + DBRA_EXPIRED
-        else:
-            cycles += BCC_B_TAKEN
-        cycles += ADDQ_W_DN
-        cycles += DBRA_CONTINUE if row != trows - 1 else DBRA_EXPIRED
-    return cycles
-
-
-def generated_blit_cycles(tcols: int, trows: int) -> int:
-    """Cycles for successful dispatch and the fixed NT0/NT1 function."""
-    if tcols <= 0 or trows <= 0:
-        raise ValueError("blit geometry must be positive")
-    dispatch = (
-        MOVE_W_PC_DISP_DN
-        + BCC_W_NOT_TAKEN
-        + MOVE_W_PC_DISP_DN
-        + LSL_W_TWO
-        + LEA_PC_DISP
-        + MOVE_L_INDEX_AN
-        + JSR_INDIRECT
-    )
-    row = (
-        MOVE_L_IMMEDIATE_ABS_LONG
-        + (tcols // 2) * MOVE_L_POSTINC_ABS_LONG
-        + (tcols & 1) * MOVE_W_POSTINC_ABS_LONG
-    )
-    return dispatch + LEA_ABS_LONG + trows * row + RTS + BRA_W
 
 
 def percentile(values: list[int], percent: int) -> float:
@@ -248,12 +171,6 @@ def main() -> None:
     saved = [old - new for old, new in measured]
     average_saved = statistics.mean(saved)
     regressed = sum(value < 0 for value in saved)
-    blit_reference = reference_blit_cycles(stream.cols, stream.rows)
-    blit_generated = generated_blit_cycles(stream.cols, stream.rows)
-    blit_saved = blit_reference - blit_generated
-    combined_saved = [value + blit_saved for value in saved]
-    combined_regressed = sum(value < 0 for value in combined_saved)
-
     mask_counts = [0, 0, 0]
     for block in stream.controls:
         if not block.entries:
@@ -281,24 +198,8 @@ def main() -> None:
         f"average Main-CPU time saved: {average_saved / args.clock_hz * 1000:.3f} ms "
         f"at {args.clock_hz} Hz; regressed frames={regressed}"
     )
-    print(
-        "name-table blit: "
-        f"reference={blit_reference} cycles, generated={blit_generated} cycles, "
-        f"saved={blit_saved} cycles/{blit_saved / args.clock_hz * 1000:.3f} ms"
-    )
-    combined_average = statistics.mean(combined_saved)
-    print(
-        "combined saved cycles/frame: "
-        f"average={combined_average:.2f}/{combined_average / args.clock_hz * 1000:.3f} ms, "
-        f"min={min(combined_saved)}, max={max(combined_saved)}, "
-        f"regressed frames={combined_regressed}"
-    )
     if regressed:
         raise AssertionError(f"generated path regressed {regressed} packed frames")
-    if blit_saved <= 0 or combined_regressed:
-        raise AssertionError(
-            f"combined generated path regressed {combined_regressed} packed frames"
-        )
 
 
 if __name__ == "__main__":

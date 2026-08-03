@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the generic/specialized player matrix for issue #21."""
+"""Build and inspect the current generic/specialized player matrix."""
 
 from __future__ import annotations
 
@@ -76,7 +76,8 @@ def make_header(case: Case) -> bytes:
     prefix = struct.pack(
         ">4s9H4LBB3L6H",
         b"TTRC", ttrc_routing.VERSION, frames, tcols, trows, cells,
-        1400, 1, ttrc_routing.FRAME_SECTORS, 1,
+        av_config.VRAM_PATTERN_POOL_TILES, 1,
+        ttrc_routing.FRAME_SECTORS, 1,
         12416, ttrc_routing.routing_sector_count(frames), 194, 12416,
         case.mode, 0, 2, 18 if case.mode else 14,
         av_config.PALTAB_STAGE_KB * 1024 // 2048,
@@ -202,76 +203,49 @@ def verify_boot_image(
 
 
 def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
-    """Keep flip branches local and prove the final VBlank guard ordering."""
+    """Prove every player publishes one staged NT without a reg2 flip."""
     disassembly = run([str(objdump), "-d", str(obj)])
-    start_match = re.search(r"^([0-9a-f]+) <bf_doflip>:$", disassembly, re.MULTILINE)
-    end_match = re.search(r"^([0-9a-f]+) <bf_after_flip>:$", disassembly, re.MULTILINE)
-    if not start_match or not end_match:
-        raise AssertionError(f"{obj}: missing bf_doflip symbols")
-    start = int(start_match.group(1), 16)
-    end = int(end_match.group(1), 16)
-    block = disassembly[start_match.end():end_match.start()]
-    branches = re.findall(
-        r"^\s*[0-9a-f]+:\s+(?:[0-9a-f]{4}\s+)+"
-        r"(?!bsr)(b[a-z]+)\s+([0-9a-f]+)\s+<",
-        block,
-        re.MULTILINE,
-    )
-    escaped = [
-        (mnemonic, int(target, 16))
-        for mnemonic, target in branches
-        if not start <= int(target, 16) <= end
-    ]
-    if escaped:
-        details = ", ".join(f"{op}->0x{target:X}" for op, target in escaped)
-        raise AssertionError(f"{obj}: bf_doflip branch escaped its region: {details}")
+    symbols = run([str(objdump), "-t", str(obj)])
+    for removed in (
+            "back_idx", "bf_blit", "publish_dbg", "stamp_dbg_stage",
+            "do_flip", "md_codegen_blit", "md_codegen_blit_addr"):
+        if re.search(rf"\b{re.escape(removed)}\b", symbols):
+            raise AssertionError(
+                f"{obj}: removed double-name-table symbol remains: {removed}")
 
-    guard_match = re.search(
-        r"^([0-9a-f]+) <do_flip>:$", disassembly, re.MULTILINE)
-    guard_end_match = re.search(
-        r"^([0-9a-f]+) <dma_chunk_wr>:$", disassembly, re.MULTILINE)
-    if not guard_match or not guard_end_match:
-        raise AssertionError(f"{obj}: missing do_flip guard symbols")
-    guard_start = int(guard_match.group(1), 16)
-    guard_end = int(guard_end_match.group(1), 16)
-    guard = disassembly[guard_match.end():guard_end_match.start()]
-    status_reads = list(re.finditer(
-        r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", guard))
-    hv_read = re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", guard)
-    tail_check = re.search(r"\bcmpiw\s+#-1024,%d0", guard)
-    fresh_wait = re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", guard)
-    plane_write = re.search(
-        r"\bmovew\s+%d5,(?:00)?c00004 <VDP_CTRL>", guard)
-    if (len(status_reads) != 2 or hv_read is None or tail_check is None or
-            fresh_wait is None or plane_write is None):
-        raise AssertionError(f"{obj}: incomplete final VBlank guard")
-    positions = (
-        status_reads[0].start(), hv_read.start(), tail_check.start(),
-        status_reads[1].start(), fresh_wait.start(), plane_write.start(),
-    )
-    if positions != tuple(sorted(positions)):
-        raise AssertionError(f"{obj}: final VBlank guard is out of order")
+    start = re.search(
+        r"^[0-9a-f]+ <bf_publish_frame>:$", disassembly, re.MULTILINE)
+    end = re.search(
+        r"^[0-9a-f]+ <bf_after_flip>:$", disassembly, re.MULTILINE)
+    if not start or not end or start.start() >= end.start():
+        raise AssertionError(f"{obj}: missing single-NT publication block")
+    publish = disassembly[start.end():end.start()]
+    required_calls = ("nt_dma_flip", "hud_dma_flip", "commit_frame")
+    positions = []
+    for callee in required_calls:
+        match = re.search(rf"\bbsr\w*\s+[^\n]*<{callee}>", publish)
+        if not match:
+            raise AssertionError(f"{obj}: publication path lacks {callee}")
+        positions.append(match.start())
+    if positions != sorted(positions):
+        raise AssertionError(
+            f"{obj}: NT/HUD/commit calls are not in publication order")
 
-    guard_branches = re.findall(
-        r"^\s*[0-9a-f]+:\s+(?:[0-9a-f]{4}\s+)+"
-        r"(?!bsr)(b[a-z]+)\s+([0-9a-f]+)\s+<",
-        guard,
-        re.MULTILINE,
-    )
-    if len(guard_branches) < 3:
-        raise AssertionError(f"{obj}: final VBlank guard branches are missing")
-    escaped = [
-        (mnemonic, int(target, 16))
-        for mnemonic, target in guard_branches
-        if not guard_start <= int(target, 16) < guard_end
-    ]
-    if escaped:
-        details = ", ".join(f"{op}->0x{target:X}" for op, target in escaped)
-        raise AssertionError(f"{obj}: do_flip branch escaped its region: {details}")
+    commit = re.search(
+        r"^[0-9a-f]+ <commit_frame>:$", disassembly, re.MULTILINE)
+    next_fn = re.search(
+        r"^[0-9a-f]+ <dma_chunk_wr>:$", disassembly, re.MULTILINE)
+    if not commit or not next_fn or commit.start() >= next_fn.start():
+        raise AssertionError(f"{obj}: missing commit_frame cadence block")
+    commit_block = disassembly[commit.end():next_fn.start()]
+    if re.search(r"\bmovew\s+[^,]+,(?:00)?c00004 <VDP_CTRL>", commit_block):
+        raise AssertionError(f"{obj}: commit_frame still writes Plane A reg2")
 
 
-def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
-    """Prove the H40 fixed-N cold-tail/NT shared-VBlank guards."""
+def verify_shared_deadline_vblank(
+    objdump: Path, obj: Path, *, mode: int, tcols: int, trows: int,
+) -> None:
+    """Prove fixed-cadence pattern and display DMAs share one safe blank."""
     disassembly = run([str(objdump), "-dr", str(obj)])
 
     def block(start_name: str, end_name: str) -> str:
@@ -341,14 +315,22 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         raise AssertionError(
             f"{obj}: active and mid-blank budget entries do not refill")
 
-    refill = block("bf_refill_vbudget", "bf_wait_fixed_flip_vblank")
+    refill = block("bf_refill_vbudget", "bf_debug_snapshot_vbudget")
     if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
         raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
-    if not re.search(r"\bmovew\s+#3200,%d7", refill):
-        raise AssertionError(f"{obj}: H40 budget refill is not 3200 words")
+    expected_budget = 2800 if mode == 0 else 3200
+    if not re.search(rf"\bmovew\s+#{expected_budget},%d7", refill):
+        raise AssertionError(
+            f"{obj}: mode {mode} budget refill is not {expected_budget} words")
     if not re.search(r"\bsubw\s+[^\n]*,%d7", refill):
         raise AssertionError(
             f"{obj}: cadence-final budget does not withhold display work")
+    target_addr = symbol_address(objdump, obj, "pace_target_vblanks")
+    if not re.search(
+            rf"\bcmpw\s+0 [^\n]*,%d0\n"
+            rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{target_addr:x}", refill):
+        raise AssertionError(
+            f"{obj}: final reserve is not keyed to the current cadence target")
 
     if "<bf_short_run>" in disassembly:
         raise AssertionError(f"{obj}: removed short-run CPU path is still linked")
@@ -358,7 +340,7 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         raise AssertionError(
             f"{obj}: split Word-RAM DMA lacks its CPU-repair charge")
 
-    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_stage")
+    shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_row")
     required = (
         (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
         (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
@@ -374,49 +356,31 @@ def verify_shared_deadline_vblank(objdump: Path, obj: Path) -> None:
         raise AssertionError(
             f"{obj}: shared deadline path lacks its two status reads")
 
-    flip = block("bf_flip", "bf_after_flip")
-    normal_reserve = 64 * 28 + 43 + 128
-    palette_reserve = normal_reserve + 64 * 4
-    for reserve, description in (
-            (normal_reserve, "normal NT/HUD/guard reserve"),
-            (palette_reserve, "palette NT/HUD/CRAM/guard reserve")):
-        if not re.search(rf"\bmovew\s+#{reserve},%d6", flip):
-            raise AssertionError(f"{obj}: missing {description} ({reserve} words)")
-    if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", flip)) != 2:
+    publish = block("bf_publish_frame", "bf_after_flip")
+    screen_cols = 32 if mode == 0 else 40
+    band_words = (trows - 1) * 64 + tcols
+    hud_words = screen_cols + (43 - screen_cols) * 4
+    normal_reserve = band_words + hud_words + 128
+    if not re.search(rf"\bmovew\s+#{normal_reserve},%d6", publish):
         raise AssertionError(
-            f"{obj}: normal and palette flips do not share the guarded helper")
-    if len(re.findall(
-            r"\bbsr\w*\s+[^\n]*<bf_patch_dbg_stage>", flip)) != 2:
+            f"{obj}: missing exact grid/HUD/guard reserve ({normal_reserve} words)")
+    if not re.search(r"\baddiw\s+#256,%d6", publish):
+        raise AssertionError(f"{obj}: optional CRAM reserve is not 256 words")
+    for callee in (
+            "bf_wait_fixed_flip_vblank", "bf_patch_dbg_row",
+            "nt_dma_flip", "hud_dma_flip", "commit_frame"):
+        if len(re.findall(rf"\bbsr\w*\s+[^\n]*<{callee}>", publish)) != 1:
+            raise AssertionError(
+                f"{obj}: publication path must call {callee} exactly once")
+    if "<publish_dbg>" in publish:
         raise AssertionError(
-            f"{obj}: normal and palette flips do not patch the staged HUD")
-    if "<publish_dbg>" in flip:
-        raise AssertionError(
-            f"{obj}: H40 flip path still republishes HUD through the VDP port")
-
-    nt_dma = block("nt_dma_flip", "set_vram_write")
-    ready_addr = symbol_address(objdump, obj, "nt_dma_ready_v")
-    ready_load = re.search(
-        rf"\bmovew\s+0 [^\n]*,%d2\n"
-        rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{ready_addr:x}",
-        nt_dma,
-    )
-    nt_trigger = re.search(
-        r"\bmovel\s+%d0,(?:00)?c00004 <VDP_CTRL>", nt_dma)
-    if (
-        not ready_load
-        or not nt_trigger
-        or ready_load.start() >= nt_trigger.start()
-        or re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>", nt_dma)
-    ):
-        raise AssertionError(
-            f"{obj}: NT DMA does not use the pre-wait readiness sample")
+            f"{obj}: display path still republishes HUD through the VDP port")
 
 
 def verify_early_nonblocking_swap(
-    objdump: Path, obj: Path, *, expected_frames: int,
+    objdump: Path, obj: Path, *, expected_frames: int, specialized: bool,
 ) -> None:
-    """Prove the H40 bank exchange starts after Word RAM and before the flip."""
+    """Prove every bank exchange starts after Word RAM and before display DMA."""
     disassembly = run([str(objdump), "-dr", str(obj)])
 
     def block(start_name: str, end_name: str) -> str:
@@ -468,10 +432,10 @@ def verify_early_nonblocking_swap(
     guarded_prefix = frame_tail[:early.start()]
     frame_zero_guard = bss_reference(
         guarded_prefix, r"\btstw\s+0 ", "frame_no")
-    final_guard = bss_reference(
-        guarded_prefix,
-        rf"\bcmpiw\s+#{expected_frames - 1},0 ",
-        "frame_no",
+    final_guard = (
+        re.search(rf"\bcmpiw\s+#{expected_frames - 1},%d0", guarded_prefix)
+        if specialized
+        else bss_reference(guarded_prefix, r"\bcmpw\s+0 [^,]*,%d0", "md_final_frame")
     )
     if not frame_zero_guard or not final_guard:
         raise AssertionError(
@@ -483,10 +447,11 @@ def verify_early_nonblocking_swap(
         raise AssertionError(
             f"{obj}: early swap frame guards do not branch around the request")
     waits = list(re.finditer(
-        r"\bbsr\w*\s+[^\n]*<bf_wait_fixed_flip_vblank>", frame_tail))
-    if len(waits) != 2 or any(early.start() >= wait.start() for wait in waits):
+        r"\bbsr\w*\s+[^\n]*<(?:bf_wait_fixed_flip_vblank|wait_vb_start)>",
+        frame_tail))
+    if not waits or any(early.start() >= wait.start() for wait in waits):
         raise AssertionError(
-            f"{obj}: bank exchange is not ahead of both cadence-final paths")
+            f"{obj}: bank exchange is not ahead of every display-deadline wait")
 
     after_early = frame_tail[early.end():]
     direct_word_ram = re.search(
@@ -500,9 +465,11 @@ def verify_early_nonblocking_swap(
             f"{obj}: Main still references Word RAM after early bank exchange")
     allowed_calls = {
         "bf_wait_fixed_flip_vblank",
-        "bf_patch_dbg_stage",
+        "wait_vb_start",
+        "bf_patch_dbg_row",
         "nt_dma_flip",
-        "do_flip",
+        "hud_dma_flip",
+        "commit_frame",
     }
     calls = set(re.findall(
         r"\bbsr\w*\s+[^\n]*<([^>]+)>", after_early))
@@ -582,22 +549,25 @@ def verify_transfer_cleanup(objdump: Path, obj: Path) -> None:
 
 
 def verify_runtime_vblank_cadence(
-    objdump: Path, obj: Path, *, expected_n: int,
+    objdump: Path, obj: Path,
 ) -> None:
-    """Prove runtime transfer diagnostics cover every fixed-N window."""
-    disassembly = run([str(objdump), "-d", str(obj)])
+    """Prove runtime diagnostics follow the current periodic cadence target."""
+    disassembly = run([str(objdump), "-dr", str(obj)])
     start = re.search(
         r"^[0-9a-f]+ <bf_wait_fixed_flip_vblank>:$",
         disassembly, re.MULTILINE)
     end = re.search(
-        r"^[0-9a-f]+ <bf_patch_dbg_stage>:$",
+        r"^[0-9a-f]+ <bf_patch_dbg_row>:$",
         disassembly, re.MULTILINE)
     if not start or not end or start.start() >= end.start():
         raise AssertionError(f"{obj}: missing runtime cadence block")
     shared = disassembly[start.end():end.start()]
-    if not re.search(rf"\bcmpiw\s+#{expected_n},%d0", shared):
+    target_addr = symbol_address(objdump, obj, "pace_target_vblanks")
+    if not re.search(
+            rf"\bcmpw\s+0 [^\n]*,%d0\n"
+            rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{target_addr:x}", shared):
         raise AssertionError(
-            f"{obj}: transfer-window accounting is not derived from N={expected_n}")
+            f"{obj}: transfer-window accounting ignores the periodic target")
 
     addresses = [
         symbol_address(objdump, obj, f"pattern_vblank{index}_words")
@@ -686,7 +656,7 @@ def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
     frame_minus_one = function_block("show_frame_minus_one")
     if not re.search(r"\bmovew\s+#-1,", frame_minus_one):
         raise AssertionError(f"{obj}: frame -1 does not publish frame=FFFF")
-    for callee in ("prepare_dbg", "publish_dbg", "wait_vblank"):
+    for callee in ("prepare_dbg", "hud_dma_flip", "wait_vblank"):
         if not re.search(
                 rf"\bbsr\w*\s+[^\n]*<{callee}>", frame_minus_one):
             raise AssertionError(
@@ -714,16 +684,16 @@ def verify_adpcm_decode_pump(
 
 
 def verify_centered_nt_dma(
-    objdump: Path, obj: Path, *, tcols: int, trows: int,
+    objdump: Path, obj: Path, *, mode: int, tcols: int, trows: int,
 ) -> None:
-    """Prove that fixed-N H40 staging centers the encoded grid."""
+    """Prove the logical grid becomes one exact centered 64-pitch DMA band."""
     disassembly = run([str(objdump), "-dr", str(obj)])
     start_match = re.search(
-        r"^[0-9a-f]+ <bf_blit>:$", disassembly, re.MULTILINE)
+        r"^[0-9a-f]+ <bf_stage_nt>:$", disassembly, re.MULTILINE)
     end_match = re.search(
         r"^[0-9a-f]+ <bf_dma>:$", disassembly, re.MULTILINE)
     if not start_match or not end_match:
-        raise AssertionError(f"{obj}: missing bf_blit/bf_dma symbols")
+        raise AssertionError(f"{obj}: missing bf_stage_nt/bf_dma symbols")
     block = disassembly[start_match.end():end_match.start()]
     long_copies = len(re.findall(r"\bmovel\s+%a0@\+,%a1@\+", block))
     word_copies = len(re.findall(r"\bmovew\s+%a0@\+,%a1@\+", block))
@@ -734,36 +704,34 @@ def verify_centered_nt_dma(
     row_skip = (64 - tcols) * 2
     if not re.search(rf"\blea\s+%a1@\({row_skip}\),%a1", block):
         raise AssertionError(f"{obj}: NT stage row skip is not {row_skip} bytes")
-    if not re.search(rf"\bmovew\s+#{trows - 1},%d0", block):
+    if not re.search(rf"\bmove(?:w|q)\s+#{trows},%d0", block):
         raise AssertionError(f"{obj}: NT stage row count is not {trows}")
 
-    stage_match = re.search(
-        r"\blea\s+0 [^\n]*,%a1\n"
-        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
-        block,
-    )
     dma_match = re.search(
         r"^[0-9a-f]+ <nt_dma_flip>:$", disassembly, re.MULTILINE)
     dma_end_match = re.search(
-        r"^[0-9a-f]+ <set_vram_write>:$", disassembly, re.MULTILINE)
-    if not stage_match or not dma_match or not dma_end_match:
+        r"^[0-9a-f]+ <hud_dma_flip>:$", disassembly, re.MULTILINE)
+    if not dma_match or not dma_end_match:
         raise AssertionError(f"{obj}: missing NT stage/DMA symbols")
     dma = disassembly[dma_match.end():dma_end_match.start()]
-    base_match = re.search(
-        r"\bmovel\s+#0,%d2\n"
-        r"\s+[^\n]*R_68K_32\s+\.bss\+0x([0-9a-f]+)",
-        dma,
+    screen_cols = 32 if mode == 0 else 40
+    expected_dst = (
+        0xE000
+        + (((28 - trows) // 2) * 64 + (screen_cols - tcols) // 2) * 2
     )
-    if not base_match:
-        raise AssertionError(f"{obj}: missing NT stage base relocation")
-    actual_offset = int(stage_match.group(1), 16) - int(base_match.group(1), 16)
-    expected_offset = (((28 - trows) // 2) * 64 + (40 - tcols) // 2) * 2
-    if actual_offset != expected_offset:
+    expected_words = (trows - 1) * 64 + tcols
+    dst = re.search(r"\bmovel\s+#(-?\d+),%d3", dma)
+    words = re.search(r"\bmovew\s+#(-?\d+),%d6", dma)
+    if not dst or int(dst.group(1)) & 0xFFFF != expected_dst:
+        actual = None if not dst else int(dst.group(1)) & 0xFFFF
         raise AssertionError(
-            f"{obj}: NT stage offset is {actual_offset}, expected {expected_offset}")
-    if "#-27904" not in dma or "#-27641" not in dma:
+            f"{obj}: NT DMA destination is {actual}, expected {expected_dst}")
+    if not words or int(words.group(1)) & 0xFFFF != expected_words:
+        actual = None if not words else int(words.group(1)) & 0xFFFF
         raise AssertionError(
-            f"{obj}: NT DMA length is not the full 64x28 aperture")
+            f"{obj}: NT DMA length is {actual}, expected {expected_words}")
+    if not re.search(r"\bbra\w*\s+[^\n]*<dma_chunk>", dma):
+        raise AssertionError(f"{obj}: name-table transfer is not one Main-RAM DMA")
 
 
 def build_case(
@@ -808,22 +776,25 @@ def build_case(
     ])
     verify_startup_body_arm(objdump, ip_obj)
     verify_transfer_cleanup(objdump, ip_obj)
+    verify_flip_control_flow(objdump, ip_obj)
+    verify_early_nonblocking_swap(
+        objdump, ip_obj, expected_frames=TEST_FRAMES,
+        specialized=specialized)
     if specialized:
-        verify_flip_control_flow(objdump, ip_obj)
-        if case.mode == 1 and av_config.uses_fixed_n_cadence(case.fps):
-            verify_centered_nt_dma(
-                objdump, ip_obj, tcols=case.tcols or 40, trows=case.trows)
-            verify_shared_deadline_vblank(objdump, ip_obj)
+        tcols = case.tcols or (32 if case.mode == 0 else 40)
+        verify_centered_nt_dma(
+            objdump, ip_obj, mode=case.mode, tcols=tcols, trows=case.trows)
+        if av_config.uses_fixed_n_cadence(case.fps):
+            verify_shared_deadline_vblank(
+                objdump, ip_obj, mode=case.mode, tcols=tcols, trows=case.trows)
             verify_runtime_vblank_cadence(
-                objdump, ip_obj,
-                expected_n=av_config.vsync_n_for_fps(case.fps))
-            verify_early_nonblocking_swap(
-                objdump, ip_obj, expected_frames=TEST_FRAMES)
+                objdump, ip_obj)
             release_ip_obj = case_dir / "ip-specialized-release.o"
             run(common[:4] + ["--defsym", "MAIN_CODEGEN=1"] + fixed + includes + [
                 str(ROOT / "boot/movieplay_ip.s"), "-o", str(release_ip_obj)])
             verify_early_nonblocking_swap(
-                objdump, release_ip_obj, expected_frames=TEST_FRAMES)
+                objdump, release_ip_obj, expected_frames=TEST_FRAMES,
+                specialized=True)
 
     sp_obj = case_dir / f"sp-{tag}.o"
     sp_bin = case_dir / f"sp-{tag}.bin"

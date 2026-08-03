@@ -27,7 +27,7 @@ SECTIONS
   ASSERT(. <= 0xFF4A00, "startup section exceeds generated-code area")
 
   /* Runtime state (M-STATE) sits in its fixed 8.25 KiB reservation right
-     after the generated handler/blitter range (M-CODE ends at 0xFF6700).
+     after the generated-handler range (M-CODE ends at 0xFF6700).
      The reservation covers the worst-case DEBUG/H40 build. */
   .bss 0xFF6700 (NOLOAD) :
   {

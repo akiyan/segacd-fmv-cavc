@@ -310,8 +310,8 @@ ISO_HOLD_N ?= 0
 # rejects streams that could need the normal third destination, leaving the
 # complete 0x7400..0x7FFF interval marker-owned.
 ISO_VERIFY_SP_TAIL ?= 0
-# Issue #27 Main-CPU straight-line bitmap handlers and fixed-geometry NT
-# blitters. H32/H40 full-playback validation is complete; MAIN_CODEGEN=0 keeps
+# Main-CPU straight-line bitmap handlers. H32/H40 full-playback validation is
+# complete; MAIN_CODEGEN=0 keeps
 # the byte-identical reference player available for fallback/A-B diagnostics.
 MAIN_CODEGEN ?= 1
 # Bind player hot constants to this profile's HEADER.DAT.  Set to 0 only for

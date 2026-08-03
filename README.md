@@ -33,11 +33,12 @@ frames that need new patterns.
   DicBuf in Main RAM keeps 512 frequently reused exact patterns available
   throughout the movie.
 - **Coordinate multiple CPUs.** The Sub CPU routes CD sectors, manages PrgBuf,
-  decodes ADPCM, and expands the next frame into Word RAM. The Main CPU builds
-  runs for the current frame, transfers patterns to VRAM, updates CRAM, and
-  DMAs the name table. The 1M/1M Word-RAM handoff connects them once per frame,
+  decodes ADPCM, and expands the next frame into Word RAM. The Main CPU consumes
+  resolved runs for the current frame, transfers patterns to VRAM, updates
+  CRAM, and DMAs one statically trimmed band into the single name table. The
+  1M/1M Word-RAM handoff connects them once per frame,
   and a pending handoff takes priority over future-data prefetch.
-- **Reuse VRAM residents.** Tiles 1–1,535 form one persistent pool shared by
+- **Reuse VRAM residents.** Tiles 1–1,663 form one persistent pool shared by
   H32 and H40. An exact resident needs only a name-table entry. Near uses a
   visually close resident, and Flbk uses a resident that improves the current
   display. A new 32-byte pattern is cold-loaded only when needed.
@@ -379,10 +380,11 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
   補充します。Main RAMのDicBufは、頻出exact patternを512-entry dictionaryとして
   全編で再利用します。
 - **複数CPUを協調させる。** Sub CPUはCD sectorのroute、PrgBuf、ADPCM decode、次frameの
-  Word RAM展開を担当します。Main CPUはcurrent frameのrun構築、VRAM transfer、CRAM
-  update、name-table DMAを担当します。1M/1M Word RAM handoffで両者をframe単位に接続し、
+  Word RAM展開を担当します。Main CPUはcurrent frameの解決済みrunを消費し、VRAM
+  transfer、CRAM update、単一name tableへの静的trim済みband DMAを担当します。
+  1M/1M Word RAM handoffで両者をframe単位に接続し、
   pending handoffを将来dataの先読みより優先します。
-- **VRAM residentを再利用する。** tile 1〜1,535をH32/H40共通のpersistent poolとして
+- **VRAM residentを再利用する。** tile 1〜1,663をH32/H40共通のpersistent poolとして
   使います。Exact residentはname-table entryだけ、Nearは見た目が近いresident、Flbkは
   現在表示を改善するresidentを参照します。新しい32-byte patternは必要なときだけ
   cold loadします。

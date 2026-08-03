@@ -1,7 +1,7 @@
 # Main-CPU boot-time code generation
 
 This harness fixes the executable-byte contract for Main-CPU code generation
-before the player emits any code at runtime. Phase 1 replaces the mixed
+before the player emits any code at runtime. The generator replaces the mixed
 bitmap-byte loop with 256 straight-line handlers generated once after
 stream-header setup.
 
@@ -10,8 +10,7 @@ The reserved Main RAM layout is:
 ```text
 0xFF2100  256-entry table of signed word offsets (512 bytes)
 0xFF2300  generated bitmap handlers
-0xFF4A00  expected Phase 1 end
-0xFF6680  maximum H40 NT blitter end
+0xFF4A00  expected generated-handler end
 0xFF6700  hard code-generation limit and M-STATE start
 0xFF8800  unallocated M-FREE start
 ```
@@ -49,20 +48,6 @@ tools/python.sh harness/main_codegen/verify_handlers.py \
 The runtime assembly generator must emit byte-for-byte the same table and
 handlers. Keep this harness synchronized whenever that instruction template
 changes.
-
-Phase 2 emits one fixed-geometry name-table blitter for NT0 and another for
-NT1 immediately after the Phase 1 handlers. Each row contains a precomputed
-VRAM write command followed by straight `MOVE.L` writes from `shadow`; an odd
-tile width ends the row with one `MOVE.W`. Verify the H32/H40 maximum layouts,
-offset layouts, odd widths, generated size, semantics, and disassembly with:
-
-```sh
-tools/python.sh harness/main_codegen/verify_blitters.py
-```
-
-The maximum H40 pair occupies 7,296 bytes (`0xFF4A00..0xFF667F`), leaving a
-128-byte guard before `M-STATE` at `0xFF6700`. Invalid or oversized geometry is
-rejected so the player can retain the existing generic blitter as fallback.
 
 Measure the per-frame instruction cost against a real packed stream with:
 

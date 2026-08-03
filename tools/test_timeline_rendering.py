@@ -50,11 +50,11 @@ class TimelineRenderingTests(unittest.TestCase):
         np.testing.assert_array_equal(
             components["repair_words"], [0, 96, 31])
         np.testing.assert_array_equal(
-            components["name_table_words"], [1792, 1792, 1792])
+            components["name_table_words"], [1820, 1820, 1820])
         np.testing.assert_array_equal(
             components["cram_words"], [0, 0, 64])
         np.testing.assert_array_equal(
-            components["words"], [1792, 5248, 5199])
+            components["words"], [1820, 5276, 5227])
 
     def test_r2v_scale_uses_exact_timed_calculated_maximum(self):
         values = np.asarray([9999, 1792, 5183, 2400], np.int64)

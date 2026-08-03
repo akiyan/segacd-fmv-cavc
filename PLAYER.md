@@ -40,7 +40,8 @@ and are listed in place.
 |---|---|
 | Sub PRG-RAM | `SP-GAP` 224 B, `SCRATCH` 256 B, and `RING-ALIGN` 448 B |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
-| Main RAM | `M-FREE` 10.50 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
+| Main RAM | `M-FREE` 10.38 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
+| VRAM | `0xD200..0xD3FF` 512 B and `0xD680..0xDFFF` 2.375 KiB; unused Window/HScroll table rows remain reserved to those VDP structures |
 
 ## Sub PRG-RAM Map
 
@@ -202,7 +203,7 @@ build-time checked against the `M-STATE` base.
 
 | Name | Address | Size | Contents |
 |---|---|---:|---|
-| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated handlers and guard |
+| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated bitmap handlers and guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | current inline fade CRAM image, copied before the consumed Word RAM bank is returned |
 | `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | unallocated space released by in-place `O_LOADS v2` consumption |
@@ -218,9 +219,34 @@ inside `M-STATE` vary per build and profile; build-time assertions keep each
 inside its fixed range. Main keeps no run-plan cursor or WordBuf read cursor:
 Sub owns both parity cursors and hands off already-resolved records.
 
+## VRAM Map
+
+The movie uses one displayed Plane A name table. No per-frame register-2
+switch selects another table.
+
+| Name | Address | Size | Contents |
+|---|---|---:|---|
+| blank tile | `0x0000..0x001F` | 32 B | fixed transparent tile 0 |
+| resident pool | `0x0020..0xCFFF` | 1,663 tiles | contiguous movie-pattern slots 1–1,663 |
+| HUD font | `0xD000..0xD1FF` | 16 tiles | hexadecimal glyphs shared by DEBUG and release startup |
+| gap | `0xD200..0xD3FF` | 512 B | unallocated VRAM |
+| sprite table | `0xD400..0xD67F` | 640 B | complete 80-record hardware SAT footprint; DEBUG uses at most 88 B (11 H32 or 3 H40 records) |
+| gap | `0xD680..0xDFFF` | 2.375 KiB | unallocated VRAM |
+| movie NT | `0xE000..0xEFFF` | 4 KiB | single 64x32 Plane A table |
+| HUD Window row | `0xF000..0xF04F` | up to 80 B | first DEBUG row; H32 uses 64 B, H40 uses 80 B |
+| horizontal scroll | `0xFC00..0xFC03` | 4 B | fixed full-screen scroll words |
+
+Main expands the logical grid into a zero-gapped, 64-entry-pitch Main-RAM
+stage. During the cadence-final VBlank it DMAs the contiguous band from the
+grid's centered top-left cell through its final cell into `movie NT`. The
+transfer length is `(rows - 1) * 64 + cols`: 1,192 words for 40x19, 1,768 for
+full-height H40, and 1,760 for full-height H32. DEBUG then sends the first
+screen-width HUD row to the Window table and its 3 or 11 spill digits as
+sprites. Generic and specialized players use the same routes at every cadence.
+
 ## Startup and Per-Frame CPU Sequence
 
-The sequences below are identical at 15 fps and 30 fps; only the frame period
+The sequences below are identical at 15, 24, and 30 fps; only the cadence
 differs.
 
 ### Startup
@@ -231,7 +257,7 @@ palette, switch table, dictionary, and sidecar data before Sub reuses that physi
 There is no separate frame-0/BODY-start handshake.
 
 `STAT_READY` exposes the completed frame-0 bank while the timed CD reader is
-still stopped. Clearing the original command after the visible frame-0 flip
+still stopped. Clearing the original command after visible frame-0 publication
 launches timed BODY service. PCM stays stopped through `ROM_READN` startup and
 begins when the first frame-1 control sector arrives. Sub finishes that
 physical slot before acknowledging the clear, so its remainder and the next
@@ -259,7 +285,7 @@ sequenceDiagram
     S-->>M: STAT_READY
     Note over S,CD: Timed suffix remains stopped
     M->>V: Show black frame -1 (DEBUG frame=FFFF)
-    M->>V: Build and flip frame 0 (frame=0000)
+    M->>V: Build and publish frame 0 (frame=0000)
     M->>S: Clear the original CMD_STREAM
     S->>CD: Launch continuous timed suffix
     CD-->>S: First frame-1 control sector
@@ -274,10 +300,10 @@ block, a routing entry, or a HUD TSV row.
 
 ### Timed playback
 
-On the specialized fixed-N H40 path, Main returns the consumed Word RAM bank as
-soon as its final pattern and status reads are complete. The bank exchange is
-started without blocking, before Main finishes the name-table, CRAM, and flip
-work for frame `N`.
+On every generic and specialized H32/H40 path, Main returns the consumed Word
+RAM bank as soon as its final pattern and status reads are complete. The bank
+exchange is started without blocking, before Main finishes the name-table,
+HUD, CRAM, and publication work for frame `N`.
 
 ```mermaid
 sequenceDiagram
@@ -307,7 +333,7 @@ sequenceDiagram
         S->>W: Flush pending WordBuf data
         CD-->>S: Pump sectors while CMD_SWAP remains asserted
     and Main finishes frame N without Word RAM
-        M->>V: DMA name table, update CRAM, flip
+        M->>V: DMA movie NT and HUD, update CRAM, commit cadence origin
     end
 
     M->>S: At the next loop head, wait only for any unfinished READY tail
@@ -318,11 +344,11 @@ A zero residual wait means Sub completed the exchange during Main's remaining
 display work. It does not mean that the exchange itself was free. Inline fade
 CRAM is copied to `M-FCRAM` before the request, so Main makes no further access
 to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
-the startup `CMD_STREAM` ownership through its flip, so frame 1 is acquired by
-the ordinary synchronous request. The final frame is also excluded: Main
+the startup `CMD_STREAM` ownership through its publication, so frame 1 is
+acquired by the ordinary synchronous request. The final frame is also excluded: Main
 requests `STAT_END` only after that frame has become visible. H32,
-non-specialized, periodic-cadence, and feature-clear paths retain the
-synchronous handoff timing.
+non-specialized, periodic-cadence, and feature-clear paths use the same early
+handoff once a future frame exists.
 
 TTRC v25 controls store `n_runs` immediately followed by compact source-aware
 run descriptors. Sub keeps the existing CDC polling cadence while resolving
@@ -333,43 +359,44 @@ bounded but raises a HUD warning. A light N4 frame may open only one or two
 budgets and leave the remaining cadence windows empty. These counters record
 explicit budget openings.
 
-For specialized fixed-N H40 playback, one transfer deadline can serve both
-the final cold-run tail and the display flip. The Main CPU uses a conservative
-3,200 DMA-word-equivalent budget for each H40 VBlank. A DMA word costs one
-unit. Every pattern run uses DMA. A Word-RAM DMA also pays four units for its
-required CPU first-word repair. Main grants a budget only after waiting for a
+For fixed-cadence H32 and H40 playback, one transfer deadline can serve both
+the final cold-run tail and display publication. The Main CPU uses a
+conservative
+2,800 H32 or 3,200 H40 DMA-word-equivalent budget for each VBlank. A DMA word
+costs one unit. Every pattern run uses DMA. A Word-RAM DMA also pays four units
+for its required CPU first-word repair. Main grants a budget only after waiting for a
 new VBlank or while the V counter is still on its first blank line (`E0`).
 Entering an already-running blank later never creates a full budget; Main
 waits for the next head.
 
-Budgets 1 through N-1 are available to patterns. Before pattern work enters
-budget N, Main withholds the complete display reserve: the 1,792-word
-64-by-28 name-table DMA, a 128-unit timing guard, the 43-unit DEBUG HUD
-staging allowance when present, and an optional CRAM replacement. CRAM is
-written by the CPU, so its 64 words reserve 256 units. The normal reserves are
-1,920 units in release and 1,963 in DEBUG; a palette switch raises them to
-2,176 and 2,219. Thus an N2 DEBUG H40 frame has 3,200 units in VBlank 1 and
-1,237 pattern units in VBlank 2, or 981 on a palette switch.
+Budgets 1 through the current cadence target minus one are available to
+patterns. Before pattern work enters the target budget, Main withholds the
+complete display reserve: the exact movie band, a 128-unit timing guard, the
+physical DEBUG HUD DMAs when present, and an optional CRAM replacement. CRAM
+is written by the CPU, so its 64 words reserve 256 units. Full-height H40 uses
+1,896 units in release or 1,948 in DEBUG; a palette switch raises those values
+to 2,152 and 2,204. Thus an N2 DEBUG full-height H40 frame has 3,200 units in
+VBlank 1 and 1,252 pattern units in VBlank 2, or 996 on a palette switch. A
+40x19 DEBUG frame reserves only 1,372 units, or 1,628 with a palette switch.
 
 A DMA run crossing a residual boundary is split exactly there and continued
 at the next fresh VBlank head, regardless of run length. After the pattern
 tail, Main restores the withheld reserve and admits the shared
-name-table/CRAM/flip path only if the current phase is still inside that same
-VBlank. VBlank status is checked before and after the V counter, and terminal
+name-table/HUD/CRAM publication path only if the current phase is still inside
+that same VBlank. VBlank status is checked before and after the V counter, and terminal
 lines `FC..FF` are rejected. If any condition fails, Main waits for a fresh
 VBlank.
 
 For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the next fresh VBlank.
 After the final pattern word, it patches only the transfer-final fields and
-the resolved palette segment into the Main-RAM name-table stage. The existing
-single 1,792-word name-table DMA therefore carries both picture and HUD; there
-is no separate 43-cell VDP-port republish after that DMA. Exact logical pattern
+the resolved palette segment in `dbg_row`. The exact-band movie NT DMA and the
+Window/SAT HUD DMAs then run as separate members of the same admitted VBlank;
+there is no CPU VDP-port HUD republish. Exact logical pattern
 word counters cover runtime VBlank budgets 1 through 4; they remain separate
 from the weighted capacity charge. `transfer_vblanks` exposes a fifth or later
-budget. The staging allowance
-keeps the shared admission check conservative even though those HUD words are
-already part of the name-table DMA.
+budget. The admission check charges the exact physical words for each display
+DMA.
 
 Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
@@ -437,7 +464,8 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 |---|---|
 | Sub PRG-RAM | `SP-GAP` 224 B、`SCRATCH` 256 B、`RING-ALIGN` 448 B |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
-| Main RAM | `M-FREE` 10.50 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
+| Main RAM | `M-FREE` 10.38 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
+| VRAM | `0xD200..0xD3FF` 512 Bと`0xD680..0xDFFF` 2.375 KiB。未使用Window/HScroll table rowは各VDP structure用に予約したまま |
 
 ## Sub PRG-RAM map
 
@@ -593,7 +621,7 @@ build-time checkされます。
 
 | Name | Address | Size | 内容 |
 |---|---|---:|---|
-| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated handler、guard |
+| `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated bitmap handler、guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | 消費済みWord RAM bankを返す前にcopyする、現在のinline fade CRAM image |
 | `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | `O_LOADS v2` in-place消費により解放された未割当領域 |
@@ -609,9 +637,33 @@ build-time checkされます。
 run-plan cursorもWordBuf read cursorも持たず、Subが両parity cursorを所有して
 解決済みrecordを渡します。
 
+## VRAM map
+
+Movieは表示用Plane A name tableを1枚だけ使います。Frameごとに別tableを選ぶ
+register-2 switchはありません。
+
+| Name | Address | Size | 内容 |
+|---|---|---:|---|
+| blank tile | `0x0000..0x001F` | 32 B | 固定transparent tile 0 |
+| resident pool | `0x0020..0xCFFF` | 1,663 tiles | 連続movie-pattern slot 1〜1,663 |
+| HUD font | `0xD000..0xD1FF` | 16 tiles | DEBUGとrelease startupで共有するhexadecimal glyph |
+| gap | `0xD200..0xD3FF` | 512 B | 未割当VRAM |
+| sprite table | `0xD400..0xD67F` | 640 B | 80 record分の完全なhardware SAT領域。DEBUGの実使用は最大88 B（H32は11、H40は3 record） |
+| gap | `0xD680..0xDFFF` | 2.375 KiB | 未割当VRAM |
+| movie NT | `0xE000..0xEFFF` | 4 KiB | 単一64x32 Plane A table |
+| HUD Window row | `0xF000..0xF04F` | 最大80 B | DEBUG先頭行。H32は64 B、H40は80 B |
+| horizontal scroll | `0xFC00..0xFC03` | 4 B | 固定full-screen scroll word |
+
+Mainはlogical gridをzero gap付き64-entry-pitch Main-RAM stageへ展開します。
+Cadence-final VBlank中に、gridのcentered top-left cellからfinal cellまでの連続bandを
+`movie NT`へDMAします。Transfer lengthは`(rows - 1) * 64 + cols`で、40x19は
+1,192 word、full-height H40は1,768、full-height H32は1,760です。DEBUGは続いて
+先頭screen-width HUD rowをWindow tableへ、spillする3桁または11桁をspriteとして
+送ります。Generic / specialized playerは全cadenceで同じrouteを使います。
+
 ## StartupとframeごとのCPU sequence
 
-以下のsequenceは15 fpsと30 fpsで同一で、frame周期だけが異なります。
+以下のsequenceは15、24、30 fpsで同一で、cadenceだけが異なります。
 
 ### Startup
 
@@ -622,7 +674,7 @@ Subが同じ物理bankを再利用する前に、Mainがpalette、切替表、di
 ありません。
 
 `STAT_READY`は完成したframe-0 bankを公開しますが、この時点ではtimed CD
-readerを停止したままにします。frame 0を実際にflipした後で元のcommandを
+readerを停止したままにします。frame 0を実際にpublishした後で元のcommandを
 clearするとtimed BODY serviceを起動します。`ROM_READN` の起動中はPCMを停止したままにし、
 最初のframe-1 control sector到着時にPCMを開始します。Subはそのphysical slotを最後まで
 drainしてからclearをacknowledgeするため、slotの残り時間と次のVBlankが通常の
@@ -650,7 +702,7 @@ sequenceDiagram
     S-->>M: STAT_READY
     Note over S,CD: timed suffixは停止したまま
     M->>V: black frame -1を表示（DEBUG frame=FFFF）
-    M->>V: frame 0を構築・flip（frame=0000）
+    M->>V: frame 0を構築・publish（frame=0000）
     M->>S: 元のCMD_STREAMをclear
     S->>CD: continuous timed suffixを起動
     CD-->>S: 最初のframe-1 control sector
@@ -665,9 +717,9 @@ entry、HUD TSV rowは追加しません。
 
 ### Timed playback
 
-Specialized fixed-N H40 pathでは、Mainは最後のpattern readとstatus readを
+すべてのgeneric / specialized H32/H40 pathで、Mainは最後のpattern readとstatus readを
 終えた時点で、消費済みWord RAM bankを返します。Frame `N`のname-table、
-CRAM、flip処理を終える前に、bank交換をblockingせず開始します。
+HUD、CRAM、publication処理を終える前に、bank交換をblockingせず開始します。
 
 ```mermaid
 sequenceDiagram
@@ -697,7 +749,7 @@ sequenceDiagram
         S->>W: pending WordBuf dataをflush
         CD-->>S: CMD_SWAP assert中にsectorをpump
     and MainがWord RAMなしでframe Nを完了
-        M->>V: name table DMA、CRAM update、flip
+        M->>V: movie NTとHUDをDMA、CRAM update、cadence originをcommit
     end
 
     M->>S: 次のloop先頭で未完了のREADY tailだけを待つ
@@ -707,11 +759,11 @@ sequenceDiagram
 残り待ちがゼロなら、Mainの残るdisplay work中にSubの交換が完了したという
 意味です。交換自体の所要時間がゼロという意味ではありません。Inline fade
 CRAMはrequest前に`M-FCRAM`へcopyするため、Mainは`CMD_SWAP` assert後、返却した
-bankへアクセスしません。Frame 0はflipまで
+bankへアクセスしません。Frame 0はpublicationまで
 startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期requestで
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
-requestします。H32、non-specialized、periodic-cadence、feature-clear pathは
-同期handoff timingを維持します。
+requestします。H32、non-specialized、periodic-cadence、feature-clear pathも、
+future frameが存在すれば同じearly handoffを使います。
 
 TTRC v25 controlは`n_runs`の直後にcompactなsource-aware run descriptorを
 置きます。Subは既存のCDC polling cadenceを保ったままdescriptorを
@@ -721,36 +773,37 @@ budgetを開く処理はboundedのままですがHUD warningになります。�
 1〜2 budgetだけを開き、残るcadence windowを空きにできます。このcounterは
 explicitなbudget openingを記録します。
 
-Specialized fixed-N H40再生では、1個のtransfer deadlineを最後のcold-run tailと
-display flipで共有できます。Main CPUはH40の各VBlankに、安全側の3,200
-DMA-word相当budgetを使います。DMA wordは1 unitで、全pattern runがDMAを使います。
+Fixed-cadence H32/H40再生では、1個のtransfer deadlineを最後のcold-run tailと
+display publicationで共有できます。Main CPUは各VBlankに、安全側のH32 2,800 / H40
+3,200 DMA-word相当budgetを使います。DMA wordは1 unitで、全pattern runがDMAを使います。
 Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新しいVBlankを待った
 直後、またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
 すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
 待ちます。
 
-Budget 1からN-1まではpatternに使えます。Pattern workがbudget Nへ入る前に、
-Mainはdisplay work全体を先に取り置きします。内訳は64-by-28 name-table DMAの
-1,792 word、128-unit timing guard、存在する場合の43-unit DEBUG HUD staging
-allowance、任意のCRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを
-予約します。通常reserveはreleaseで1,920 unit、DEBUGで1,963 unit、palette switch時は
-2,176と2,219です。したがってN2 DEBUG H40 frameはVBlank 1に3,200 unit、
-VBlank 2にpattern用1,237 unit、palette switch時は981 unitを持ちます。
+Budget 1からcurrent cadence targetの1つ前まではpatternに使えます。Pattern workが
+target budgetへ入る前に、Mainはdisplay work全体を先に取り置きします。内訳は
+exact movie band、128-unit timing guard、存在する場合の物理DEBUG HUD DMA、任意の
+CRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを予約します。
+Full-height H40のreserveはreleaseで1,896 unit、DEBUGで1,948 unit、palette switch時は
+それぞれ2,152と2,204です。したがってN2 DEBUG full-height H40 frameはVBlank 1に
+3,200 unit、VBlank 2にpattern用1,252 unit、palette switch時は996 unitを持ちます。
+40x19 DEBUG frameのreserveは1,372 unit、palette switch時は1,628 unitだけです。
 
 DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
 fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
-同じVBlank内にまだいる場合だけname-table/CRAM/flip shared pathを許可します。
+同じVBlank内にまだいる場合だけname-table/HUD/CRAM publication shared pathを許可します。
 VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineは拒否します。
 どれかを満たさなければfresh VBlankを待ちます。
 
 multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
 VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
-transfer終了時に確定するfieldとpalette segmentだけをMain-RAM name-table stageへ
-patchします。既存の1,792-word name-table DMAがpictureとHUDを一緒に運ぶため、
-DMA後に別の43-cell VDP-port republishは行いません。Runtime VBlank budget
+transfer終了時に確定するfieldとpalette segmentだけを`dbg_row`へpatchします。
+Exact-band movie NT DMAとWindow/SAT HUD DMAは、同じadmitted VBlankの別々のmember
+として実行します。CPU VDP-portによるHUD republishは行いません。Runtime VBlank budget
 1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、
-`transfer_vblanks`が5本目以降のbudgetを可視化します。HUD wordはname-table DMAに
-含まれますが、staging allowanceはshared admission checkを保守的に維持します。
+`transfer_vblanks`が5本目以降のbudgetを可視化します。Admission checkは各display
+DMAの正確な物理word数をchargeします。
 
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が

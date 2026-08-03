@@ -176,13 +176,14 @@ CRAM_QUALITY_PRIORITY_SEARCH_FRAMES = 4
 
 # --- Fixed encoder/player resources ---
 # The resident movie-pattern pool starts at tile 1 and ends immediately before
-# the first movie name table at VRAM 0xC000.  The HUD font lives in the gap at
-# 0xD000, so DEBUG and release builds share the same full pool.
+# the fixed HUD font at VRAM 0xD000. The single movie name table starts at
+# 0xE000, so DEBUG and release builds share the same contiguous pool.
 VRAM_PATTERN_BASE_TILE = 1
-VRAM_FIRST_MOVIE_NT_TILE = 0xC000 // 32
 VRAM_HUD_FONT_TILE = 0xD000 // 32
+VRAM_MOVIE_NT_TILE = 0xE000 // 32
+VRAM_FIRST_MOVIE_NT_TILE = VRAM_MOVIE_NT_TILE
 VRAM_PATTERN_POOL_TILES = (
-    VRAM_FIRST_MOVIE_NT_TILE - VRAM_PATTERN_BASE_TILE)
+    VRAM_HUD_FONT_TILE - VRAM_PATTERN_BASE_TILE)
 
 # These are pipeline policy, not per-source choices.  Forward fill uses safe
 # physical-slot padding for future Prg payload, while startup audio is clamped

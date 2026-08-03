@@ -48,16 +48,16 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
 
 
 class PlayerConstantsTest(unittest.TestCase):
-    def test_pool_may_fill_up_to_the_movie_name_table(self):
-        # The HUD font now lives in the 0xD000-0xDFFF gap, so the pool may run
-        # right up to the first movie name table at tile 1536 (base 1 + 1535).
-        values = player_constants.parse_header_sector(make_header(pool=1535))
-        self.assertEqual(values.pool, 1535)
+    def test_pool_may_fill_up_to_the_hud_font(self):
+        # The single NT starts at 0xE000, so the pool may fill every tile below
+        # the fixed font at tile 1664 (base 1 + 1663).
+        values = player_constants.parse_header_sector(make_header(pool=1663))
+        self.assertEqual(values.pool, 1663)
         self.assertEqual(values.font_vtile, 0xD000 // 32)
         self.assertEqual(values.font_addr, 0xD000)
 
         with self.assertRaisesRegex(ValueError, "overlaps"):
-            player_constants.parse_header_sector(make_header(pool=1536))
+            player_constants.parse_header_sector(make_header(pool=1664))
 
     def test_sonic_h32_current_values(self):
         values = player_constants.parse_header_sector(make_header())
