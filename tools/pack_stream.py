@@ -1851,23 +1851,35 @@ def main():
     # frame0(完全ロードのヘッダ)は除外。
     # realized == cap(共有 TileAllocator で構成上保証)。上限はprofile/logから取得する。
     if profile is not None:
-        requested_cold_cap = int(profile.section("encoder")["cold_cap"])
+        requested_cold_cap = profile.section("encoder")["cold_cap"]
     else:
         # A direct decision-log pack has no TOML to authenticate. Preserve the
-        # cap frozen by that sim.
-        requested_cold_cap = int(log.get("max_cold", 0))
+        # cap spec frozen by that sim.
+        requested_cold_cap = log.get(
+            "cold_cap_spec", str(log.get("max_cold", 0)))
     cold_ceiling = av_config.cold_cap(requested_cold_cap)
-    if int(sim_cold) != cold_ceiling:
+    cold_spec = av_config.cold_cap_spec(requested_cold_cap)
+    sim_spec = str(log.get("cold_cap_spec", sim_cold))
+    if int(sim_cold) != cold_ceiling or sim_spec != cold_spec:
         raise SystemExit(
-            f"pack: sim cold cap={sim_cold} differs from effective profile "
-            f"cap={cold_ceiling}; re-run sim with the current TOML")
-    realized_max = max([int(x) for x in n_load[1:]], default=0)
-    if realized_max > cold_ceiling:
+            f"pack: sim cold cap={sim_spec} (ceiling {sim_cold}) differs from "
+            f"effective profile cap={cold_spec} (ceiling {cold_ceiling}); "
+            "re-run sim with the current TOML")
+    frame_cold_caps = np.asarray(
+        av_config.frame_cold_caps(len(n_load), FPS, requested_cold_cap),
+        np.int64)
+    realized = np.asarray([int(x) for x in n_load], np.int64)
+    over = np.flatnonzero(realized[1:] > frame_cold_caps[1:]) + 1
+    if len(over):
+        frame = int(over[0])
         raise SystemExit(
-            f"pack: realized per-frame cold max={realized_max} > cap={cold_ceiling}. "
-            f"共有 TileAllocator では realized=cap のはず=想定外。sim/pack の割り当て食い違いを疑う。")
-    print(f"  realized cold: max={realized_max} <= profile cap {cold_ceiling} "
-          "(共有割り当て)")
+            f"pack: realized cold={int(realized[frame])} > per-frame "
+            f"cap={int(frame_cold_caps[frame])} at frame {frame} "
+            f"(spec {cold_spec}). "
+            f"共有 TileAllocator では realized<=cap のはず=想定外。sim/pack の割り当て食い違いを疑う。")
+    realized_max = int(realized[1:].max(initial=0))
+    print(f"  realized cold: max={realized_max} <= profile cap {cold_spec} "
+          "(per-frame, 共有割り当て)")
     if len(n_load) and int(n_load[0]) > POOL:
         raise SystemExit(
             f"pack: frame0 exact+prefetch cold={int(n_load[0])} exceeds "

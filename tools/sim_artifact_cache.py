@@ -101,7 +101,7 @@ def readable_key(
         height: int,
         fps: str,
         fit: str,
-        cold_cap: int,
+        cold_cap: int | str,
 ) -> str:
     source = identity["source"]
     settings = {
