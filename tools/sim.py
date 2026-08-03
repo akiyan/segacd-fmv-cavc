@@ -1462,7 +1462,7 @@ def main():
     cur_rgb = np.zeros((C_CELLS, TILE, TILE, 3), np.uint8)      # 表示中の各セル
     cur_key = [None] * C_CELLS          # 表示中パターン(idx bytes)
     cur_pal = np.full(C_CELLS, -1, np.int16)
-    committed_plain = [None] * C_CELLS  # 直近commitした plain パターン(内容変化検出用)
+    committed_plain = [None] * C_CELLS  # 内容変化検出用: 直近commitのplainキー(Flbkは表示した近似キー)
     from tile_alloc import (
         FrameTransitionGuard,
         TileAllocator,
@@ -2897,7 +2897,10 @@ def main():
                         _lp_counts["flbk_accepted"] += 1
                     flbk_mask[c] = True
                     loaded_keys.add(bk); name_recs += 1; spent_tiles += NAME_BYTES
-                    commit_repoint(c, bk, pat_pal[bk], pat_rgb[bk]); committed_plain[c] = key; updated[c] = True
+                    # 変化検出には理想keyではなく実際に表示した近似bkを記録する。
+                    # 理想keyを記録すると静止セルが次コマから「変化なし」になり、
+                    # cold枠が余っていてもショット終了まで補正されない(issue #104)。
+                    commit_repoint(c, bk, pat_pal[bk], pat_rgb[bk]); committed_plain[c] = bk; updated[c] = True
                     return
                 # 5. Miss(何もしない)
 
