@@ -63,13 +63,41 @@ display, frame by frame, so playback corruption that the HUD gate cannot see
   Main-side entry-stream defect or a Sub-side race newly exposed by the
   changed Main timing are both still open.
 
-## Next steps
+## Root cause (resolved, e178)
 
-1. Instrument one side to break the ambiguity: either a Sub DEBUG counter of
-   ring pops per frame (compare with the packed per-frame Prg pop count), or
-   a Main-side checksum of the shadow entry stream per frame.
-2. Once the side is known, bisect within `90da67e`'s Main rewrite (blitters,
-   `bf_update_list`/`bf_stage_nt`, or flip timing) or the Sub pop/pump
-   interleave, fix, and requalify H40 15/30 fps plus 24 fps H32/H40 with
-   `scan_divergence.py` (bad_cells must be 0), then p-bump and re-run the
-   three pending uploads.
+The full LOGVDP value trace settled it. Reconstructing every VRAM pool write
+of one frame and matching it pixel-exact against the intended cold sequence
+showed the payload was the intended stream **displaced forward by exactly 32
+patterns (1,024 bytes = half a CD sector)**, first appearing at cumulative
+ring pop 13,440 = the PrgBuf ring's physical capacity (420 KiB), then growing
+by another 32 per ring lap. The name-table entries, record walk, and Main DMA
+were all correct; active-display pattern DMA was proven harmless (p141 spills
+more and stays clean).
+
+The defect was encoder-side, not the single-NT player: the WordBuf-ring
+schedule (`tools/wordbuf_ring.py`) froze `prebuf_pat` at the raw fps-derived
+PrgBuf ceiling. At 24 fps that ceiling is 389 KiB = 12,448 patterns = 194.5
+sectors. The player prefills exactly `prebuf_pat*32` bytes and continues the
+timed BODY payload from the same byte offset, so `ring_tail` becomes
+permanently half-sector-misaligned: each ring lap one 2,048-byte sector store
+straddles `RING_END`, its last 1,024 bytes land outside the ring (over the
+`WORD_PENDING` scratch), and the pop stream gains a permanent +32-pattern
+lead. 30 fps (400 KiB = 200 sectors) and 15 fps (380 KiB = 190 sectors) are
+sector multiples by luck, so only 24 fps corrupted. Encodes whose ring plan
+was infeasible fell back to the sector-floored `stream_schedule` prebuffer
+(12,416) and played back clean on the same p144 player — that per-encode split
+(HEADER.DAT `Bpat` 12,448 vs 12,416) is what made the earlier build bisect
+look like a single-NT regression. The single-NT commit's own failure
+(catastrophic slips at p143) was the HUD sprite-table VRAM overlap already
+fixed by `8bb86c6`; an aligned-Bpat 24 fps encode on p144 is fully clean, so
+single-NT itself qualifies at 24 fps.
+
+Fix (e178): floor the ring-plan prebuffer to whole sectors and reject
+fractional-sector prebuffers in `replay_frozen_schedule`, `pack_stream`, and
+the `player_constants` header reader.
+
+## Requalification
+
+Re-encode with e178 (`Bpat` must be sector-aligned in HEADER.DAT), record,
+then require `scan_divergence.py` bad_cells = 0 across the movie in addition
+to the HUD gate.
