@@ -5,40 +5,33 @@ from __future__ import annotations
 
 import argparse
 import pickle
+import sys
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
 
 
-BAYER8 = np.array([
-    [0, 32, 8, 40, 2, 34, 10, 42],
-    [48, 16, 56, 24, 50, 18, 58, 26],
-    [12, 44, 4, 36, 14, 46, 6, 38],
-    [60, 28, 52, 20, 62, 30, 54, 22],
-    [3, 35, 11, 43, 1, 33, 9, 41],
-    [51, 19, 59, 27, 49, 17, 57, 25],
-    [15, 47, 7, 39, 13, 45, 5, 37],
-    [63, 31, 55, 23, 61, 29, 53, 21],
-], dtype=np.float32)
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from output_dither import BAYER, normalize_mode, quantize_rgb333  # noqa: E402
 
 
-def source_distribution(master_dir: Path, width: int, height: int, tile: int):
-    threshold = np.tile(
-        (BAYER8 + 0.5) / 64.0,
-        (height // 8 + 1, width // 8 + 1),
-    )[:height, :width]
+def source_distribution(
+        master_dir: Path,
+        width: int,
+        height: int,
+        tile: int,
+        output_dither: str,
+):
     counts = np.zeros(65, dtype=np.int64)
     flat = np.zeros(65, dtype=np.int64)
     rows, cols = height // tile, width // tile
     files = sorted(master_dir.glob("*.png"))
     for path in files:
         image = np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
-        scaled = image.astype(np.float32) * (7.0 / 255.0)
-        base = np.floor(scaled)
-        quant = np.clip(
-            base + ((scaled - base) > threshold[..., None]), 0, 7
-        ).astype(np.uint8)
+        quant = quantize_rgb333(image, output_dither)
         qtiles = quant.reshape(rows, tile, cols, tile, 3)
         qtiles = qtiles.transpose(0, 2, 1, 3, 4).reshape(rows * cols, tile * tile, 3)
         source_tiles = image.reshape(rows, tile, cols, tile, 3)
@@ -105,15 +98,20 @@ def main() -> int:
 
     with args.decisions.open("rb") as src:
         log = pickle.load(src)
+    output_dither = normalize_mode(
+        log.get("config", {}).get("video", {}).get(
+            "output_dither", BAYER))
     palettes = np.asarray(log["seg_pals"], dtype=np.uint8)
     frame_seg = np.asarray(log["frame_seg"], dtype=np.int32)
     cols, rows, cells, tile = map(int, log["geom"])
     source, flat, source_frames = source_distribution(
-        args.master_dir, cols * tile, rows * tile, tile
+        args.master_dir, cols * tile, rows * tile, tile, output_dither
     )
     display, display_frames = display_distribution(log, palettes, frame_seg, cells)
 
-    print(f"source_frames={source_frames} display_frames={len(log['frames'])}")
+    print(
+        f"output_dither={output_dither} source_frames={source_frames} "
+        f"display_frames={len(log['frames'])}")
     print("gray_dots,source_tiles,source_flat_range_le_3,display_cell_frames,display_frames")
     for dots in range(1, 65):
         if source[dots] or display[dots]:

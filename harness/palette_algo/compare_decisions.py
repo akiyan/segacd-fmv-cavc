@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compare_sources import rgb333_bayer  # noqa: E402
+from output_dither import BAYER, normalize_mode, quantize_rgb333  # noqa: E402
 from palette_algorithms import coherent_assign_idx  # noqa: E402
 from quantize_global4_tiles import palette_lut, rgb333_keys, tile_blocks  # noqa: E402
 
@@ -124,6 +124,17 @@ def main() -> int:
     parser.add_argument("--coherent-iterations", type=int, nargs="+", default=[2])
     args = parser.parse_args()
     logs = [load_log(path) for path in args.decision]
+    output_dither_modes = {
+        normalize_mode(
+            log.get("config", {}).get("video", {}).get(
+                "output_dither", BAYER))
+        for log in logs
+    }
+    if len(output_dither_modes) != 1:
+        raise SystemExit(
+            "decision logs use different output-dither modes: "
+            + ", ".join(sorted(output_dither_modes)))
+    output_dither = output_dither_modes.pop()
     total = min(len(log["frame_seg"]) for log in logs)
     frames = sorted(args.master_dir.glob("*.png"))[:total]
     if len(frames) != total:
@@ -133,8 +144,9 @@ def main() -> int:
         0, total - 1,
     ))
     frame_tiles = {
-        int(index): flatten_low_detail(tile_blocks(rgb333_bayer(
-            np.asarray(Image.open(frames[int(index)]).convert("RGB"))
+        int(index): flatten_low_detail(tile_blocks(quantize_rgb333(
+            np.asarray(Image.open(frames[int(index)]).convert("RGB")),
+            output_dither,
         )))
         for index in indices
     }

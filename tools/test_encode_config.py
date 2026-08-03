@@ -151,6 +151,8 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN"], "253")
         self.assertEqual(env["CBRSIM_RESIZE_FILTER"], "area")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
+        self.assertEqual(
+            env["CBRSIM_OUTPUT_DITHER"], "edge-attenuated-bayer")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
         self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
@@ -175,6 +177,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "900")
         self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "pad")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
+        self.assertEqual(env["CBRSIM_OUTPUT_DITHER"], "bayer")
         self.assertEqual(
             env["CBRSIM_MASTER_VF"],
             "setsar=1,guided=radius=1:eps=0.002:planes=15",
@@ -227,6 +230,8 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env = apply_profile_env(load_profile(path), {
                 "CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX": "2",
                 "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN": "253",
+                "CBRSIM_OUTPUT_DITHER": "edge-attenuated-bayer",
+                "CBRSIM_DITHER": "0",
             })
         self.assertEqual(
             env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX"], "-1")
@@ -234,6 +239,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN"], "256")
         self.assertEqual(env["CBRSIM_RESIZE_FILTER"], "lanczos")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "1")
+        self.assertEqual(env["CBRSIM_OUTPUT_DITHER"], "bayer")
         self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
         self.assertEqual(
             env["CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES"],
@@ -243,7 +249,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env["CBRSIM_VRAM_TILES"],
             str(av_config.VRAM_PATTERN_POOL_TILES))
         self.assertEqual(env["CBRSIM_GPU"], "1")
-        self.assertEqual(env["CBRSIM_DITHER"], "1")
+        self.assertNotIn("CBRSIM_DITHER", env)
         self.assertEqual(env["CBRSIM_SEGPAL"], "1")
         self.assertEqual(env["CBRSIM_NEAR"], "1")
         self.assertEqual(env["CBRSIM_BOOT_VRAM_PREFETCH"], "1")
@@ -358,6 +364,22 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             path.write_text(PROFILE.replace(
                 "fit = \"pad\"", "fit = \"pad\"\nresize_filter = \"magic\""))
             with self.assertRaisesRegex(ValueError, "video.resize_filter"):
+                load_profile(path)
+
+    def test_output_dither_accepts_only_named_modes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "output-dither.toml"
+            path.write_text(PROFILE.replace(
+                "fit = \"pad\"",
+                "fit = \"pad\"\noutput_dither = \"edge-attenuated-bayer\""))
+            env = apply_profile_env(load_profile(path), {})
+            self.assertEqual(
+                env["CBRSIM_OUTPUT_DITHER"], "edge-attenuated-bayer")
+
+            path.write_text(PROFILE.replace(
+                "fit = \"pad\"",
+                "fit = \"pad\"\noutput_dither = \"diffusion\""))
+            with self.assertRaisesRegex(ValueError, "video.output_dither"):
                 load_profile(path)
 
     def test_active_tiles_must_fit_the_output_grid(self) -> None:
