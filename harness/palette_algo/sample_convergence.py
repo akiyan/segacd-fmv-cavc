@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compare_sources import rgb333_bayer  # noqa: E402
+from output_dither import edge_adaptive_rgb333  # noqa: E402
 from palette_algorithms import build_mosaic_palettes, score_palettes  # noqa: E402
 from quantize_global4_tiles import tile_blocks  # noqa: E402
 
@@ -35,7 +35,8 @@ def spaced_indices(total: int, count: int, half_step: bool):
 
 def load_tiles(frames, indices):
     return np.concatenate([
-        tile_blocks(rgb333_bayer(np.asarray(Image.open(frames[index]).convert("RGB"))))
+        tile_blocks(edge_adaptive_rgb333(
+            np.asarray(Image.open(frames[index]).convert("RGB"))))
         for index in indices
     ])
 

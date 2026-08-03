@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compare_sources import rgb333_bayer  # noqa: E402
+from output_dither import edge_adaptive_rgb333  # noqa: E402
 from palette_algorithms import coherent_assign_idx  # noqa: E402
 from quantize_global4_tiles import palette_lut, rgb333_keys, tile_blocks  # noqa: E402
 
@@ -133,7 +133,7 @@ def main() -> int:
         0, total - 1,
     ))
     frame_tiles = {
-        int(index): flatten_low_detail(tile_blocks(rgb333_bayer(
+        int(index): flatten_low_detail(tile_blocks(edge_adaptive_rgb333(
             np.asarray(Image.open(frames[int(index)]).convert("RGB"))
         )))
         for index in indices

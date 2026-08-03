@@ -12,8 +12,9 @@
   (per-frameではない)。セグメント境界でCRAMを切り替える。
 - 分散が非常に低い(=ほぼ単色)タイルだけ平均色へ均して単純化(FLATTEN_STD)。
   ディザ除去済みなので閾値は低めでよい。
-- 出力量子化では位置固定Bayerディザを常に使う。同じ画面座標には同じ
-  閾値を使うため、静止タイルの差分は増やさない。
+- 出力量子化では位置固定Bayerディザを使い、強い3x3輝度境界の近くだけ
+  ディザ量を連続的に絞る。同じframe内容と画面座標には同じ結果を返すため、
+  静止タイルの差分は増やさない。
 - **タイル重複排除(dedup)**: MDのネームテーブルは各セル→(パターンslot, パレット)。
   パターン(8x8 idx配列)はパレット非依存なので、同じidxパターンは VRAM に1つ
   だけ置き、複数セル(パレット違いも可)で使い回す。パターン転送32Bを共有でき、
@@ -77,6 +78,7 @@ from palette_algorithms import (  # noqa: E402
     coherent_assign_idx, normalize_palette_algo, refine_one_line_palette,
     score_palettes,
 )
+from output_dither import edge_adaptive_rgb333  # noqa: E402
 from cbr_paths import sim_work_dir  # noqa: E402
 from video_geometry import (  # noqa: E402
     endpoint_snap_filter, probe_source, parse_ratio, source_filter, raw_filter,
@@ -330,9 +332,10 @@ GHOST_ESCALATE_N = ghost_escalate_frames(GHOST_ESCALATE_SEC, FPS)
 # 近似表示(Flbk)を入力に Near 判定すると近似が居座る(ゴースト)ため。0で旧挙動(近似表示も維持可)。
 NEAR_KEEP_ACCURATE_ONLY = os.environ.get("CBRSIM_NEAR_ACCURATE_ONLY", "1") != "0"
 
-# 出力量子化で「位置固定の規則ディザ(Bayer 8x8)」を掛ける。同じ画面座標は常に同じ閾値なので
-# 静止タイルは毎コマ同一の333のまま=差分/使い回しを壊さない(誤差拡散は波及するので不採用)。
-# 素材側の既存ディザは master_filter でエッジを保って除去し、出力の333化では常に掛け直す。
+# Output quantization uses position-fixed Bayer 8x8 dither. Its amplitude
+# fades continuously near strong 3x3 luma edges, while gentle gradients keep
+# the full pattern. The result depends only on the frame and screen position,
+# so static tiles remain byte-identical across frames.
 DITHER_ON = True
 # Optional source preprocessing, applied before both the master and raw paths.
 # Out-of-range defaults disable it for profiles without endpoint_snap.
@@ -350,22 +353,11 @@ PAL_SEAM_ITERATIONS = av_config.PALETTE_SEAM_ITERATIONS
 PAL_WRITE_BYTES = 0             # CRAM pre-load(PALTAB): 全区間パレットはヘッダ直後のPALTAB領域で
                                 # 一括配送しMain-RAM表から引くので、切替フレームの予算控除は無し
                                 # (ストリームには1Bの区間参照だけ。旧: in-stream 128B/切替)
-_BAYER8 = np.array([
-    [0, 32, 8, 40, 2, 34, 10, 42], [48, 16, 56, 24, 50, 18, 58, 26],
-    [12, 44, 4, 36, 14, 46, 6, 38], [60, 28, 52, 20, 62, 30, 54, 22],
-    [3, 35, 11, 43, 1, 33, 9, 41], [51, 19, 59, 27, 49, 17, 57, 25],
-    [15, 47, 7, 39, 13, 45, 5, 37], [63, 31, 55, 23, 61, 29, 53, 21]], float)
-_BAYER_T = np.tile((_BAYER8 + 0.5) / 64.0, (H // 8 + 1, W // 8 + 1))[:H, :W].astype(np.float32)
-
-
 def to_rgb333(img888):
-    """RGB888(H,W,3)->RGB333。CBRSIM_DITHER時は位置固定ディザ(静止タイルは毎コマ同一)=Bayer。"""
+    """Convert RGB888 to deterministic, edge-adaptive dithered RGB333."""
     if not DITHER_ON:
         return rgb888_to_rgb333(img888)
-    f = img888.astype(np.float32) * (7.0 / 255.0)
-    base = np.floor(f)
-    frac = f - base
-    return np.clip(base + (frac > _BAYER_T[..., None]), 0, 7).astype(np.uint8)   # Bayerディザ
+    return edge_adaptive_rgb333(img888)
 
 
 def detect_palette_segments(frames, metrics=None):

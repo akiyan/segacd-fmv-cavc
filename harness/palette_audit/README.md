@@ -6,8 +6,9 @@ referenced by displayed tiles.
 
 It replays every decision-log update, maintains the current 896-cell pattern
 state, and counts palette-index use for every frame. When a `master/` directory
-is supplied, it also applies the encoder's exact Bayer RGB333 conversion to all
-source frames and reports the complete quantised-source colour set.
+is supplied, it also applies the encoder's exact edge-adaptive RGB333 output
+dither to all source frames and reports the complete quantised-source colour
+set.
 
 Run from the repository root:
 
@@ -29,9 +30,9 @@ Outputs:
 - `palette_global.tsv`: global unique-colour counts and locations;
 - `summary.txt`: concise exact counts and colour values.
 
-The near-white dither check compares the Bayer input with the actual codec
-display state and counts 8x8 tiles made only from RGB333 `666` and `777`,
-grouped by the number of `666` pixels:
+The near-white dither check compares the edge-adaptive output-dither input with
+the actual codec display state and counts 8x8 tiles made only from RGB333 `666`
+and `777`, grouped by the number of `666` pixels:
 
 ```sh
 tools/python.sh harness/palette_audit/near_white.py \

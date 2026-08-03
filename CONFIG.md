@@ -326,7 +326,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | Distance-weighted waiting pressure, capped at 7×. |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | Error reference and maximum pressure increase per frame. |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | Continuous approximation duration before Miss severity. |
-| output dither | on | Fixed encoder behavior. |
+| output dither | edge-adaptive | A position-fixed 8x8 Bayer pattern is preserved through gentle gradients. Across a 3x3 luma range of 32 to 96, its strength fades continuously to nearest-colour rounding so strong edges stay clean. |
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior. |
@@ -785,7 +785,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | distance-weighted waiting pressure、最大7倍。 |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | error基準とframeごとのpressure増加上限。 |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | 連続近似をMiss severityへ上げるまでの時間。 |
-| output dither | on | 固定encoder behavior。 |
+| output dither | edge-adaptive | なだらかな階調では画面位置固定の8x8 Bayerパターンを保ちます。3x3近傍の輝度差が32から96へ強くなる間にディザ量を連続的に絞り、強い境界では最も近い色へ丸めて輪郭をきれいに保ちます。 |
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。 |

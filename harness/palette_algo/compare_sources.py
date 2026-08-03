@@ -15,33 +15,9 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
+from output_dither import edge_adaptive_rgb333  # noqa: E402
 from palette_algorithms import build_mosaic_palettes, score_palettes  # noqa: E402
 from quantize_global4_tiles import build_palettes, tile_blocks  # noqa: E402
-
-
-BAYER8 = np.array([
-    [0, 32, 8, 40, 2, 34, 10, 42],
-    [48, 16, 56, 24, 50, 18, 58, 26],
-    [12, 44, 4, 36, 14, 46, 6, 38],
-    [60, 28, 52, 20, 62, 30, 54, 22],
-    [3, 35, 11, 43, 1, 33, 9, 41],
-    [51, 19, 59, 27, 49, 17, 57, 25],
-    [15, 47, 7, 39, 13, 45, 5, 37],
-    [63, 31, 55, 23, 61, 29, 53, 21],
-], dtype=np.float32)
-
-
-def rgb333_bayer(image):
-    height, width, _channels = image.shape
-    threshold = np.tile(
-        (BAYER8 + 0.5) / 64.0,
-        (height // 8 + 1, width // 8 + 1),
-    )[:height, :width]
-    scaled = image.astype(np.float32) * (7.0 / 255.0)
-    base = np.floor(scaled)
-    return np.clip(
-        base + ((scaled - base) > threshold[..., None]), 0, 7
-    ).astype(np.uint8)
 
 
 def load_tiles(master_dir: Path, count: int):
@@ -50,7 +26,8 @@ def load_tiles(master_dir: Path, count: int):
         raise SystemExit(f"no PNG frames under {master_dir}")
     selected = np.unique(np.linspace(0, len(frames) - 1, min(count, len(frames)), dtype=int))
     return np.concatenate([
-        tile_blocks(rgb333_bayer(np.asarray(Image.open(frames[index]).convert("RGB"))))
+        tile_blocks(edge_adaptive_rgb333(
+            np.asarray(Image.open(frames[index]).convert("RGB"))))
         for index in selected
     ]), len(selected), len(frames)
 

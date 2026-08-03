@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e172: Fade the position-fixed Bayer output dither continuously toward
+#         nearest-colour rounding around strong 3x3 luma edges. Gentle
+#         gradients retain the complete ordered pattern, while resize-created
+#         antialias pixels no longer become alternating boundary dots.
 #   p144: Move the DEBUG HUD sprite table from Window-map row 16 at 0xF800
 #         into the free 0xD400 VRAM range. This removes the three duplicated
 #         H40 spill glyphs from the movie while preserving the intended sprite
@@ -1194,5 +1198,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
-e=171
+e=172
 p=144

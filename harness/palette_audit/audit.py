@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 import pickle
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -13,17 +14,13 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 
+ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "tools"))
+
+from output_dither import edge_adaptive_rgb333  # noqa: E402
+
+
 MD_LEVELS = np.array([0, 36, 72, 108, 144, 180, 216, 252], dtype=np.uint8)
-BAYER8 = np.array([
-    [0, 32, 8, 40, 2, 34, 10, 42],
-    [48, 16, 56, 24, 50, 18, 58, 26],
-    [12, 44, 4, 36, 14, 46, 6, 38],
-    [60, 28, 52, 20, 62, 30, 54, 22],
-    [3, 35, 11, 43, 1, 33, 9, 41],
-    [51, 19, 59, 27, 49, 17, 57, 25],
-    [15, 47, 7, 39, 13, 45, 5, 37],
-    [63, 31, 55, 23, 61, 29, 53, 21],
-], dtype=np.float32)
 
 
 def font(size: int, mono: bool = False, bold: bool = False) -> ImageFont.FreeTypeFont:
@@ -100,19 +97,11 @@ def source_histogram(master_dir: Path | None, width: int, height: int):
     if master_dir is None:
         return hist, 0
     files = sorted(master_dir.glob("*.png"))
-    threshold = np.tile(
-        (BAYER8 + 0.5) / 64.0,
-        (height // 8 + 1, width // 8 + 1),
-    )[:height, :width]
     for path in files:
         image = np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
         if image.shape != (height, width, 3):
             raise SystemExit(f"{path}: shape {image.shape}, expected {(height, width, 3)}")
-        scaled = image.astype(np.float32) * (7.0 / 255.0)
-        base = np.floor(scaled)
-        quant = np.clip(
-            base + ((scaled - base) > threshold[..., None]), 0, 7
-        ).astype(np.uint8)
+        quant = edge_adaptive_rgb333(image)
         keys = (
             (quant[..., 0].astype(np.int16) << 6)
             | (quant[..., 1].astype(np.int16) << 3)
@@ -256,7 +245,7 @@ def draw_global_chart(path, global_data, source_frames):
     draw.text(
         (28, 76),
         f"Displayed: {len(keys)} colours ({neutral} neutral gray + {len(keys) - neutral} off-gray).  "
-        f"PALTAB union: {len(table_keys)}.  Bayer-quantised source union: {len(source_keys)} across {source_frames} frames.",
+        f"PALTAB union: {len(table_keys)}.  Output-dithered source union: {len(source_keys)} across {source_frames} frames.",
         font=body,
         fill=(205, 209, 220),
     )
@@ -276,7 +265,7 @@ def draw_global_chart(path, global_data, source_frames):
     )
     draw.text(
         (28, 188),
-        "A single 15-colour line can hold the complete 10-colour Bayer source union for this encode.",
+        "A single 15-colour line can hold the complete output-dithered source union for this encode.",
         font=font(23, bold=True),
         fill=(244, 196, 73),
     )
@@ -298,7 +287,7 @@ def draw_global_chart(path, global_data, source_frames):
         source_count = int(source_hist[key])
         draw.text(
             (274, y + 55),
-            f"displayed {count:,} ({count / total:.6%})   source-after-Bayer {source_count:,}   PALTAB slots {slot_count[key]}",
+            f"displayed {count:,} ({count / total:.6%})   source-after-dither {source_count:,}   PALTAB slots {slot_count[key]}",
             font=mono,
             fill=(192, 197, 210),
         )
@@ -357,7 +346,7 @@ def write_summary(path, palettes, global_data, source_frames):
         f"CRAM segments: {len(palettes)}",
         f"Displayed unique colours: {len(keys)}",
         f"PALTAB unique colours: {len(slot_count)}",
-        f"Bayer-quantised source unique colours: {len(source_keys)} ({source_frames} frames)",
+        f"Output-dithered source unique colours: {len(source_keys)} ({source_frames} frames)",
         "",
         "Displayed colours:",
     ]
