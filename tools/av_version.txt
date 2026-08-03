@@ -13,6 +13,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e175: Add opt-in whole-movie automatic black/white dynamic-range expansion
+#         (source.preprocess.auto_range). One combined RGB histogram over the
+#         extracted master detects a dominant near-endpoint level spike and
+#         one shared linear LUT stretches master and raw so the effective
+#         black/white reach exactly 0/255, removing large-area dither between
+#         the lowest/highest MD levels.
 #   e174: Record the displayed fallback pattern, not the ideal target, as the
 #         committed content of a Flbk cell. Static cells that settled for an
 #         approximation stay "changed" every frame, so spare cold budget on
@@ -1207,5 +1213,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
-e=174
+e=175
 p=144
