@@ -145,7 +145,6 @@ def stage_commands(
             "--seconds", str(_record_seconds(profile, record_seconds)),
             "--tag", f"{stem}_emu",
             "--record-size", _native_record_size(profile),
-            "--out", f"{stem}_emu_preview.mp4",
         ]))
     if through_index >= STAGES.index("hud"):
         commands.append(("hud", []))

@@ -1,6 +1,6 @@
 ---
 name: record
-description: Build a DEBUG Sega CD disc by default, then make a fast fixed-Replay FFV1/FLAC recording with RetroArch and Genesis Plus GX from emulator launch through the Mega-CD startup screens and playback, preserving synchronized A/V and producing a native-resolution lossless MKV plus a verification preview. Use for "record it", "capture playback as video", "record the OP", "verify the recording", or "/record". Build release or use realtime pacing only when explicitly requested. Use DEBUG HUD OCR only for requested diagnostics, never for default head cueing. This skill records and verifies; compilation produces the final upload MP4 and publishes it.
+description: Build a DEBUG Sega CD disc by default, then make a fast fixed-Replay FFV1/FLAC recording with RetroArch and Genesis Plus GX from emulator launch through the Mega-CD startup screens and playback, preserving synchronized A/V and producing a native-resolution lossless MKV. A lossy verification preview is opt-in via --preview and is not produced normally. Use for "record it", "capture playback as video", "record the OP", "verify the recording", or "/record". Build release or use realtime pacing only when explicitly requested. Use DEBUG HUD OCR only for requested diagnostics, never for default head cueing. This skill records and verifies; compilation produces the final upload MP4 and publishes it.
 ---
 
 # record: Sega CD Playback Recording
@@ -25,7 +25,8 @@ Use this skill to:
   publish the PNG to a public Gist after every full recording, then require the
   matching codec timeline and render, show, and publicly publish the combined
   `mixline`;
-- return the raw lossless MKV, sidecars, and verification preview.
+- return the raw lossless MKV and its sidecars. A lossy verification preview
+  is produced only when `--preview` is explicitly requested.
 
 Do not apply upload PAR/upscaling, create YouTube metadata, or upload here. Pass the verified
 lossless MKV to `compilation`. Do not locate `frame=0000` or trim to the movie unless the user
@@ -77,10 +78,11 @@ esac
 Use `tools/record_movie.sh`, which owns the high-level recording workflow:
 
 ```sh
-tools/record_movie.sh [--config TOML | --disc CUE --no-build] [--out MP4] [--seconds N] \
+tools/record_movie.sh [--config TOML | --disc CUE --no-build] [--seconds N] \
   [--trim SEC | --auto-audio-trim] [--tag NAME] [--display :N] \
   [--preset realtime|ffv1-flac] [--record-size WxH] [--no-build] \
-  [--release-build] [--offline-record | --realtime-lossless] [--input-replay FILE]
+  [--release-build] [--offline-record | --realtime-lossless] [--input-replay FILE] \
+  [--preview [--out MP4]]
 ```
 
 Defaults and rules:
@@ -109,9 +111,12 @@ Defaults and rules:
 - Omit `--display` for normal work; Xvfb allocates a free display with
   `-displayfd`. An explicit `--display :N` is diagnostic-only and fails if an
   existing server owns it.
-- `--out` supplies only the preview filename. The harness writes the preview,
-  bounded raw MKV, Replay, and sidecars into one leased tmpfs directory and
-  prints `OUT=` and `LOSSLESS=` with their real paths.
+- The lossy H.264 verification preview is opt-in: pass `--preview` to create
+  it and `--out` only to name it. The harness writes the bounded raw MKV,
+  Replay, and sidecars into one leased tmpfs directory and prints `LOSSLESS=`
+  (plus `OUT=` only when a preview was requested) with their real paths.
+  Verify recordings with stills extracted from the lossless MKV instead of a
+  preview transcode.
 - A direct `tools/run_headless.sh out/PROFILE.cue` call defaults its screenshots,
   logs, PID files, and raw diagnostic capture to `tmp/PROFILE/record/`; do not
   put multiple profile runs directly in the shared `tmp/` root.
@@ -132,8 +137,7 @@ Canonical full capture for later upload:
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml --seconds 180 \
   --tag STEM_emu --preset ffv1-flac \
-  --record-size "$NATIVE_RECORD_SIZE" \
-  --out STEM_emu_preview.mp4
+  --record-size "$NATIVE_RECORD_SIZE"
 ```
 
 Replace `STEM` and the mode-specific size. The harness records with a safety tail, then
@@ -146,8 +150,7 @@ For a short boot/playback check:
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 30 --tag rec_check \
-  --out rec_check_preview.mp4
+  --seconds 30 --tag rec_check
 ```
 
 ## Default fast offline capture
@@ -156,8 +159,7 @@ Routine `$record` work uses faster-than-realtime FFV1/FLAC without an extra mode
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml --seconds 180 \
-  --tag STEM_offline --record-size 256x224 \
-  --out STEM_offline_preview.mp4
+  --tag STEM_offline --record-size 256x224
 ```
 
 With no `--input-replay`, the high-level harness first records an input Replay under
@@ -175,13 +177,11 @@ REPLAY=/dev/shm/segacd-fmv-ttrc/artifacts/RECORD_ENTRY/data/replay/STEM_offline_
 
 tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 --realtime-lossless \
   --preset ffv1-flac --input-replay "$REPLAY" \
-  --tag STEM_realtime --record-size 256x224 \
-  --out STEM_realtime_preview.mp4
+  --tag STEM_realtime --record-size 256x224
 
 tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 \
   --input-replay "$REPLAY" --tag STEM_offline_ab \
-  --record-size 256x224 \
-  --out STEM_offline_ab_preview.mp4
+  --record-size 256x224
 
 tools/python.sh tools/compare_recordings.py \
   "$REALTIME_LOSSLESS" "$OFFLINE_AB_LOSSLESS" \
@@ -390,7 +390,8 @@ complete, then remove only artifacts created by this session when space is neede
 
 ## Report
 
-Report the raw MKV path, printed direct preview MP4 path, duration, raster/fps, audio codec,
+Report the raw MKV path (and the preview MP4 path when one was explicitly
+requested), duration, raster/fps, audio codec,
 sample rate, channels and packet presence, whether startup was retained, and
 whether human listening was performed. For offline runs also report the Replay
 path, requested/max frame count, wall time, and speed. When the run requalifies

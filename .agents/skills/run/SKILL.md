@@ -224,7 +224,8 @@ qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 - `ffv1-flac`;
 - `--record-size 256x224` for H32 or `320x224` for H40;
 - automatic private X-display allocation;
-- the direct tmpfs lossless MKV and preview paths printed by the recorder.
+- the direct tmpfs lossless MKV path printed by the recorder (a lossy
+  preview exists only when `--preview` was explicitly requested).
 
 Record emulator-synchronized A/V. "Offline" means unpaced emulation, not an
 offline audio replacement. Never replace the recorded audio with the source
@@ -411,7 +412,7 @@ Report one compact result block per source with:
   and first/last matching frame numbers (frame 0 excluded);
 - analysis URL, output path, average rate, and starvation result;
 - pack verification result;
-- lossless recording and preview paths, duration, raster/fps, and audio metrics;
+- lossless recording path, duration, raster/fps, and audio metrics;
 - hudline path, five descriptive gate maxima, diagnostic `cd_wait_count`
   maximum, `cd_wait_count` / `adpcm_decode_units`
   minimum/mean/median/maximum, and public Gist/raw image URLs;

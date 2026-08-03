@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #
-# record_movie.sh - record Sega CD playback and create a verification preview.
+# record_movie.sh - record Sega CD playback into a bounded lossless MKV.
 #
 # Wraps tools/run_headless.sh (RetroArch + Genesis Plus GX FFmpeg recorder under
-# Xvfb), keeps the Mega-CD startup sequence, records FFV1/FLAC through a fixed
-# input Replay at uncapped speed by default, and transcodes it to an H.264 + AAC
-# preview for quick verification.
+# Xvfb), keeps the Mega-CD startup sequence, and records FFV1/FLAC through a
+# fixed input Replay at uncapped speed by default. A lossy H.264 + AAC
+# verification preview is opt-in via --preview and is not produced normally.
 #
 # The recording is the emulator's own synchronized A/V output (video + whatever
 # audio the build produces) - not an offline re-mux of PROBE.BIN.
@@ -18,8 +18,10 @@
 # Options:
 #   --config TOML  profile used by make; also derives out/<toml-stem>.cue
 #   --disc CUE     explicit disc image to boot (normally derived from --config)
-#   --out NAME     requested verification-preview filename
-#                  (default <tag>_preview.mp4; bytes stay in managed tmpfs)
+#   --preview      also transcode a lossy H.264 verification preview
+#                  (default: off; the bounded lossless MKV is the artifact)
+#   --out NAME     requested verification-preview filename; used only with
+#                  --preview (default <tag>_preview.mp4; bytes stay in tmpfs)
 #   --seconds N    seconds to keep in the bounded native MKV/preview (default 160)
 #   --trim SEC     seconds to drop from the front; disables auto-audio-trim
 #                  (default: 0, preserving the startup sequence)
@@ -60,6 +62,7 @@ RECORD_SIZE=""
 BUILD=1
 BUILD_DEBUG=1
 AUTO_AUDIO_TRIM=0
+PREVIEW=0
 OFFLINE_RECORD=1
 OFFLINE_REQUESTED=0
 REALTIME_LOSSLESS_REQUESTED=0
@@ -70,6 +73,7 @@ while [ $# -gt 0 ]; do
     --config) CONFIG="$2"; shift 2;;
     --disc) DISC="$2"; shift 2;;
     --out) OUT="$2"; shift 2;;
+    --preview) PREVIEW=1; shift;;
     --seconds) REC_SECS="$2"; shift 2;;
     --trim) TRIM="$2"; AUTO_AUDIO_TRIM=0; shift 2;;
     --tag) TAG="$2"; shift 2;;
@@ -330,17 +334,22 @@ fi
 ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
   -t "$REC_SECS" -map 0:v:0 -map '0:a:0?' -c copy "$BOUNDED_MKV"
 
-echo ">> transcoding verification preview -> $OUT"
-RECORD_CPU_WORKERS="$(
-  "$PYTHON" tools/resource_tokens.py cpu-workers
-)"
-echo ">> preview CPU tokens: $RECORD_CPU_WORKERS"
-"$PYTHON" tools/resource_tokens.py run \
-  --resource cpu --count "$RECORD_CPU_WORKERS" -- \
-  ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
-    -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
-    -c:a aac -b:a 128k -movflags +faststart "$OUT"
-OUT_ACTUAL="$OUT"
+if [ "$PREVIEW" -eq 1 ]; then
+  echo ">> transcoding verification preview -> $OUT"
+  RECORD_CPU_WORKERS="$(
+    "$PYTHON" tools/resource_tokens.py cpu-workers
+  )"
+  echo ">> preview CPU tokens: $RECORD_CPU_WORKERS"
+  "$PYTHON" tools/resource_tokens.py run \
+    --resource cpu --count "$RECORD_CPU_WORKERS" -- \
+    ffmpeg -y -hide_banner -loglevel error -i "$BOUNDED_MKV" \
+      -c:v libx264 -threads "$RECORD_CPU_WORKERS" -crf 18 -pix_fmt yuv420p \
+      -c:a aac -b:a 128k -movflags +faststart "$OUT"
+  OUT_ACTUAL="$OUT"
+else
+  echo ">> lossy verification preview disabled (opt-in with --preview)"
+  OUT_ACTUAL=""
+fi
 
 if [ -n "$PIPELINE_WALL_START_NS" ]; then
   PIPELINE_WALL_END_NS="$(date +%s%N)"
@@ -353,8 +362,10 @@ rm -f "$RAW_MKV"
 [ -n "$REPLAY_FILE" ] && echo "REPLAY=$REPLAY_FILE"
 [ -n "$PIPELINE_WALL_START_NS" ] && echo "PIPELINE_WALL_SECONDS=$PIPELINE_WALL_SECONDS"
 echo "$BOUNDED_KEY=$BOUNDED_MKV"
-echo "OUT=$OUT_ACTUAL"
-for artifact in "$BOUNDED_MKV" "$OUT_ACTUAL"; do
+[ -z "$OUT_ACTUAL" ] || echo "OUT=$OUT_ACTUAL"
+ARTIFACTS=("$BOUNDED_MKV")
+[ -z "$OUT_ACTUAL" ] || ARTIFACTS+=("$OUT_ACTUAL")
+for artifact in "${ARTIFACTS[@]}"; do
   AUDIO_INFO="$(ffprobe -v error -count_packets -select_streams a:0 \
     -show_entries stream=codec_name,sample_rate,channels,nb_read_packets \
     -of csv=p=0 "$artifact")"
