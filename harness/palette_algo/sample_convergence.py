@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from output_dither import edge_adaptive_rgb333  # noqa: E402
+from output_dither import BAYER, MODES, quantize_rgb333  # noqa: E402
 from palette_algorithms import build_mosaic_palettes, score_palettes  # noqa: E402
 from quantize_global4_tiles import tile_blocks  # noqa: E402
 
@@ -33,10 +33,11 @@ def spaced_indices(total: int, count: int, half_step: bool):
     ))
 
 
-def load_tiles(frames, indices):
+def load_tiles(frames, indices, output_dither):
     return np.concatenate([
-        tile_blocks(edge_adaptive_rgb333(
-            np.asarray(Image.open(frames[index]).convert("RGB"))))
+        tile_blocks(quantize_rgb333(
+            np.asarray(Image.open(frames[index]).convert("RGB")),
+            output_dither))
         for index in indices
     ])
 
@@ -55,6 +56,8 @@ def main() -> int:
     parser.add_argument("master_dir", type=Path)
     parser.add_argument("--counts", default="30,60,120,240,480,960,1920")
     parser.add_argument("--validation-frames", type=int, default=240)
+    parser.add_argument(
+        "--output-dither", choices=MODES, default=BAYER)
     args = parser.parse_args()
 
     frames = sorted(args.master_dir.glob("*.png"))
@@ -62,7 +65,8 @@ def main() -> int:
         raise SystemExit(f"no PNG frames under {args.master_dir}")
     counts = [int(value) for value in args.counts.split(",") if value.strip()]
     validation_indices = spaced_indices(len(frames), args.validation_frames, half_step=True)
-    validation = load_tiles(frames, validation_indices)
+    validation = load_tiles(
+        frames, validation_indices, args.output_dither)
     print(
         f"source={args.master_dir} total_frames={len(frames)} "
         f"validation_frames={len(validation_indices)} validation_tiles={len(validation)}"
@@ -74,7 +78,7 @@ def main() -> int:
     previous = None
     for requested in counts:
         train_indices = spaced_indices(len(frames), requested, half_step=False)
-        training = load_tiles(frames, train_indices)
+        training = load_tiles(frames, train_indices, args.output_dither)
         start = perf_counter()
         palettes, stats = build_mosaic_palettes(training, return_stats=True)
         elapsed = perf_counter() - start

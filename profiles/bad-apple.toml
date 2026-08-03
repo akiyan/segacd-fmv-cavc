@@ -18,6 +18,8 @@ fit = "crop"
 # Preserve the qualified Bad Apple image settings; only cold cap changes.
 resize_filter = "area"
 master_denoise = false
+# Preserve gradients while suppressing opposite-colour dots at hard edges.
+output_dither = "edge-attenuated-bayer"
 
 [output]
 directory = "tmpfs/BadApple_H40_320x224_adpcm22_cold210/sim"

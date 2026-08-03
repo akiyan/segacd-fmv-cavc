@@ -12,9 +12,9 @@
   (per-frameではない)。セグメント境界でCRAMを切り替える。
 - 分散が非常に低い(=ほぼ単色)タイルだけ平均色へ均して単純化(FLATTEN_STD)。
   ディザ除去済みなので閾値は低めでよい。
-- 出力量子化では位置固定Bayerディザを使い、強い3x3輝度境界の近くだけ
-  ディザ量を連続的に絞る。同じframe内容と画面座標には同じ結果を返すため、
-  静止タイルの差分は増やさない。
+- 出力量子化ではprofileで選んだ位置固定Bayerディザを使う。通常のBayerと、
+  強い3x3輝度境界の近くだけディザ量を連続的に絞る境界減衰型を選べる。
+  同じframe内容と画面座標には同じ結果を返すため、静止タイルの差分は増やさない。
 - **タイル重複排除(dedup)**: MDのネームテーブルは各セル→(パターンslot, パレット)。
   パターン(8x8 idx配列)はパレット非依存なので、同じidxパターンは VRAM に1つ
   だけ置き、複数セル(パレット違いも可)で使い回す。パターン転送32Bを共有でき、
@@ -67,7 +67,7 @@ import tmpfs_workspace  # noqa: E402
 import upgrade_planner  # noqa: E402
 
 from quantize_md_video import (  # noqa: E402
-    rgb888_to_rgb333, rgb333_to_rgb888, run, prepare_dir, MD_LEVELS,
+    rgb333_to_rgb888, run, prepare_dir, MD_LEVELS,
 )
 from quantize_global4_tiles import (  # noqa: E402
     tile_blocks, build_palettes, edge_strengths, pals_to_bytes, palette_lut,
@@ -78,7 +78,7 @@ from palette_algorithms import (  # noqa: E402
     coherent_assign_idx, normalize_palette_algo, refine_one_line_palette,
     score_palettes,
 )
-from output_dither import edge_adaptive_rgb333  # noqa: E402
+import output_dither  # noqa: E402
 from cbr_paths import sim_work_dir  # noqa: E402
 from video_geometry import (  # noqa: E402
     endpoint_snap_filter, probe_source, parse_ratio, source_filter, raw_filter,
@@ -332,11 +332,11 @@ GHOST_ESCALATE_N = ghost_escalate_frames(GHOST_ESCALATE_SEC, FPS)
 # 近似表示(Flbk)を入力に Near 判定すると近似が居座る(ゴースト)ため。0で旧挙動(近似表示も維持可)。
 NEAR_KEEP_ACCURATE_ONLY = os.environ.get("CBRSIM_NEAR_ACCURATE_ONLY", "1") != "0"
 
-# Output quantization uses position-fixed Bayer 8x8 dither. Its amplitude
-# fades continuously near strong 3x3 luma edges, while gentle gradients keep
-# the full pattern. The result depends only on the frame and screen position,
-# so static tiles remain byte-identical across frames.
-DITHER_ON = True
+# Output quantization uses a profile-selected, position-fixed Bayer 8x8 mode.
+# Both modes depend only on the frame and screen position, so static tiles
+# remain byte-identical across frames. Edge attenuation is opt-in.
+OUTPUT_DITHER = output_dither.normalize_mode(os.environ.get(
+    "CBRSIM_OUTPUT_DITHER", output_dither.BAYER))
 # Optional source preprocessing, applied before both the master and raw paths.
 # Out-of-range defaults disable it for profiles without endpoint_snap.
 PREPROCESS_BLACK_MAX = int(os.environ.get(
@@ -354,10 +354,8 @@ PAL_WRITE_BYTES = 0             # CRAM pre-load(PALTAB): 全区間パレット�
                                 # 一括配送しMain-RAM表から引くので、切替フレームの予算控除は無し
                                 # (ストリームには1Bの区間参照だけ。旧: in-stream 128B/切替)
 def to_rgb333(img888):
-    """Convert RGB888 to deterministic, edge-adaptive dithered RGB333."""
-    if not DITHER_ON:
-        return rgb888_to_rgb333(img888)
-    return edge_adaptive_rgb333(img888)
+    """Convert RGB888 with the profile-selected deterministic dither."""
+    return output_dither.quantize_rgb333(img888, OUTPUT_DITHER)
 
 
 def detect_palette_segments(frames, metrics=None):
@@ -1391,7 +1389,9 @@ def main():
               f"({uniq*PATTERN_BYTES/1024:.0f}KB) をロード時バッファ")
 
     # Palette: train the CRAM palette segments.
-    print(f"training palettes ({PAL_ALGO})  DITHER={DITHER_ON} SEGPAL={SEGPAL_ON} NEAR={NEAR_ON} ...")
+    print(
+        f"training palettes ({PAL_ALGO})  "
+        f"DITHER={OUTPUT_DITHER} SEGPAL={SEGPAL_ON} NEAR={NEAR_ON} ...")
     with _parallel_phase(
             "Palette", worker_limit=12, use_gpu=True):
         frame_cache = FrameFeatureCache(frames) if PAL_ALGO == MOSAIC_GM else None
@@ -4307,6 +4307,7 @@ def main():
 
     report = "\n".join([
         f"resolution={W}x{H} cells/frame={C_CELLS} active_tiles={ACTIVE_TILES} fps={FPS}",
+        f"output_dither={OUTPUT_DITHER}",
         f"body_gross_bytes_per_frame={body_gross_bytes[1:].mean():.1f} "
         f"(exact sectors {sorted(set(int(x // stream_schedule.SECTOR_BYTES) for x in body_gross_bytes[1:]))})",
         f"body_fixed_control_bytes_per_frame={body_fixed_control_bytes[1:].mean():.1f}",
@@ -4555,6 +4556,7 @@ def main():
                 "tile": int(TILE), "fit": GEOMETRY_FIT,
                 "resize_filter": RESIZE_FILTER,
                 "master_denoise": bool(MASTER_DENOISE),
+                "output_dither": OUTPUT_DITHER,
             },
             "timing": {
                 "content_fps": str(FPS_STR), "fps": float(FPS),

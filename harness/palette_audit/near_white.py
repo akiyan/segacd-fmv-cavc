@@ -15,17 +15,23 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from output_dither import edge_adaptive_rgb333  # noqa: E402
+from output_dither import BAYER, normalize_mode, quantize_rgb333  # noqa: E402
 
 
-def source_distribution(master_dir: Path, width: int, height: int, tile: int):
+def source_distribution(
+        master_dir: Path,
+        width: int,
+        height: int,
+        tile: int,
+        output_dither: str,
+):
     counts = np.zeros(65, dtype=np.int64)
     flat = np.zeros(65, dtype=np.int64)
     rows, cols = height // tile, width // tile
     files = sorted(master_dir.glob("*.png"))
     for path in files:
         image = np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
-        quant = edge_adaptive_rgb333(image)
+        quant = quantize_rgb333(image, output_dither)
         qtiles = quant.reshape(rows, tile, cols, tile, 3)
         qtiles = qtiles.transpose(0, 2, 1, 3, 4).reshape(rows * cols, tile * tile, 3)
         source_tiles = image.reshape(rows, tile, cols, tile, 3)
@@ -92,15 +98,20 @@ def main() -> int:
 
     with args.decisions.open("rb") as src:
         log = pickle.load(src)
+    output_dither = normalize_mode(
+        log.get("config", {}).get("video", {}).get(
+            "output_dither", BAYER))
     palettes = np.asarray(log["seg_pals"], dtype=np.uint8)
     frame_seg = np.asarray(log["frame_seg"], dtype=np.int32)
     cols, rows, cells, tile = map(int, log["geom"])
     source, flat, source_frames = source_distribution(
-        args.master_dir, cols * tile, rows * tile, tile
+        args.master_dir, cols * tile, rows * tile, tile, output_dither
     )
     display, display_frames = display_distribution(log, palettes, frame_seg, cells)
 
-    print(f"source_frames={source_frames} display_frames={len(log['frames'])}")
+    print(
+        f"output_dither={output_dither} source_frames={source_frames} "
+        f"display_frames={len(log['frames'])}")
     print("gray_dots,source_tiles,source_flat_range_le_3,display_cell_frames,display_frames")
     for dots in range(1, 65):
         if source[dots] or display[dots]:

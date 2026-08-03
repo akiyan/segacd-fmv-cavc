@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Deterministic RGB333 output dithering for the codec."""
+"""Deterministic, selectable RGB333 output dithering for the codec."""
 
 from __future__ import annotations
 
 import numpy as np
+
+
+BAYER = "bayer"
+EDGE_ATTENUATED_BAYER = "edge-attenuated-bayer"
+MODES = (BAYER, EDGE_ATTENUATED_BAYER)
 
 
 BAYER8 = np.array([
@@ -22,6 +27,7 @@ BAYER8 = np.array([
 # antialiasing cannot turn a crisp boundary into alternating bright/dark dots.
 EDGE_DITHER_START = 32
 EDGE_DITHER_FULL = 96
+EDGE_EXPANSION_RADIUS = 1
 
 
 def _check_rgb888(image: np.ndarray) -> np.ndarray:
@@ -55,6 +61,29 @@ def local_luma_range(image: np.ndarray) -> np.ndarray:
     return np.maximum.reduce(neighbours) - np.minimum.reduce(neighbours)
 
 
+def expand_edge_range(
+        edge_range: np.ndarray,
+        radius: int = EDGE_EXPANSION_RADIUS,
+) -> np.ndarray:
+    """Spread the strongest local edge range outward by ``radius`` pixels."""
+    values = np.asarray(edge_range)
+    if values.ndim != 2:
+        raise ValueError(
+            f"edge range must have shape (H, W), got {values.shape}")
+    if isinstance(radius, bool) or not isinstance(radius, int) or radius < 0:
+        raise ValueError("edge expansion radius must be a non-negative integer")
+    if radius == 0:
+        return values.copy()
+    height, width = values.shape
+    padded = np.pad(values, radius, mode="edge")
+    neighbours = [
+        padded[y:y + height, x:x + width]
+        for y in range(radius * 2 + 1)
+        for x in range(radius * 2 + 1)
+    ]
+    return np.maximum.reduce(neighbours)
+
+
 def edge_dither_amount(
         edge_range: np.ndarray,
         start: int = EDGE_DITHER_START,
@@ -82,15 +111,36 @@ def bayer_rgb333(image: np.ndarray) -> np.ndarray:
     ).astype(np.uint8)
 
 
-def edge_adaptive_rgb333(image: np.ndarray) -> np.ndarray:
+def edge_attenuated_bayer_rgb333(image: np.ndarray) -> np.ndarray:
     """Apply position-fixed Bayer dither, fading it near strong luma edges."""
     rgb = _check_rgb888(image)
     height, width, _channels = rgb.shape
     scaled = rgb.astype(np.float32) * (7.0 / 255.0)
     base = np.floor(scaled)
-    amount = edge_dither_amount(local_luma_range(rgb))
+    # Resampling can leave a nearly white or black fringe one pixel beyond the
+    # high-contrast core. Spread the core's attenuation into that fringe so a
+    # moving boundary cannot expose one alternating Bayer dot just outside it.
+    edge_range = expand_edge_range(local_luma_range(rgb))
+    amount = edge_dither_amount(edge_range)
     bayer = bayer_thresholds(height, width)
     threshold = 0.5 + (bayer - 0.5) * amount
     return np.clip(
         base + ((scaled - base) > threshold[..., None]), 0, 7
     ).astype(np.uint8)
+
+
+def normalize_mode(value: str) -> str:
+    """Return one supported profile spelling for an output-dither mode."""
+    mode = str(value).strip().lower()
+    if mode not in MODES:
+        raise ValueError(
+            f"output dither must be one of {', '.join(MODES)}, got {value!r}")
+    return mode
+
+
+def quantize_rgb333(image: np.ndarray, mode: str = BAYER) -> np.ndarray:
+    """Convert RGB888 to RGB333 with the selected deterministic dither."""
+    selected = normalize_mode(mode)
+    if selected == BAYER:
+        return bayer_rgb333(image)
+    return edge_attenuated_bayer_rgb333(image)

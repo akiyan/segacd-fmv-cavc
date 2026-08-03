@@ -17,7 +17,7 @@ from PIL import Image, ImageDraw, ImageFont
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
-from output_dither import edge_adaptive_rgb333  # noqa: E402
+from output_dither import BAYER, normalize_mode, quantize_rgb333  # noqa: E402
 
 
 MD_LEVELS = np.array([0, 36, 72, 108, 144, 180, 216, 252], dtype=np.uint8)
@@ -92,7 +92,12 @@ def replay_usage(log, palettes, frame_seg):
     return usage
 
 
-def source_histogram(master_dir: Path | None, width: int, height: int):
+def source_histogram(
+        master_dir: Path | None,
+        width: int,
+        height: int,
+        output_dither: str,
+):
     hist = np.zeros(512, dtype=np.int64)
     if master_dir is None:
         return hist, 0
@@ -101,7 +106,7 @@ def source_histogram(master_dir: Path | None, width: int, height: int):
         image = np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
         if image.shape != (height, width, 3):
             raise SystemExit(f"{path}: shape {image.shape}, expected {(height, width, 3)}")
-        quant = edge_adaptive_rgb333(image)
+        quant = quantize_rgb333(image, output_dither)
         keys = (
             (quant[..., 0].astype(np.int16) << 6)
             | (quant[..., 1].astype(np.int16) << 3)
@@ -325,7 +330,8 @@ def write_tsvs(output, palettes, usage, frame_seg, fps, upload_offset, global_da
         writer = csv.writer(dst, delimiter="\t", lineterminator="\n")
         writer.writerow([
             "rgb333", "cram_word", "digital_rgb888", "displayed_pixel_frames",
-            "displayed_fraction", "source_after_bayer_pixels", "paltab_slots",
+            "displayed_fraction", "source_after_output_dither_pixels",
+            "paltab_slots",
             "segments", "locations",
         ])
         for key in keys:
@@ -338,11 +344,13 @@ def write_tsvs(output, palettes, usage, frame_seg, fps, upload_offset, global_da
             ])
 
 
-def write_summary(path, palettes, global_data, source_frames):
+def write_summary(
+        path, palettes, global_data, source_frames, output_dither):
     keys, slot_count, pixel_count, _locations, segments, source_hist = global_data
     source_keys = set(int(key) for key in np.flatnonzero(source_hist))
     lines = [
         "Bad Apple H32 palette audit",
+        f"Output dither: {output_dither}",
         f"CRAM segments: {len(palettes)}",
         f"Displayed unique colours: {len(keys)}",
         f"PALTAB unique colours: {len(slot_count)}",
@@ -377,11 +385,15 @@ def main() -> int:
     args = parser.parse_args()
 
     log, palettes, frame_seg = load_log(args.decisions)
+    output_dither = normalize_mode(
+        log.get("config", {}).get("video", {}).get(
+            "output_dither", BAYER))
     fps = float(log.get("fps", 30.0))
     geom = tuple(log.get("geom", (32, 28, 896, 8)))
     width, height = int(geom[0] * geom[3]), int(geom[1] * geom[3])
     usage = replay_usage(log, palettes, frame_seg)
-    source_hist, source_frames = source_histogram(args.master_dir, width, height)
+    source_hist, source_frames = source_histogram(
+        args.master_dir, width, height, output_dither)
     global_data = collect_global(palettes, usage, source_hist)
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -398,10 +410,12 @@ def main() -> int:
     )
     write_summary(
         args.output_dir / "summary.txt", palettes, global_data, source_frames,
+        output_dither,
     )
 
     keys, slot_count, _pixel_count, _locations, _segments, source_hist = global_data
-    print(f"segments={len(palettes)} switches={max(0, len(palettes) - 1)} "
+    print(f"output_dither={output_dither} "
+          f"segments={len(palettes)} switches={max(0, len(palettes) - 1)} "
           f"displayed_unique={len(keys)} "
           f"paltab_unique={len(slot_count)} source_unique={np.count_nonzero(source_hist)}")
     for name in (

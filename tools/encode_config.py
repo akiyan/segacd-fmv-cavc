@@ -50,6 +50,7 @@ ENV_MAP = {
     ("video", "fit"): "CBRSIM_GEOMETRY_FIT",
     ("video", "resize_filter"): "CBRSIM_RESIZE_FILTER",
     ("video", "master_denoise"): "CBRSIM_MASTER_DENOISE",
+    ("video", "output_dither"): "CBRSIM_OUTPUT_DITHER",
     ("video", "master_filter"): "CBRSIM_MASTER_VF",
     ("video", "raw_filter"): "CBRSIM_RAW_VF",
     ("output", "directory"): "CBRSIM_OUT",
@@ -70,9 +71,9 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN": "256",
     "CBRSIM_RESIZE_FILTER": "lanczos",
     "CBRSIM_MASTER_DENOISE": "1",
+    "CBRSIM_OUTPUT_DITHER": "bayer",
     "CBRSIM_GPU": "1",
     "CBRSIM_VRAM_TILES": str(av_config.VRAM_PATTERN_POOL_TILES),
-    "CBRSIM_DITHER": "1",
     "CBRSIM_SEGPAL": "1",
     "CBRSIM_NEAR": "1",
     "CBRSIM_BOOT_VRAM_PREFETCH": "1",
@@ -266,6 +267,12 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         raise ValueError(
             f"{profile_path}: video.resize_filter must be area, bicubic, "
             "bilinear, lanczos, or neighbor")
+    output_dither = str(
+        data["video"].get("output_dither", "bayer")).lower()
+    if output_dither not in {"bayer", "edge-attenuated-bayer"}:
+        raise ValueError(
+            f"{profile_path}: video.output_dither must be bayer or "
+            "edge-attenuated-bayer")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")
@@ -320,6 +327,7 @@ def apply_profile_env(
     # from content fps in av_config. Remove retired overrides so a parent shell
     # cannot turn them back into profile/session knobs.
     for retired in (
+            "CBRSIM_DITHER",
             "CBRSIM_QUALITY_BUDGET_KB",
             "CBRSIM_RING_CAP_KB",
             "CBRSIM_TANK_KB"):

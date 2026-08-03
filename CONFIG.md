@@ -326,7 +326,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | Distance-weighted waiting pressure, capped at 7×. |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | Error reference and maximum pressure increase per frame. |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | Continuous approximation duration before Miss severity. |
-| output dither | edge-adaptive | A position-fixed 8x8 Bayer pattern is preserved through gentle gradients. Across a 3x3 luma range of 32 to 96, its strength fades continuously to nearest-colour rounding so strong edges stay clean. |
+| `video.output_dither` | `bayer` | Profile option. `bayer` uses the standard position-fixed 8x8 pattern. `edge-attenuated-bayer` preserves that pattern through gentle gradients, expands strong-edge influence one pixel into the resampled fringe, then fades its strength to nearest-colour rounding across a 3x3 luma range of 32 to 96. |
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior. |
@@ -419,7 +419,7 @@ tmp/<profile>/
 |---|---|---|
 | `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | Input and native timing. `sar` repairs source metadata. `audio_filter` is an ffmpeg `-af` chain applied to the source audio before the mono 22.05 kHz conversion (e.g. `loudnorm=I=-8:TP=-1:LRA=7` to raise a quiet master's loudness); omission extracts the audio as-is. |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
-| `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
+| `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | Human-readable requested sim identity, decoded-input reuse, and decision-log output. Sim bytes use a deterministic direct tmpfs path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
@@ -428,19 +428,20 @@ tmp/<profile>/
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
 the output raster while preserving displayed aspect and may discard outer
 source pixels. `resize_filter` defaults to `lanczos`; `master_denoise` defaults
-to true. H32 pixel aspect is 8:7 and H40 is 32:35.
+to true. `output_dither` defaults to `bayer`; set it to
+`edge-attenuated-bayer` only for sources whose strong boundaries need the
+local 3x3 luma-based attenuation. H32 pixel aspect is 8:7 and H40 is 32:35.
 
 `active_tiles` is the number of tiles ever non-black after conversion. Omission
 uses the full grid. A smaller value is verified against every master frame.
 It affects accounting, not the profile's cold cap.
 
-The loader rejects unknown keys, unsupported modes, non-tile-aligned
-dimensions, unsafe profile names, a missing/non-positive/non-integer cold cap,
-a cold cap above the resident-pool size, and a negative or non-integer CRAM-risk
-search length.
-GPU, the
-1,663-tile resident pool, dither, segmented palettes, Near, boot prefetch, and
-the four physical supplies are fixed behavior.
+The loader rejects unknown keys, unsupported modes, unknown output-dither
+names, non-tile-aligned dimensions, unsafe profile names, a
+missing/non-positive/non-integer cold cap, a cold cap above the resident-pool
+size, and a negative or non-integer CRAM-risk search length. GPU, the
+1,663-tile resident pool, segmented palettes, Near, boot prefetch, and the four
+physical supplies are fixed behavior.
 
 ## Build switches
 
@@ -785,7 +786,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | distance-weighted waiting pressure、最大7倍。 |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | error基準とframeごとのpressure増加上限。 |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | 連続近似をMiss severityへ上げるまでの時間。 |
-| output dither | edge-adaptive | なだらかな階調では画面位置固定の8x8 Bayerパターンを保ちます。3x3近傍の輝度差が32から96へ強くなる間にディザ量を連続的に絞り、強い境界では最も近い色へ丸めて輪郭をきれいに保ちます。 |
+| `video.output_dither` | `bayer` | profile option。`bayer` は画面位置固定の標準8x8 patternを使います。`edge-attenuated-bayer` は強い境界の影響をresize後のfringeへ1px広げ、なだらかな階調ではpatternを保ちながら、3x3近傍の輝度差が32から96へ強くなる間にディザ量を最も近い色への丸めまで連続的に絞ります。 |
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。 |
@@ -870,7 +871,7 @@ tmp/<profile>/
 |---|---|---|
 | `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | inputとnative timing。`sar` はsource metadataを補正する。`audio_filter` はmono 22.05kHz変換前のsource audioへ適用するffmpeg `-af` chain（例: 音圧の低いmasterを持ち上げる `loudnorm=I=-8:TP=-1:LRA=7`）。省略時は無加工で抽出する。 |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
-| `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
+| `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | human-readableなsim要求identity、decoded-input reuse、decision-log output。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
@@ -878,18 +879,18 @@ tmp/<profile>/
 
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
 保ってoutput rasterを埋めるため、source外周を捨てる場合があります。
-`resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。H32 pixel
-aspectは8:7、H40は32:35です。
+`resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。
+`output_dither` defaultは `bayer` です。強い境界で局所3x3輝度差による減衰が必要な
+sourceだけ `edge-attenuated-bayer` を指定します。H32 pixel aspectは8:7、H40は32:35です。
 
 `active_tiles` は変換後に一度でもnon-blackになるtile数です。省略時はfull gridを使い、
 小さい値は全master frameに対して検証します。accountingには影響しますがprofileの
 cold capには影響しません。
 
-loaderは未知key、未対応mode、tile境界に揃わないdimension、安全でないprofile名、
-未指定・非positive・非integerのcold cap、resident-pool sizeを超えるcold cap、負または
-非integerのCRAM-risk search長を拒否します。
-GPU、1,663-tile resident pool、dither、
-segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
+loaderは未知key、未対応mode、未知のoutput-dither名、tile境界に揃わないdimension、
+安全でないprofile名、未指定・非positive・非integerのcold cap、resident-pool sizeを
+超えるcold cap、負または非integerのCRAM-risk search長を拒否します。GPU、1,663-tile
+resident pool、segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 
 ## Build switch
 
