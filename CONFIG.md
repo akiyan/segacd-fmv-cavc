@@ -142,8 +142,14 @@ controls.
 
 Cold means a 32-byte pattern written to VRAM in the current timed frame,
 regardless of whether its source is Prg, WordBuf, or DicBuf. Every profile must
-set the positive integer `[encoder].cold_cap`; there is no fps-derived fallback
-or diagnostic override. The value must not exceed the 1,663-tile resident pool.
+set `[encoder].cold_cap`; there is no fps-derived fallback or diagnostic
+override. The value is either one positive integer applied to every frame, or
+a per-VBlank-interval spec string such as `"2:170,3:250"` for a
+multi-interval display cadence (24 fps alternates 2- and 3-VBlank slots; frame
+1 uses cadence element zero, so it is a 2-VBlank frame). A spec must name
+exactly the intervals its cadence uses. Each frame receives the cap of its own
+display slot, while layout and reservation envelopes use the largest cap. No
+cap may exceed the 1,663-tile resident pool.
 
 The checked-in profile records the source's qualified playback ceiling.
 Temporary comparison profiles use the same key, so artifact identity, tmpfs
@@ -153,7 +159,7 @@ qualification with the complete encoder, stream, Sub-CPU, Main-CPU, audio, and
 CD-pump path.
 
 The sim and packer share `tools/tile_alloc.py`. The packer replays the frozen
-allocation and requires realized cold to remain within the cold cap.
+allocation and requires realized cold to remain within each frame's own cap.
 Frame 0 is exempt because the untimed BODY arm installs it before timed
 playback.
 
@@ -450,8 +456,9 @@ region is a smooth ramp rather than a spike, stay unchanged. Default off.
 
 The loader rejects unknown keys, unsupported modes, unknown output-dither
 names, non-tile-aligned dimensions, unsafe profile names, a
-missing/non-positive/non-integer cold cap, a cold cap above the resident-pool
-size, and a negative or non-integer CRAM-risk search length. GPU, the
+missing/non-positive/malformed cold cap, a cold cap above the resident-pool
+size, an interval cold-cap spec that does not match the profile fps cadence,
+and a negative or non-integer CRAM-risk search length. GPU, the
 1,663-tile resident pool, segmented palettes, Near, boot prefetch, and the four
 physical supplies are fixed behavior.
 
@@ -626,8 +633,13 @@ APPLY flow、物理pattern delivery、cold-run suffixは継続します。
 ## Cold cap
 
 Coldは、sourceがPrg、WordBuf、DicBufのどれでも、現在のtimed frameでVRAMへ書く
-32-byte patternです。すべてのprofileが正のinteger `[encoder].cold_cap` を必ず指定し、
-fps由来fallbackや診断overrideは使いません。値は1,663-tile resident pool以下にします。
+32-byte patternです。すべてのprofileが `[encoder].cold_cap` を必ず指定し、
+fps由来fallbackや診断overrideは使いません。値は全フレーム共通の正のinteger 1つか、
+複数間隔のdisplay cadence用のVBlank間隔別スペック文字列（例 `"2:170,3:250"`。
+24 fpsは2/3 VBlank slotが交互で、frame 1がcadence要素0=2 VBlank frame）です。
+スペックはそのcadenceが使う間隔をちょうど全部指定します。各フレームは自分の
+display slotのcapを受け取り、layoutと予約envelopeは最大capを使います。どのcapも
+1,663-tile resident pool以下にします。
 
 checked-in profileは、そのsourceでqualificationした再生上限を記録します。一時的な比較
 profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、pack、analysisへ
@@ -636,7 +648,7 @@ profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、p
 完全な経路で新しい全編再生qualificationが必要です。
 
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
-realized coldがcold cap内にあることを要求します。frame 0はtimed playback前に
+realized coldが各フレーム自身のcap内にあることを要求します。frame 0はtimed playback前に
 untimed BODY armが構築するため対象外です。
 
 ## Audio
@@ -910,8 +922,9 @@ sourceを示します。検出時はmasterとrawの両sequenceを全channel共�
 滑らかな勾配のsourceは変更しません。defaultはoffです。
 
 loaderは未知key、未対応mode、未知のoutput-dither名、tile境界に揃わないdimension、
-安全でないprofile名、未指定・非positive・非integerのcold cap、resident-pool sizeを
-超えるcold cap、負または非integerのCRAM-risk search長を拒否します。GPU、1,663-tile
+安全でないprofile名、未指定・非positive・不正形式のcold cap、resident-pool sizeを
+超えるcold cap、profileのfps cadenceと一致しない間隔別cold capスペック、
+負または非integerのCRAM-risk search長を拒否します。GPU、1,663-tile
 resident pool、segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 
 ## Build switch
