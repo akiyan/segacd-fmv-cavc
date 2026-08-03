@@ -26,6 +26,7 @@ import random
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import analysis_style as style
+import r2v_model
 import stream_schedule
 
 FONT = "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf"
@@ -152,15 +153,20 @@ def dma_frame_max(mode, fps):
     return int(round(60.0 / fps * dma_vblank(mode)))
 
 
-def dma_tile_capacity(mode, fps, cells):
-    """Pattern-tile DMA ceiling after the fixed full name table is paid.
+def dma_tile_capacity(mode, fps, cols, rows):
+    """Pattern-tile DMA ceiling after current display publication is paid.
 
-    The byte ceiling includes the per-frame 2-byte name entry for every drawn
-    cell. The remainder is available to 32-byte pattern tiles. A frame cannot
-    transfer more pattern tiles than it draws.
+    The byte ceiling includes the exact movie-name-table band plus the DEBUG
+    Window/SAT workload. The remainder is available to 32-byte pattern tiles.
+    A frame cannot transfer more pattern tiles than it draws.
     """
-    cells = int(cells)
-    pattern_bytes = max(0, dma_frame_max(mode, fps) - cells * 2)
+    cols = int(cols)
+    rows = int(rows)
+    cells = cols * rows
+    publication_bytes = r2v_model.name_table_words(
+        mode, cols, rows, fps) * 2
+    pattern_bytes = max(
+        0, dma_frame_max(mode, fps) - publication_bytes)
     return min(cells, pattern_bytes // 32)
 
 

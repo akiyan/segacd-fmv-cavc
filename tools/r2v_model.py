@@ -13,11 +13,10 @@ PATTERN_WORDS = 16
 SHORT_RUN_MAX_PATTERNS = 2
 DMA_REPAIR_WORDS = 1
 CRAM_WORDS = 64
-H40_STAGE_PITCH = 64
-H40_STAGE_ROWS = 28
+NT_STAGE_PITCH = 64
 
-# DEBUG specialized players publish this many name-table cells outside the
-# encoded movie grid. Fixed-N H40 stages them inside its 64x28 name-table DMA.
+# DEBUG players publish this many cells. The first screen-width row uses the
+# Window name table; any remaining cells use four-word sprite-table records.
 DEBUG_HUD_WORDS = 43
 
 
@@ -40,9 +39,17 @@ def name_table_words(
         raise ValueError(f"invalid tile grid: {cols}x{rows}")
     if debug_hud_words < 0:
         raise ValueError("DEBUG HUD word count must be non-negative")
-    if normalized == "H40" and av_config.uses_fixed_n_cadence(fps):
-        return H40_STAGE_PITCH * H40_STAGE_ROWS
-    return cols * rows + debug_hud_words
+    # Keep fps in the public call shape: the physical publication workload no
+    # longer changes with cadence.
+    av_config.vsync_n_for_fps(fps)
+    screen_cols = 40 if normalized == "H40" else 32
+    if cols > screen_cols or rows > 28:
+        raise ValueError(
+            f"tile grid {cols}x{rows} exceeds the {normalized} aperture")
+    movie_words = (rows - 1) * NT_STAGE_PITCH + cols
+    window_words = min(debug_hud_words, screen_cols)
+    sprite_words = max(0, debug_hud_words - screen_cols) * 4
+    return movie_words + window_words + sprite_words
 
 
 def calculate_words(

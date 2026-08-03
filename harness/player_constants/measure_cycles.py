@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure a conservative issue #21 cycle saving over a packed fixed-N2 stream.
+"""Measure conservative specialization savings over a packed fixed-N2 stream.
 
 Only RAM-to-immediate replacements whose execution count is known from the
 packed control blocks are included.  Extra ``pump_poll`` calls, additional
@@ -30,8 +30,6 @@ SUB_CLOCK_HZ = 12_500_000
 # MC68000 User's Manual, Section 8.  For the word operations used here, an
 # absolute-long source costs eight clocks more than an immediate source.
 FIXED_SOURCE_SAVING = 8
-TST_ABS_LONG = 16
-BCC_SHORT_NOT_TAKEN = 8
 
 
 def cold_run_count(entries: tuple[int, ...]) -> int:
@@ -82,12 +80,13 @@ def main() -> None:
     runs = [cold_run_count(block.entries) for block in stream.controls]
 
     # Main, per frame:
-    # - fixed-N2 bf_doflip and do_flip each lose TST.W abs.l + untaken BEQ;
+    # - exact NT-band destination and length become immediates;
+    # - nonzero frames also make the final-frame comparison immediate;
     # - non-empty updates replace two bmbytes reads;
     # - a frame with cold runs replaces at least the initial VBlank-budget read.
-    fixed_flip = 2 * (TST_ABS_LONG + BCC_SHORT_NOT_TAKEN)
     main_saved = [
-        fixed_flip
+        2 * FIXED_SOURCE_SAVING
+        + (FIXED_SOURCE_SAVING if block.seq else 0)
         + (2 * FIXED_SOURCE_SAVING if block.entries else 0)
         + (FIXED_SOURCE_SAVING if run_count else 0)
         for block, run_count in zip(stream.controls, runs)

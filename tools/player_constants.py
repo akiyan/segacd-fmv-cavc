@@ -166,10 +166,10 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     if tcols > screen_cols or trows > screen_rows:
         raise ValueError(
             f"tile grid {tcols}x{trows} exceeds {screen_cols}x{screen_rows} display")
-    if base + pool > av_config.VRAM_FIRST_MOVIE_NT_TILE:
+    if base + pool > av_config.VRAM_HUD_FONT_TILE:
         raise ValueError(
             f"resident pool base {base} + {pool} tiles overlaps "
-            f"movie name-table tile {av_config.VRAM_FIRST_MOVIE_NT_TILE}")
+            f"HUD font tile {av_config.VRAM_HUD_FONT_TILE}")
     expected_routing_sec = ttrc_routing.routing_sector_count(frames)
     if routing_sec != expected_routing_sec:
         raise ValueError(

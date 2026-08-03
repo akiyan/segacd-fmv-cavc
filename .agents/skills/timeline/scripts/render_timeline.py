@@ -49,8 +49,8 @@ BAND_HEIGHT = 32
 R2V_WORDS_PER_PATTERN = r2v_model.PATTERN_WORDS
 R2V_PATTERN_WORD_COST = 1
 R2V_DMA_REPAIR_WORDS = r2v_model.DMA_REPAIR_WORDS
-P125_H40_NAME_TABLE_WORDS = (
-    r2v_model.H40_STAGE_PITCH * r2v_model.H40_STAGE_ROWS)
+DEFAULT_H40_NAME_TABLE_WORDS = r2v_model.name_table_words(
+    "H40", 40, 28, 30)
 P125_CRAM_WORDS = r2v_model.CRAM_WORDS
 
 REQ_ORDER = tuple(style.REQ_TIMELINE_CATS)
@@ -163,7 +163,7 @@ def calculate_r2v_words(
     run_count: np.ndarray,
     short_run_count: np.ndarray,
     palette_switch: np.ndarray,
-    name_table_word_count: int | np.ndarray = P125_H40_NAME_TABLE_WORDS,
+    name_table_word_count: int | np.ndarray = DEFAULT_H40_NAME_TABLE_WORDS,
 ) -> dict[str, np.ndarray]:
     """Return VDP-memory words from an external packed-stream workload."""
     words = np.asarray(pass2_words, np.int64)

@@ -99,32 +99,32 @@ def dma_events(lines: Iterable[str]) -> list[tuple[int, int, int, int, int, int]
 def infer_dma_pcs(
     events: list[tuple[int, int, int, int, int, int]],
     frame_count: int,
-) -> tuple[tuple[int, ...], int, int]:
-    """Infer the fixed name-table and all timed pattern-DMA call sites."""
+) -> tuple[tuple[int, ...], int, int, int]:
+    """Infer the exact-band name-table command and timed pattern sites."""
     nt_counts = Counter(
-        pc for dma_type, _rate, _left, _capacity, remaining, pc in events
-        if dma_type == 1 and remaining == 1792
+        (pc, remaining)
+        for dma_type, _rate, _left, _capacity, remaining, pc in events
+        if dma_type == 1
     )
     nt_candidates = [
-        (pc, count) for pc, count in nt_counts.items() if count >= frame_count
+        (pc, words, count)
+        for (pc, words), count in nt_counts.items()
+        if count >= frame_count
     ]
-    nt_candidates.sort(key=lambda item: item[1], reverse=True)
-    if (
-        not nt_candidates
-        or (
-            len(nt_candidates) > 1
-            and nt_candidates[0][1] == nt_candidates[1][1]
-        )
-    ):
+    # NT, Window and SAT DMAs can all execute at the shared Main-RAM DMA site
+    # once per frame. The statically trimmed movie band is always the largest
+    # such fixed transfer, so its command-start length identifies it.
+    nt_candidates.sort(key=lambda item: (item[1], item[2]), reverse=True)
+    if not nt_candidates:
         rendered = ", ".join(
-            f"0x{pc:04X}:{count}" for pc, count in nt_counts.most_common(8)
+            f"0x{pc:04X}/{words}:{count}"
+            for (pc, words), count in nt_counts.most_common(8)
         )
         raise ValueError(
-            "could not identify at least one 1792-word name-table DMA per "
-            "HUD frame; "
+            "could not identify one fixed name-table-band DMA per HUD frame; "
             f"candidates were {rendered or 'none'}"
         )
-    nt_pc = nt_candidates[0][0]
+    nt_pc, nt_words, _nt_count = nt_candidates[0]
 
     # Pattern DMA has separate whole-run, split Word-RAM, and split DicBuf
     # wait sites.  Ignore boot-time DMA sites by discovering pattern PCs only
@@ -135,7 +135,7 @@ def infer_dma_pcs(
     for dma_type, _rate, _left, _capacity, remaining, pc in events:
         if dma_type != 1:
             continue
-        if pc == nt_pc and remaining == 1792:
+        if pc == nt_pc and remaining == nt_words:
             movie_started = True
             name_table_frames += 1
             if name_table_frames >= frame_count:
@@ -153,10 +153,10 @@ def infer_dma_pcs(
 
     nt_rates = Counter(
         rate for dma_type, rate, _left, _capacity, remaining, pc in events
-        if dma_type == 1 and pc == nt_pc and remaining == 1792
+        if dma_type == 1 and pc == nt_pc and remaining == nt_words
     )
     blank_rate, _count = nt_rates.most_common(1)[0]
-    return pattern_pcs, nt_pc, blank_rate
+    return pattern_pcs, nt_pc, nt_words, blank_rate
 
 
 def empty_rows(frame_count: int) -> list[dict[str, int]]:
@@ -171,6 +171,7 @@ def extract_dma_rows(
     frame_count: int,
     pattern_pcs: tuple[int, ...],
     nt_pc: int,
+    nt_words: int,
     blank_rate: int,
 ) -> list[dict[str, int]]:
     rows = empty_rows(frame_count)
@@ -184,12 +185,8 @@ def extract_dma_rows(
             break
         if dma_type != 1:
             continue
-        if pc == nt_pc:
+        if nt_open or (pc == nt_pc and remaining == nt_words):
             if not nt_open:
-                if remaining != 1792:
-                    raise ValueError(
-                        "name-table DMA continuation appeared without its start"
-                    )
                 if next_frame >= frame_count:
                     raise ValueError("LOGVDP trace has more movie frames than HUD TSV")
                 nt_frame = next_frame
@@ -237,13 +234,14 @@ def extract_cpu_rows(
     rows: list[dict[str, int]],
     pattern_pcs: tuple[int, ...],
     nt_pc: int,
+    nt_words: int,
 ) -> None:
     """Count non-DMA VRAM writes between the inferred movie-frame markers.
 
-    The fixed H40 player sends the full name table by DMA. Between two such
-    markers, every other VRAM data-port write is therefore either a short
-    pattern run or the one-word repair after a Word-RAM DMA. Generated DMA
-    writes carry the DMA call-site PC and are excluded.
+    Every player sends its exact movie-table band by DMA. Between two such
+    markers, every other non-DMA VRAM data-port write is therefore a one-word
+    repair after a Word-RAM DMA. Generated DMA writes carry the shared call-site
+    PC and are excluded.
     """
     frame_count = len(rows)
     next_frame = 0
@@ -254,7 +252,7 @@ def extract_cpu_rows(
             dma_type = int(dma_match.group(1))
             remaining = int(dma_match.group(5))
             pc = pc16(dma_match.group(6))
-            if dma_type == 1 and pc == nt_pc and remaining == 1792:
+            if dma_type == 1 and pc == nt_pc and remaining == nt_words:
                 next_frame += 1
                 if next_frame >= frame_count:
                     break
@@ -337,15 +335,18 @@ def main() -> None:
     try:
         hud_rows = load_hud(hud_tsv)
         events = dma_events(log_lines(compact_log))
-        pattern_pcs, nt_pc, blank_rate = infer_dma_pcs(events, len(hud_rows))
+        pattern_pcs, nt_pc, nt_words, blank_rate = infer_dma_pcs(
+            events, len(hud_rows))
         rows = extract_dma_rows(
             events,
             len(hud_rows),
             pattern_pcs,
             nt_pc,
+            nt_words,
             blank_rate,
         )
-        extract_cpu_rows(log_lines(full_log), rows, pattern_pcs, nt_pc)
+        extract_cpu_rows(
+            log_lines(full_log), rows, pattern_pcs, nt_pc, nt_words)
         validate_frame_axis(rows, hud_rows)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
@@ -365,6 +366,7 @@ def main() -> None:
         "frames": len(rows),
         "pattern_dma_pcs": [f"0x{pc:04X}" for pc in pattern_pcs],
         "name_table_dma_pc": f"0x{nt_pc:04X}",
+        "name_table_dma_words": nt_words,
         "blank_dma_rate_words_per_line": blank_rate,
         "cpu_blank_vcounter_range": [224, 260],
         "cpu_active_vcounter_range": [0, 222],
