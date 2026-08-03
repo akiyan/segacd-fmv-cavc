@@ -42,7 +42,20 @@
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
-.equ HUD_SPRITE_TABLE, 0xF800
+.equ HUD_SPRITE_TABLE, 0xD400
+.equ HUD_SPRITE_TABLE_BYTES, 80*8
+.equ HUD_SPRITE_REG, 0x8500 | (HUD_SPRITE_TABLE >> 9)
+
+/* H40 ignores the low sprite-table base bit, so the physical table must be
+   0x400-aligned. Keep its complete 80-record hardware footprint inside the
+   free VRAM gap below the movie name table. In particular, it must not alias
+   the full-screen Window map at 0xF000 as the old 0xF800 placement did. */
+.if (HUD_SPRITE_TABLE & 0x03FF)
+.error "H40 HUD sprite table is not 0x400-aligned"
+.endif
+.if (HUD_SPRITE_TABLE < 0xD200) || ((HUD_SPRITE_TABLE + HUD_SPRITE_TABLE_BYTES) > MOVIE_NT)
+.error "HUD sprite table is outside the free VRAM gap"
+.endif
 
 /* 0xFF2100..0xFF66FF is no longer a tile staging buffer: streamed pattern DMA
    reads Word RAM directly and repairs the first destination word on the CPU.
@@ -304,7 +317,7 @@ ip_entry:
 	move.w	#0x8B00, (VDP_CTRL).l		/* reg11 scroll full-screen */
 	move.w	#0x8407, (VDP_CTRL).l		/* reg4  Plane B NT = movie NT 0xE000 */
 	move.w	#0x833C, (VDP_CTRL).l		/* reg3  Window NT = 0xF000 */
-	move.w	#0x857C, (VDP_CTRL).l		/* reg5  sprite table = 0xF800 */
+	move.w	#HUD_SPRITE_REG, (VDP_CTRL).l	/* reg5  sprite table = 0xD400 */
 	move.w	#0x8D3F, (VDP_CTRL).l		/* reg13 hscroll 0xFC00 */
 	move.w	#0x8238, (VDP_CTRL).l		/* reg2  Plane A = single movie NT 0xE000 */
 	move.l	#0x40000010, (VDP_CTRL).l	/* VSRAM=0 */

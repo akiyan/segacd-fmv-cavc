@@ -13,6 +13,10 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p144: Move the DEBUG HUD sprite table from Window-map row 16 at 0xF800
+#         into the free 0xD400 VRAM range. This removes the three duplicated
+#         H40 spill glyphs from the movie while preserving the intended sprite
+#         row and the complete 1,663-tile resident pattern pool.
 #   e171: Reserve the preceding display's live pattern slots while selecting
 #         the next frame. Reject optional cache reuse that would overflow the
 #         temporary old-plus-new VRAM union before the final name-table DMA.
@@ -1191,4 +1195,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
 e=171
-p=143
+p=144
