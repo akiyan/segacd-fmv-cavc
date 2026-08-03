@@ -448,12 +448,13 @@ def audio_frame_layout(fps):
 # realized <= cap as a guard. frame0 (the full-load header) is exempt.
 
 # --- Per-frame cold cap supplied by the encode profile ---
-def cold_cap(requested_cap=None):
-    """Return one explicit positive cold cap.
+# A profile supplies either one scalar cap ("225") or, for a multi-interval
+# VBlank cadence such as 24 fps, one cap per display interval ("2:170,3:250"
+# maps a 2-VBlank slot to 170 cold patterns and a 3-VBlank slot to 250).
+def _parse_cold_cap_spec(requested_cap=None):
+    """Return the cap spec as ``{vblank_interval_or_None: cap}``.
 
-    ``requested_cap`` is used by frozen-log consumers such as the packer.
-    Otherwise ``CBRSIM_COLD_CAP`` is the internal handoff populated from the
-    required ``[encoder].cold_cap`` profile key.
+    A scalar spec is stored under the key ``None`` and applies to every frame.
     """
     raw_cap = (
         os.environ.get("CBRSIM_COLD_CAP", "").strip()
@@ -465,6 +466,33 @@ def cold_cap(requested_cap=None):
             "cold cap is required; set [encoder].cold_cap in the profile")
     if isinstance(raw_cap, bool):
         raise ValueError(f"profile cold cap must be an integer: {raw_cap!r}")
+    if isinstance(raw_cap, str) and ":" in raw_cap:
+        spec = {}
+        for entry in raw_cap.split(","):
+            entry = entry.strip()
+            if not entry:
+                raise ValueError(
+                    f"profile cold cap has an empty entry: {raw_cap!r}")
+            interval_text, _, cap_text = entry.partition(":")
+            try:
+                interval = int(interval_text)
+                cap = int(cap_text)
+            except ValueError as exc:
+                raise ValueError(
+                    "profile cold cap entries must be "
+                    f"'vblanks:cap' integers: {entry!r}") from exc
+            if not 1 <= interval <= MAX_FIXED_VBLANK_INTERVAL:
+                raise ValueError(
+                    "cold cap VBlank interval must be within "
+                    f"1..{MAX_FIXED_VBLANK_INTERVAL}: {entry!r}")
+            if cap <= 0:
+                raise ValueError(
+                    f"profile cold cap must be positive: {entry!r}")
+            if interval in spec:
+                raise ValueError(
+                    f"duplicate cold cap interval {interval}: {raw_cap!r}")
+            spec[interval] = cap
+        return spec
     try:
         effective_cap = int(raw_cap)
     except (TypeError, ValueError) as exc:
@@ -473,7 +501,69 @@ def cold_cap(requested_cap=None):
     if effective_cap <= 0:
         raise ValueError(
             f"profile cold cap must be positive: {effective_cap}")
-    return effective_cap
+    return {None: effective_cap}
+
+
+def cold_cap(requested_cap=None):
+    """Return the largest explicit positive cold cap of the spec.
+
+    ``requested_cap`` is used by frozen-log consumers such as the packer.
+    Otherwise ``CBRSIM_COLD_CAP`` is the internal handoff populated from the
+    required ``[encoder].cold_cap`` profile key.  For a per-interval spec this
+    is the capacity-reservation ceiling; per-frame limits come from
+    ``frame_cold_caps``.
+    """
+    return max(_parse_cold_cap_spec(requested_cap).values())
+
+
+def cold_cap_spec(requested_cap=None):
+    """Return the canonical cold cap spec string ("225" or "2:170,3:250")."""
+    spec = _parse_cold_cap_spec(requested_cap)
+    if set(spec) == {None}:
+        return str(spec[None])
+    return ",".join(
+        f"{interval}:{spec[interval]}" for interval in sorted(spec))
+
+
+def cold_cap_key(requested_cap=None):
+    """Return the filesystem-safe cap identity used in artifact names."""
+    return cold_cap_spec(requested_cap).replace(":", "x").replace(",", "-")
+
+
+def frame_cold_caps(frame_count, fps, requested_cap=None):
+    """Return the per-frame cold cap list for one encode.
+
+    Frame 1 uses cadence element zero, matching the CD-deadline accumulator
+    (``stream_schedule.rate_deltas``): a frame's cap belongs to the display
+    slot whose VBlanks fund its delivery and decode.  Frame 0 is the untimed
+    full load and carries the reservation ceiling only.
+    """
+    count = int(frame_count)
+    if count <= 0:
+        raise ValueError(f"frame count must be positive, got {frame_count!r}")
+    spec = _parse_cold_cap_spec(requested_cap)
+    if set(spec) == {None}:
+        return [spec[None]] * count
+    cadence = vblank_cadence_pattern(fps)
+    if cadence is None:
+        raise ValueError(
+            "a per-interval cold cap spec needs a qualified VBlank cadence; "
+            f"fps={fps!r} is delivery-paced")
+    missing = sorted(set(cadence) - set(spec))
+    if missing:
+        raise ValueError(
+            f"cold cap spec lacks caps for VBlank intervals {missing} "
+            f"used by the {fps!r} fps cadence")
+    unused = sorted(interval for interval in spec if interval not in cadence)
+    if unused:
+        raise ValueError(
+            f"cold cap spec names VBlank intervals {unused} that the "
+            f"{fps!r} fps cadence never uses")
+    caps = [max(spec.values())]
+    caps.extend(
+        spec[cadence[(frame - 1) % len(cadence)]]
+        for frame in range(1, count))
+    return caps
 
 
 def cold_realized_ceiling(requested_cap=None):
