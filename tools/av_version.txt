@@ -13,6 +13,9 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e177: Add the dither-free output mode `none` (issue #111): every pixel
+#         rounds to its nearest RGB333 level with no Bayer pattern. Selected
+#         per profile via video.output_dither.
 #   e176: Allow a per-VBlank-interval cold cap spec ("2:170,3:250") so a
 #         multi-interval display cadence gives each frame the decode ceiling
 #         of its own slot. The 24 fps 2/3 cadence schedules 2-VBlank frames
@@ -1218,5 +1221,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
-e=176
+e=177
 p=144

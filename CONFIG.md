@@ -332,7 +332,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | Distance-weighted waiting pressure, capped at 7×. |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | Error reference and maximum pressure increase per frame. |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | Continuous approximation duration before Miss severity. |
-| `video.output_dither` | `bayer` | Profile option. `bayer` uses the standard position-fixed 8x8 pattern. `edge-attenuated-bayer` preserves that pattern through gentle gradients, expands strong-edge influence one pixel into the resampled fringe, then fades its strength to nearest-colour rounding across a 3x3 luma range of 32 to 96. |
+| `video.output_dither` | `bayer` | Profile option. `bayer` uses the standard position-fixed 8x8 pattern. `edge-attenuated-bayer` preserves that pattern through gentle gradients, expands strong-edge influence one pixel into the resampled fringe, then fades its strength to nearest-colour rounding across a 3x3 luma range of 32 to 96. `none` disables dithering entirely and rounds every pixel to its nearest RGB333 level. |
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior. |
@@ -437,7 +437,8 @@ the output raster while preserving displayed aspect and may discard outer
 source pixels. `resize_filter` defaults to `lanczos`; `master_denoise` defaults
 to true. `output_dither` defaults to `bayer`; set it to
 `edge-attenuated-bayer` only for sources whose strong boundaries need the
-local 3x3 luma-based attenuation. H32 pixel aspect is 8:7 and H40 is 32:35.
+local 3x3 luma-based attenuation, or to `none` for dither-free
+nearest-colour rounding. H32 pixel aspect is 8:7 and H40 is 32:35.
 
 `active_tiles` is the number of tiles ever non-black after conversion. Omission
 uses the full grid. A smaller value is verified against every master frame.
@@ -810,7 +811,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | distance-weighted waiting pressure、最大7倍。 |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | error基準とframeごとのpressure増加上限。 |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | 連続近似をMiss severityへ上げるまでの時間。 |
-| `video.output_dither` | `bayer` | profile option。`bayer` は画面位置固定の標準8x8 patternを使います。`edge-attenuated-bayer` は強い境界の影響をresize後のfringeへ1px広げ、なだらかな階調ではpatternを保ちながら、3x3近傍の輝度差が32から96へ強くなる間にディザ量を最も近い色への丸めまで連続的に絞ります。 |
+| `video.output_dither` | `bayer` | profile option。`bayer` は画面位置固定の標準8x8 patternを使います。`edge-attenuated-bayer` は強い境界の影響をresize後のfringeへ1px広げ、なだらかな階調ではpatternを保ちながら、3x3近傍の輝度差が32から96へ強くなる間にディザ量を最も近い色への丸めまで連続的に絞ります。`none` はディザを完全に無効化し、全画素を最も近いRGB333レベルへ丸めます。 |
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。 |
@@ -906,7 +907,8 @@ tmp/<profile>/
 保ってoutput rasterを埋めるため、source外周を捨てる場合があります。
 `resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。
 `output_dither` defaultは `bayer` です。強い境界で局所3x3輝度差による減衰が必要な
-sourceだけ `edge-attenuated-bayer` を指定します。H32 pixel aspectは8:7、H40は32:35です。
+sourceだけ `edge-attenuated-bayer` を、ディザ無しの最近色丸めには `none` を
+指定します。H32 pixel aspectは8:7、H40は32:35です。
 
 `active_tiles` は変換後に一度でもnon-blackになるtile数です。省略時はfull gridを使い、
 小さい値は全master frameに対して検証します。accountingには影響しますがprofileの
