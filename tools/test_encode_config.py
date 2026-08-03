@@ -201,15 +201,15 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         profile = load_profile(root / "profiles/machi-op.toml")
         env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
-        self.assertEqual(env["CBRSIM_H"], "152")
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "760")
+        self.assertEqual(env["CBRSIM_H"], "144")
+        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "720")
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
         self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "crop")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(
-            env["CBRSIM_MASTER_VF"], "setsar=1,crop=320:152:0:34")
+            env["CBRSIM_MASTER_VF"], "setsar=1,crop=320:144:0:38")
         self.assertEqual(
-            env["CBRSIM_RAW_VF"], "setsar=1,crop=320:152:0:34")
+            env["CBRSIM_RAW_VF"], "setsar=1,crop=320:144:0:38")
         # The source-qualified encoder ceiling is recorded directly.
         self.assertEqual(env["CBRSIM_COLD_CAP"], "480")
 
