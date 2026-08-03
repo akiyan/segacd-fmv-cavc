@@ -11,20 +11,22 @@ sar = "1:1"
 audio_filter = "aformat=channel_layouts=mono,volume=7.9dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
-mode = "H40"
-width = 320
+mode = "H32"
+width = 256
 height = 224
 fit = "pad"
+# Dither-free comparison build: nearest-colour RGB333 rounding only.
+output_dither = "none"
 
 [output]
-directory = "tmpfs/lunar_sss_op_H40_320x224_adpcm22/sim"
-reuse = true
+directory = "tmpfs/lunar_sss_op_H32_256x224_adpcm22_nodither/sim"
+reuse = false
 emit_decisions = true
 
 [encoder]
 # 24 fps alternates 2- and 3-VBlank display slots; give each slot its own
 # qualified decode ceiling instead of one shared middle value.
-cold_cap = "2:200,3:250"
+cold_cap = "2:160,3:220"
 
 [palette]
 algorithm = "mosaic-gm"
