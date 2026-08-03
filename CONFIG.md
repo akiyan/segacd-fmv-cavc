@@ -124,7 +124,11 @@ the advance plan because the exact anchor-frame Prg ceiling depends on earlier
 physical control blocks. The block does not redirect ordinary visible
 allocation into its future destinations. Prefetch never replaces a
 slot referenced by either the current or preceding display, because a pattern
-transfer may span multiple VBlanks before the name-table flip completes.
+transfer may span multiple VBlanks before the final single-name-table DMA
+publishes the prepared frame. During ordinary frame selection, the encoder
+likewise reserves the preceding display's distinct pattern slots and accepts
+new or cache-only identities only while the temporary old-plus-new union fits
+the resident pool.
 Visible updates may reclaim a prefetched slot when the pool is temporarily
 full; the automatically sized preparation window includes retry room for both
 display protection and reclaimed entries. The derived catch-up schedule
@@ -595,8 +599,10 @@ Prg容量を予約します。明るいreferenceのうち既にresidentのkeyは
 全destinationがまだ表示中の場合だけ、別の安全なslotへ退避します。anchor自身に保守的な
 exact-load量を仮定せず、異なるreference keyをすべて先行planへ含めます。anchor frameの正確な
 Prg上限は、それ以前の物理control blockが確定して初めて決まるためです。このblockの将来destinationへ
-通常の表示allocationを誘導しません。pattern transferはname-table flipの完了前に複数VBlankへ
-またがる場合があるため、prefetchは現在または直前の表示が参照するslotを置き換えません。
+通常の表示allocationを誘導しません。pattern transferは準備したframeを公開する最後の単一name-table
+DMAより前に複数VBlankへまたがる場合があるため、prefetchは現在または直前の表示が参照するslotを
+置き換えません。通常frameの選択でもencoderは直前表示の異なるpattern slotを予約し、一時的な
+旧表示と新表示の和集合がresident poolへ収まる間だけ、新規またはcache-only identityを採用します。
 poolが一時的に満杯なら表示updateがprefetch済みslotを回収できますが、自動算出する準備windowは
 表示保護とentry回収の両方にretry容量を持ちます。catch-up scheduleがanchorまでに復元し、
 間に合わないfadeは不成立として退けます。

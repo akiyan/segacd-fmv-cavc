@@ -1472,6 +1472,7 @@ def main():
     cur_pal = np.full(C_CELLS, -1, np.int16)
     committed_plain = [None] * C_CELLS  # 直近commitした plain パターン(内容変化検出用)
     from tile_alloc import (
+        FrameTransitionGuard,
         TileAllocator,
         cold_transfer_order,
     )
@@ -2375,6 +2376,16 @@ def main():
             - frame_fade_prefetch_patterns
             * stream_schedule.RUN_DESCRIPTOR_BYTES,
         )
+        # Pattern data is installed before the final name-table DMA. The
+        # preceding display therefore keeps all of its slots live while this
+        # frame's new and cache-only identities are prepared. Budget that
+        # temporary union explicitly; otherwise a zero-byte cache hit can
+        # still force an unfunded reload at allocation time.
+        transition_guard = FrameTransitionGuard(alloc)
+
+        def commit_repoint(c, key, pal, rgb):
+            transition_guard.commit(c, key)
+            repoint(c, key, pal, rgb, i)
 
         def reserved_variable_spend(
             decision_spent=0,
@@ -2387,7 +2398,8 @@ def main():
                 + cold_tiles * stream_schedule.RUN_DESCRIPTOR_BYTES)
 
         def decision_fits(
-                cost, *, extra_cold=0, extra_updates=1, limit=None):
+                cost, *, extra_cold=0, extra_updates=1, limit=None,
+                cell=None, key=None):
             if limit is None:
                 limit = decision_budget
             funded = reserved_variable_spend(
@@ -2400,7 +2412,15 @@ def main():
                 + (cold_spent + int(extra_cold))
                 * stream_schedule.RUN_DESCRIPTOR_BYTES
             )
-            return funded and control <= visible_control_block_limit
+            transition = (
+                cell is None or key is None
+                or transition_guard.fits(cell, key)
+            )
+            return (
+                funded
+                and control <= visible_control_block_limit
+                and transition
+            )
 
         def current_reserved_spend():
             return reserved_variable_spend(spent_tiles, cold_spent)
@@ -2520,7 +2540,7 @@ def main():
                     (int(mbk[c, 0]), int(mbk[c, 1]), int(mbk[c, 2])))
             name_recs += 1
             spent_tiles += cost
-            repoint(c, key, int(assign[c]), plain_rgb[c], i)
+            commit_repoint(c, key, int(assign[c]), plain_rgb[c])
             committed_plain[c] = key
             updated[c] = True
 
@@ -2540,7 +2560,8 @@ def main():
             preload = source != pattern_supply.SOURCE_PRG
             cost = 0 if in_prg else (
                 NAME_BYTES + (0 if free or preload else PATTERN_BYTES))
-            if not decision_fits(cost, extra_cold=int(not free)):
+            if not decision_fits(
+                    cost, extra_cold=int(not free), cell=c, key=key):
                 return False
             rep_key = key; rep_pal = int(assign[c]); rep_rgb = plain_rgb[c]
             if in_vram:
@@ -2575,7 +2596,7 @@ def main():
                 append_resident_bucket(
                     key, (int(mbk[c, 0]), int(mbk[c, 1]), int(mbk[c, 2])))
             name_recs += 1; spent_tiles += cost
-            repoint(c, rep_key, rep_pal, rep_rgb, i)
+            commit_repoint(c, rep_key, rep_pal, rep_rgb)
             committed_plain[c] = key; updated[c] = True
             return True
 
@@ -2743,8 +2764,10 @@ def main():
                     bk, dYm, dYp, dCm = best_resident(c)
                     tier = tier_of(dYm, dYp, dCm) if bk is not None else -1
                 # 2. Good reuse (Same=exact / Near=tier0) points at resident VRAM.
+                selected_key = key if exact else bk
                 if ((exact or (bk is not None and tier == 0))
-                        and decision_fits(NAME_BYTES)):
+                        and decision_fits(
+                            NAME_BYTES, cell=c, key=selected_key)):
                     if exact:
                         dedup_saved += 1; dedup_mask[c] = True                # Same(完全一致流用=Sameへ畳む)
                         rk, rp, rr = key, int(assign[c]), plain_rgb[c]
@@ -2752,7 +2775,7 @@ def main():
                     else:
                         near_mask[c] = True; rk, rp, rr = bk, pat_pal[bk], pat_rgb[bk]
                     loaded_keys.add(rk); name_recs += 1; spent_tiles += NAME_BYTES
-                    repoint(c, rk, rp, rr, i); committed_plain[c] = key; updated[c] = True
+                    commit_repoint(c, rk, rp, rr); committed_plain[c] = key; updated[c] = True
                     return
                 # Cold exact and fallback share the remaining frame budget.
                 # Defer both so the exact selector can preserve every pending
@@ -2767,7 +2790,8 @@ def main():
                 key = plain_keys[c]
                 exact = alloc.is_resident(key) or key in loaded_keys
                 if exact:
-                    if not decision_fits(NAME_BYTES, limit=limit):
+                    if not decision_fits(
+                            NAME_BYTES, limit=limit, cell=c, key=key):
                         return False
                     dedup_saved += 1
                     dedup_mask[c] = True
@@ -2775,7 +2799,7 @@ def main():
                     loaded_keys.add(key)
                     name_recs += 1
                     spent_tiles += NAME_BYTES
-                    repoint(c, key, int(assign[c]), plain_rgb[c], i)
+                    commit_repoint(c, key, int(assign[c]), plain_rgb[c])
                     committed_plain[c] = key
                     updated[c] = True
                     return True
@@ -2783,9 +2807,11 @@ def main():
                 source = preload_source(key)
                 preload = source != pattern_supply.SOURCE_PRG
                 cost = NAME_BYTES + (0 if preload else PATTERN_BYTES)
-                if (decision_fits(cost, extra_cold=1)
+                if (decision_fits(
+                            cost, extra_cold=1, cell=c, key=key)
                         and decision_fits(
-                            cost, extra_cold=1, limit=limit)
+                            cost, extra_cold=1, limit=limit,
+                            cell=c, key=key)
                         and prg_source_fits(source, c)
                         and not (
                             cold_limit_active
@@ -2804,7 +2830,7 @@ def main():
                     append_resident_bucket(
                         key, (int(mbk[c, 0]), int(mbk[c, 1]), int(mbk[c, 2])))
                     name_recs += 1; spent_tiles += cost
-                    repoint(c, key, int(assign[c]), plain_rgb[c], i); committed_plain[c] = key; updated[c] = True
+                    commit_repoint(c, key, int(assign[c]), plain_rgb[c]); committed_plain[c] = key; updated[c] = True
                     return True
                 if _loop_profile:
                     _lp_counts["exact_blocked"] += 1
@@ -2816,7 +2842,8 @@ def main():
                 key = plain_keys[c]
                 exact = alloc.is_resident(key) or key in loaded_keys
                 if exact:
-                    if not decision_fits(NAME_BYTES):
+                    if not decision_fits(
+                            NAME_BYTES, cell=c, key=key):
                         if _loop_profile:
                             _lp_counts["flbk_budget_blocked"] += 1
                         return
@@ -2826,7 +2853,7 @@ def main():
                     loaded_keys.add(key)
                     name_recs += 1
                     spent_tiles += NAME_BYTES
-                    repoint(c, key, int(assign[c]), plain_rgb[c], i)
+                    commit_repoint(c, key, int(assign[c]), plain_rgb[c])
                     committed_plain[c] = key
                     updated[c] = True
                     return
@@ -2861,7 +2888,8 @@ def main():
                     if _loop_profile:
                         _lp_counts["flbk_no_candidate"] += 1
                     return
-                if not decision_fits(NAME_BYTES):
+                if not decision_fits(
+                        NAME_BYTES, cell=c, key=bk):
                     if _loop_profile:
                         _lp_counts["flbk_budget_blocked"] += 1
                     return
@@ -2877,7 +2905,7 @@ def main():
                         _lp_counts["flbk_accepted"] += 1
                     flbk_mask[c] = True
                     loaded_keys.add(bk); name_recs += 1; spent_tiles += NAME_BYTES
-                    repoint(c, bk, pat_pal[bk], pat_rgb[bk], i); committed_plain[c] = key; updated[c] = True
+                    commit_repoint(c, bk, pat_pal[bk], pat_rgb[bk]); committed_plain[c] = key; updated[c] = True
                     return
                 # 5. Miss(何もしない)
 
@@ -2981,7 +3009,9 @@ def main():
                             cost,
                             extra_cold=int(not in_vram),
                             extra_updates=int(not updated[c]),
-                            limit=lim):
+                            limit=lim,
+                            cell=c,
+                            key=key):
                         return
                     if ((not in_vram)
                             and (
@@ -3008,7 +3038,7 @@ def main():
                     if not updated[c]:
                         name_recs += 1
                     spent_tiles += cost
-                    repoint(c, key, int(assign[c]), plain_rgb[c], i)
+                    commit_repoint(c, key, int(assign[c]), plain_rgb[c])
                     committed_plain[c] = key; updated[c] = True; upgraded += 1
                 carried = (cell_tier < 9) & ~changed            # 変化せず近似のまま持ち越し(安定Near等)
                 cand_mask = near_mask | flbk_mask | carried

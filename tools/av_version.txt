@@ -13,6 +13,9 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e171: Reserve the preceding display's live pattern slots while selecting
+#         the next frame. Reject optional cache reuse that would overflow the
+#         temporary old-plus-new VRAM union before the final name-table DMA.
 #   e170/p143: Publish one statically trimmed movie-name-table band by DMA in
 #         the cadence-final VBlank for every player mode and cadence. Route the
 #         DEBUG HUD through the Window row plus sprites, remove NT0/NT1 flips,
@@ -1187,5 +1190,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
-e=170
+e=171
 p=143

@@ -8,6 +8,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tile_alloc import (
+    FrameTransitionGuard,
     TileAllocator,
     cold_transfer_order,
     count_slot_runs,
@@ -302,6 +303,48 @@ class ColdRunTests(unittest.TestCase):
     def test_transfer_order_follows_physical_slots(self):
         placements = [(5, True), (2, False), (1, True), (3, True)]
         self.assertEqual(cold_transfer_order(placements), (2, 3, 0))
+
+
+class FrameTransitionGuardTests(unittest.TestCase):
+    def test_previous_display_and_new_keys_share_the_pool(self):
+        alloc = TileAllocator(2, 3)
+        alloc.place_frame([(0, b"old-a"), (1, b"old-b")], 0)
+        guard = FrameTransitionGuard(alloc)
+
+        self.assertEqual(guard.capacity, 1)
+        self.assertTrue(guard.fits(0, b"new-a"))
+        guard.commit(0, b"new-a")
+        self.assertFalse(guard.fits(1, b"new-b"))
+
+    def test_resident_preceding_key_needs_no_extra_slot(self):
+        alloc = TileAllocator(2, 2)
+        alloc.place_frame([(0, b"old-a"), (1, b"old-b")], 0)
+        guard = FrameTransitionGuard(alloc)
+
+        self.assertEqual(guard.capacity, 0)
+        self.assertTrue(guard.fits(0, b"old-b"))
+        guard.commit(0, b"old-b")
+        self.assertEqual(guard.used, 0)
+
+    def test_replacing_a_cell_releases_its_unique_reservation(self):
+        alloc = TileAllocator(2, 3)
+        alloc.place_frame([(0, b"old-a"), (1, b"old-b")], 0)
+        guard = FrameTransitionGuard(alloc)
+
+        guard.commit(0, b"discarded")
+        self.assertTrue(guard.fits(0, b"replacement"))
+        guard.commit(0, b"replacement")
+        self.assertEqual(guard.used, 1)
+
+    def test_duplicate_new_key_uses_one_reservation(self):
+        alloc = TileAllocator(2, 3)
+        alloc.place_frame([(0, b"old-a"), (1, b"old-b")], 0)
+        guard = FrameTransitionGuard(alloc)
+
+        guard.commit(0, b"shared")
+        self.assertTrue(guard.fits(1, b"shared"))
+        guard.commit(1, b"shared")
+        self.assertEqual(guard.used, 1)
 
 
 if __name__ == "__main__":

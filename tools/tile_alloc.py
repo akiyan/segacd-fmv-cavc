@@ -57,6 +57,72 @@ def count_slot_runs(slots):
     return len(slot_runs(slots))
 
 
+class FrameTransitionGuard:
+    """Reserve the extra VRAM identities needed by one display transition.
+
+    Pattern loads finish before the final name-table DMA, so every slot used
+    by the preceding display remains live while the next display is prepared.
+    A selected key needs one additional slot unless its resident slot is
+    already part of that preceding display. The encoder may replace an
+    earlier choice for the same cell, so this guard reference-counts selected
+    keys and releases a no-longer-used reservation.
+
+    Construct the guard before making a frame's decisions and do not mutate
+    the allocator until those decisions are complete.
+    """
+
+    def __init__(self, allocator):
+        self._allocator = allocator
+        self.capacity = int(
+            allocator.POOL - np.count_nonzero(allocator.slot_refs))
+        self._cell_key = {}
+        self._extra_refs = {}
+
+    @property
+    def used(self):
+        return len(self._extra_refs)
+
+    def _needs_extra_slot(self, key):
+        slot = self._allocator.key_slot.get(key)
+        return slot is None or self._allocator.slot_refs[slot] == 0
+
+    def fits(self, cell, key):
+        """Return whether selecting ``key`` for ``cell`` fits the transition."""
+        cell = int(cell)
+        old_key = self._cell_key.get(cell)
+        if old_key == key:
+            return True
+        used = self.used
+        if (old_key is not None
+                and self._needs_extra_slot(old_key)
+                and self._extra_refs[old_key] == 1):
+            used -= 1
+        if (self._needs_extra_slot(key)
+                and key not in self._extra_refs):
+            used += 1
+        return used <= self.capacity
+
+    def commit(self, cell, key):
+        """Record one accepted selection, replacing that cell's prior choice."""
+        cell = int(cell)
+        if not self.fits(cell, key):
+            raise RuntimeError(
+                "frame transition exceeds the VRAM slots outside the "
+                "preceding display")
+        old_key = self._cell_key.get(cell)
+        if old_key == key:
+            return
+        if old_key is not None and self._needs_extra_slot(old_key):
+            remaining = self._extra_refs[old_key] - 1
+            if remaining:
+                self._extra_refs[old_key] = remaining
+            else:
+                del self._extra_refs[old_key]
+        self._cell_key[cell] = key
+        if self._needs_extra_slot(key):
+            self._extra_refs[key] = self._extra_refs.get(key, 0) + 1
+
+
 class TileAllocator:
     """Slot residency for one stream. Feed it each frame's updated cells in a fixed
     order; it assigns a VRAM slot per tile key and reports cold (new load) vs reuse.
