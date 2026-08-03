@@ -10,17 +10,26 @@ sar = "32:35"
 # -1 dB limiter lands near -10 LUFS integrated).
 audio_filter = "aformat=channel_layouts=mono,volume=8.8dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
+# The source's effective black sits at level 8 and its effective white at 239
+# (whole-movie histogram spikes), so large flat areas dither between the
+# outermost MD levels without the automatic range expansion.
+[source.preprocess]
+auto_range = true
+
 [video]
 mode = "H40"
 width = 320
-height = 152
+height = 144
 fit = "crop"
 master_denoise = false
-master_filter = "setsar=1,crop=320:152:0:34"
-raw_filter = "setsar=1,crop=320:152:0:34"
+# Whole-movie per-row luma: real picture rows are exactly 38..181 (144 rows).
+# The former 320x152 crop kept 4 near-black rows (level ~8 with occasional
+# edge bleed) on each side, which fed Near/Flbk garbage into the edge tiles.
+master_filter = "setsar=1,crop=320:144:0:38"
+raw_filter = "setsar=1,crop=320:144:0:38"
 
 [output]
-directory = "tmpfs/machi_op_H40_320x152_adpcm22/sim"
+directory = "tmpfs/machi_op_H40_320x144_adpcm22/sim"
 reuse = false
 emit_decisions = true
 

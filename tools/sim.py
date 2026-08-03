@@ -78,6 +78,7 @@ from palette_algorithms import (  # noqa: E402
     coherent_assign_idx, normalize_palette_algo, refine_one_line_palette,
     score_palettes,
 )
+import auto_range  # noqa: E402
 import output_dither  # noqa: E402
 from cbr_paths import sim_work_dir  # noqa: E402
 from video_geometry import (  # noqa: E402
@@ -345,6 +346,11 @@ PREPROCESS_WHITE_MIN = int(os.environ.get(
     "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN", "256"))
 SOURCE_PREPROCESS_VF = endpoint_snap_filter(
     PREPROCESS_BLACK_MAX, PREPROCESS_WHITE_MIN)
+# Whole-movie automatic black/white range expansion (issue #105). Runs after
+# extraction: one combined histogram over every master frame decides the
+# stretch, then master and raw are rewritten through one shared LUT.
+PREPROCESS_AUTO_RANGE = os.environ.get(
+    "CBRSIM_PREPROCESS_AUTO_RANGE", "0") != "0"
 # 深い暗転で区切り、暗転の瞬間に区間別60色パレットへ差し替える(CRAM総入替)。
 SEGPAL_ON = True
 PAL_ALGO = normalize_palette_algo()                          # stl4 (legacy) / mosaic-gm (opt-in while tuning)
@@ -1326,6 +1332,20 @@ def main():
                  "-vn", *(["-af", AUDIO_AF] if AUDIO_AF else []),
                  "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
                  str(OUT / AUDIO_FILE)])
+            if PREPROCESS_AUTO_RANGE:
+                masters = sorted(master_dir.glob("*.png"))
+                black, white = auto_range.detect_range(
+                    auto_range.scan_histogram(masters))
+                if (black, white) == (0, 255):
+                    print("auto_range: no dominant near-endpoint spike; "
+                          "levels unchanged")
+                else:
+                    print(f"auto_range: stretching black={black} "
+                          f"white={white} to 0..255 (master+raw)")
+                    auto_range.rewrite_files(
+                        masters + sorted(raw_dir.glob("*.png")),
+                        auto_range.build_lut(black, white),
+                        workers=extract_workers)
     _t = _mark("Extract", _t)
     frames = sorted(master_dir.glob("*.png"))
     n = len(frames)

@@ -419,6 +419,7 @@ tmp/<profile>/
 |---|---|---|
 | `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | Input and native timing. `sar` repairs source metadata. `audio_filter` is an ffmpeg `-af` chain applied to the source audio before the mono 22.05 kHz conversion (e.g. `loudnorm=I=-8:TP=-1:LRA=7` to raise a quiet master's loudness); omission extracts the audio as-is. |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
+| `[source.preprocess]` | optional `auto_range` | Whole-movie automatic black/white dynamic-range expansion after extraction. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | Human-readable requested sim identity, decoded-input reuse, and decision-log output. Sim bytes use a deterministic direct tmpfs path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
@@ -435,6 +436,17 @@ local 3x3 luma-based attenuation. H32 pixel aspect is 8:7 and H40 is 32:35.
 `active_tiles` is the number of tiles ever non-black after conversion. Omission
 uses the full grid. A smaller value is verified against every master frame.
 It affects accounting, not the profile's cold cap.
+
+`auto_range = true` scans one combined RGB histogram over every extracted
+master frame. A dominant level spike just above black (level 1..16) or just
+below white (level 239..254) — carrying at least 1% of all samples and standing
+well clear of the rest of its window and the first level beyond it — marks a
+source whose effective black or white sits slightly off the endpoint and
+therefore dithers between the lowest or highest MD levels. Both the master and
+raw sequences are then rewritten through one linear LUT shared by all channels
+(so hue stays stable) that stretches the detected points exactly to 0 and 255.
+Sources whose histogram already touches the endpoints, or whose near-endpoint
+region is a smooth ramp rather than a spike, stay unchanged. Default off.
 
 The loader rejects unknown keys, unsupported modes, unknown output-dither
 names, non-tile-aligned dimensions, unsafe profile names, a
@@ -871,6 +883,7 @@ tmp/<profile>/
 |---|---|---|
 | `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | inputとnative timing。`sar` はsource metadataを補正する。`audio_filter` はmono 22.05kHz変換前のsource audioへ適用するffmpeg `-af` chain（例: 音圧の低いmasterを持ち上げる `loudnorm=I=-8:TP=-1:LRA=7`）。省略時は無加工で抽出する。 |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
+| `[source.preprocess]` | optional `auto_range` | 展開後に動画全編で判定する黒/白dynamic-range自動拡張。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, optional `reuse`, `emit_decisions` | human-readableなsim要求identity、decoded-input reuse、decision-log output。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
@@ -886,6 +899,15 @@ sourceだけ `edge-attenuated-bayer` を指定します。H32 pixel aspectは8:7
 `active_tiles` は変換後に一度でもnon-blackになるtile数です。省略時はfull gridを使い、
 小さい値は全master frameに対して検証します。accountingには影響しますがprofileの
 cold capには影響しません。
+
+`auto_range = true` は展開済み全master frameの結合RGB histogramを1本走査します。
+黒のすぐ上(level 1..16)または白のすぐ下(level 239..254)にある支配的なlevel spike
+(全sampleの1%以上を占め、window内の他levelとwindow直外のlevelを明確に上回るもの)
+は、事実上の黒/白が端から少しずれていて最下位/最上位MD level間でditherになる
+sourceを示します。検出時はmasterとrawの両sequenceを全channel共通の線形LUTで
+書き換え、検出pointをちょうど0と255まで引き伸ばします(共通LUTなので色相は
+変わりません)。histogramが既に端へ達しているsourceや、端付近がspikeではなく
+滑らかな勾配のsourceは変更しません。defaultはoffです。
 
 loaderは未知key、未対応mode、未知のoutput-dither名、tile境界に揃わないdimension、
 安全でないprofile名、未指定・非positive・非integerのcold cap、resident-pool sizeを

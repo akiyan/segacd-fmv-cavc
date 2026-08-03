@@ -305,7 +305,7 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 | Straight sim output, video+audio, no overlay (`export_sim_video.py`) | printed direct tmpfs path ending in `<stem>_sim.mp4` |
 | Sim inputs, stats, and decision data | deterministic direct tmpfs `.../sim-.../data/` path; analysis creates `preview/` and `catmap/` there on demand |
 | Lossless emulator capture (`record`) | printed direct tmpfs path ending in `<stem>_emu_lossless.mkv` |
-| Verification preview (`record`) | printed direct tmpfs path ending in `<stem>_emu_preview.mp4` |
+| Verification preview (`record`, opt-in `--preview` only) | printed direct tmpfs path ending in `<stem>_emu_preview.mp4` |
 | Upload compilation (`compilation`) | printed direct tmpfs path ending in `<stem>_emu.mp4` |
 
 - `<input-basename>`: the source file name without extension.
@@ -599,12 +599,13 @@ path for verification and upload.
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 180 --tag STEM_emu --out STEM_emu_preview.mp4
+  --seconds 180 --tag STEM_emu
 ```
 
 - The high-level recorder defaults to FFV1/FLAC and writes its bounded
-  pixel-lossless MKV, preview, Replay, and emulator logs into one leased tmpfs
-  directory. It uses the qualified fixed-Replay offline path by default: the
+  pixel-lossless MKV, Replay, and emulator logs into one leased tmpfs
+  directory. The lossy H.264 verification preview is opt-in via `--preview`
+  and is not produced normally; verify with stills extracted from the MKV. It uses the qualified fixed-Replay offline path by default: the
   same DEBUG disc, Mega-CD startup, CD player, START transition, movie and tail,
   with audio sync, rate control and video vsync disabled so the fixed
   emulator-frame run can proceed uncapped.

@@ -201,15 +201,15 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         profile = load_profile(root / "profiles/machi-op.toml")
         env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
-        self.assertEqual(env["CBRSIM_H"], "152")
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "760")
+        self.assertEqual(env["CBRSIM_H"], "144")
+        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "720")
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
         self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "crop")
         self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
         self.assertEqual(
-            env["CBRSIM_MASTER_VF"], "setsar=1,crop=320:152:0:34")
+            env["CBRSIM_MASTER_VF"], "setsar=1,crop=320:144:0:38")
         self.assertEqual(
-            env["CBRSIM_RAW_VF"], "setsar=1,crop=320:152:0:34")
+            env["CBRSIM_RAW_VF"], "setsar=1,crop=320:144:0:38")
         # The source-qualified encoder ceiling is recorded directly.
         self.assertEqual(env["CBRSIM_COLD_CAP"], "480")
 
@@ -357,6 +357,32 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 "[source.preprocess.endpoint_snap]\nblack_max = 2\n\n[video]"))
             with self.assertRaisesRegex(ValueError, "missing.*white_min"):
                 load_profile(path)
+
+    def test_auto_range_must_be_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auto-range.toml"
+            path.write_text(PROFILE.replace(
+                "[video]",
+                "[source.preprocess]\nauto_range = 1\n\n[video]"))
+            with self.assertRaisesRegex(ValueError, "auto_range must be a boolean"):
+                load_profile(path)
+
+    def test_auto_range_exports_preprocess_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auto-range.toml"
+            path.write_text(PROFILE.replace(
+                "[video]",
+                "[source.preprocess]\nauto_range = true\n\n[video]"))
+            env = apply_profile_env(load_profile(path), {})
+            self.assertEqual(env["CBRSIM_PREPROCESS_AUTO_RANGE"], "1")
+
+    def test_profile_without_auto_range_disables_inherited_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auto-range.toml"
+            path.write_text(PROFILE)
+            env = apply_profile_env(
+                load_profile(path), {"CBRSIM_PREPROCESS_AUTO_RANGE": "1"})
+            self.assertEqual(env["CBRSIM_PREPROCESS_AUTO_RANGE"], "0")
 
     def test_unknown_resize_filter_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
