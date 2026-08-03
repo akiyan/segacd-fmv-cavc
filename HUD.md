@@ -1,6 +1,7 @@
 # On-hardware DEBUG HUD
 
-The DEBUG player writes a values-only hexadecimal HUD into Plane A. It is
+The DEBUG player writes a values-only hexadecimal HUD through the fixed top
+Window row and one-tile sprites on the second row. It is
 designed for native-resolution recording and deterministic OCR. The HUD has no
 labels on the console; every decoded value is exposed to tools with a
 descriptive field name.
@@ -16,6 +17,11 @@ make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 43
 hexadecimal digits. H32 wraps after 32 cells and uses 11 cells on a second
 row. H40 wraps after 40 cells and uses three cells on a second row.
+
+The first 32 H32 or 40 H40 digits are one-word Window name-table entries. Each
+second-row digit is one four-word sprite-table record, so the cadence-final HUD
+DMAs transfer 76 words in H32 and 52 words in H40. The movie Plane A table is
+not used as a HUD route.
 
 ## Physical layout
 
@@ -50,7 +56,7 @@ The table lists logical cell offsets before native-width wrapping. H32 maps
 | `transfer_vblanks` | 36 | 1 | Fresh transfer budgets opened this frame |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
 | `pattern_dma_ready_vcounter` | 39-40 | 2 | Pattern-run ready V-counter before the fresh-blank wait |
-| `name_table_dma_ready_vcounter` | 41-42 | 2 | Name-table path ready V-counter before the cadence-final VBlank wait; zero when that path is absent |
+| `name_table_dma_ready_vcounter` | 41-42 | 2 | Name-table path ready V-counter before the cadence-final VBlank wait |
 
 The player-only pre-roll sentinel uses `frame=FFFF`. It is an OCR anchor, not a
 stream frame, and is never written to the HUD TSV. Movie frame 0 remains in the
@@ -84,7 +90,7 @@ TSV for sequence alignment but is untimed boot staging.
 | `transfer_vblanks` | Main | per frame | Number of fresh transfer budgets opened |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
 | `pattern_dma_ready_vcounter` | Main | per frame | Raw V-counter when Main is ready to consume the first pattern run, immediately before waiting for a fresh blank head |
-| `name_table_dma_ready_vcounter` | Main | per frame | Raw V-counter when the fixed-N H40 name-table path is ready, immediately before waiting for the cadence-final VBlank |
+| `name_table_dma_ready_vcounter` | Main | per frame | Raw V-counter when the single-table DMA path is ready, immediately before waiting for the cadence-final VBlank |
 
 `sector_slip`, `control_desync`, `audio_resync`, and
 `msf_gap_recoveries` are four-bit cumulative counters. A transition is the
@@ -97,15 +103,15 @@ The transport-retry remainder is
 was spent; a larger wait can also mean the Sub path reached the next sector
 earlier.
 
-On the specialized fixed-N H40 path, Main asserts `CMD_SWAP` without blocking
-after the final pattern DMA and repair and after every read from the current
-Word RAM bank. Main then continues the name-table, CRAM, and flip path while
+On every generic and specialized H32/H40 path, Main asserts `CMD_SWAP` without
+blocking after the final pattern DMA and repair and after every read from the current
+Word RAM bank. Main then continues the name-table, HUD, CRAM, and publication path while
 Sub exchanges the banks, flushes pending WordBuf data, and pumps the CD. At the
 next playback-loop head, `sub_wait_scanlines` measures only the time from
 entering completion polling until Sub reports ready or end. Zero means the
 handoff completed during the overlap; it does not mean that the physical bank
-exchange took zero time. Paths without this overlap continue to expose their
-ordinary blocking handoff wait.
+exchange took zero time. Frame 0 and the final-frame end request remain
+synchronous because they have no safe future-frame bank request to overlap.
 
 The pattern-ready and name-table-ready fields retain the raw eight-bit NTSC V28
 V-counter. On the current raster, visible lines 0-223 use `00-DF`; blank starts
@@ -134,10 +140,10 @@ gate JSON.
 
 `/hudline` also converts `name_table_dma_ready_vcounter` into the derived
 `name_table_dma_ready_pressure` row. Its deadline is the cadence-final VBlank
-head that carries the H40 name-table DMA: the second VBlank at 30 fps and the
-fourth at 15 fps. `transfer_vblanks` identifies how many fresh pattern budgets
-have already opened. Readiness earlier than the active raster immediately
-before that target clamps to pressure zero. In that final active raster, raw
+head that carries the single-table DMA: VBlank 4 at 15 fps, alternating
+VBlank 2/3 at 24 fps, and VBlank 2 at 30 fps. `transfer_vblanks` identifies
+how many fresh pattern budgets have already opened. Readiness earlier than the
+active raster immediately before that target clamps to pressure zero. In that final active raster, raw
 scanlines `00..DF` map directly to pressure; scanline 0 is pressure zero and
 `E0` is zero margin.
 
@@ -148,8 +154,8 @@ visible. A visible sample after the target budget opened, or a third PT budget
 at 30 fps, becomes the `0x100` escaped-target-blank sentinel. A blank-phase raw
 sample before the target belongs to the preceding budget and clamps to zero,
 avoiding the repeated `E5..EA` ambiguity. The row has an orange `E0`
-target-head guide, and values after it are red. A movie without this DMA path
-has no NT pressure points. Raw `name_table_dma_ready_vcounter` remains
+target-head guide, and values after it are red. Raw
+`name_table_dma_ready_vcounter` remains
 unchanged in the TSV and gate JSON.
 
 ## Upload gate
@@ -255,7 +261,8 @@ diagnostic interface.
 
 # 実機 DEBUG HUD
 
-DEBUG player は値だけの 16 進 HUD を Plane A へ書きます。Native-resolution
+DEBUG playerは値だけの16進HUDを、固定top Window rowと2行目の1-tile spriteで
+書きます。Native-resolution
 recording から deterministic に OCR するための HUD です。実機画面には label を
 出さず、tool が decode した値はすべて説明的な field name で公開します。
 
@@ -270,6 +277,10 @@ make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 43 桁の
 16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 11 cell を使います。
 H40 は 40 cell の後で折り返し、2 行目の 3 cell を使います。
+
+先頭のH32 32桁 / H40 40桁は1-word Window name-table entryです。2行目の各桁は
+4-word sprite-table recordなので、cadence-final HUD DMAはH32で76 word、H40で
+52 wordを転送します。Movie Plane A tableはHUD routeに使いません。
 
 ## 物理 layout
 
@@ -304,7 +315,7 @@ confidence check に使います。
 | `transfer_vblanks` | 36 | 1 | この frame で開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | 37-38 | 2 | Final transfer exit V-counter |
 | `pattern_dma_ready_vcounter` | 39-40 | 2 | Fresh-blank 待ち直前の pattern-run ready V-counter |
-| `name_table_dma_ready_vcounter` | 41-42 | 2 | Cadence-final VBlank 待ち直前の name-table path ready V-counter。該当 path がなければ 0 |
+| `name_table_dma_ready_vcounter` | 41-42 | 2 | Cadence-final VBlank待ち直前のname-table path ready V-counter |
 
 Player-only pre-roll sentinel は `frame=FFFF` です。OCR anchor であり stream frame
 ではなく、HUD TSV にも書きません。Movie frame 0 は sequence alignment のため
@@ -338,7 +349,7 @@ TSV に残しますが、untimed boot staging です。
 | `transfer_vblanks` | Main | per frame | 開いた fresh transfer budget 数 |
 | `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
 | `pattern_dma_ready_vcounter` | Main | per frame | Main が最初の pattern run を consume 可能になり、fresh blank head を待つ直前の raw V-counter |
-| `name_table_dma_ready_vcounter` | Main | per frame | fixed-N H40 name-table path が ready になり、cadence-final VBlank を待つ直前の raw V-counter |
+| `name_table_dma_ready_vcounter` | Main | per frame | single-table DMA pathがreadyになり、cadence-final VBlankを待つ直前のraw V-counter |
 
 `sector_slip`、`control_desync`、`audio_resync`、
 `msf_gap_recoveries` は 4-bit cumulative counter です。Transition が event で、
@@ -351,14 +362,15 @@ Transport-retry remainder は
 使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
 結果でもあり得ます。
 
-Specialized fixed-N H40 pathでは、Mainは最後のpattern DMAと先頭word補修、および
-現在のWord RAM bankに対する全readを終えた後、blockingせず`CMD_SWAP`をassert
-します。その後Mainがname-table、CRAM、flip pathを進む間に、Subはbank交換、
+すべてのgeneric / specialized H32/H40 pathで、Mainは最後のpattern DMAと
+先頭word補修、および現在のWord RAM bankに対する全readを終えた後、
+blockingせず`CMD_SWAP`をassert
+します。その後Mainがname-table、HUD、CRAM、publication pathを進む間に、Subはbank交換、
 pending WordBuf dataのflush、CD pumpを行います。次のplayback-loop先頭で、
 `sub_wait_scanlines`は完了pollingに入ってからSubがreadyまたはendを返すまでの
 時間だけを測ります。ゼロはhandoffが重なり実行中に完了したという意味であり、
-物理bank交換の所要時間がゼロという意味ではありません。この重なり実行を
-持たないpathでは、通常のblocking handoff待ちをそのまま示します。
+物理bank交換の所要時間がゼロという意味ではありません。Frame 0とfinal-frameの
+end requestは、安全に重ねられるfuture-frame bank requestがないため同期のままです。
 
 Pattern-ready field と name-table-ready field は NTSC V28 の raw 8-bit
 V-counter を保持します。現在の raster では visible line 0-223 が `00-DF`、
@@ -385,9 +397,9 @@ blank-phase readyはまだその直前blankに属します。`pass2_delay_q4`で
 `pattern_dma_ready_vcounter`は変更しません。
 
 `/hudline` は `name_table_dma_ready_vcounter` も導出値
-`name_table_dma_ready_pressure` の row へ変換します。Deadline は H40
-name-table DMA を実行する cadence-final VBlank head、つまり 30 fps なら 2 回目、
-15 fps なら 4 回目です。`transfer_vblanks` で、すでに開いた fresh pattern
+`name_table_dma_ready_pressure`のrowへ変換します。Deadlineはsingle-table DMAを
+実行するcadence-final VBlank headで、15 fpsは4回目、24 fpsは2/3回目を交互、
+30 fpsは2回目です。`transfer_vblanks`で、すでに開いたfresh pattern
 budget 数を判定します。Target 直前の active raster より早く ready なら逼迫度 0
 へ clamp します。その最後の active raster では raw scanline `00..DF` をそのまま
 逼迫度にし、scanline 0 が逼迫度 0、`E0` が余裕 0 です。
@@ -399,8 +411,7 @@ budgetを開いた後のvisible sample、または30 fpsで3本目のPT budget�
 target blankを抜けた`0x100` sentinelにします。Targetより前のblank-phase raw
 sampleは一つ前のbudgetに属するため0へclampし、繰り返す`E5..EA`の曖昧さを
 持ち込みません。Rowにはorangeの`E0` target-head guideを引き、それより後の値は
-redにします。このDMA pathがないmovieにはNT pressureの点を表示しません。TSVと
-gate JSONのraw `name_table_dma_ready_vcounter`は変更しません。
+redにします。TSVとgate JSONのraw `name_table_dma_ready_vcounter`は変更しません。
 
 ## Upload gate
 

@@ -139,7 +139,7 @@ controls.
 Cold means a 32-byte pattern written to VRAM in the current timed frame,
 regardless of whether its source is Prg, WordBuf, or DicBuf. Every profile must
 set the positive integer `[encoder].cold_cap`; there is no fps-derived fallback
-or diagnostic override. The value must not exceed the 1,535-tile resident pool.
+or diagnostic override. The value must not exceed the 1,663-tile resident pool.
 
 The checked-in profile records the source's qualified playback ceiling.
 Temporary comparison profiles use the same key, so artifact identity, tmpfs
@@ -243,7 +243,9 @@ slot order while name updates remain in cell order.
 | `VB_WORDS_H32` | 2,800 DMA-word equivalents/VBlank | ip | Conservative H32 VBlank work budget. |
 | `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
-| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU handlers and blitters. |
+| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU bitmap handlers. |
+| movie name-table DMA | `(rows - 1) * 64 + cols` words/frame | ip / analysis | One statically trimmed 64-pitch band into the single table at `0xE000`. |
+| DEBUG HUD DMA | H32 76 / H40 52 words/frame | ip / analysis | One Window-row word per screen column plus one four-word sprite record per spill digit. |
 | `O_LOADS v2` records | at most the grid cell count; exact parity peaks in PSUP | sp / ip / sim / pack | Sub-built source-aware physical transfer plan consumed by Main in place. |
 | run record size | 22 bytes | sp / ip | Pre-swizzled VDP length/source registers, command, raw destination, and raw source. |
 
@@ -256,6 +258,13 @@ the resulting extra control bytes, `O_LOADS v2` record, and first-word repair
 are all charged before playback. Each parity's Word-RAM reservation is sized
 from the exact whole-encode record and inline-Prg peak, so there is no separate
 Main-RAM record limit.
+
+Every generic and specialized H32/H40 player publishes the movie table in the
+cadence-final VBlank; frame cadence does not change this workload. A 40x19
+grid transfers 1,192 movie words, full-height H40 transfers 1,768, and
+full-height H32 transfers 1,760. DEBUG then transfers its Window row and spill
+sprites separately. These physical words are included in the R2V analysis
+value and in the final-VBlank reserve. Release builds omit the HUD words.
 
 ## Physical delivery allowance
 
@@ -303,7 +312,7 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 
 | Name | Default | Meaning |
 |---|---:|---|
-| resident VRAM pool | 1,535 tiles | Tiles 1–1,535, ending before the first movie name table at `0xC000`. |
+| resident VRAM pool | 1,663 tiles | Tiles 1–1,663, ending before the fixed HUD font at `0xD000`; the single movie name table starts at `0xE000`. |
 | HUD font | 16 tiles at tile 1,664 | Shared by DEBUG and release startup. |
 | `CBRSIM_RESIDENT_K` / `RESIDENT_BW` | 24 / 24 | Candidate search depth and rendered mean-colour bucket width. |
 | `CBRSIM_NEAR_YM` / `_YP` / `_C` | 10 / 28 / 24 | Near mean/max luma and mean chroma bounds. |
@@ -426,14 +435,14 @@ dimensions, unsafe profile names, a missing/non-positive/non-integer cold cap,
 a cold cap above the resident-pool size, and a negative or non-integer CRAM-risk
 search length.
 GPU, the
-1,535-tile resident pool, dither, segmented palettes, Near, boot prefetch, and
+1,663-tile resident pool, dither, segmented palettes, Near, boot prefetch, and
 the four physical supplies are fixed behavior.
 
 ## Build switches
 
 | Name | Default | Meaning |
 |---|---:|---|
-| `MAIN_CODEGEN` | 1 | Generate specialized bitmap handlers and name-table blitters. Zero selects the reference bit loop. |
+| `MAIN_CODEGEN` | 1 | Generate specialized bitmap handlers. Zero selects the reference bit loop. |
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
 
@@ -599,7 +608,7 @@ APPLY flow、物理pattern delivery、cold-run suffixは継続します。
 
 Coldは、sourceがPrg、WordBuf、DicBufのどれでも、現在のtimed frameでVRAMへ書く
 32-byte patternです。すべてのprofileが正のinteger `[encoder].cold_cap` を必ず指定し、
-fps由来fallbackや診断overrideは使いません。値は1,535-tile resident pool以下にします。
+fps由来fallbackや診断overrideは使いません。値は1,663-tile resident pool以下にします。
 
 checked-in profileは、そのsourceでqualificationした再生上限を記録します。一時的な比較
 profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、pack、analysisへ
@@ -696,7 +705,9 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 | `VB_WORDS_H32` | 2,800 DMA-word相当/VBlank | ip | 安全側のH32 VBlank work budget。 |
 | `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
-| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU handlerとblitter。 |
+| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。 |
+| movie name-table DMA | `(rows - 1) * 64 + cols` word/frame | ip / analysis | `0xE000`の単一tableへ送る、静的にtrimした1本の64-pitch band。 |
+| DEBUG HUD DMA | H32 76 / H40 52 word/frame | ip / analysis | screen columnごとのWindow-row wordと、spill digitごとの4-word sprite record。 |
 | `O_LOADS v2` records | grid cell数以下。正確なparityピークはPSUP | sp / ip / sim / pack | Subが構築しMainがin-placeで消費するsource-aware physical transfer計画。 |
 | run record size | 22 bytes | sp / ip | 事前変換済みVDP length/source register、command、raw destination、raw source。 |
 
@@ -707,6 +718,12 @@ descriptorはpack前にparity ring末尾でも分割するため、追加control
 `O_LOADS v2` record、first-word repairをplayback前にすべてchargeします。各parityの
 Word-RAM予約はencode全体の正確なrecordとinline Prgピークから決めるため、独立した
 Main-RAM record上限はありません。
+
+すべてのgeneric / specialized H32/H40 playerはcadence-final VBlankでmovie tableを
+publishし、frame cadenceによってこのworkloadは変わりません。40x19 gridはmovie
+wordを1,192、full-height H40は1,768、full-height H32は1,760転送します。DEBUGは
+続けてWindow rowとspill spriteを別DMAします。これらの物理wordはR2V解析値と
+final-VBlank reserveに含まれます。Release buildはHUD wordを省きます。
 
 ## 物理delivery allowance
 
@@ -752,7 +769,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 
 | Name | Default | 意味 |
 |---|---:|---|
-| resident VRAM pool | 1,535 tiles | tile 1〜1,535。最初のmovie name table `0xC000` より前まで。 |
+| resident VRAM pool | 1,663 tiles | tile 1〜1,663。固定HUD font `0xD000`の直前までで、単一movie name tableは`0xE000`から。 |
 | HUD font | tile 1,664から16 tiles | DEBUGとrelease startupで共有。 |
 | `CBRSIM_RESIDENT_K` / `RESIDENT_BW` | 24 / 24 | candidate search深さとrendered mean-colour bucket幅。 |
 | `CBRSIM_NEAR_YM` / `_YP` / `_C` | 10 / 28 / 24 | Nearのmean/max luma、mean chroma境界。 |
@@ -865,14 +882,14 @@ cold capには影響しません。
 loaderは未知key、未対応mode、tile境界に揃わないdimension、安全でないprofile名、
 未指定・非positive・非integerのcold cap、resident-pool sizeを超えるcold cap、負または
 非integerのCRAM-risk search長を拒否します。
-GPU、1,535-tile resident pool、dither、
+GPU、1,663-tile resident pool、dither、
 segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 
 ## Build switch
 
 | Name | Default | 意味 |
 |---|---:|---|
-| `MAIN_CODEGEN` | 1 | specialized bitmap handlerとname-table blitterを生成する。zeroはreference bit loop。 |
+| `MAIN_CODEGEN` | 1 | specialized bitmap handlerを生成する。zeroはreference bit loop。 |
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
 
