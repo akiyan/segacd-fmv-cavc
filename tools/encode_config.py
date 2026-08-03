@@ -69,6 +69,7 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_AUDIO_AF": "",
     "CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX": "-1",
     "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN": "256",
+    "CBRSIM_PREPROCESS_AUTO_RANGE": "0",
     "CBRSIM_RESIZE_FILTER": "lanczos",
     "CBRSIM_MASTER_DENOISE": "1",
     "CBRSIM_OUTPUT_DITHER": "bayer",
@@ -276,7 +277,7 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")
-    unknown_preprocess = set(preprocess) - {"endpoint_snap"}
+    unknown_preprocess = set(preprocess) - {"endpoint_snap", "auto_range"}
     if unknown_preprocess:
         raise ValueError(
             f"{profile_path}: unknown [source.preprocess] keys: "
@@ -304,6 +305,10 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         if black_max >= white_min:
             raise ValueError(
                 f"{profile_path}: endpoint snap black_max must be below white_min")
+    if "auto_range" in preprocess and not isinstance(
+            preprocess["auto_range"], bool):
+        raise ValueError(
+            f"{profile_path}: source.preprocess.auto_range must be a boolean")
     source_canvas = data.get("analysis", {}).get("source_canvas")
     if source_canvas is not None:
         if (not isinstance(source_canvas, list) or len(source_canvas) != 2
@@ -363,6 +368,12 @@ def apply_profile_env(
             scalar = _toml_scalar(value)
             env[name] = scalar
             applied[name] = scalar
+    auto_range = (profile.data["source"].get("preprocess", {})
+                  .get("auto_range"))
+    if auto_range is not None:
+        scalar = _toml_scalar(auto_range)
+        env["CBRSIM_PREPROCESS_AUTO_RANGE"] = scalar
+        applied["CBRSIM_PREPROCESS_AUTO_RANGE"] = scalar
     env["CBRSIM_CONFIG"] = str(profile.path)
     applied["CBRSIM_CONFIG"] = str(profile.path)
     return applied

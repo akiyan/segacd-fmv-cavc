@@ -358,6 +358,32 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "missing.*white_min"):
                 load_profile(path)
 
+    def test_auto_range_must_be_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auto-range.toml"
+            path.write_text(PROFILE.replace(
+                "[video]",
+                "[source.preprocess]\nauto_range = 1\n\n[video]"))
+            with self.assertRaisesRegex(ValueError, "auto_range must be a boolean"):
+                load_profile(path)
+
+    def test_auto_range_exports_preprocess_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auto-range.toml"
+            path.write_text(PROFILE.replace(
+                "[video]",
+                "[source.preprocess]\nauto_range = true\n\n[video]"))
+            env = apply_profile_env(load_profile(path), {})
+            self.assertEqual(env["CBRSIM_PREPROCESS_AUTO_RANGE"], "1")
+
+    def test_profile_without_auto_range_disables_inherited_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "auto-range.toml"
+            path.write_text(PROFILE)
+            env = apply_profile_env(
+                load_profile(path), {"CBRSIM_PREPROCESS_AUTO_RANGE": "1"})
+            self.assertEqual(env["CBRSIM_PREPROCESS_AUTO_RANGE"], "0")
+
     def test_unknown_resize_filter_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "resize-filter.toml"
