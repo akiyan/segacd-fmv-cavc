@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e176: Allow a per-VBlank-interval cold cap spec ("2:170,3:250") so a
+#         multi-interval display cadence gives each frame the decode ceiling
+#         of its own slot. The 24 fps 2/3 cadence schedules 2-VBlank frames
+#         at the lower cap while 3-VBlank frames keep the higher one; layout
+#         and reservation envelopes use the largest cap.
 #   e175: Add opt-in whole-movie automatic black/white dynamic-range expansion
 #         (source.preprocess.auto_range). One combined RGB histogram over the
 #         extracted master detects a dominant near-endpoint level spike and
@@ -1213,5 +1218,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260803
-e=175
+e=176
 p=144
