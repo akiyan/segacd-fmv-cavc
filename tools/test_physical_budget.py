@@ -294,6 +294,22 @@ class PhysicalBudgetPlanTests(unittest.TestCase):
             plan.realized_control_block_bytes, realized_control)
         self.assertEqual(plan.planning_passes, 1)
 
+    def test_shared_sector_planner_accepts_per_frame_cold_caps(self) -> None:
+        planner = physical_budget.SharedSectorPlanner(
+            5,
+            max_prg_patterns=480,
+            max_cold_patterns=[250, 170, 250, 170, 250],
+            prebuffer_capacity_patterns=640,
+            frame_sectors=5,
+            fps=24,
+        )
+        for frame, expected in enumerate([0, 170, 250, 170, 250]):
+            limit = planner.begin_frame(frame)
+            self.assertEqual(limit.cold_patterns, expected)
+            planner.commit_frame(
+                frame, prg_patterns=0, cold_patterns=0,
+                control_block_bytes=0)
+
     def test_shared_sector_forward_ring_check_limits_a_late_burst(
             self) -> None:
         planner = physical_budget.SharedSectorPlanner(

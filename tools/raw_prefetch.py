@@ -118,7 +118,7 @@ def forecast_requests(
     protected_frames: Sequence[np.ndarray],
     *,
     vram_tiles: int,
-    max_cold: int,
+    max_cold: int | Sequence[int] | np.ndarray,
     boot_prefetch_requests: Sequence[tuple[bytes, int]] = (),
 ) -> PrefetchForecast:
     """Return a conservative distinct-pattern request list for each frame.
@@ -134,7 +134,8 @@ def forecast_requests(
     if n == 0:
         empty = np.zeros(0, np.int64)
         return PrefetchForecast((), empty, empty.copy())
-    if min(vram_tiles, max_cold) < 0:
+    frame_max_cold = np.broadcast_to(np.asarray(max_cold, np.int64), (n,))
+    if min(vram_tiles, int(frame_max_cold.min())) < 0:
         raise ValueError("prefetch forecast limits must be non-negative")
 
     first_patterns = np.asarray(pattern_frames[0])
@@ -177,7 +178,8 @@ def forecast_requests(
         if frame == 0 or not cold:
             selected: tuple[bytes, ...] = ()
         else:
-            move = min(cold, max(0, cold - max_cold)) if max_cold else 0
+            frame_cap = int(frame_max_cold[frame])
+            move = min(cold, max(0, cold - frame_cap)) if frame_cap else 0
             ranked = sorted(
                 cold_counts,
                 key=lambda key: (-cold_counts[key], key),

@@ -140,7 +140,7 @@ def predict_update_demands(
     vram_tiles: int,
     name_bytes: int = 2,
     pattern_bytes: int = 32,
-    max_cold: int = 0,
+    max_cold: int | Sequence[int] | np.ndarray = 0,
     protected_frames: Sequence[np.ndarray] | None = None,
     forced_update_frames: Sequence[bool] | None = None,
     boot_prefetch_requests: Sequence[tuple[bytes, int]] = (),
@@ -151,7 +151,8 @@ def predict_update_demands(
     eventual approximations.  It uses the shared VRAM allocator, so recurring
     patterns cost only a name-table write while newly allocated patterns cost
     both a name-table write and pattern payload.  ``max_cold`` clips demand
-    that the hardware could not apply in one frame anyway.
+    that the hardware could not apply in one frame anyway; a per-frame
+    sequence expresses a VBlank-cadence-dependent cap.
 
     ``protected_frames`` optionally selects the changes that count toward the
     second, narrower demand trace. ``forced_update_frames`` marks frames whose
@@ -183,7 +184,7 @@ def predict_update_demand_details(
     vram_tiles: int,
     name_bytes: int = 2,
     pattern_bytes: int = 32,
-    max_cold: int = 0,
+    max_cold: int | Sequence[int] | np.ndarray = 0,
     protected_frames: Sequence[np.ndarray] | None = None,
     forced_update_frames: Sequence[bool] | None = None,
     boot_prefetch_requests: Sequence[tuple[bytes, int]] = (),
@@ -203,7 +204,9 @@ def predict_update_demand_details(
             empty, empty.copy(), empty.copy(), empty.copy(), (), (), ())
     if vram_tiles <= 0:
         raise ValueError("vram_tiles must be positive")
-    if name_bytes < 0 or pattern_bytes < 0 or max_cold < 0:
+    frame_max_cold = np.broadcast_to(
+        np.asarray(max_cold, np.int64), (n,))
+    if name_bytes < 0 or pattern_bytes < 0 or int(frame_max_cold.min()) < 0:
         raise ValueError("byte costs and max_cold must be non-negative")
 
     first_patterns = np.asarray(pattern_frames[0])
@@ -269,12 +272,13 @@ def predict_update_demand_details(
         if frame_idx > 0:
             exact_cold = len(exact_cold_keys)
             protected_cold = len(protected_cold_keys)
-            if max_cold:
-                exact_cold = min(exact_cold, max_cold)
-                protected_cold = min(protected_cold, max_cold)
-                exact_cold_keys = exact_cold_keys[:max_cold]
-                protected_cold_keys = protected_cold_keys[:max_cold]
-                exact_cold_slots = exact_cold_slots[:max_cold]
+            frame_cap = int(frame_max_cold[frame_idx])
+            if frame_cap:
+                exact_cold = min(exact_cold, frame_cap)
+                protected_cold = min(protected_cold, frame_cap)
+                exact_cold_keys = exact_cold_keys[:frame_cap]
+                protected_cold_keys = protected_cold_keys[:frame_cap]
+                exact_cold_slots = exact_cold_slots[:frame_cap]
             exact_demand[frame_idx] = (
                 len(changed_cells) * name_bytes + exact_cold * pattern_bytes)
             protected_demand[frame_idx] = (
