@@ -37,9 +37,39 @@ display, frame by frame, so playback corruption that the HUD gate cannot see
     visual corruption remains.
   H40 15 fps and H40 30 fps were the only cadences qualified for #102;
   24 fps (periodic 2/3) breaks in both H32 and H40.
-- GPGX LOGVDP frame TSV shows the mechanism: on heavily loaded 2-VBlank
-  slots the pattern DMA continues past the vertical blank into active display
-  (hundreds to 1,151 words active in one frame; `transfer_end_vcounter`
-  reaches 0x9E) while `transfer_vblanks` stays 1, i.e. one VBlank word budget
-  was never split. The name-table DMA itself is always fully inside a blank
-  (1,760 blank words, 0 active words on every frame).
+- GPGX LOGVDP frame TSV shows pattern DMA continuing past the vertical blank
+  into active display on loaded frames while `transfer_vblanks` stays 1. This
+  is NOT the corruption cause: the clean p141 build spills even more pattern
+  words into active display (1,713 frames, 946k words) with zero visual
+  damage — slot liveness makes active-phase pool writes safe. The name-table
+  DMA is always fully inside a blank (1,760 words) in every build.
+- `measure_lead.py` (quantized-exact matching through the emulator's RGB ramp
+  0/34/69/101/138/170/207/239) proves the real defect: within a corrupt frame
+  the first K freshly-loaded cells are pixel-exact correct, and every later
+  cell displays, pixel-exact, the pattern intended for a cell 33..52 positions
+  LATER in the same frame's unique-pattern sequence (e.g. f92: correct through
+  unique position 16, then a constant +37 shift; onset K and shift vary per
+  frame and drift within the frame). Cells past the shifted window match no
+  scheduled pattern at all. Frame 92 has `transfer_vblanks=1` (a single,
+  unsplit Main budget), so the displacement already exists in the delivered
+  content or entry stream, not in Main's budget splitting.
+- Every observed shifted pair shares the same palette line, so the palette
+  test could not yet separate "pattern payload stream displaced" (Sub
+  O_LOADS/PrgBuf pop side) from "name-table entry stream displaced" (Main
+  shadow/blitter side); with contiguous two-pass slot allocation both produce
+  identical pixel evidence. `90da67e` rewrote the Main shadow blitters and
+  deleted `harness/main_codegen/verify_blitters.py`, and moved the NT publish
+  into the flip VBlank; the Sub image was not modified by that commit, so a
+  Main-side entry-stream defect or a Sub-side race newly exposed by the
+  changed Main timing are both still open.
+
+## Next steps
+
+1. Instrument one side to break the ambiguity: either a Sub DEBUG counter of
+   ring pops per frame (compare with the packed per-frame Prg pop count), or
+   a Main-side checksum of the shadow entry stream per frame.
+2. Once the side is known, bisect within `90da67e`'s Main rewrite (blitters,
+   `bf_update_list`/`bf_stage_nt`, or flip timing) or the Sub pop/pump
+   interleave, fix, and requalify H40 15/30 fps plus 24 fps H32/H40 with
+   `scan_divergence.py` (bad_cells must be 0), then p-bump and re-run the
+   three pending uploads.
