@@ -13,6 +13,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p146: Boot-time silence initialization for real hardware (issue #81).
+#         Main parks the Z80 on di+halt, mutes all four PSG channels, pulses
+#         the Z80/YM2612 reset and forces the YM2612 registers silent before
+#         streaming starts; Sub clears the complete 64 KiB RF5C164 wave RAM
+#         (rewriting the 0x8000 ring loop-end marker) and parks ch1..ch7
+#         registers at known-silent values.
 #   e179/p145: Rename the on-disc identifier from TTRC to CAVC and remove the
 #         independent header version word. Shift the fixed fields two bytes
 #         earlier while preserving the signature and PSUP offsets at 192/196.
@@ -1235,4 +1241,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
 e=179
-p=145
+p=146
