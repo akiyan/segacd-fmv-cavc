@@ -96,10 +96,16 @@ class PackScrollTests(unittest.TestCase):
         )
         self.assertEqual(len(block), int(expected[0]))
 
-    def test_scroll_metadata_rejects_vertical_or_diagonal_motion(self):
+    def test_scroll_metadata_rejects_diagonal_motion(self):
         log = self.scroll_log()
         log["scroll"]["positions"][1] = (-5, 3)
-        with self.assertRaisesRegex(SystemExit, "horizontal-only"):
+        with self.assertRaisesRegex(SystemExit, "axis-only"):
+            pack_stream.control_arrays(log, 2)
+
+    def test_scroll_metadata_rejects_idle_positions(self):
+        log = self.scroll_log()
+        log["scroll"]["positions"][1] = (0, 0)
+        with self.assertRaisesRegex(SystemExit, "no position"):
             pack_stream.control_arrays(log, 2)
 
     def test_horizontal_controls_select_scroll_feature(self):
@@ -109,11 +115,13 @@ class PackScrollTests(unittest.TestCase):
             cavc_routing.FEATURE_SCROLL,
         )
 
-    def test_vertical_controls_are_rejected(self):
+    def test_vertical_controls_select_scroll_feature(self):
         vertical = self.scroll_log()
         vertical["scroll"]["positions"][1] = (0, -5)
-        with self.assertRaisesRegex(SystemExit, "horizontal-only"):
-            pack_stream.scroll_feature_bits(vertical, 2)
+        self.assertEqual(
+            pack_stream.scroll_feature_bits(vertical, 2),
+            cavc_routing.FEATURE_SCROLL,
+        )
 
     def test_scroll_requires_completed_update_list(self):
         with tempfile.TemporaryDirectory() as tmp:

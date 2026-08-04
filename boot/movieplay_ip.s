@@ -210,7 +210,8 @@
 .error "rolling-plane scroll requires the full-screen H40 40x28 grid"
 .endif
 .equ NT_SCROLL_BAND_WORDS, PC_TROWS*NT_STAGE_PITCH
-.equ NT_FLIP_SCROLL_WORDS, (NT_SCROLL_BAND_WORDS-NT_STAGE_WORDS)+2*CPU_VDP_WORD_COST
+.equ NT_SCROLL_VBAND_WORDS, 32*NT_STAGE_PITCH
+.equ NT_FLIP_SCROLL_WORDS, (NT_SCROLL_BAND_WORDS-NT_STAGE_WORDS)+4*CPU_VDP_WORD_COST
 .else
 .equ NT_FLIP_SCROLL_WORDS, 0
 .endif
@@ -559,8 +560,8 @@ ip_entry:
 .endif
 .endif
 .ifdef INCLUDE_SCROLL
-	clr.w	scroll_active
 	clr.w	scroll_next_h
+	clr.w	scroll_next_v
 	clr.w	scroll_h_dirty
 .endif
 play_loop:
@@ -711,7 +712,8 @@ bf_upd:
 .ifdef INCLUDE_SCROLL
 	/* Leaving a scroll window: copy the final tile-aligned viewport back to
 	   the logical shadow before this frame's ordinary updates apply. */
-	tst.w	scroll_active
+	move.w	scroll_next_h, d0
+	or.w	scroll_next_v, d0
 	beq.s	3f
 	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
 	beq.s	3f
@@ -889,7 +891,12 @@ bf_dma:
 	PC_MOVE_W md_nt_flip_reserve_words, NT_FLIP_RESERVE_WORDS, d0
 .ifdef INCLUDE_SCROLL
 	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
-	beq.s	8f				/* scroll carries no CRAM image */
+	bne.s	6f				/* scroll carries no CRAM image */
+	tst.w	scroll_next_v
+	beq.s	8f
+	addi.w	#NT_SCROLL_VBAND_WORDS-NT_SCROLL_BAND_WORDS, d0
+	bra.s	8f
+6:
 .endif
 	tst.w	frame_type
 	bne.s	7f
@@ -1101,6 +1108,12 @@ bf_publish_frame:
 	beq.s	1f
 	addi.w	#64*CPU_VDP_WORD_COST, d6
 1:
+.ifdef INCLUDE_SCROLL
+	tst.w	scroll_next_v
+	beq.s	2f
+	addi.w	#NT_SCROLL_VBAND_WORDS-NT_SCROLL_BAND_WORDS, d6
+2:
+.endif
 	.ifdef DEBUG
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
@@ -1134,6 +1147,11 @@ bf_publish_frame:
 	clr.w	scroll_h_dirty
 	move.l	#0x7C000003, (VDP_CTRL).l	/* VRAM write 0xFC00 */
 	move.w	scroll_next_h, d0
+	move.w	d0, (VDP_DATA).l		/* Plane A */
+	move.w	d0, (VDP_DATA).l		/* Plane B */
+	move.l	#0x40000010, (VDP_CTRL).l	/* VSRAM write 0 */
+	move.w	scroll_next_v, d0
+	neg.w	d0				/* stream: screen=plane[y-v]; VSRAM adds */
 	move.w	d0, (VDP_DATA).l		/* Plane A */
 	move.w	d0, (VDP_DATA).l		/* Plane B */
 9:
@@ -1179,14 +1197,14 @@ bf_update_list:
 
 .ifdef INCLUDE_SCROLL
 bf_scroll_control:
-	/* Item 0 carries the absolute Plane A/B HScroll plus a reserved zero
-	   word.  The remaining completed items address the physical 64x32 plane
-	   directly; the 4KB nt_stage allocation bounds every masked offset.  The
-	   logical shadow stays untouched, so the stage expansion is skipped and
-	   the persistent plane band goes to VRAM as-is. */
+	/* Item 0 carries the absolute Plane A/B HScroll and VScroll pair; the
+	   adopted window moves on exactly one axis.  The remaining completed
+	   items address the physical 64x32 plane directly; the 4KB nt_stage
+	   allocation bounds every masked offset.  The logical shadow stays
+	   untouched, so the stage expansion is skipped and the persistent plane
+	   band goes to VRAM as-is. */
 	move.w	(a0)+, scroll_next_h
-	addq.l	#2, a0
-	move.w	#1, scroll_active
+	move.w	(a0)+, scroll_next_v
 	move.w	#1, scroll_h_dirty
 	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
 	subq.w	#1, d7				/* the position item is counted */
@@ -1203,8 +1221,10 @@ bf_scroll_control:
 bf_scroll_rebase:
 	/* The adopted window ends on a tile boundary.  Compact the 40x28
 	   viewport out of the 64-pitch plane band into the logical shadow and
-	   rearm both HScrolls at zero for this frame's flip.  Preserves a0/d6/d7
+	   rearm both scrolls at zero for this frame's flip.  Preserves a0/d6/d7
 	   for the caller's control-parse state. */
+	tst.w	scroll_next_v
+	bne	bf_scroll_rebase_vertical
 	movem.l	d1-d5/a1-a3, -(sp)
 	move.w	scroll_next_h, d0
 	neg.w	d0
@@ -1240,9 +1260,36 @@ bf_scroll_rebase:
 	lea	NT_STAGE_PITCH*2(a2), a2
 	dbra	d5, 2b
 	clr.w	scroll_next_h
-	clr.w	scroll_active
-	move.w	#1, scroll_h_dirty		/* publish HScroll zero at this flip */
+	clr.w	scroll_next_v
+	move.w	#1, scroll_h_dirty		/* publish both scroll zeros at this flip */
 	movem.l	(sp)+, d1-d5/a1-a3
+	rts
+
+bf_scroll_rebase_vertical:
+	/* Vertical windows roll through all 32 plane rows.  Copy the 28-row
+	   viewport out of the ring, wrapping the plane-row offset at 4KB. */
+	movem.l	d3/d5/a1-a3, -(sp)
+	move.w	scroll_next_v, d0
+	neg.w	d0
+	asr.w	#3, d0
+	andi.w	#31, d0				/* first plane row of the viewport */
+	lsl.w	#7, d0				/* *128 bytes per plane row */
+	lea	shadow, a1
+	lea	nt_stage, a2
+	move.w	#PC_TROWS-1, d5
+1:
+	lea	(a2,d0.w), a3
+	move.w	#PC_TCOLS/2-1, d3
+2:
+	move.l	(a3)+, (a1)+
+	dbra	d3, 2b
+	addi.w	#NT_STAGE_PITCH*2, d0
+	andi.w	#NT_SCROLL_VBAND_WORDS*2-1, d0	/* wrap at plane row 32 */
+	dbra	d5, 1b
+	clr.w	scroll_next_h
+	clr.w	scroll_next_v
+	move.w	#1, scroll_h_dirty		/* publish both scroll zeros at this flip */
+	movem.l	(sp)+, d3/d5/a1-a3
 	rts
 .endif
 
@@ -1691,9 +1738,13 @@ nt_dma_flip:
 	PC_MOVE_L md_nt_stage_dst, NT_STAGE_DST, d3
 	PC_MOVE_W md_nt_stage_words, NT_STAGE_WORDS, d6
 .ifdef INCLUDE_SCROLL
-	tst.w	scroll_active
+	move.w	scroll_next_h, d0
+	or.w	scroll_next_v, d0
 	beq.s	1f
 	move.w	#NT_SCROLL_BAND_WORDS, d6	/* full 64-column band while scrolled */
+	tst.w	scroll_next_v
+	beq.s	1f
+	move.w	#NT_SCROLL_VBAND_WORDS, d6	/* vertical rolls the wrapped rows too */
 1:
 .endif
 	bra	dma_chunk
@@ -2450,12 +2501,12 @@ n_runs:
 frame_type:
 	.space 2				/* masked bits14..13 from the current control */
 .ifdef INCLUDE_SCROLL
-scroll_active:
-	.space 2				/* a scroll control governs the current frame */
 scroll_next_h:
 	.space 2				/* absolute Plane A/B HScroll for the next flip */
+scroll_next_v:
+	.space 2				/* absolute Plane A/B VScroll for the next flip */
 scroll_h_dirty:
-	.space 2				/* rewrite the HScroll pair at the next flip */
+	.space 2				/* rewrite both scroll pairs at the next flip */
 .endif
 dbg_seg:
 	.space 2

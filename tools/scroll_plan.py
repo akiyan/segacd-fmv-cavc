@@ -121,7 +121,12 @@ def select_windows(
     minimum_movements: int = 16,
         minimum_gain: float = 2.0,
         minimum_beneficial_fraction: float = 0.80,
-        maximum_overlap_rmse_p95: float = 18.0,
+        # A moving background with an independent foreground layer (feathers,
+        # subtitles, lip flaps) keeps a real overlap residual even when the
+        # pan itself is exact; the beneficial-fraction and gain gates already
+        # reject windows the scroll would not improve. 28 admits the measured
+        # Lunar vertical rise (p95 ~= 24) while still refusing cut-like noise.
+        maximum_overlap_rmse_p95: float = 28.0,
         tile_size: int = TILE_SIZE,
 ) -> tuple[ScrollWindow, ...]:
     """Choose sustained, useful, tile-phase-safe windows without time hints."""

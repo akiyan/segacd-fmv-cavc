@@ -453,7 +453,7 @@ payload.
 | 2 | frame_seq | expected frame sequence, low 16 bits |
 | 2 | n_upd/format | bit 15 selects a completed list; bits 14-13 are frame type; bits 12-0 are the update count |
 | variable | normal shadow updates | type 0: bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
-| variable | scroll updates | type 3: one 4-byte position item (`>h` absolute HScroll, `>h` reserved zero), then 4-byte completed items addressing the 64x32 plane |
+| variable | scroll updates | type 3: one 4-byte position item (`>h` absolute HScroll, `>h` absolute VScroll; exactly one axis nonzero), then 4-byte completed items addressing the 64x32 plane |
 | 128 | inline CRAM | type 1/2: four complete 16-word CRAM lines; replaces the shadow-update field |
 | `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
 | 0/1 | audio pad | zero byte when needed for word alignment |
@@ -474,13 +474,18 @@ detected direction for validation and analysis.
 
 Type 3 requires the completed-list bit and `FEATURE_SCROLL`. Its item count
 includes the leading position item. The position item carries the signed
-absolute Plane A/B HScroll value and a reserved zero word. The remaining items
-address the physical 64x32 rolling plane as `row * 64 + column` over the full
-64-column pitch; the plane's hidden rows 28..31 are never addressed. The
-player applies the HScroll value to both planes, stages the complete
-64-column band, and on the first following normal frame copies the final
-tile-aligned viewport back to the logical grid and resets HScroll to zero.
-The final position of every adopted window is tile aligned.
+absolute Plane A/B HScroll and VScroll values; an adopted window moves on
+exactly one axis, so exactly one component is nonzero. Both scroll values
+follow one convention: the screen pixel at `y, x` shows the plane pixel at
+`y - vscroll, x - hscroll`. The VDP adds VSRAM to the line counter, so the
+player writes the negated VScroll value to VSRAM. The remaining items address
+the physical 64x32 rolling plane as `row * 64 + column` over the full
+64-column pitch. A horizontal window never addresses the plane's hidden rows
+28..31 and the player stages the TROWS-row 64-column band; a vertical window
+rolls through all 32 plane rows and the player stages the complete 64x32
+band. On the first following normal frame the player copies the final
+tile-aligned viewport back to the logical grid and resets both scrolls to
+zero. The final position of every adopted window is tile aligned.
 
 The run descriptors immediately follow `n_runs`. Sub resolves them into
 `O_LOADS v2` while preserving its CDC polling cadence. Main schedules those
@@ -965,7 +970,7 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 | 2 | frame_seq | 期待frame sequenceの下位16 bit |
 | 2 | n_upd/format | bit 15はcompleted list、bits 14-13はframe type、bits 12-0はupdate数 |
 | variable | 通常shadow updates | type 0: bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
-| variable | scroll updates | type 3: 先頭に4-byte position item（`>h` 絶対HScroll、`>h` reserved zero）、続けて64x32 planeを指す4-byte completed item |
+| variable | scroll updates | type 3: 先頭に4-byte position item（`>h` 絶対HScroll、`>h` 絶対VScroll。非ゼロは常に片軸だけ）、続けて64x32 planeを指す4-byte completed item |
 | 128 | inline CRAM | type 1/2: 完全な16-word CRAM line×4。shadow-update fieldの代わりに置く |
 | `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
 | 0/1 | audio pad | word alignmentに必要なzero byte |
@@ -983,12 +988,16 @@ static fade中に将来patternをprefetchできます。2つのfade方向のplay
 tagはencoderが検出した方向をvalidationとanalysisのために保存します。
 
 Type 3はcompleted-list bitと`FEATURE_SCROLL`が必須です。Item数は先頭のposition
-itemを含みます。Position itemは符号付き絶対Plane A/B HScroll値とreserved zero
-wordを運びます。残りのitemは物理64x32 rolling planeを`row * 64 + column`の
-64列pitchで指し、planeの隠し行28..31は決して指しません。Playerはこの
-HScroll値を両planeへ適用し、64列幅の完全なbandをstageし、直後の最初の
-normal frameでtile整列済みの最終viewportをlogical gridへ複写してHScrollを
-0へ戻します。採用windowの最終positionは常にtile整列です。
+itemを含みます。Position itemは符号付き絶対Plane A/B HScroll値とVScroll値を
+運びます。採用windowは単一軸でのみ動くため、非ゼロは常に片方だけです。両
+scroll値は同一の規約に従い、screenの`y, x`はplaneの`y - vscroll, x - hscroll`
+を表示します。VDPはVSRAMをline counterへ加算するため、playerはVScroll値を
+符号反転してVSRAMへ書きます。残りのitemは物理64x32 rolling planeを
+`row * 64 + column`の64列pitchで指します。Horizontal windowはplaneの隠し行
+28..31を決して指さず、playerはTROWS行×64列のbandをstageします。Vertical
+windowは32行全体を環状に使い、playerは完全な64x32 bandをstageします。直後の
+最初のnormal frameで、playerはtile整列済みの最終viewportをlogical gridへ複写
+し、両scrollを0へ戻します。採用windowの最終positionは常にtile整列です。
 
 Run descriptorは`n_runs`の直後に続きます。SubがCDC polling cadenceを保ちながら
 `O_LOADS v2`へ解決し、Mainはguard付き残余VBlank budgetでその展開済みrecordを

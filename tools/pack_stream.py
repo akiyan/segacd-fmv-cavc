@@ -343,12 +343,18 @@ def scroll_control_arrays(log, frame_count):
         frame = int(np.argwhere((raw_positions != 0) & ~active[:, None])[0, 0])
         raise SystemExit(
             f"pack: inactive scroll frame {frame} has a nonzero position")
-    vertical = active & (raw_positions[:, 1] != 0)
-    if np.any(vertical):
-        frame = int(np.flatnonzero(vertical)[0])
+    both_axes = active & np.all(raw_positions != 0, axis=1)
+    if np.any(both_axes):
+        frame = int(np.flatnonzero(both_axes)[0])
         raise SystemExit(
-            f"pack: scroll frame {frame} uses unsupported vertical motion; "
-            "rolling-plane controls are horizontal-only")
+            f"pack: scroll frame {frame} moves on both axes; rolling-plane "
+            "controls are axis-only")
+    idle = active & np.all(raw_positions == 0, axis=1)
+    if np.any(idle):
+        frame = int(np.flatnonzero(idle)[0])
+        raise SystemExit(
+            f"pack: scroll frame {frame} has no position; the player derives "
+            "the band and rebase axis from the nonzero component")
     if count and bool(active[0]):
         raise SystemExit("pack: frame 0 cannot be a streamed scroll control")
     return active, raw_positions.astype(np.int16)
@@ -455,10 +461,15 @@ def resolve(log, POOL, mode="lru"):
                 for logical, physical in enumerate(normal_cells):
                     expected_patterns[physical] = before[logical]
                 domain_expanded = True
-            position = int(scroll_positions[i, 0])
+            hscroll = int(scroll_positions[i, 0])
+            vscroll = int(scroll_positions[i, 1])
+            axis = (
+                scroll_frames.AXIS_HORIZONTAL if hscroll
+                else scroll_frames.AXIS_VERTICAL)
+            position = hscroll or vscroll
             delta = position - previous_scroll_position
             scroll_state = scroll_plan.position_state(
-                i, scroll_frames.AXIS_HORIZONTAL, position, delta=delta,
+                i, axis, position, delta=delta,
                 columns=TCOLS, rows=TROWS)
             active_cells = (
                 *scroll_state.primary_cells,
@@ -1386,24 +1397,28 @@ def decode_verify(
             raise ValueError(
                 f"frame {i}: PALIDX switch and inline CRAM coincide")
         if shadow_updates.has_scroll_position(frame_type):
-            hscroll, reserved = struct.unpack_from(">hh", blk, p)
+            hscroll, vscroll = struct.unpack_from(">hh", blk, p)
             p += shadow_updates.SCROLL_POSITION_BYTES
-            if reserved:
+            if (hscroll != 0) == (vscroll != 0):
                 raise ValueError(
-                    f"frame {i}: horizontal scroll reserved word is nonzero")
-            if (hscroll, reserved) != tuple(
+                    f"frame {i}: scroll position {(hscroll, vscroll)} must "
+                    "move on exactly one axis")
+            if (hscroll, vscroll) != tuple(
                     int(value) for value in expected_scroll_positions[i]):
                 raise ValueError(
-                    f"frame {i}: packed scroll position {(hscroll, reserved)} "
-                    "differs from simulation")
-            position = int(hscroll)
+                    f"frame {i}: packed scroll position "
+                    f"{(hscroll, vscroll)} differs from simulation")
+            axis = (
+                scroll_frames.AXIS_HORIZONTAL if hscroll
+                else scroll_frames.AXIS_VERTICAL)
+            position = int(hscroll or vscroll)
             if not scrolling:
                 for logical, physical in enumerate(normal_plane_cells):
                     plane_nt_slot[physical] = nt_slot[logical]
                     plane_nt_pal[physical] = nt_pal[logical]
             delta = position - scroll_position
             scroll_state = scroll_plan.position_state(
-                i, scroll_frames.AXIS_HORIZONTAL, position, delta=delta,
+                i, axis, position, delta=delta,
                 columns=TCOLS, rows=TROWS)
             scrolling = True
             scroll_position = position
@@ -1493,12 +1508,19 @@ def decode_verify(
             update_pal[c] = (ent >> 13) & 3
             update_slot[c] = (ent & 0x07FF) - BASE
         if scrolling:
+            # Horizontal scroll delivers the TROWS-row 64-column band; only a
+            # vertical window rolls through the plane's wrapped rows 28..31
+            # and therefore ships the complete 64x32 band.
+            band_cells = (
+                shadow_updates.SCROLL_PLANE_CELLS
+                if scroll_state.axis == scroll_frames.AXIS_VERTICAL
+                else scroll_transfer_cells)
             for cell, _entry in update_items:
-                if int(cell) >= scroll_transfer_cells:
+                if int(cell) >= band_cells:
                     raise ValueError(
                         f"frame {i}: horizontal scroll dirties hidden row "
                         f"cell {int(cell)} beyond the "
-                        f"{scroll_transfer_cells}-word band")
+                        f"{band_cells}-word band")
         need_img = (cmp is not None) or (sample_dir is not None and i in samples)
         if not need_img:
             continue

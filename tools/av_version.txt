@@ -13,6 +13,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e181/p147: Vertical scroll adoption and playback (issue #29). The encoder
+#         adopts axis-only vertical windows; the FRAME_SCROLL position item
+#         carries (HScroll, VScroll) with exactly one nonzero axis. Vertical
+#         windows roll through all 32 plane rows, so those frames stage the
+#         complete 64x32 band. The player writes the negated VScroll to the
+#         VSRAM pair in the flip blank and rebases vertical exits with a
+#         wrapped row copy.
 #   e180: Automatic horizontal-scroll adoption (issue #29). The encoder
 #         detects axis-only integer pans on the output raster, adopts strict
 #         tile-phase-safe windows, and encodes them as FRAME_SCROLL controls
@@ -1246,5 +1253,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
-e=180
-p=146
+e=181
+p=147

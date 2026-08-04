@@ -1502,6 +1502,7 @@ def main():
     scroll_windows = ()
     scroll_states = {}
     scroll_active = np.zeros(n, np.bool_)
+    scroll_vertical = np.zeros(n, np.bool_)
     scroll_positions = np.zeros((n, 2), np.int16)
     scroll_anchor_guard_counts = {}
     if scroll_supported and n > 1:
@@ -1510,17 +1511,20 @@ def main():
             raise SystemExit(
                 "automatic scroll detection requires one raw frame per master")
         print(
-            "automatic scroll detection: source-wide horizontal block voting; "
+            "automatic scroll detection: source-wide axis-only block voting; "
             "no source time ranges ...",
             flush=True,
         )
         with _parallel_phase("Scroll", worker_limit=1, use_gpu=True):
             scroll_estimates, scroll_segments = scroll_frames.detect_segments(
                 raw_frames, backend="auto")
-            horizontal_segments = tuple(
+            axis_segments = tuple(
                 segment for segment in scroll_segments
-                if segment.axis == scroll_frames.AXIS_HORIZONTAL)
-            for segment in horizontal_segments:
+                if segment.axis in (
+                    scroll_frames.AXIS_HORIZONTAL,
+                    scroll_frames.AXIS_VERTICAL,
+                ))
+            for segment in axis_segments:
                 for row in scroll_frames.measure_segment_adoption(
                         segment, frames):
                     scroll_measurements[int(row.frame)] = row
@@ -1531,7 +1535,7 @@ def main():
             int(value) for value in np.flatnonzero(
                 np.asarray(fade_layout.reference_frames) >= 0))
         scroll_windows = scroll_plan.select_windows(
-            horizontal_segments,
+            axis_segments,
             scroll_measurements,
             fps=FPS,
             forbidden_frames=forbidden_scroll_frames,
@@ -1544,7 +1548,10 @@ def main():
             for frame in range(window.anchor + 1, window.end + 1):
                 state = scroll_states[frame]
                 scroll_active[frame] = True
+                scroll_vertical[frame] = (
+                    window.axis == scroll_frames.AXIS_VERTICAL)
                 scroll_positions[frame, 0] = state.hscroll
+                scroll_positions[frame, 1] = state.vscroll
             first_state = scroll_states[window.anchor + 1]
             scroll_anchor_guard_counts[int(window.anchor)] = len(
                 first_state.guard_cells)
@@ -1570,7 +1577,7 @@ def main():
                     f"{int(int(row.frame) in selected_by_frame)}\n")
         print(
             "  automatic scroll: "
-            f"horizontal_segments={len(horizontal_segments)} "
+            f"axis_segments={len(axis_segments)} "
             f"adopted={len(scroll_windows)} "
             f"controls={int(scroll_active.sum())}; "
             f"windows={[ (w.anchor, w.end, w.axis, w.final_position) for w in scroll_windows ]}; "
@@ -4778,10 +4785,16 @@ def main():
         MODE, TCOLS, TROWS, FPS)
     r2v_nt_word_counts = np.full(n, r2v_nt_words, np.int64)
     if scroll_plane_enabled:
-        # A scroll frame extends the staged band across the full 64-column
-        # last row and rewrites the Plane A/B HScroll pair at VRAM 0xFC00.
-        r2v_nt_word_counts[scroll_active] += (
-            scroll_plan.PLANE_COLUMNS - TCOLS + 2)
+        # A horizontal scroll frame extends the staged band across the full
+        # 64-column last row; a vertical one carries the complete 64x32 plane
+        # so the wrapped incoming rows are delivered. Every scroll frame also
+        # rewrites the Plane A/B HScroll pair and the VSRAM pair.
+        base_band = (TROWS - 1) * scroll_plan.PLANE_COLUMNS + TCOLS
+        r2v_nt_word_counts[scroll_active & ~scroll_vertical] += (
+            TROWS * scroll_plan.PLANE_COLUMNS - base_band + 4)
+        r2v_nt_word_counts[scroll_vertical] += (
+            scroll_plan.PLANE_ROWS * scroll_plan.PLANE_COLUMNS
+            - base_band + 4)
     r2v_components = r2v_model.calculate_words(
         np.asarray(transfer_tiles_log, np.int64),
         np.asarray(transfer_runs_log, np.int64),
