@@ -53,6 +53,9 @@ import stream_schedule
 import analysis_logs
 import resource_tokens
 import r2v_model
+import scroll_frames
+import scroll_plan
+import shadow_updates
 import tmpfs_workspace
 from cbr_paths import artifact_path, sim_work_dir
 
@@ -238,6 +241,52 @@ if any(int(values[0]) != 0 for values in (
     raise SystemExit(
         "timed BODY delivery slot 0 must exclude the BODY arm/frame 0; re-run sim")
 MISS_MASKS = np.load(f"{SIM}/miss_masks.npy")
+
+# ---- hardware-scroll state (sim decisions) ----
+# ``positions`` are absolute VDP scroll values per frame; the crop formula
+# display = plane[(xy - position) % plane_size] makes a decreasing position a
+# rightward/downward camera pan.  The legend indicator and category-map edge
+# overlay appear only when the movie adopted at least one scroll window.
+_SCROLL_META = DECISIONS.get("scroll") or {}
+SCROLL_ACTIVE = np.asarray(
+    _SCROLL_META.get("active", np.zeros(NF, np.bool_)), np.bool_)
+SCROLL_POSITIONS = np.asarray(
+    _SCROLL_META.get("positions", np.zeros((NF, 2), np.int64)), np.int64)
+if SCROLL_ACTIVE.shape != (NF,) or SCROLL_POSITIONS.shape != (NF, 2):
+    raise SystemExit("analysis scroll trace has an invalid shape; re-run sim")
+SCROLL_ON = bool(SCROLL_ACTIVE.any())
+
+
+def frame_scroll(i):
+    """Legend/category-map hardware-scroll state for one frame.
+
+    Returns None for a movie without any adopted scroll window (the legend
+    indicator is omitted entirely), an inactive dict between windows, and an
+    active dict with the axis, absolute VDP position, camera-pan direction,
+    and pan speed (px per content frame) inside a window.
+    """
+    if not SCROLL_ON:
+        return None
+    if not SCROLL_ACTIVE[i]:
+        return dict(active=False)
+    hscroll = int(SCROLL_POSITIONS[i, 0])
+    vscroll = int(SCROLL_POSITIONS[i, 1])
+    axis = "H" if hscroll else "V"
+    position = hscroll or vscroll
+    previous = 0
+    if i > 0 and SCROLL_ACTIVE[i - 1]:
+        previous = int(
+            SCROLL_POSITIONS[i - 1, 0] or SCROLL_POSITIONS[i - 1, 1])
+    delta = position - previous
+    # A zero-movement frame (fractional cadence) keeps the window's overall
+    # direction, recovered from the accumulated position's sign.
+    toward = delta if delta else position
+    if axis == "H":
+        direction = "right" if toward < 0 else "left"
+    else:
+        direction = "down" if toward < 0 else "up"
+    return dict(active=True, axis=axis, position=position,
+                speed=abs(delta), direction=direction)
 
 # ---- stats -> mutually-exclusive display categories ----
 col = lambda k: S[:, idx[k]].astype(np.int64) if k in idx else np.zeros(NF, np.int64)
@@ -521,11 +570,56 @@ def materialize_analysis_panels(frames):
         name: np.uint16(1 << index)
         for index, name in enumerate(CATEGORY_MASK_ORDER)
     }
-    display_idx = np.zeros((C, 64), np.uint8)
-    display_pal = np.zeros(C, np.uint8)
+    # A scroll-adopted movie's decision cells address the physical 64x32
+    # rolling plane; replay it exactly like the pack's decode verifier and
+    # crop the fine-scrolled viewport for the preview panel. Without scroll
+    # controls the plane degenerates to the logical grid.
+    scroll_active_flags = SCROLL_ACTIVE
+    scroll_position_pairs = SCROLL_POSITIONS
+    plane_on = SCROLL_ON
+    plane_cells = (
+        shadow_updates.SCROLL_PLANE_CELLS if plane_on else C)
+    normal_cells = (
+        scroll_plan.normal_plane_cells(TCOLS, TROWS)
+        if plane_on else tuple(range(C)))
+    display_idx = np.zeros((plane_cells, 64), np.uint8)
+    display_pal = np.zeros(plane_cells, np.uint8)
+    scrolling = False
+    scroll_position = 0
+    scroll_state = None
     for frame, updates in enumerate(DECISION_FRAMES):
+        if scroll_active_flags[frame]:
+            hscroll = int(scroll_position_pairs[frame, 0])
+            vscroll = int(scroll_position_pairs[frame, 1])
+            axis = (
+                scroll_frames.AXIS_HORIZONTAL if hscroll
+                else scroll_frames.AXIS_VERTICAL)
+            position = hscroll or vscroll
+            # Entry needs no seeding: ordinary frames already write through
+            # the normal_cells mapping, so the viewport's plane cells hold
+            # the logical content when the first control arrives.
+            delta = position - scroll_position
+            scroll_state = scroll_plan.position_state(
+                frame, axis, position, delta=delta,
+                columns=TCOLS, rows=TROWS)
+            scrolling = True
+            scroll_position = position
+            frame_cells = tuple(scroll_state.primary_cells)
+        else:
+            if scrolling:
+                sources = np.asarray(
+                    scroll_state.primary_cells, np.int64)
+                destinations = np.asarray(normal_cells, np.int64)
+                display_idx[destinations] = display_idx[sources]
+                display_pal[destinations] = display_pal[sources]
+                scrolling = False
+                scroll_position = 0
+                scroll_state = None
+            frame_cells = normal_cells
         for cell, palette, key in updates:
             cell = int(cell)
+            if not scroll_active_flags[frame]:
+                cell = normal_cells[cell]
             indices = np.frombuffer(key, np.uint8)
             if indices.shape != (64,):
                 raise SystemExit(
@@ -546,12 +640,33 @@ def materialize_analysis_panels(frames):
 
         full_palette = np.zeros((4, 16, 3), np.uint8)
         full_palette[:, 1:] = ACTIVE_FRAME_CRAM[frame]
+        selection = np.asarray(frame_cells, np.int64)
         cell_rgb = (
-            full_palette[display_pal[:, None], display_idx] * 36
+            full_palette[display_pal[selection, None], display_idx[selection]]
+            * 36
         ).reshape(C, 8, 8, 3).astype(np.uint8)
-        Image.fromarray(
-            _cells_to_image(cell_rgb), "RGB"
-        ).save(preview_dir / f"{frame:05d}.png")
+        if scrolling:
+            # Fine crop of the rolling plane, exactly like the pack decoder.
+            plane_rgb = (
+                full_palette[display_pal[:, None], display_idx] * 36
+            ).reshape(
+                scroll_plan.PLANE_ROWS, scroll_plan.PLANE_COLUMNS, 8, 8, 3,
+            ).transpose(0, 2, 1, 3, 4).reshape(
+                scroll_plan.PLANE_ROWS * 8,
+                scroll_plan.PLANE_COLUMNS * 8,
+                3,
+            ).astype(np.uint8)
+            yy = (
+                np.arange(H, dtype=np.int64) - int(scroll_state.vscroll)
+            ) % plane_rgb.shape[0]
+            xx = (
+                np.arange(W, dtype=np.int64) - int(scroll_state.hscroll)
+            ) % plane_rgb.shape[1]
+            preview_image = plane_rgb[yy[:, None], xx[None, :]]
+        else:
+            preview_image = _cells_to_image(cell_rgb)
+        Image.fromarray(preview_image, "RGB").save(
+            preview_dir / f"{frame:05d}.png")
 
         category_rgb = cell_rgb.astype(np.float64)
         category_rgb[
@@ -853,11 +968,12 @@ def draw_status_real(data):
 
 
 def catmap_panel(i, sw, sh):
-    """catmap を(sw,sh)へ拡大 → Missセル(miss_masks)を『赤で塗りつぶし』で上書き。"""
+    """catmap を(sw,sh)へ拡大 → Missセル(miss_masks)を『赤で塗りつぶし』で上書き。
+    scroll活性フレームは進入エッジのstrip枠+行進chevronを重ねる。"""
     cm = Image.open(f"{SIM}/catmap/{i:05d}.png").convert("RGB").resize((sw, sh), Image.NEAREST)
+    d = ImageDraw.Draw(cm)
     bits = np.unpackbits(MISS_MASKS[i])[:C]
     if bits.any():
-        d = ImageDraw.Draw(cm)
         for cell in np.where(bits)[0]:
             r, c = int(cell) // TCOLS, int(cell) % TCOLS
             x0 = round(c * sw / TCOLS); y0 = round(r * sh / TROWS)
@@ -866,6 +982,7 @@ def catmap_panel(i, sw, sh):
                 [x0, y0, x1, y1],
                 fill=style.CAT_MISS,
             )
+    L.draw_scroll_edge(d, sw, sh, frame_scroll(i), TCOLS, TROWS)
     return cm
 
 
@@ -906,6 +1023,7 @@ def frame_data(i):
                 cold_prefetch=L.timed_metric_value(i, PREFETCH[i]),
                 prefetch_cap=PREFETCH_CAP,
                 cold_cap=COLD_CAP,
+                scroll=frame_scroll(i),
                 pl_info=frame_plinfo(i),
                 frame=i, total_frames=NF, time_s=i / FPS, palettes=frame_palettes(i),
                 series={k: [int(FULL[k][min(max(j, 0), NF - 1)]) for j in range(i - HALF, i + HALF + 1)]
@@ -928,6 +1046,7 @@ ANALYSIS_TSV_COLUMNS = (
     "body_payload_bytes", "body_control_bytes", "body_pad_bytes",
     "body_physical_bytes", "body_useful_bytes", "body_band_bps",
     "quality_budget_remaining_bytes",
+    "scroll_active", "scroll_hscroll", "scroll_vscroll",
 ) + tuple(f"stat_{name}" for name in STAT_COLUMNS)
 
 
@@ -947,7 +1066,7 @@ def analysis_tsv_row(i):
     data = frame_data(i)
     cn = data["counts"]
     row = {
-        "schema_version": 7,
+        "schema_version": 8,
         "frame": i,
         "frame_hex": f"0x{i:04X}",
         "time_seconds": format(i / FPS, ".9f"),
@@ -992,6 +1111,9 @@ def analysis_tsv_row(i):
         "body_useful_bytes": int(BODY_USEFUL_BYTES[i]),
         "body_band_bps": int(BAND_BPS[i]),
         "quality_budget_remaining_bytes": int(QUALITY_REM[i]),
+        "scroll_active": int(bool(SCROLL_ACTIVE[i])),
+        "scroll_hscroll": int(SCROLL_POSITIONS[i, 0]),
+        "scroll_vscroll": int(SCROLL_POSITIONS[i, 1]),
     }
     row.update({
         f"stat_{name}": _tsv_number(S[i, idx[name]])

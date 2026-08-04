@@ -44,6 +44,13 @@ COL_OVER_REMAINDER: RGB = (150, 60, 60)
 COL_PRG_CAP: RGB = COL_LIMIT
 COL_PRG_CAP_BLOCKED: RGB = COL_OVER_REMAINDER
 
+# Hardware-scroll indicator.  Green marks active hardware scrolling (the
+# legend indicator, the category-map entering-edge outline, and its marching
+# chevrons all share it); the idle legend indicator dims to gray.  The
+# indicator appears only in a movie with at least one adopted scroll window.
+COL_SCROLL: RGB = (95, 210, 120)
+COL_SCROLL_IDLE: RGB = (110, 112, 118)
+
 # Category-border alternating colours.
 COL_BORDER_BLACK: RGB = (15, 15, 15)
 COL_BORDER_WHITE: RGB = (235, 235, 235)

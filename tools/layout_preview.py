@@ -317,6 +317,8 @@ def dummy_data():
                 dma_tiles=dma_tiles, dma_runs=23,
                 r2v_words=r2v_words, r2v_max=r2v_max,
                 tl=tl, supply_series=supply_series, tln=tln,
+                scroll=dict(active=True, axis="H", position=-248, speed=2,
+                            direction="right"),
                 time_s=42.0, frame=1260, total_frames=2712)
 
 
@@ -394,6 +396,7 @@ def draw_catmap(w, h, data):
             # 内容(色ブロック)を塗る
             d.rectangle([x0, y0, x1, y1], fill=((c * 11 + r * 7) % 256, (r * 13) % 256, (c * 17) % 256))
             style.draw_category_border(d, (x0, y0, x1, y1), k)
+    draw_scroll_edge(d, w, h, data.get("scroll"), cols, rows)
     return im
 
 
@@ -403,8 +406,104 @@ def swatch(d, x, y, sw, name, col):
     style.draw_category_swatch(d, (x, y, x + sw, y + sw), name)
 
 
+def draw_scroll_chevron(d, x, y, size, direction, color, width=2):
+    """One chevron centred at (x, y) pointing in the camera-pan direction."""
+    s = int(size)
+    if direction == "right":
+        pts = [(x - s // 2, y - s), (x + s // 2, y), (x - s // 2, y + s)]
+    elif direction == "left":
+        pts = [(x + s // 2, y - s), (x - s // 2, y), (x + s // 2, y + s)]
+    elif direction == "down":
+        pts = [(x - s, y - s // 2), (x, y + s // 2), (x + s, y - s // 2)]
+    elif direction == "up":
+        pts = [(x - s, y + s // 2), (x, y - s // 2), (x + s, y + s // 2)]
+    else:
+        raise ValueError(f"unknown scroll direction: {direction}")
+    d.line(pts, fill=color, width=width, joint="curve")
+
+
+def draw_scroll_status(d, w, h, scroll):
+    """Right-aligned hardware-scroll indicator in the legend's free slot.
+
+    Drawn only for a movie with at least one adopted scroll window.  While
+    hardware scroll is active the field shows two green chevrons pointing in
+    the camera-pan direction plus ``SCROLL <axis>:<position> <speed>/f``
+    (axis H or V, the absolute VDP scroll position, and the pan speed in
+    pixels per content frame).  Frames outside a scroll window dim the field
+    to ``SCROLL ---``.
+    """
+    sw = 14
+    y = (h // 2) + (h // 2 - sw) // 2 - 1
+    if not scroll.get("active"):
+        text = "SCROLL ---"
+        d.text((w - _w(f_leg, text) - 8, y), text,
+               fill=style.COL_SCROLL_IDLE, font=f_leg)
+        return
+    text = "SCROLL %s:%d %d/f" % (
+        scroll["axis"], scroll["position"], scroll["speed"])
+    x0 = w - _w(f_leg, text) - 8
+    d.text((x0, y), text, fill=style.COL_SCROLL, font=f_leg)
+    for i in (0, 1):
+        draw_scroll_chevron(
+            d, x0 - 18 + i * 7, y + 8, 5, scroll["direction"],
+            style.COL_SCROLL)
+
+
+def draw_scroll_edge(d, w, h, scroll, cols, rows):
+    """Overlay the scroll entering edge on a category-map panel.
+
+    The viewport edge in the camera-pan direction is where fresh tile
+    columns/rows enter; its one-tile strip is outlined in the scroll green
+    and filled with chevrons pointing in the pan direction.  The chevrons
+    are phase-locked to the scroll position, so they march with the movie's
+    actual movement.  Cells inside the strip keep their normal category
+    borders; the strip only localizes where scroll-entry loads land.
+    """
+    if not scroll or not scroll.get("active"):
+        return
+    direction = scroll["direction"]
+    position = int(scroll["position"])
+    col = style.COL_SCROLL
+    phase = ((-position) if direction in ("right", "down") else position) % 16
+    if direction in ("right", "left"):
+        tw = w / max(1, int(cols))
+        if direction == "right":
+            x0, x1 = int(w - tw), w - 1
+            cx = x1 - 20 + phase
+            edge = x1 - 1
+        else:
+            x0, x1 = 0, int(tw) - 1
+            cx = x0 + 20 - phase
+            edge = 1
+        d.rectangle([x0, 0, x1, h - 1], outline=col, width=1)
+        d.line([(edge, 0), (edge, h - 1)], fill=col, width=2)
+        step = max(24, h // 8)
+        for cy in range(step // 2, h, step):
+            draw_scroll_chevron(d, cx, cy, 5, direction, col)
+    else:
+        th = h / max(1, int(rows))
+        if direction == "down":
+            y0, y1 = int(h - th), h - 1
+            cy = y1 - 20 + phase
+            edge = y1 - 1
+        else:
+            y0, y1 = 0, int(th) - 1
+            cy = y0 + 20 - phase
+            edge = 1
+        d.rectangle([0, y0, w - 1, y1], outline=col, width=1)
+        d.line([(0, edge), (w - 1, edge)], fill=col, width=2)
+        step = max(24, w // 8)
+        for cx in range(step // 2, w, step):
+            draw_scroll_chevron(d, cx, cy, 5, direction, col)
+
+
 def draw_legend(w, h, data):
-    """Five-column, two-row legend with one displayed-cell count per item."""
+    """Five-column, two-row legend with one displayed-cell count per item.
+
+    ``data['scroll']`` (present only for a movie with adopted hardware
+    scroll) adds the right-aligned scroll indicator in the free second-row
+    space; see ``draw_scroll_status``.
+    """
     im = Image.new("RGB", (w, h), (14, 14, 14))
     d = ImageDraw.Draw(im)
     per_row = 5
@@ -419,6 +518,9 @@ def draw_legend(w, h, data):
         count = (data["counts"]["Wr0"] + data["counts"]["Wr1"]
                  if name == "Wrd" else data["counts"][name])
         draw_field(d, tx, y - 1, label, count, 3, f_leg, COL_TXT)
+    scroll = data.get("scroll")
+    if scroll is not None:
+        draw_scroll_status(d, w, h, scroll)
     return im
 
 
