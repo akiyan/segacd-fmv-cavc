@@ -13,6 +13,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p148: Fix the boot-VRAM sidecar loader's stale TTRC header offsets
+#         (issue #112). The CAVC rename moved the fixed fields two bytes
+#         earlier, but load_boot_vram_sidecar still tested the features low
+#         byte at 63 and read pool/base at 14/16, so the whole BVRM load
+#         silently skipped and every backside pattern displayed as an empty
+#         slot (startup black tiles) until churn replaced it.
 #   e183: Fix the pack raw-prefetch replay divergence (issue #113). The sim's
 #         organic prefetch-slot choice consults its full-frame quantized
 #         target keys, which the decision log does not carry; the pack now
@@ -1266,4 +1272,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
 e=183
-p=147
+p=148

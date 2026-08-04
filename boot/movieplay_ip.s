@@ -1985,7 +1985,11 @@ start_playback:
 load_boot_vram_sidecar:
 	movem.l	d0-d7/a0-a2, -(sp)
 	lea	(PROBE_BANK+STATUS_OFF+0x80).l, a0
-	btst	#FEATURE_BOOT_VRAM_SIDECAR_BIT, 63(a0)
+	/* CAVC keeps the features word at header offset 60; its low byte (61)
+	   carries bit 7. The former TTRC offsets (features 62/63, pool 14,
+	   base 16) sat two bytes later and silently skipped this loader after
+	   the version word was removed (issue #112). */
+	btst	#FEATURE_BOOT_VRAM_SIDECAR_BIT, 61(a0)
 	beq	9f
 	lea	(PROBE_BANK+BOOT_VRAM_DIR_OFF).l, a2
 	cmpi.l	#BOOT_VRAM_MAGIC, (a2)
@@ -2024,9 +2028,9 @@ load_boot_vram_records:
 4:
 	moveq	#0, d0
 	move.w	(a1)+, d0			/* zero-based physical slot */
-	cmp.w	14(a0), d0
+	cmp.w	12(a0), d0			/* CAVC pool size at header offset 12 */
 	bhs.s	6f
-	add.w	16(a0), d0			/* + resident pool base */
+	add.w	14(a0), d0			/* + resident pool base (offset 14) */
 	lsl.l	#5, d0
 	bsr	set_vram_write
 	moveq	#8-1, d1
