@@ -121,6 +121,13 @@ def select_windows(
     minimum_movements: int = 16,
         minimum_gain: float = 2.0,
         minimum_beneficial_fraction: float = 0.80,
+        # Adoption quality floor on the detector's block-vote agreement. A
+        # low-support pan mixes independent motion into the "pan", and every
+        # adopted window also spends the shared WordBuf guard reserve and
+        # per-frame Prg allowance, so a marginal window can starve a strong
+        # one's mandatory guard column. 0.85 keeps the measured Lunar windows
+        # (0.997) while rejecting the mixed 0.74 dolly shot.
+        minimum_support: float = 0.85,
         # A moving background with an independent foreground layer (feathers,
         # subtitles, lip flaps) keeps a real overlap residual even when the
         # pan itself is exact; the beneficial-fraction and gain gates already
@@ -175,7 +182,8 @@ def select_windows(
                 continue
             gain, beneficial, rmse95 = _window_metrics(rows)
             if (
-                gain < float(minimum_gain)
+                float(segment.support) < float(minimum_support)
+                or gain < float(minimum_gain)
                 or beneficial < float(minimum_beneficial_fraction)
                 or rmse95 > float(maximum_overlap_rmse_p95)
             ):
