@@ -762,7 +762,7 @@ pb_lp:
 	move.w	d7, (COMSTAT1).l		/* boot UI: remaining PrgBuf preload sectors */
 	bne	pb_lp
 pb_done:
-	/* Clearing all 32 KiB of wave RAM is intentionally outside the finite
+	/* Clearing all 64 KiB of wave RAM is intentionally outside the finite
 	   HEADER read. Running this extension while sectors are still arriving
 	   leaves a long unpumped interval and can lose the next sector. The staged
 	   copy survives a short route; longer routes preserve the complete copy at

@@ -23,6 +23,16 @@
 .equ VDP_CTRL, 0x00C00004
 .equ VDP_HV,   0x00C00008
 
+/* Genesis-side sound devices, silenced once at boot (init_sound_silence). */
+.equ Z80_RAM,    0x00A00000
+.equ Z80_BUSREQ, 0x00A11100
+.equ Z80_RESET,  0x00A11200
+.equ YM_ADDR0,   0x00A04000
+.equ YM_DATA0,   0x00A04001
+.equ YM_ADDR1,   0x00A04002
+.equ YM_DATA1,   0x00A04003
+.equ PSG_PORT,   0x00C00011
+
 .equ GA_COMCMD0, 0x00A12010
 .equ GA_COMCMD1, 0x00A12012
 .equ GA_COMSTAT0, 0x00A12020
@@ -288,6 +298,12 @@
 ip_entry:
 	move.w	#0x2700, sr
 	lea	STACK, sp
+
+	/* Real hardware powers up the Z80, PSG and YM2612 undefined; an unheld
+	   Z80 executes garbage RAM and can drive constant noise over PCM
+	   playback. Emulators start them zeroed and hide this. Park everything
+	   in a known-silent state before any streaming begins. */
+	bsr	init_sound_silence
 
 	/* IPイメージ内蔵のパレット表(可変長 n_seg*128B)と切替表(64B)をM-RAMへ。
 	   格納元は一時.startup領域で、後段のcodegenが上書きするため最初に写す。
@@ -2112,6 +2128,84 @@ dbg_put2:
 /* パレット表(全区間)と切替表はboot時にM-RAMへ写すだけの一時データなので、
    codegenが上書きする.startup領域に置いて恒久.dataの8KiB枠を消費しない。 */
 	.section .startup, "a", @progbits
+
+/* Boot-only sound silencing, called first from ip_entry. Take the Z80 bus,
+   park the Z80 on di+halt so it cannot execute undefined RAM, mute all four
+   PSG channels, pulse the Z80 reset line (which also resets the YM2612 core),
+   then force the YM2612 registers silent explicitly. Runs long before codegen
+   overwrites this transient section, and touches no Word-RAM or CD state. */
+	.align 2
+init_sound_silence:
+	move.w	#0x0100, (Z80_BUSREQ).l		/* request the Z80 bus */
+	move.w	#0x0100, (Z80_RESET).l		/* release reset for RAM access */
+1:
+	btst	#0, (Z80_BUSREQ).l
+	bne.s	1b
+	move.b	#0xF3, (Z80_RAM).l		/* di */
+	move.b	#0x76, (Z80_RAM+1).l		/* halt */
+	/* PSG: all four channels to maximum attenuation (silent) */
+	move.b	#0x9F, (PSG_PORT).l
+	move.b	#0xBF, (PSG_PORT).l
+	move.b	#0xDF, (PSG_PORT).l
+	move.b	#0xFF, (PSG_PORT).l
+	/* Pulse the Z80 reset low; the same line resets the YM2612 core */
+	move.w	#0x0000, (Z80_RESET).l
+	move.w	#191, d0
+1:
+	dbra	d0, 1b
+	move.w	#0x0100, (Z80_RESET).l
+	/* Explicit YM2612 silence on top of the reset: LFO off, timers and
+	   ch3 special mode off, DAC off, TL max on every slot, all keys off */
+	move.w	#0x22, d1
+	moveq	#0, d2
+	bsr	ym_write0
+	move.w	#0x27, d1
+	bsr	ym_write0
+	move.w	#0x2B, d1
+	bsr	ym_write0
+	move.w	#0x40, d1
+	move.w	#0x7F, d2
+1:
+	bsr	ym_write0
+	bsr	ym_write1
+	addq.w	#1, d1
+	cmpi.w	#0x50, d1
+	blo.s	1b
+	move.w	#0x28, d1
+	moveq	#0, d2
+	bsr	ym_write0
+	moveq	#1, d2
+	bsr	ym_write0
+	moveq	#2, d2
+	bsr	ym_write0
+	moveq	#4, d2
+	bsr	ym_write0
+	moveq	#5, d2
+	bsr	ym_write0
+	moveq	#6, d2
+	bsr	ym_write0
+	move.w	#0x0000, (Z80_BUSREQ).l		/* release: Z80 runs di+halt */
+	rts
+
+/* d1 = register, d2 = data. The busy flag (bit 7) reads at YM_ADDR0 for both
+   register parts; the Z80 bus stays held for the whole init. */
+ym_write0:
+1:
+	tst.b	(YM_ADDR0).l
+	bmi.s	1b
+	move.b	d1, (YM_ADDR0).l
+	nop
+	move.b	d2, (YM_DATA0).l
+	rts
+ym_write1:
+1:
+	tst.b	(YM_ADDR0).l
+	bmi.s	1b
+	move.b	d1, (YM_ADDR1).l
+	nop
+	move.b	d2, (YM_DATA1).l
+	rts
+
 	.align 2
 paltab_image:
 	.incbin "paltab.bin"
