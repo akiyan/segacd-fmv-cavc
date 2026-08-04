@@ -46,7 +46,7 @@ Argument: source MP4 path, optionally plus display name or upload instruction.
 
 Other fixed defaults:
 
-- All features on: GPU, the full 1,663-tile VRAM pool, `DITHER`, `SEGPAL`,
+- All features on: GPU, the full 1,743-tile VRAM pool, `DITHER`, `SEGPAL`,
   `NEAR`, boot VRAM prefetch, whole-movie quality planning, and the unified
   Prg/Wr0/Wr1/Dic pattern supply at every supported cadence. Remove a source's
   existing dither with an edge-preserving `video.master_filter` before the

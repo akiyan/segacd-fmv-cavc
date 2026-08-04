@@ -116,7 +116,7 @@ or the rendered analysis video when the change is meant to improve quality.
 - Priority sorting only applies to changed tiles that are not Near-skipped.
 - Near and Same cost 0 bytes and do not compete for Raw transfer budget.
 - Each cell's current degradation level is tracked in `cell_tier`:
-  `0=Miss`, `1=Flbk`, `2=Near`, `9=good`.
+  `0 = Miss / Scrl (unsupplied want)`, `1=Flbk`, `2=Near`, `9=good`.
 - Integer `wait` is retained only for TSV `carry` and `age` reporting. It must
   not be reused for update or upgrade priority.
 - Approximation upgrades sort by severity, then `age_press`, then base score.

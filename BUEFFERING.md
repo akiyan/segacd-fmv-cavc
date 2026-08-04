@@ -39,7 +39,9 @@ The quality-budget and physical-occupancy traces remain different values.
 
 The primary quality objective is to avoid concentrating many Miss cells in one
 frame. A small approximation distributed across the picture is generally less
-damaging than a frame with hundreds of unchanged holes.
+damaging than a frame with hundreds of unchanged holes. Inside an adopted
+hardware-scroll window an unsupplied want reports as Scrl rather than Miss,
+because the scroll still carries the cell to its correct position.
 
 The planner prioritizes future changes likely to fall through to Flbk or Miss.
 It does not hide starvation by lowering raster size or frame rate.
@@ -265,13 +267,13 @@ dictionary count:
 - unloaded preload capacity is not drawn as present data; and
 - the quality-budget trace remains diagnostic-only.
 
-`buffer_remaining.npz` schema 7 contains physical remaining amounts, capacities,
+`buffer_remaining.npz` schema 8 contains physical remaining amounts, capacities,
 realized loads, base and effective quality reserve traces, predicted demand,
 the terminal-drain start/credit/balance/debt traces, the CRAM-priority frame
 mask and shortage, the WordBuf Prg-pressure start and provisional payload
 supply, preload credits, and physical BODY payload/control/pad accounting.
 The decision log also freezes
-`pattern_supply` schema 2, `pattern_transfers` schema 2, and the physical
+`pattern_supply` schema 5, `pattern_transfers` schema 3, and the physical
 schedule used by the packer.
 
 ## Validation Gates
@@ -339,7 +341,9 @@ boot-preload creditを使う正確なcold loadのencoder funding categoryであ�
 ## 目的
 
 主な画質目的は、多数のMiss cellが1 frameへ集中することを避けることです。画面全体へ
-分散した小さな近似は、数百のcellが更新されないframeより一般に目立ちません。
+分散した小さな近似は、数百のcellが更新されないframeより一般に目立ちません。採用
+hardware-scroll window中の未供給wantは、scrollがcellを正しい位置へ運ぶため、
+MissではなくScrlとして報告します。
 
 Plannerは、FlbkまたはMissへ落ちやすい将来の変化を優先します。Raster sizeやframe rateを
 下げてstarvationを隠しません。
@@ -543,13 +547,13 @@ live delivery専用で、最後の6 KiBは観測・overflow安全領域です。
 - Loadしていないpreload capacityをdataが存在するようには表示しません。
 - Quality-budget traceはdiagnostic専用です。
 
-`buffer_remaining.npz` schema 7は、物理remaining amount、capacity、realized load、
+`buffer_remaining.npz` schema 8は、物理remaining amount、capacity、realized load、
 base/effective quality reserve trace、predicted demand、terminal-drainの
 start/credit/balance/debt trace、CRAM-priority frame maskと予測不足量、WordBufの
 Prg-pressure startと暫定payload供給、preload credit、物理BODYのpayload/control/pad
 会計を含みます。
-Decision logは`pattern_supply` schema 2、
-`pattern_transfers` schema 2、packerが使うphysical scheduleも固定します。
+Decision logは`pattern_supply` schema 5、
+`pattern_transfers` schema 3、packerが使うphysical scheduleも固定します。
 
 ## Validation gate
 

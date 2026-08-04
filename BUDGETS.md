@@ -240,15 +240,21 @@ full-path qualification.
 The pack asserts that every timed frame's realized new-tile loads stay within
 the effective encoded cap and does not re-cap the stream. Frame 0 is exempt
 because `HEADER.DAT` loads it before timed playback. Cells that cannot be
-updated within the cap appear as Miss in the analysis category map.
+updated within the cap appear as Miss in the analysis category map, except
+inside an adopted hardware-scroll window, where they appear as Scrl. An
+adopted scroll frame further clamps its per-frame cold/Prg ceiling to
+`SCROLL_SINGLETON_COLD_FRACTION` (0.30) of the qualified cap because its
+fragmented colds transfer as single-run setups (see
+[`CONFIG.md`](CONFIG.md)).
 
 `boot/movieplay_ip.s` sets a per-mode VBlank word budget (`md_vbudget`):
 `VB_WORDS_H32` = 2800 and `VB_WORDS_H40` = 3200. Both are below the GPGX
 ceilings (H32 2982 words/VBlank, H40 3664 words/VBlank). Re-check against the
 ares `dmabench` value before raising them.
 
-The mode4 player path uses true SMS Mode 4 for display with VBlank-only Mode 5
-DMA. Re-prove it on ares or hardware before raising player limits.
+No mode4 player path exists yet; the player supports H32 and H40 only. The
+mode4 design target uses true SMS Mode 4 for display with VBlank-only Mode 5
+DMA. Prove it on ares or hardware before adding player limits.
 
 ## Empirical measurement — `cpuvrambench`
 
@@ -516,14 +522,19 @@ Pure-DMA ceilingだけでは再生上限を決められません。各frameに�
 Packは各timed frameの実new-tile loadがencode時のeffective cap以内にあることをassertし、
 streamへ別のcapをかけません。Frame 0は`HEADER.DAT`によってtimed playback前にload
 されるため対象外です。Cap内で更新できないcellは、解析category mapでMissとして表示します。
+ただし採用hardware-scroll window中はScrlとして表示します。採用scroll frameはさらに、
+frameごとのcold/Prg上限を認定済みcapの`SCROLL_SINGLETON_COLD_FRACTION`（0.30）へ
+clampします。断片化したcoldが単独run setupとして転送されるためです
+（[`CONFIG.md`](CONFIG.md)参照）。
 
 `boot/movieplay_ip.s`はmodeごとのVBlank word予算`md_vbudget`を設定します。
 `VB_WORDS_H32`は2800、`VB_WORDS_H40`は3200です。どちらもGPGX ceiling
 （H32は2982 word/VBlank、H40は3664 word/VBlank）より小さい値です。引き上げる前に、
 aresの`dmabench`値と照合してください。
 
-Mode4 playerでは、上記実測経路、つまり表示に真のSMS Mode 4を使い、VBlank中だけ
-Mode 5 DMAを行います。Player limitを引き上げる前に、aresまたは実機で再証明してください。
+Mode4 player pathはまだ存在せず、playerはH32とH40だけをsupportします。mode4の
+設計目標は、表示に真のSMS Mode 4を使い、VBlank中だけMode 5 DMAを行う構成です。
+Player limitを追加する前に、aresまたは実機で証明してください。
 
 ## 実測 — `cpuvrambench`
 

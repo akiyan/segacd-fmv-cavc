@@ -35,13 +35,21 @@ frames that need new patterns.
 - **Coordinate multiple CPUs.** The Sub CPU routes CD sectors, manages PrgBuf,
   decodes ADPCM, and expands the next frame into Word RAM. The Main CPU consumes
   resolved runs for the current frame, transfers patterns to VRAM, updates
-  CRAM, and DMAs one statically trimmed band into the single name table. The
-  1M/1M Word-RAM handoff connects them once per frame,
+  CRAM, and DMAs one statically trimmed band into the single name table;
+  during an adopted scroll window it instead stages the full 64-column
+  rolling-plane band and republishes the Plane A/B scroll pair in the same
+  VBlank. The 1M/1M Word-RAM handoff connects them once per frame,
   and a pending handoff takes priority over future-data prefetch.
-- **Reuse VRAM residents.** Tiles 1–1,663 form one persistent pool shared by
-  H32 and H40. An exact resident needs only a name-table entry. Near uses a
+- **Reuse VRAM residents.** Tiles 1–1,743 form one persistent pool shared by
+  H32 and H40, ending just below the fixed HUD font at VRAM `0xDA00`. An exact
+  resident needs only a name-table entry. Near uses a
   visually close resident, and Flbk uses a resident that improves the current
   display. A new 32-byte pattern is cold-loaded only when needed.
+- **Move the whole picture in hardware.** The encoder automatically detects
+  sustained axis-only camera scrolls, adopts only the windows that are
+  measurably cheaper than the fixed grid, and streams scroll controls. The
+  player rolls a 64x32 Plane A with absolute HScroll/VScroll values, so cells
+  the scroll carries need no pattern or name-table update at all (Scrl).
 - **Time-slice the CRAM constraint.** The encoder trains 60 colours within the
   VDP's four palette lines of 15 usable colours each. The movie is segmented at
   safe transitions, every segment palette is preloaded into Main RAM, and
@@ -93,8 +101,9 @@ rendering is a separate step.
 
 The optional 1920x1080 analysis video shows decoded Sega CD output, source,
 per-cell categories, audio, physical delivery, pattern supplies, DMA, and
-whole-movie timelines. Frame 0 is omitted from timed-work values and graph
-maxima.
+whole-movie timelines; a movie with an adopted scroll window also shows the
+hardware-scroll indicator and the Scrl category. Frame 0 is omitted from
+timed-work values and graph maxima.
 
 The authoritative panel, meter, category, timeline, audio-window, and TSV
 specifications live beside their implementation in `tools/layout_preview.py`,
@@ -165,9 +174,12 @@ run.
 | `movieplay` / `disc` | Codec player disc. |
 | `cdcbench` | Continuous and restarted CD-read measurement. |
 | `dmabench` | Maximum VRAM DMA per VBlank and screen mode. |
+| `cpuvrambench` | CPU-to-VRAM data-port write throughput during VBlank. |
+| `fontbench` | Gate-array font bit vs CPU LUT 1bpp-to-4bpp expansion benchmark. |
 | `still256` | Static H32 display bring-up. |
 | `streamtest` | Minimal continuous stream test. |
 | `pcmtest` | RF5C164 register and wave-RAM test. |
+| `adpcmtest` | ADPCM decode and PCM playback test. |
 | `test1m` | 1M/1M Word-RAM swap test. |
 | `prgtest` | PRG-RAM and streaming interaction test. |
 | `asictest` / `upscaletest` | Graphics ASIC and CPU-upscale experiments. |
@@ -180,7 +192,6 @@ Ubuntu host packages:
 sudo apt update
 sudo apt install \
   ffmpeg fonts-ipafont-gothic genisoimage imagemagick \
-  libretro-genesisplusgx \
   pipx \
   retroarch rsync xdotool xvfb
 ```
@@ -297,11 +308,13 @@ Use emulator-synchronized A/V:
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 180 --tag STEM_emu --out STEM_emu_preview.mp4
+  --seconds 180 --tag STEM_emu
 ```
 
 The recorder defaults to fixed-Replay, faster-than-realtime, native-size
-FFV1/FLAC. The MP4 is a quick verification preview. `--realtime-lossless`
+FFV1/FLAC; the bounded lossless MKV is the artifact. Add `--preview` (with
+optional `--out NAME`) for an opt-in lossy H.264 verification preview.
+`--realtime-lossless`
 creates a paced FFV1/FLAC diagnostic baseline. `--preset realtime` is 4:2:0
 and is not an upload master. Recordings retain Mega-CD startup unless an
 explicit movie-only trim is requested.
@@ -382,12 +395,19 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
 - **複数CPUを協調させる。** Sub CPUはCD sectorのroute、PrgBuf、ADPCM decode、次frameの
   Word RAM展開を担当します。Main CPUはcurrent frameの解決済みrunを消費し、VRAM
   transfer、CRAM update、単一name tableへの静的trim済みband DMAを担当します。
+  採用scroll window中は代わりに64列rolling plane bandをstageし、同じVBlank内で
+  Plane A/Bのscroll値も更新します。
   1M/1M Word RAM handoffで両者をframe単位に接続し、
   pending handoffを将来dataの先読みより優先します。
-- **VRAM residentを再利用する。** tile 1〜1,663をH32/H40共通のpersistent poolとして
-  使います。Exact residentはname-table entryだけ、Nearは見た目が近いresident、Flbkは
+- **VRAM residentを再利用する。** tile 1〜1,743をH32/H40共通のpersistent poolとして
+  使います（固定HUD font `0xDA00`の直前まで）。Exact residentはname-table entryだけ、
+  Nearは見た目が近いresident、Flbkは
   現在表示を改善するresidentを参照します。新しい32-byte patternは必要なときだけ
   cold loadします。
+- **画面全体はhardwareで動かす。** Encoderは持続する単一軸のcamera scrollを自動検出し、
+  固定gridより実測で安くなるwindowだけを採用してscroll controlをstreamします。
+  Playerは64x32 Plane Aを絶対HScroll/VScroll値で環状に使うため、scrollが運ぶcellは
+  patternもname-table更新も一切不要です（Scrl）。
 - **CRAM制約を時分割する。** VDPの4 palette lines、各15 usable coloursの範囲で60色を
   学習します。安全なtransitionでmovieをsegment化し、全segment paletteをMain RAMへ
   preloadして、再生中は小さな参照だけで時限切替します。また、黒の間で
@@ -430,7 +450,8 @@ Disc packはsimulation後、optional analysis renderは別工程です。
 ## Analysis
 
 optional 1920x1080 analysis videoはdecoded Sega CD output、source、cell別category、
-audio、物理delivery、pattern供給、DMA、movie全体timelineを表示します。frame 0は
+audio、物理delivery、pattern供給、DMA、movie全体timelineを表示します。採用scroll
+windowがあるmovieではhardware-scroll indicatorとScrl categoryも表示します。frame 0は
 timed-work valueとgraph maximumから除外します。
 
 全panel、meter、category、timeline、audio window、TSV fieldの正は、実装と同じ
@@ -497,9 +518,12 @@ build intermediate、tmpfs leaseはrunごとに分離します。
 | `movieplay` / `disc` | Codec player disc。 |
 | `cdcbench` | continuous/restarted CD read計測。 |
 | `dmabench` | screen mode別のVBlank当たり最大VRAM DMA。 |
+| `cpuvrambench` | VBlank中のCPU→VRAM data port書き込みthroughput実測。 |
+| `fontbench` | gate-array Font bit vs CPU LUTの1bpp→4bpp展開benchmark。 |
 | `still256` | static H32 display bring-up。 |
 | `streamtest` | minimal continuous stream test。 |
 | `pcmtest` | RF5C164 register/wave-RAM test。 |
+| `adpcmtest` | ADPCM decodeとPCM playback test。 |
 | `test1m` | 1M/1M Word-RAM swap test。 |
 | `prgtest` | PRG-RAMとstreaming interaction test。 |
 | `asictest` / `upscaletest` | graphics ASICとCPU upscale experiment。 |
@@ -512,7 +536,6 @@ Ubuntu host package:
 sudo apt update
 sudo apt install \
   ffmpeg fonts-ipafont-gothic genisoimage imagemagick \
-  libretro-genesisplusgx \
   pipx \
   retroarch rsync xdotool xvfb
 ```
@@ -626,11 +649,13 @@ emulator-synchronized A/Vを使います。
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 180 --tag STEM_emu --out STEM_emu_preview.mp4
+  --seconds 180 --tag STEM_emu
 ```
 
 recorderのdefaultはfixed-Replay、faster-than-realtime、native-size FFV1/FLACです。
-MP4は短時間確認用previewです。`--realtime-lossless` はpaced FFV1/FLAC diagnostic
+成果物はbounded lossless MKVです。lossy H.264 verification previewはopt-inで、
+`--preview`（必要なら`--out NAME`も）を付けたときだけ作ります。
+`--realtime-lossless` はpaced FFV1/FLAC diagnostic
 baselineを作ります。`--preset realtime` は4:2:0でupload masterには使いません。
 明示的なmovie-only trimを要求しない限りMega-CD startupを保持します。
 

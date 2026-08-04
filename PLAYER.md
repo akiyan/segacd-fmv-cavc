@@ -41,7 +41,7 @@ and are listed in place.
 | Sub PRG-RAM | `SP-GAP` 224 B, `SCRATCH` 256 B, and `RING-ALIGN` 448 B |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
 | Main RAM | `M-FREE` 10.38 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
-| VRAM | `0xDE80..0xDFFF` 384 B; unused Window/HScroll table rows remain reserved to those VDP structures |
+| VRAM | `0xDE80..0xDFFF` 384 B; unused Window/HScroll table rows remain reserved to those VDP structures. DEBUG shapes its HUD row with reg 18 only; reg 17 must stay 0 because Window row 24 cols 0-1 alias the HScroll table at `0xFC00`, which now carries nonzero scroll values |
 
 ## Sub PRG-RAM Map
 
@@ -204,7 +204,7 @@ build-time checked against the `M-STATE` base.
 | Name | Address | Size | Contents |
 |---|---|---:|---|
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated bitmap handlers and guard |
-| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage, state; worst-case fixed reserve |
+| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage (a persistent 4,096 B 64x32 plane band on a scroll build), scroll state (`scroll_next_h`/`scroll_next_v`/`scroll_h_dirty`), state; worst-case fixed reserve |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | current inline fade CRAM image, copied before the consumed Word RAM bank is returned |
 | `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | unallocated space released by in-place `O_LOADS v2` consumption |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
@@ -216,8 +216,10 @@ build-time checked against the `M-STATE` base.
 
 The realized generated-code end inside `M-CODE` and the realized `.bss` end
 inside `M-STATE` vary per build and profile; build-time assertions keep each
-inside its fixed range. Main keeps no run-plan cursor or WordBuf read cursor:
-Sub owns both parity cursors and hands off already-resolved records.
+inside its fixed range. A scroll DEBUG build fills the `M-STATE` reservation
+completely, with zero spare bytes. Main keeps no run-plan cursor or WordBuf
+read cursor: Sub owns both parity cursors and hands off already-resolved
+records.
 
 ## VRAM Map
 
@@ -233,13 +235,20 @@ switch selects another table.
 | gap | `0xDE80..0xDFFF` | 384 B | unallocated VRAM |
 | movie NT | `0xE000..0xEFFF` | 4 KiB | single 64x32 Plane A table |
 | HUD Window row | `0xF000..0xF04F` | up to 80 B | first DEBUG row; H32 uses 64 B, H40 uses 80 B |
-| horizontal scroll | `0xFC00..0xFC03` | 4 B | fixed full-screen scroll words |
+| horizontal scroll | `0xFC00..0xFC03` | 4 B | Plane A/B full-screen HScroll pair; zero outside a scroll window, rewritten every flip inside one |
+
+VSRAM entries 0 and 1 carry the Plane A/B VScroll. The stream's scroll value
+follows the `y - vscroll` convention while the VDP adds VSRAM to the line
+counter, so the player writes the negated value; both pairs are zero outside
+a scroll window and republished in the same VBlank as the band DMA.
 
 Main expands the logical grid into a zero-gapped, 64-entry-pitch Main-RAM
 stage. During the cadence-final VBlank it DMAs the contiguous band from the
 grid's centered top-left cell through its final cell into `movie NT`. The
 transfer length is `(rows - 1) * 64 + cols`: 1,192 words for 40x19, 1,768 for
-full-height H40, and 1,760 for full-height H32. DEBUG then sends the first
+full-height H40, and 1,760 for full-height H32. Inside a scroll window the
+DMA instead covers the full 64-column band — `rows * 64` words, or all 32
+plane rows (2,048 words) on a vertical window. DEBUG then sends the first
 screen-width HUD row to the Window table and its 3 or 11 spill digits as
 sprites. Generic and specialized players use the same routes at every cadence.
 
@@ -349,6 +358,14 @@ requests `STAT_END` only after that frame has become visible. H32,
 non-specialized, periodic-cadence, and feature-clear paths use the same early
 handoff once a future frame exists.
 
+On a scroll build, a type-3 control takes a dedicated apply path: item 0
+supplies the absolute HScroll/VScroll pair, and the remaining completed-list
+items write directly into the persistent 64x32 plane band, leaving the
+logical shadow untouched and skipping the stage expansion. The flip then
+publishes the full plane band and both scroll pairs. On the first following
+non-scroll frame the player compacts the tile-aligned final viewport back
+into the logical shadow and rearms both scrolls at zero.
+
 CAVC controls store `n_runs` immediately followed by compact source-aware
 run descriptors. Sub keeps the existing CDC polling cadence while resolving
 those descriptors into `O_LOADS v2`; Main schedules the expanded records
@@ -377,6 +394,11 @@ is written by the CPU, so its 64 words reserve 256 units. Full-height H40 uses
 to 2,152 and 2,204. Thus an N2 DEBUG full-height H40 frame has 3,200 units in
 VBlank 1 and 1,252 pattern units in VBlank 2, or 996 on a palette switch. A
 40x19 DEBUG frame reserves only 1,372 units, or 1,628 with a palette switch.
+A scroll build adds the fixed scroll term — the full-band excess over the
+trimmed band plus 16 units for the CPU-written HScroll/VScroll pairs (40
+units at full-height H40) — and a vertical window adds a further 256 units
+at runtime for the wrapped plane rows. A scroll frame carries no inline CRAM
+image, so the palette-switch variants never apply to it.
 
 A DMA run crossing a residual boundary is split exactly there and continued
 at the next fresh VBlank head, regardless of run length. After the pattern
@@ -464,7 +486,7 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 | Sub PRG-RAM | `SP-GAP` 224 B、`SCRATCH` 256 B、`RING-ALIGN` 448 B |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
 | Main RAM | `M-FREE` 10.38 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
-| VRAM | `0xDE80..0xDFFF` 384 B。未使用Window/HScroll table rowは各VDP structure用に予約したまま |
+| VRAM | `0xDE80..0xDFFF` 384 B。未使用Window/HScroll table rowは各VDP structure用に予約したまま。DEBUGのHUD行はreg 18だけで形成し、reg 17は0のまま保つ。Window row 24 col 0-1は`0xFC00`のHScroll tableとaliasし、そこはいまや非ゼロのscroll値を運ぶため |
 
 ## Sub PRG-RAM map
 
@@ -621,7 +643,7 @@ build-time checkされます。
 | Name | Address | Size | 内容 |
 |---|---|---:|---|
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated bitmap handler、guard |
-| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage、state。最悪ケース固定予約 |
+| `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage（scroll buildでは常駐4,096 Bの64x32 plane band）、scroll state（`scroll_next_h`/`scroll_next_v`/`scroll_h_dirty`）、state。最悪ケース固定予約 |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | 消費済みWord RAM bankを返す前にcopyする、現在のinline fade CRAM image |
 | `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | `O_LOADS v2` in-place消費により解放された未割当領域 |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
@@ -632,7 +654,8 @@ build-time checkされます。
 | `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | stack topより上 / BIOS reserve |
 
 `M-CODE`内の実generated-code末尾と`M-STATE`内の実`.bss`末尾はbuildとprofile
-ごとに変わり、build-time assertionが各固定rangeの内側に保ちます。Mainは
+ごとに変わり、build-time assertionが各固定rangeの内側に保ちます。scroll DEBUG
+buildは`M-STATE`予約を余りゼロで使い切ります。Mainは
 run-plan cursorもWordBuf read cursorも持たず、Subが両parity cursorを所有して
 解決済みrecordを渡します。
 
@@ -650,12 +673,19 @@ register-2 switchはありません。
 | gap | `0xDE80..0xDFFF` | 384 B | 未割当VRAM |
 | movie NT | `0xE000..0xEFFF` | 4 KiB | 単一64x32 Plane A table |
 | HUD Window row | `0xF000..0xF04F` | 最大80 B | DEBUG先頭行。H32は64 B、H40は80 B |
-| horizontal scroll | `0xFC00..0xFC03` | 4 B | 固定full-screen scroll word |
+| horizontal scroll | `0xFC00..0xFC03` | 4 B | Plane A/Bのfull-screen HScroll対。scroll window外では0、window中は毎flip書き換え |
+
+VSRAM entry 0と1はPlane A/BのVScrollを運びます。streamのscroll値は
+`y - vscroll`規約に従い、VDPはVSRAMをline counterへ加算するため、playerは
+符号反転した値を書きます。両対ともscroll window外では0で、band DMAと同じ
+VBlank内でrepublishします。
 
 Mainはlogical gridをzero gap付き64-entry-pitch Main-RAM stageへ展開します。
 Cadence-final VBlank中に、gridのcentered top-left cellからfinal cellまでの連続bandを
 `movie NT`へDMAします。Transfer lengthは`(rows - 1) * 64 + cols`で、40x19は
-1,192 word、full-height H40は1,768、full-height H32は1,760です。DEBUGは続いて
+1,192 word、full-height H40は1,768、full-height H32は1,760です。scroll window中は
+代わりに64列band全体をDMAします。horizontalは`rows * 64` word、verticalは
+32 plane行すべて（2,048 word）です。DEBUGは続いて
 先頭screen-width HUD rowをWindow tableへ、spillする3桁または11桁をspriteとして
 送ります。Generic / specialized playerは全cadenceで同じrouteを使います。
 
@@ -763,6 +793,13 @@ startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期reque
 requestします。H32、non-specialized、periodic-cadence、feature-clear pathも、
 future frameが存在すれば同じearly handoffを使います。
 
+scroll buildでは、type 3 controlが専用のapply pathを通ります。item 0が絶対
+HScroll/VScroll対を供給し、残りのcompleted-list itemは常駐64x32 plane bandへ
+直接書き込みます。logical shadowには触れず、stage展開もskipします。flipは
+plane band全体と両scroll対をpublishします。直後の最初の非scroll frameで、
+playerはtile整列済みの最終viewportをlogical shadowへ圧縮複写し、両scrollを
+0へ戻して再armします。
+
 CAVC controlは`n_runs`の直後にcompactなsource-aware run descriptorを
 置きます。Subは既存のCDC polling cadenceを保ったままdescriptorを
 `O_LOADS v2`へ解決し、Mainがruntime残budgetに対して展開済みrecordをschedule
@@ -787,6 +824,10 @@ Full-height H40のreserveはreleaseで1,896 unit、DEBUGで1,948 unit、palette 
 それぞれ2,152と2,204です。したがってN2 DEBUG full-height H40 frameはVBlank 1に
 3,200 unit、VBlank 2にpattern用1,252 unit、palette switch時は996 unitを持ちます。
 40x19 DEBUG frameのreserveは1,372 unit、palette switch時は1,628 unitだけです。
+scroll buildは固定のscroll項 — trim済みbandに対するfull bandの超過分と、CPU
+writeするHScroll/VScroll対の16 unit（full-height H40では計40 unit）— を加え、
+vertical windowはwrapするplane行の分としてさらに256 unitをruntimeで加えます。
+scroll frameはinline CRAM imageを運ばないため、palette switch変種は適用されません。
 
 DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
 fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、

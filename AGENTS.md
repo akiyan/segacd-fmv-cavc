@@ -117,7 +117,14 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
      category map / 60 fps audio waveform and spectrum; bottom status =
      Req with its Miss count, Cold, Band, R2V, Run, Prg, Wrd, and Pre, then the
      palette strip and the stacked Req / supply / Run / Band timelines; the
-     category legend is Raw, Same, Near, Flbk, Miss, Prg, Wrd, Dic). Define Band
+     category legend is Raw, Same, Near, Flbk, Miss, Prg, Wrd, Dic, plus Scrl
+     on a movie with adopted hardware scroll — Scrl is a cell the active
+     scroll carried to its correct position without an update this frame,
+     scroll reuse rather than a Miss. Such a movie also shows the legend's
+     right-aligned hardware-scroll indicator: green chevrons pointing in the
+     on-screen flow direction plus axis:position and speed per frame while a
+     window is active, dimmed to "SCROLL ---" between windows; a movie with
+     no adopted window shows neither Scrl nor the indicator). Define Band
      as useful
      `BODY.DAT` payload + control bytes in the physical delivery slot, excluding
      all pad and the untimed `HEADER.DAT` / BODY-arm / frame-0 regions, divided

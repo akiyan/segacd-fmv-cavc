@@ -76,8 +76,8 @@ def encode_count(
         raise ValueError("fade frames cannot use a shadow update list")
     if kind == FRAME_SCROLL and not use_list:
         raise ValueError("scroll frames require a shadow update list")
-    # A horizontal scroll control stores absolute x plus one reserved zero word
-    # as its first four-byte list item. Counting it lets the Sub CPU locate
+    # A scroll control stores the absolute HScroll/VScroll pair as its first
+    # four-byte list item. Counting it lets the Sub CPU locate
     # audio through the ordinary list path without another resident parser.
     encoded_count = value + int(kind == FRAME_SCROLL)
     if encoded_count > COUNT_MASK:

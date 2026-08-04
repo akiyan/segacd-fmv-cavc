@@ -86,8 +86,8 @@ class RingGeometryTests(unittest.TestCase):
         self.assertEqual(av_config.VRAM_PATTERN_BASE_TILE, 1)
         self.assertEqual(av_config.VRAM_FIRST_MOVIE_NT_TILE, 1792)
         self.assertEqual(av_config.VRAM_MOVIE_NT_TILE, 1792)
-        self.assertEqual(av_config.VRAM_PATTERN_POOL_TILES, 1663)
-        self.assertEqual(av_config.VRAM_HUD_FONT_TILE, 1664)
+        self.assertEqual(av_config.VRAM_PATTERN_POOL_TILES, 1743)
+        self.assertEqual(av_config.VRAM_HUD_FONT_TILE, 1744)
         self.assertTrue(av_config.PACK_FORWARD_FILL)
         self.assertEqual(av_config.STARTUP_AUDIO_PREFETCH_FRAMES, 30)
 
