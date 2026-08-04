@@ -158,6 +158,14 @@ profile is conservative; raising it requires a new full-length playback
 qualification with the complete encoder, stream, Sub-CPU, Main-CPU, audio, and
 CD-pump path.
 
+A horizontal-scroll frame additionally clamps its cold/Prg ceiling to
+`SCROLL_SINGLETON_COLD_FRACTION` (0.30, `tools/av_config.py`) of the frame's
+qualified cap, never below the mandatory incoming guard column. The rolling
+plane keeps long-lived world tiles resident, so the shared slot pool
+fragments and nearly every scroll-frame cold transfers as its own run; the
+per-run setup time (measured about 30 to 45 microseconds) would otherwise
+exceed the blank-time budget the ordinary caps were qualified against.
+
 The sim and packer share `tools/tile_alloc.py`. The packer replays the frozen
 allocation and requires realized cold to remain within each frame's own cap.
 Frame 0 is exempt because the untimed BODY arm installs it before timed
@@ -648,6 +656,13 @@ profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、p
 1つの値がそのまま流れます。Qualification済みprofileから値を下げるのは保守的な変更
 です。引き上げる場合はencoder、stream、Sub CPU、Main CPU、audio、CD pumpを含む
 完全な経路で新しい全編再生qualificationが必要です。
+
+horizontal-scroll frameはさらに、cold/Prg上限をそのframeの認定済みcapの
+`SCROLL_SINGLETON_COLD_FRACTION`（0.30、`tools/av_config.py`）にclampします。
+必須の進入guard列を下回ることはありません。rolling planeは長寿命のworld tileを
+residentに保つため共有slot poolが断片化し、scroll frameのcoldはほぼすべて単独run
+として転送されます。run毎のsetup時間（実測で約30〜45マイクロ秒）は、通常capの
+qualificationが前提としたblank時間予算をそのままでは超過します。
 
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
 realized coldが各フレーム自身のcap内にあることを要求します。frame 0はtimed playback前に

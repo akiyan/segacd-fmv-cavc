@@ -2731,6 +2731,18 @@ def main():
         cold_limit_active = i > 0
         frame_max_cold = int(physical_frame_limit.cold_patterns)
         frame_max_prg = int(physical_frame_limit.prg_patterns)
+        if scroll_state is not None:
+            # Fragmented scroll-frame colds are singleton runs; per-run setup
+            # time dominates. Keep the frame's transfer time at the qualified
+            # ordinary-frame level (see av_config.SCROLL_SINGLETON_COLD_FRACTION)
+            # while always affording the mandatory incoming guard column.
+            scroll_cold_ceiling = max(
+                len(scroll_state.guard_cells),
+                int(frame_max_cold
+                    * av_config.SCROLL_SINGLETON_COLD_FRACTION),
+            )
+            frame_max_cold = min(frame_max_cold, scroll_cold_ceiling)
+            frame_max_prg = min(frame_max_prg, scroll_cold_ceiling)
         frame_control_block_limit = int(
             physical_frame_limit.control_block_bytes)
         visible_frame_max_cold = max(

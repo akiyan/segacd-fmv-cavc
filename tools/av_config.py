@@ -447,6 +447,20 @@ def audio_frame_layout(fps):
 # per-source `CBRSIM_COLD_CAP_REALIZED` env override. The pack still asserts
 # realized <= cap as a guard. frame0 (the full-load header) is exempt.
 
+# --- Scroll-frame singleton-run transfer ceiling ---
+# A rolling-plane scroll window keeps long-lived world tiles resident, so the
+# shared slot pool fragments and nearly every scroll-frame cold becomes its
+# own transfer run. Per-run setup time then dominates the blank-time budget
+# (measured ~30..45us per run, i.e. roughly 40..60 DMA-word equivalents; the
+# stopwatch model in harness/cold_cap_model is U ~= 0.71/load + 9.9/run - 65
+# ticks). The profile cold caps are qualified on ordinary frames whose runs
+# average about four tiles. Equating the qualified transfer time
+# (a*cap + b*cap/4) with the singleton-run cost (a + b per cold) gives
+# cap * (a + b/4) / (a + b) ~= 0.30 * cap. Scroll frames therefore clamp the
+# per-frame cold/Prg ceiling to this fraction of the qualified cap until the
+# measured run-aware VBlank budget replaces the approximation.
+SCROLL_SINGLETON_COLD_FRACTION = 0.30
+
 # --- Per-frame cold cap supplied by the encode profile ---
 # A profile supplies either one scalar cap ("225") or, for a multi-interval
 # VBlank cadence such as 24 fps, one cap per display interval ("2:170,3:250"
