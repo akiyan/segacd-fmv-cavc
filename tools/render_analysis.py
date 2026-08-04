@@ -255,6 +255,9 @@ SCROLL_POSITIONS = np.asarray(
 if SCROLL_ACTIVE.shape != (NF,) or SCROLL_POSITIONS.shape != (NF, 2):
     raise SystemExit("analysis scroll trace has an invalid shape; re-run sim")
 SCROLL_ON = bool(SCROLL_ACTIVE.any())
+if SCROLL_ON and "scrl" not in idx:
+    raise SystemExit(
+        "analysis Scrl category is missing for a scroll movie; re-run sim")
 
 
 def frame_scroll(i):
@@ -308,6 +311,10 @@ if not np.array_equal(Prg + Wr0 + Wr1 + Dic, Buf):
 if "same" not in idx:
     raise SystemExit("analysis exact Same category is missing; re-run sim")
 Same = col("same")
+# Scrl = scroll-carried cells (unfunded want during an active scroll window).
+# A pre-Scrl stats file is acceptable only for a movie without scroll windows,
+# where the category is identically zero.
+Scrl = col("scrl")
 DMA_TILES = col("dma_tiles") if "dma_tiles" in idx else Raw + Buf
 PREFETCH = col("prefetch")
 _r2v_fields = (
@@ -447,7 +454,7 @@ def _legacy_dma_runs():
 DMA_RUNS = col("dma_runs") if "dma_runs" in idx else _legacy_dma_runs()
 FULL = {
     "Raw": Raw, "Same": Same, "Near": Near, "Flbk": Flbk, "Miss": Miss,
-    "Prg": Prg, "Wr0": Wr0, "Wr1": Wr1, "Dic": Dic,
+    "Scrl": Scrl, "Prg": Prg, "Wr0": Wr0, "Wr1": Wr1, "Dic": Dic,
 }
 _category_sum = sum(FULL.values())
 if not np.array_equal(_category_sum, np.full(NF, C, np.int64)):
@@ -561,9 +568,13 @@ def materialize_analysis_panels(frames):
         (catmap_dir / f"{frame:05d}.png").unlink(missing_ok=True)
 
     required_order = (
-        "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+        "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss", "Scrl",
     )
-    if CATEGORY_MASK_ORDER != required_order:
+    # A pre-Scrl mask order is acceptable only without scroll windows (the
+    # Scrl bit would be identically zero there).
+    if CATEGORY_MASK_ORDER == required_order[:-1] and not SCROLL_ON:
+        pass
+    elif CATEGORY_MASK_ORDER != required_order:
         raise SystemExit(
             f"analysis category-mask order differs: {CATEGORY_MASK_ORDER!r}")
     category_bits = {
@@ -668,22 +679,49 @@ def materialize_analysis_panels(frames):
         Image.fromarray(preview_image, "RGB").save(
             preview_dir / f"{frame:05d}.png")
 
-        category_rgb = cell_rgb.astype(np.float64)
-        category_rgb[
-            (category_masks & category_bits["Miss"]) != 0
-        ] = 0
-        for name in ("Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic"):
-            style.apply_numpy_category_border(
-                category_rgb,
-                (category_masks & category_bits[name]) != 0,
-                name,
+        border_names = ("Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic")
+        if scrolling:
+            # Category art in plane space, fine-cropped with the exact same
+            # per-pixel offset as the preview, so the category map slides
+            # with the real hardware scroll instead of jumping per tile.
+            # Same and Scrl draw no border; Miss keeps its black hole.
+            plane_masks = np.zeros(plane_cells, np.uint16)
+            plane_masks[selection] = category_masks
+            plane_rgb_cells = (
+                full_palette[display_pal[:, None], display_idx] * 36
+            ).reshape(plane_cells, 8, 8, 3).astype(np.float64)
+            plane_rgb_cells[
+                (plane_masks & category_bits["Miss"]) != 0
+            ] = 0
+            for name in border_names:
+                style.apply_numpy_category_border(
+                    plane_rgb_cells,
+                    (plane_masks & category_bits[name]) != 0,
+                    name,
+                )
+            plane_art = plane_rgb_cells.clip(0, 255).astype(np.uint8).reshape(
+                scroll_plan.PLANE_ROWS, scroll_plan.PLANE_COLUMNS, 8, 8, 3,
+            ).transpose(0, 2, 1, 3, 4).reshape(
+                scroll_plan.PLANE_ROWS * 8,
+                scroll_plan.PLANE_COLUMNS * 8,
+                3,
             )
-        Image.fromarray(
-            _cells_to_image(
-                category_rgb.clip(0, 255).astype(np.uint8)
-            ),
-            "RGB",
-        ).save(catmap_dir / f"{frame:05d}.png")
+            catmap_image = plane_art[yy[:, None], xx[None, :]]
+        else:
+            category_rgb = cell_rgb.astype(np.float64)
+            category_rgb[
+                (category_masks & category_bits["Miss"]) != 0
+            ] = 0
+            for name in border_names:
+                style.apply_numpy_category_border(
+                    category_rgb,
+                    (category_masks & category_bits[name]) != 0,
+                    name,
+                )
+            catmap_image = _cells_to_image(
+                category_rgb.clip(0, 255).astype(np.uint8))
+        Image.fromarray(catmap_image, "RGB").save(
+            catmap_dir / f"{frame:05d}.png")
     print(
         f"analysis panels: materialized {len(requested)} preview/category frames",
         flush=True,
@@ -1036,7 +1074,7 @@ ANALYSIS_TSV_COLUMNS = (
     "cold_cap_tiles", "prefetch_cap_tiles",
     "legend_raw", "legend_same", "legend_dic", "legend_prg",
     "legend_wr", "legend_wr0", "legend_wr1", "legend_near",
-    "legend_flbk", "legend_miss",
+    "legend_flbk", "legend_miss", "legend_scrl",
     "status_req", "status_miss", "status_cold", "status_pre",
     "status_band_kib_s", "status_prg", "status_wr0", "status_wr1",
     "status_r2v", "status_dma", "status_run",
@@ -1066,7 +1104,7 @@ def analysis_tsv_row(i):
     data = frame_data(i)
     cn = data["counts"]
     row = {
-        "schema_version": 8,
+        "schema_version": 9,
         "frame": i,
         "frame_hex": f"0x{i:04X}",
         "time_seconds": format(i / FPS, ".9f"),
@@ -1086,6 +1124,7 @@ def analysis_tsv_row(i):
         "legend_near": cn["Near"],
         "legend_flbk": cn["Flbk"],
         "legend_miss": cn["Miss"],
+        "legend_scrl": cn["Scrl"],
         "status_req": data["req"],
         "status_miss": data["miss"],
         "status_cold": data["cold"],

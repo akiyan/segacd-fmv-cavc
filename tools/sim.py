@@ -138,13 +138,13 @@ AUDIO_RATE, AUDIO_PCM_BYTES, AUDIO_CONTROL_BYTES = av_config.audio_frame_layout(
     FPS)
 AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * PLAYBACK_FPS))
 DISPLAY_CATEGORY_MASK_ORDER = (
-    "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+    "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss", "Scrl",
 )
 STAT_COLUMNS = (
     "frame", "ffix", "want", "updated", "miss", "delta", "dedup", "tx",
     "carry", "age", "want_frac", "near", "flbk", "buf", "prg", "wr0",
     "wr1", "dic", "same", "same_u", "near_u", "flbk_u", "dma_tiles",
-    "dma_runs", "prefetch",
+    "dma_runs", "prefetch", "scrl",
 )
 STAT_COLUMN_INDEX = {
     name: index for index, name in enumerate(STAT_COLUMNS)
@@ -1801,7 +1801,7 @@ def main():
     starved_frames = 0
     dec_frames = []            # 実機決定ログ: 各要素 = そのフレームの [(cell, pal, key), ...]
     dec_miss = []              # per-frame Miss数(デバッグオーバーレイ用。デコード側では算出不能)
-    dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss](デバッグ欄用)
+    dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss,scrl](デバッグ欄用)
     dec_category_rows = []     # analysis: 2-byte/cell overlapping category masks
     transfer_tiles_log = []    # pack/player照合用: cold pattern tile数
     transfer_runs_log = []     # pack/player照合用: packed cold-run record数
@@ -4251,14 +4251,25 @@ def main():
 
         # --- per-frame 実測(status line用) ---
         near_eff = near_mask if MIDFAR_ON else near   # MIDFARは統合探索が埋めたnear_mask
-        stale = changed & ~updated & ~near_eff    # Nearは取りこぼしではない(意図的スキップ)
+        stale_full = changed & ~updated & ~near_eff   # Nearは取りこぼしではない(意図的スキップ)
+        # Hardware scroll carries every non-updated cell to its correct world
+        # position, so an unfunded want during a scroll frame is scroll reuse
+        # (display category Scrl), not a Miss. Decision-side pressure
+        # (cell_tier, aging, wait) still sees the full set below, so encoder
+        # behavior and the packed stream are unchanged by this split.
+        if scroll_state is not None:
+            scrl_mask = stale_full
+            stale = np.zeros_like(stale_full)
+        else:
+            scrl_mask = np.zeros_like(stale_full)
+            stale = stale_full
         near_disp = near_eff & ~updated           # 実際に省略したNear(余裕があればRaw済み=除く)
         # 優先度レイヤー/格上げ用に各セルの現在の劣化度を更新(触れたセルのみ。未変化セルは前値を保持)
         if MIDFAR_ON:
             cell_tier[dedup_mask | raw_mask | prg_mask] = 9              # 正確(Same/Raw/Buf)
             cell_tier[near_eff] = 2                                      # Near(近い近似=格上げ候補)
             cell_tier[flbk_mask] = 1
-            cell_tier[stale] = 0                                          # Miss(取りこぼし)
+            cell_tier[stale_full] = 0                                     # Miss/Scrl(未供給want)
             approx_carry = np.where(cell_tier < 9, approx_carry + 1, 0)  # 近似のまま持ち越した連続コマ数
             upgrade_log.append((upgraded, int((cell_tier < 9).sum())))   # 指標: 格上げ枚数 / まだ近似のセル数
         # カテゴリ別ユニークタイル数(何枚の別タイルを使い回したか)。同一キーは1枚と数える。
@@ -4277,6 +4288,7 @@ def main():
         want = int(changed.sum())
         upd = int(updated.sum())
         miss = int(stale.sum())
+        scrl_count = int(scrl_mask.sum())
         raw_count = int(raw_display_mask.sum())
         source_count = sum(int(mask.sum()) for mask in (
             prg_source_mask, wr0_source_mask, wr1_source_mask,
@@ -4285,14 +4297,15 @@ def main():
         flbk_count = int(flbk_mask.sum())
         same_count = (
             C_CELLS - raw_count - source_count - near_count
-            - flbk_count - miss)
+            - flbk_count - miss - scrl_count)
         if same_count < 0:
             raise AssertionError(
                 f"frame {i}: display categories exceed {C_CELLS} cells")
         if i == 0:
             if not bool(updated.all()):
                 raise AssertionError("frame 0 did not update every display cell")
-            if (source_count or near_count or flbk_count or miss):
+            if (source_count or near_count or flbk_count or miss
+                    or scrl_count):
                 raise AssertionError(
                     "frame 0 contains a non-Raw/Same display category")
             if raw_count != len(frame0_keys):
@@ -4306,11 +4319,11 @@ def main():
                 raise AssertionError("frame 0 display is not the exact target")
         if EMIT_DEC:
             dec_miss.append(miss)
-            # デバッグ欄用カテゴリ数: catmap と同一定義(Raw/Buf/Flbk/Near/Miss は互いに素、
-            # 残り=Same(不変+Dedup畳み込み))。6種は必ず C_CELLS に合計する。
+            # デバッグ欄用カテゴリ数: catmap と同一定義(Raw/Buf/Flbk/Near/Miss/Scrl は
+            # 互いに素、残り=Same(不変+Dedup畳み込み))。7種は必ず C_CELLS に合計する。
             dec_cats.append((
                 raw_count, same_count, near_count, flbk_count,
-                source_count, miss))
+                source_count, miss, scrl_count))
             # Category styling is intentionally a bit set, not one category
             # ID per cell. A physical cold-load attribution can share a cell
             # with its Near/Flbk quality result after allocator ordering moves
@@ -4324,7 +4337,8 @@ def main():
                     ("Wr0", wr0_source_mask),
                     ("Wr1", wr1_source_mask),
                     ("Dic", dic_source_mask),
-                    ("Miss", stale)):
+                    ("Miss", stale),
+                    ("Scrl", scrl_mask)):
                 bit = np.uint16(
                     1 << DISPLAY_CATEGORY_MASK_ORDER.index(name))
                 category_row[mask] |= bit
@@ -4349,7 +4363,7 @@ def main():
             int(wr1_source_mask.sum()), int(dic_source_mask.sum()),
             same_count,
             len(u_same), len(u_near), len(u_flbk), dma_tiles, dma_runs,
-            len(prefetch_cold_slots)))
+            len(prefetch_cold_slots), scrl_count))
 
         # TSV観測用のMiss待ちカウンタを更新。NearはMissではない。
         wait = np.where(changed & ~updated & ~near_eff, wait + 1, 0)   # Nearは滞留させない
@@ -5673,7 +5687,7 @@ def main():
                     if shadow_plan is not None else False),
             },
             "miss": dec_miss,                                         # per-frame Miss数(overlay用)
-            "cats": dec_cats,                                         # per-frame [raw,same,near,flbk,buf,miss]
+            "cats": dec_cats,                                         # per-frame [raw,same,near,flbk,buf,miss,scrl]
             "body_gross_bytes": body_gross_bytes,
             "body_fixed_control_bytes": body_fixed_control_bytes,
             "body_variable_supply_bytes": body_variable_supply_bytes,

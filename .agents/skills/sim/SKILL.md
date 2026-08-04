@@ -288,6 +288,11 @@ Important rendering notes:
   - Miss in Category is a filled red hole
   - legend: `Raw / Same / Near / Flbk / Miss` on row 1 and
     `Prg / Wrd / Dic` on row 2; the displayed Wrd count is Wr0 + Wr1
+  - a movie with adopted hardware scroll adds `Scrl` after Dic (green
+    chevron swatch, no category-map border: cells carried by the active
+    scroll) plus the right-aligned scroll indicator (green chevrons +
+    axis:position speed/f while active, dim `SCROLL ---` between windows);
+    a movie without scroll shows neither
   - each legend item shows one displayed-cell count (Wr shows the combined
     count while the underlying Wr0/Wr1 data remains separate)
   - Same uses the original light/dark checker legend swatch but no
