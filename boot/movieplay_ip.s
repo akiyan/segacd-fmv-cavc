@@ -140,6 +140,7 @@
 .equ FRAME_TYPE_NORMAL, 0x0000
 .equ FRAME_TYPE_FADE_IN, 0x2000
 .equ FRAME_TYPE_FADE_OUT, 0x4000
+.equ FRAME_TYPE_SCROLL, 0x6000
 .equ SHADOW_UPDATE_COUNT_MASK, 0x1FFF
 .equ SHADOW_OFFSET_MASK, 0x0FFE	/* 4KB physical shadow, even word offsets */
 .equ PACE_VBLANK_TICKS, 543	/* one NTSC VBlank in 30.72us stopwatch ticks */
@@ -200,7 +201,20 @@
 .else
 .equ NT_FLIP_HUD_WORDS, 0
 .endif
-.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
+.if (PC_FEATURES & 0x0200)
+/* Rolling-plane horizontal scroll: nt_stage grows into the persistent 64x32
+   plane band, scroll controls stage the full 64-column band, and the flip
+   VBlank rewrites the Plane A/B HScroll pair at VRAM 0xFC00. */
+.equ INCLUDE_SCROLL, 1
+.if (PC_TCOLS != 40) || (PC_TROWS != 28)
+.error "rolling-plane scroll requires the full-screen H40 40x28 grid"
+.endif
+.equ NT_SCROLL_BAND_WORDS, PC_TROWS*NT_STAGE_PITCH
+.equ NT_FLIP_SCROLL_WORDS, (NT_SCROLL_BAND_WORDS-NT_STAGE_WORDS)+2*CPU_VDP_WORD_COST
+.else
+.equ NT_FLIP_SCROLL_WORDS, 0
+.endif
+.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_SCROLL_WORDS+NT_FLIP_GUARD_WORDS
 .endif
 
 .macro PC_MOVE_W runtime, constant, dest
@@ -544,6 +558,11 @@ ip_entry:
 	clr.w	nt_dma_ready_v
 .endif
 .endif
+.ifdef INCLUDE_SCROLL
+	clr.w	scroll_active
+	clr.w	scroll_next_h
+	clr.w	scroll_h_dirty
+.endif
 play_loop:
 	/* Feature bit 1 pairs the Main VBlank cadence with the Sub's exact
 	   per-interval CD deadline schedule. */
@@ -689,6 +708,18 @@ bf_upd:
 	andi.w	#FRAME_TYPE_MASK, d6
 	move.w	d6, frame_type
 	move.w	d7, d6			/* preserve list tag */
+.ifdef INCLUDE_SCROLL
+	/* Leaving a scroll window: copy the final tile-aligned viewport back to
+	   the logical shadow before this frame's ordinary updates apply. */
+	tst.w	scroll_active
+	beq.s	3f
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq.s	3f
+	bsr	bf_scroll_rebase
+3:
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq	bf_scroll_control
+.endif
 	tst.w	frame_type
 	beq.s	1f
 	/* The single-NT path returns this bank before the final CRAM write. Preserve
@@ -856,6 +887,10 @@ bf_dma:
 	clr.w	pattern_transfer_vblanks
 	clr.w	vbudget_held_reserve
 	PC_MOVE_W md_nt_flip_reserve_words, NT_FLIP_RESERVE_WORDS, d0
+.ifdef INCLUDE_SCROLL
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq.s	8f				/* scroll carries no CRAM image */
+.endif
 	tst.w	frame_type
 	bne.s	7f
 	movea.l	palidx_ptr, a0
@@ -1031,8 +1066,13 @@ bf_flip:
 	   で必ず終端されるためadvanceは有界。CRAM本体はboot時に積んだMain-RAMの
 	   PALTAB表から引く(ストリーム到着タイミング非依存)。 */
 	clr.l	cram_source
+.ifdef INCLUDE_SCROLL
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq.s	7f				/* scroll follows the ordinary PALIDX walk */
+.endif
 	tst.w	frame_type
 	bne	bf_inline_cram
+7:
 	movea.l	palidx_ptr, a0
 	move.w	frame_no, d1
 	cmp.w	(a0), d1
@@ -1085,6 +1125,19 @@ bf_publish_frame:
 	bsr	bf_patch_dbg_row			/* final counters feed this frame's HUD DMAs */
 	.endif
 	bsr	nt_dma_flip			/* static grid band into the displayed NT */
+.ifdef INCLUDE_SCROLL
+	/* Publish the Plane A/B HScroll pair in the same blank as the band DMA
+	   so fine position and tile content stay atomic. dma_chunk has already
+	   polled DMA completion and left autoincrement at 2. */
+	tst.w	scroll_h_dirty
+	beq.s	9f
+	clr.w	scroll_h_dirty
+	move.l	#0x7C000003, (VDP_CTRL).l	/* VRAM write 0xFC00 */
+	move.w	scroll_next_h, d0
+	move.w	d0, (VDP_DATA).l		/* Plane A */
+	move.w	d0, (VDP_DATA).l		/* Plane B */
+9:
+.endif
 	.ifdef DEBUG
 	bsr	hud_dma_flip			/* Window row plus spill-digit SAT */
 	.endif
@@ -1123,6 +1176,75 @@ bf_update_list:
 	move.w	(a0)+, (a1,d0.w)
 	dbra	d7, 1b
 	bra	bf_stage_nt
+
+.ifdef INCLUDE_SCROLL
+bf_scroll_control:
+	/* Item 0 carries the absolute Plane A/B HScroll plus a reserved zero
+	   word.  The remaining completed items address the physical 64x32 plane
+	   directly; the 4KB nt_stage allocation bounds every masked offset.  The
+	   logical shadow stays untouched, so the stage expansion is skipped and
+	   the persistent plane band goes to VRAM as-is. */
+	move.w	(a0)+, scroll_next_h
+	addq.l	#2, a0
+	move.w	#1, scroll_active
+	move.w	#1, scroll_h_dirty
+	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
+	subq.w	#1, d7				/* the position item is counted */
+	beq	bf_dma
+	lea	nt_stage, a1
+	subq.w	#1, d7
+1:
+	move.w	(a0)+, d0
+	andi.w	#SHADOW_OFFSET_MASK, d0
+	move.w	(a0)+, (a1,d0.w)
+	dbra	d7, 1b
+	bra	bf_dma
+
+bf_scroll_rebase:
+	/* The adopted window ends on a tile boundary.  Compact the 40x28
+	   viewport out of the 64-pitch plane band into the logical shadow and
+	   rearm both HScrolls at zero for this frame's flip.  Preserves a0/d6/d7
+	   for the caller's control-parse state. */
+	movem.l	d1-d5/a1-a3, -(sp)
+	move.w	scroll_next_h, d0
+	neg.w	d0
+	asr.w	#3, d0
+	andi.w	#NT_STAGE_PITCH-1, d0		/* first plane column of the viewport */
+	moveq	#NT_STAGE_PITCH, d1
+	sub.w	d0, d1				/* columns before the plane wraps */
+	cmpi.w	#PC_TCOLS, d1
+	bls.s	1f
+	move.w	#PC_TCOLS, d1
+1:
+	move.w	#PC_TCOLS, d2
+	sub.w	d1, d2				/* wrapped columns */
+	add.w	d0, d0				/* byte offset of the first column */
+	lea	shadow, a1
+	lea	nt_stage, a2
+	move.w	#PC_TROWS-1, d5
+2:
+	lea	(a2,d0.w), a3
+	move.w	d1, d3
+	subq.w	#1, d3
+3:
+	move.w	(a3)+, (a1)+
+	dbra	d3, 3b
+	move.w	d2, d3
+	beq.s	5f
+	movea.l	a2, a3
+	subq.w	#1, d3
+4:
+	move.w	(a3)+, (a1)+
+	dbra	d3, 4b
+5:
+	lea	NT_STAGE_PITCH*2(a2), a2
+	dbra	d5, 2b
+	clr.w	scroll_next_h
+	clr.w	scroll_active
+	move.w	#1, scroll_h_dirty		/* publish HScroll zero at this flip */
+	movem.l	(sp)+, d1-d5/a1-a3
+	rts
+.endif
 
 /* Start Pass2 with one honest VBlank word budget.  An already-active display
    waits for the next blank.  An already-entered blank may keep the full budget
@@ -1568,6 +1690,12 @@ nt_dma_flip:
 	lea	nt_stage, a3
 	PC_MOVE_L md_nt_stage_dst, NT_STAGE_DST, d3
 	PC_MOVE_W md_nt_stage_words, NT_STAGE_WORDS, d6
+.ifdef INCLUDE_SCROLL
+	tst.w	scroll_active
+	beq.s	1f
+	move.w	#NT_SCROLL_BAND_WORDS, d6	/* full 64-column band while scrolled */
+1:
+.endif
 	bra	dma_chunk
 
 	.ifdef DEBUG
@@ -2254,10 +2382,14 @@ dbg_row:
 	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
 .endif
 nt_stage:
+.ifdef INCLUDE_SCROLL
+	.space NT_STAGE_PITCH*32*2		/* persistent 64x32 plane band; 4KB bounds masked offsets */
+.else
 .ifdef PLAYER_SPECIALIZED
 	.space NT_STAGE_WORDS*2			/* exact static grid band */
 .else
 	.space NT_STAGE_MAX_WORDS*2		/* runtime H32/H40 maximum */
+.endif
 .endif
 .ifdef DEBUG
 hud_sprites:
@@ -2317,6 +2449,14 @@ n_runs:
 	.space 2
 frame_type:
 	.space 2				/* masked bits14..13 from the current control */
+.ifdef INCLUDE_SCROLL
+scroll_active:
+	.space 2				/* a scroll control governs the current frame */
+scroll_next_h:
+	.space 2				/* absolute Plane A/B HScroll for the next flip */
+scroll_h_dirty:
+	.space 2				/* rewrite the HScroll pair at the next flip */
+.endif
 dbg_seg:
 	.space 2
 cram_source:
