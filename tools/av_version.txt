@@ -13,6 +13,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e180: Automatic horizontal-scroll adoption (issue #29). The encoder
+#         detects axis-only integer pans on the output raster, adopts strict
+#         tile-phase-safe windows, and encodes them as FRAME_SCROLL controls
+#         with an absolute HScroll position list item plus rolling 64x32
+#         Plane A cell updates (world-aligned quantization, incoming-guard
+#         reserve). Non-adopted frames are unchanged.
 #   p146: Boot-time silence initialization for real hardware (issue #81).
 #         Main parks the Z80 on di+halt, mutes all four PSG channels, pulses
 #         the Z80/YM2612 reset and forces the YM2612 registers silent before
@@ -1240,5 +1246,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
-e=179
+e=180
 p=146
