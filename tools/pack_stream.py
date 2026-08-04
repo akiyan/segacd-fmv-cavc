@@ -22,6 +22,7 @@ MOVIE.DAT はツール互換用の HEADER.DAT || BODY.DAT 連結コンテナ。
 paltab.bin / palidx.bin としてplayerビルド入力へ書き、Main-IPイメージが内蔵する。
 control block: >H total_len >H frame_seq >H type|n_upd
                normal: aligned bitmap/list + entries; fade: 128-byte inline CRAM
+               scroll: >h hscroll >h reserved_zero + 64x32 physical update list
                audio [even pad]
                >H n_runs n_runs*(>H slot_start >H count)
   通常palette切替はboot搭載のM-PALIDX表起点。自動fadeはcontrol内の128-byte CRAM。
@@ -49,6 +50,8 @@ import stream_schedule
 import cavc_routing
 import wordbuf_ring
 import resource_tokens
+import scroll_frames
+import scroll_plan
 import tmpfs_workspace
 from encode_config import load_profile
 from cbr_paths import sim_work_dir
@@ -104,6 +107,7 @@ FEATURE_VRAM_RAW_PREFETCH = cavc_routing.FEATURE_VRAM_RAW_PREFETCH
 FEATURE_DICBUF_INDEXED_RUNS = cavc_routing.FEATURE_DICBUF_INDEXED_RUNS
 FEATURE_BOOT_VRAM_SIDECAR = cavc_routing.FEATURE_BOOT_VRAM_SIDECAR
 FEATURE_WORDBUF_RING = cavc_routing.FEATURE_WORDBUF_RING
+FEATURE_SCROLL = cavc_routing.FEATURE_SCROLL
 ADPCM_TABLE_SECTORS = math.ceil(ima_adpcm.FULL_TABLE_BYTES / SECTOR)
 ROUTING_MAX_FRAMES = cavc_routing.MAX_FRAMES
 
@@ -311,6 +315,68 @@ def fade_control_arrays(log, frame_count):
     return types, crams
 
 
+def scroll_control_arrays(log, frame_count):
+    """Return validated scroll-active flags and absolute signed positions."""
+
+    count = int(frame_count)
+    meta = log.get("scroll") or {}
+    if not meta:
+        return (
+            np.zeros(count, np.bool_),
+            np.zeros((count, 2), np.int16),
+        )
+    if int(meta.get("schema_version", 0)) != 1:
+        raise SystemExit("pack: unsupported automatic-scroll decision schema")
+    active = np.asarray(meta.get("active", ()), np.bool_)
+    raw_positions = np.asarray(meta.get("positions", ()), np.int64)
+    if active.shape != (count,):
+        raise SystemExit("pack: scroll-active count differs from decisions")
+    if raw_positions.shape != (count, 2):
+        raise SystemExit("pack: scroll positions have an invalid shape")
+    if np.any((raw_positions < -0x8000) | (raw_positions > 0x7FFF)):
+        frame, axis = np.argwhere(
+            (raw_positions < -0x8000) | (raw_positions > 0x7FFF))[0]
+        raise SystemExit(
+            f"pack: scroll position frame {int(frame)} axis {int(axis)} "
+            "is outside signed 16-bit range")
+    if np.any(raw_positions[~active] != 0):
+        frame = int(np.argwhere((raw_positions != 0) & ~active[:, None])[0, 0])
+        raise SystemExit(
+            f"pack: inactive scroll frame {frame} has a nonzero position")
+    vertical = active & (raw_positions[:, 1] != 0)
+    if np.any(vertical):
+        frame = int(np.flatnonzero(vertical)[0])
+        raise SystemExit(
+            f"pack: scroll frame {frame} uses unsupported vertical motion; "
+            "rolling-plane controls are horizontal-only")
+    if count and bool(active[0]):
+        raise SystemExit("pack: frame 0 cannot be a streamed scroll control")
+    return active, raw_positions.astype(np.int16)
+
+
+def scroll_feature_bits(log, frame_count):
+    """Return rolling-plane capability bits required by frozen controls."""
+
+    active, _positions = scroll_control_arrays(log, frame_count)
+    if not np.any(active):
+        return 0
+    return FEATURE_SCROLL
+
+
+def control_arrays(log, frame_count):
+    """Combine mutually exclusive fade and scroll decisions for controls."""
+
+    frame_types, frame_cram = fade_control_arrays(log, frame_count)
+    scroll_active, scroll_positions = scroll_control_arrays(log, frame_count)
+    overlap = scroll_active & (frame_types != shadow_updates.FRAME_NORMAL)
+    if np.any(overlap):
+        frame = int(np.flatnonzero(overlap)[0])
+        raise SystemExit(f"pack: frame {frame} overlaps fade and scroll controls")
+    frame_types = frame_types.copy()
+    frame_types[scroll_active] = shadow_updates.FRAME_SCROLL
+    return frame_types, frame_cram, scroll_positions
+
+
 def segment_entry_palettes(log):
     """Return the CRAM image installed at each PALIDX segment boundary."""
 
@@ -338,8 +404,18 @@ def resolve(log, POOL, mode="lru"):
     frames = log["frames"]
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     nfr = len(frames)
-    frame_types, _frame_cram = fade_control_arrays(log, nfr)
-    alloc = TileAllocator(C_CELLS, POOL, BASE)   # 共有割り当て(連続)。sim も同一 = cap=realized
+    frame_types, _frame_cram, scroll_positions = control_arrays(log, nfr)
+    scroll_active = frame_types == shadow_updates.FRAME_SCROLL
+    allocator_cells = (
+        shadow_updates.SCROLL_PLANE_CELLS
+        if np.any(scroll_active) else C_CELLS
+    )
+    alloc = TileAllocator(C_CELLS, POOL, BASE)
+    domain_expanded = False
+    normal_cells = (
+        scroll_plan.normal_plane_cells(TCOLS, TROWS)
+        if np.any(scroll_active) else tuple(range(C_CELLS))
+    )
     per = []
     transfer_orders = []
     n_load = np.zeros(nfr, np.int64)
@@ -351,15 +427,86 @@ def resolve(log, POOL, mode="lru"):
     raw_requests = raw_prefetch.get("requests", ())
     if prefetch_enabled and len(raw_requests) != nfr:
         raise SystemExit("pack: raw-prefetch frame count differs from decisions")
+    if prefetch_enabled:
+        invalid_scroll_prefetch = [
+            frame for frame in np.flatnonzero(scroll_active)
+            if raw_requests[int(frame)]
+        ]
+        if invalid_scroll_prefetch:
+            raise SystemExit(
+                "pack: rolling-plane frame carries screen-space raw "
+                f"prefetch requests at frame {invalid_scroll_prefetch[0]}")
     prefetch_per = []
     physical_patterns = [None] * POOL
-    displayed_slots = np.full(C_CELLS, -1, np.int64)
-    expected_patterns = [None] * C_CELLS
+    expected_patterns = [None] * allocator_cells
+    previous_scroll_state = None
+    previous_scroll_position = 0
 
     for i in range(nfr):
         fr = sorted(frames[i], key=lambda t: t[0])
+        if bool(scroll_active[i]):
+            if not domain_expanded:
+                alloc.expand_cell_domain(
+                    shadow_updates.SCROLL_PLANE_CELLS,
+                    zip(normal_cells, range(C_CELLS), strict=True),
+                )
+                before = expected_patterns[:C_CELLS]
+                expected_patterns = [None] * allocator_cells
+                for logical, physical in enumerate(normal_cells):
+                    expected_patterns[physical] = before[logical]
+                domain_expanded = True
+            position = int(scroll_positions[i, 0])
+            delta = position - previous_scroll_position
+            scroll_state = scroll_plan.position_state(
+                i, scroll_frames.AXIS_HORIZONTAL, position, delta=delta,
+                columns=TCOLS, rows=TROWS)
+            active_cells = (
+                *scroll_state.primary_cells,
+                *scroll_state.guard_cells,
+            )
+            alloc.replace_display_cells(
+                ((cell, cell) for cell in active_cells),
+                clear_others=True,
+            )
+            expected_patterns = [
+                expected_patterns[cell] if cell in active_cells else None
+                for cell in range(allocator_cells)
+            ]
+            allocation_cells = [int(cell) for cell, _pal, _key in fr]
+            if any(not 0 <= cell < allocator_cells for cell in allocation_cells):
+                raise SystemExit(
+                    f"pack: scroll frame {i} contains a cell outside the "
+                    "64x32 plane")
+            previous_scroll_state = scroll_state
+            previous_scroll_position = position
+        else:
+            if previous_scroll_state is not None:
+                sources = previous_scroll_state.primary_cells
+                alloc.replace_display_cells(
+                    zip(normal_cells, sources, strict=True),
+                    clear_others=True,
+                )
+                before = expected_patterns
+                expected_patterns = [None] * allocator_cells
+                for destination, source in zip(
+                        normal_cells, sources, strict=True):
+                    expected_patterns[destination] = before[source]
+                previous_scroll_state = None
+                previous_scroll_position = 0
+            packed_cells = [int(cell) for cell, _pal, _key in fr]
+            if any(not 0 <= cell < C_CELLS for cell in packed_cells):
+                raise SystemExit(
+                    f"pack: normal frame {i} contains a cell outside the "
+                    "logical shadow")
+            allocation_cells = [
+                normal_cells[cell] if domain_expanded else cell
+                for cell in packed_cells
+            ]
         results = alloc.place_frame(
-            [(int(cell), key) for (cell, pal, key) in fr], i)
+            [(cell, item[2]) for cell, item in zip(
+                allocation_cells, fr, strict=True)],
+            i,
+        )
         transfer_order = cold_transfer_order(results)
         pal_w[i] = 1 if (
             i == 0
@@ -374,7 +521,7 @@ def resolve(log, POOL, mode="lru"):
             entries.append((int(pal) << 13) | (BASE + slot))
             colds.append(cold)
             n_upd[i] += 1
-        if (frame_types[i] != shadow_updates.FRAME_NORMAL
+        if (shadow_updates.has_inline_cram(int(frame_types[i]))
                 and n_upd[i] != 0):
             raise SystemExit(
                 f"pack: fade frame {i} carries {int(n_upd[i])} name updates")
@@ -443,13 +590,16 @@ def resolve(log, POOL, mode="lru"):
         frame_prefetch.sort(key=lambda item: int(item[0]))
         Plist.extend(
             pack_key(item[2]) for item in frame_prefetch if bool(item[1]))
-        for (cell, _pal, key), (physical_slot, _cold) in zip(fr, results):
-            displayed_slots[int(cell)] = int(physical_slot)
-            expected_patterns[int(cell)] = key
+        for physical_cell, (_cell, _pal, key) in zip(
+                allocation_cells, fr, strict=True):
+            expected_patterns[int(physical_cell)] = key
         for cell, expected in enumerate(expected_patterns):
             if expected is None:
                 continue
-            physical_slot = int(displayed_slots[cell])
+            physical_slot = int(alloc.cur_slot[cell])
+            if physical_slot < 0:
+                raise SystemExit(
+                    f"pack: expected display cell {cell} has no slot at frame {i}")
             if physical_patterns[physical_slot] != expected:
                 raise SystemExit(
                     f"pack: slot display mismatch at frame {i}, "
@@ -933,7 +1083,7 @@ def build_control(
     """Build control blocks and return their reconstructed source PCM chunks."""
     segment_entries = segment_entry_palettes(log)
     seg_cram = [pals_to_bytes_128(p) for p in segment_entries]
-    frame_types, frame_cram = fade_control_arrays(log, len(per))
+    frame_types, frame_cram, scroll_positions = control_arrays(log, len(per))
     audio_chunks, pcm_chunks = build_audio_chunks(audio_path, len(per))
     # CRAM pre-load(PALTAB): パレット本体はplayerイメージ内蔵(paltab.bin)で、実機は
     # boot時にMain-RAM表へコピー済み。切替トリガも内蔵のPALIDX表(frame番号+区間番号)で、
@@ -971,10 +1121,13 @@ def build_control(
         body += struct.pack(">H", i & 0xFFFF)
         use_list = bool(update_lists[i])
         frame_type = int(frame_types[i])
-        if frame_type != shadow_updates.FRAME_NORMAL and use_list:
+        if shadow_updates.has_inline_cram(frame_type) and use_list:
             raise ValueError(f"fade frame {i} cannot use a shadow update list")
         body += struct.pack(">H", shadow_updates.encode_count(
             n_upd[i], use_list, frame_type))
+        if shadow_updates.has_scroll_position(frame_type):
+            body += struct.pack(
+                ">hh", *(int(value) for value in scroll_positions[i]))
         sourced_entries = []
         for e, cold, source in zip(entries, colds, frame_sources):
             sourced_entry = pattern_supply.encode_entry_source(
@@ -986,7 +1139,12 @@ def build_control(
                     f"fade frame {i} must not carry name-table updates")
             body += pals_to_bytes_128(frame_cram[i])
         elif use_list:
-            body += shadow_updates.build_update_list(cells, sourced_entries, C_CELLS)
+            list_cells = (
+                shadow_updates.SCROLL_PLANE_CELLS
+                if shadow_updates.has_scroll_position(frame_type)
+                else C_CELLS)
+            body += shadow_updates.build_update_list(
+                cells, sourced_entries, list_cells)
         else:
             body += build_bitmap(cells)
             # CAVC keeps the 16-bit entry array word-aligned even when
@@ -1030,18 +1188,21 @@ def control_audio_bounds(block):
     raw_count = struct.unpack_from(">H", block, 4)[0]
     n_upd, use_list = shadow_updates.decode_count(raw_count)
     frame_type = shadow_updates.decode_frame_type(raw_count)
-    if frame_type == shadow_updates.FRAME_RESERVED:
-        raise ValueError("reserved frame type in control block")
     if shadow_updates.has_inline_cram(frame_type):
         if n_upd or use_list:
             raise ValueError("fade control carries shadow updates")
         update_bytes = shadow_updates.INLINE_CRAM_BYTES
     else:
+        if shadow_updates.has_scroll_position(frame_type) and not use_list:
+            raise ValueError("scroll control does not use an update list")
         update_bytes = (
             n_upd * shadow_updates.LIST_ITEM_BYTES if use_list
             else shadow_updates.aligned_bitmap_bytes(C_CELLS)
             + n_upd * shadow_updates.SHADOW_ENTRY_BYTES)
-    pos = 6 + update_bytes
+    position_bytes = (
+        shadow_updates.SCROLL_POSITION_BYTES
+        if shadow_updates.has_scroll_position(frame_type) else 0)
+    pos = 6 + position_bytes + update_bytes
     return pos, pos + AUDIO_CONTROL
 
 
@@ -1124,7 +1285,11 @@ def decode_verify(
     """
     frame_seg = np.asarray(log["frame_seg"], np.int64)
     segment_entries = segment_entry_palettes(log)
-    expected_types, expected_frame_cram = fade_control_arrays(log, len(per))
+    (
+        expected_types,
+        expected_frame_cram,
+        expected_scroll_positions,
+    ) = control_arrays(log, len(per))
     active_cram = np.asarray(segment_entries[0], np.uint8).copy()
     n_pay_sec = sc["n_pay_sec"]; blk_len = sc["blk_len"]; B = sc["prebuf_pat"]
     word_stage_sec = np.asarray(
@@ -1166,7 +1331,18 @@ def decode_verify(
         if not 0 <= slot < POOL:
             raise ValueError(f"boot sidecar slot {slot} is outside the pool")
         tile[slot + BASE] = pattern
-    nt_slot = np.zeros(C_CELLS, np.int64); nt_pal = np.zeros(C_CELLS, np.int64)
+    nt_slot = np.zeros(C_CELLS, np.int64)
+    nt_pal = np.zeros(C_CELLS, np.int64)
+    plane_nt_slot = np.zeros(shadow_updates.SCROLL_PLANE_CELLS, np.int64)
+    plane_nt_pal = np.zeros(shadow_updates.SCROLL_PLANE_CELLS, np.int64)
+    normal_plane_cells = scroll_plan.normal_plane_cells(TCOLS, TROWS)
+    scrolling = False
+    scroll_position = 0
+    scroll_state = None
+    # The single displayed name table receives the complete 64-pitch stage
+    # band every frame, so scroll rows 0..TROWS-1 are always current. Only
+    # the plane's hidden rows must stay untouched.
+    scroll_transfer_cells = scroll_plan.PLANE_COLUMNS * TROWS
     diffs = []; ring_peak = len(ring); bad = 0
     for i in range(len(per)):
         segment_switch = bool(
@@ -1202,8 +1378,6 @@ def decode_verify(
         raw_count = struct.unpack(">H", blk[p:p + 2])[0]; p += 2
         nupd, use_list = shadow_updates.decode_count(raw_count)
         frame_type = shadow_updates.decode_frame_type(raw_count)
-        if frame_type == shadow_updates.FRAME_RESERVED:
-            raise ValueError(f"reserved frame type in frame {i}")
         if frame_type != int(expected_types[i]):
             raise ValueError(
                 f"frame {i}: packed type {frame_type} differs from sim "
@@ -1211,6 +1385,38 @@ def decode_verify(
         if segment_switch and frame_type != shadow_updates.FRAME_NORMAL:
             raise ValueError(
                 f"frame {i}: PALIDX switch and inline CRAM coincide")
+        if shadow_updates.has_scroll_position(frame_type):
+            hscroll, reserved = struct.unpack_from(">hh", blk, p)
+            p += shadow_updates.SCROLL_POSITION_BYTES
+            if reserved:
+                raise ValueError(
+                    f"frame {i}: horizontal scroll reserved word is nonzero")
+            if (hscroll, reserved) != tuple(
+                    int(value) for value in expected_scroll_positions[i]):
+                raise ValueError(
+                    f"frame {i}: packed scroll position {(hscroll, reserved)} "
+                    "differs from simulation")
+            position = int(hscroll)
+            if not scrolling:
+                for logical, physical in enumerate(normal_plane_cells):
+                    plane_nt_slot[physical] = nt_slot[logical]
+                    plane_nt_pal[physical] = nt_pal[logical]
+            delta = position - scroll_position
+            scroll_state = scroll_plan.position_state(
+                i, scroll_frames.AXIS_HORIZONTAL, position, delta=delta,
+                columns=TCOLS, rows=TROWS)
+            scrolling = True
+            scroll_position = position
+        elif scrolling:
+            if scroll_state is None:
+                raise AssertionError("scroll verifier lost its final state")
+            for logical, physical in enumerate(scroll_state.primary_cells):
+                nt_slot[logical] = plane_nt_slot[physical]
+                nt_pal[logical] = plane_nt_pal[physical]
+            scrolling = False
+            scroll_position = 0
+            scroll_state = None
+
         if shadow_updates.has_inline_cram(frame_type):
             if nupd or use_list:
                 raise ValueError(f"fade frame {i} carries shadow updates")
@@ -1223,9 +1429,13 @@ def decode_verify(
             update_items = []
         elif use_list:
             update_items = []
+            update_cells = (
+                shadow_updates.SCROLL_PLANE_CELLS
+                if shadow_updates.has_scroll_position(frame_type)
+                else C_CELLS)
             for _ in range(nupd):
                 offset, ent = struct.unpack_from(">HH", blk, p); p += 4
-                if offset & 1 or offset >= C_CELLS * 2:
+                if offset & 1 or offset >= update_cells * 2:
                     raise ValueError(f"invalid shadow offset {offset} in frame {i}")
                 update_items.append((offset // 2, ent))
         else:
@@ -1273,24 +1483,68 @@ def decode_verify(
             raise ValueError(
                 f"frame {i}: run suffix ends at {runs_pos}, "
                 f"control length is {len(blk)}")
+        if shadow_updates.has_scroll_position(frame_type):
+            update_slot = plane_nt_slot
+            update_pal = plane_nt_pal
+        else:
+            update_slot = nt_slot
+            update_pal = nt_pal
         for c, ent in update_items:
-            nt_pal[c] = (ent >> 13) & 3
-            nt_slot[c] = (ent & 0x07FF) - BASE
+            update_pal[c] = (ent >> 13) & 3
+            update_slot[c] = (ent & 0x07FF) - BASE
+        if scrolling:
+            for cell, _entry in update_items:
+                if int(cell) >= scroll_transfer_cells:
+                    raise ValueError(
+                        f"frame {i}: horizontal scroll dirties hidden row "
+                        f"cell {int(cell)} beyond the "
+                        f"{scroll_transfer_cells}-word band")
         need_img = (cmp is not None) or (sample_dir is not None and i in samples)
         if not need_img:
             continue
         full16 = np.zeros((4, 16, 3), np.uint8)
         full16[:, 1:] = active_cram
-        img = np.zeros((C_CELLS, TILE, TILE, 3), np.uint8)
-        for c in range(C_CELLS):
-            pat = tile[int(nt_slot[c]) + BASE]
+        render_slot = plane_nt_slot if scrolling else nt_slot
+        render_pal = plane_nt_pal if scrolling else nt_pal
+        render_cells = (
+            shadow_updates.SCROLL_PLANE_CELLS if scrolling else C_CELLS)
+        img = np.zeros((render_cells, TILE, TILE, 3), np.uint8)
+        for c in range(render_cells):
+            pat = tile[int(render_slot[c]) + BASE]
             if pat is None:
                 continue
             a = np.frombuffer(pat, np.uint8); idx = np.zeros(64, np.uint8)
             idx[0::2] = a >> 4; idx[1::2] = a & 0xF
-            img[c] = rgb333_to_rgb888(full16[nt_pal[c], idx].reshape(8, 8, 3))
-        fr = img.reshape(TROWS, TCOLS, TILE, TILE, 3).transpose(0, 2, 1, 3, 4).reshape(
-            TROWS * TILE, TCOLS * TILE, 3)
+            img[c] = rgb333_to_rgb888(
+                full16[render_pal[c], idx].reshape(8, 8, 3))
+        if scrolling:
+            if scroll_state is None:
+                raise AssertionError("scroll verifier has no render state")
+            plane = img.reshape(
+                scroll_plan.PLANE_ROWS,
+                scroll_plan.PLANE_COLUMNS,
+                TILE,
+                TILE,
+                3,
+            ).transpose(0, 2, 1, 3, 4).reshape(
+                scroll_plan.PLANE_ROWS * TILE,
+                scroll_plan.PLANE_COLUMNS * TILE,
+                3,
+            )
+            yy = (
+                np.arange(TROWS * TILE, dtype=np.int64)
+                - int(scroll_state.vscroll)
+            ) % plane.shape[0]
+            xx = (
+                np.arange(TCOLS * TILE, dtype=np.int64)
+                - int(scroll_state.hscroll)
+            ) % plane.shape[1]
+            fr = plane[yy[:, None], xx[None, :]]
+        else:
+            fr = img.reshape(
+                TROWS, TCOLS, TILE, TILE, 3
+            ).transpose(0, 2, 1, 3, 4).reshape(
+                TROWS * TILE, TCOLS * TILE, 3)
         if sample_dir is not None and i in samples:
             Image.fromarray(fr, "RGB").save(sample_dir / f"decoded_{i:05d}.png")
         if cmp is not None:
@@ -1568,6 +1822,7 @@ def write_stream(
         features |= FEATURE_BOOT_VRAM_SIDECAR
     if any(word_stage_sec):
         features |= FEATURE_WORDBUF_RING
+    features |= scroll_feature_bits(log, nfr)
     header = struct.pack(">4sHHHHHHHH", MAGIC, nfr, TCOLS, TROWS, C_CELLS,
                          POOL, BASE, FRAME_SECTORS, len(log["seg_pals"]))
     header += struct.pack(">LLLL", Bpat, routing_sec, prebuf_sec, ring_peak)
@@ -1930,21 +2185,28 @@ def main():
             "pack: independently recomputed O_LOADS peaks differ from sim: "
             f"pack={packed_peaks} sim={frozen_peaks}; re-run sim")
     shadow_meta = log.get("shadow_updates") or {}
-    frame_types, _frame_cram = fade_control_arrays(log, len(per))
+    frame_types, _frame_cram, _scroll_positions = control_arrays(log, len(per))
     update_lists = np.asarray(
         shadow_meta.get("selected", np.zeros(len(per), np.bool_)), np.bool_)
     if update_lists.shape != (len(per),):
         raise SystemExit("pack: frozen shadow update-list flags have wrong frame count")
     if len(update_lists) and bool(update_lists[0]):
         raise SystemExit("pack: frame 0 must retain the legacy bitmap format")
-    if np.any(
-            update_lists
-            & (frame_types != shadow_updates.FRAME_NORMAL)):
+    fade_controls = np.isin(frame_types, (
+        shadow_updates.FRAME_FADE_IN,
+        shadow_updates.FRAME_FADE_OUT,
+    ))
+    if np.any(update_lists & fade_controls):
         frame = int(np.flatnonzero(
-            update_lists
-            & (frame_types != shadow_updates.FRAME_NORMAL))[0])
+            update_lists & fade_controls)[0])
         raise SystemExit(
             f"pack: fade frame {frame} cannot use a shadow update list")
+    missing_scroll_lists = (
+        (frame_types == shadow_updates.FRAME_SCROLL) & ~update_lists)
+    if np.any(missing_scroll_lists):
+        frame = int(np.flatnonzero(missing_scroll_lists)[0])
+        raise SystemExit(
+            f"pack: scroll frame {frame} requires a shadow update list")
     raw_prefetch_enabled = bool(
         (log.get("raw_prefetch") or {}).get("enabled", False))
     if update_lists.any() and not (
@@ -1954,7 +2216,14 @@ def main():
     frozen_legacy = np.asarray(shadow_meta.get("legacy_cycles", ()), np.int64)
     frozen_list = np.asarray(shadow_meta.get("list_cycles", ()), np.int64)
     recomputed_costs = tuple(
-        shadow_updates.frame_cost(cells, C_CELLS) for cells, _entries, _colds in per)
+        shadow_updates.frame_cost(
+            cells,
+            shadow_updates.SCROLL_PLANE_CELLS
+            if int(frame_types[frame]) == shadow_updates.FRAME_SCROLL
+            else C_CELLS,
+        )
+        for frame, (cells, _entries, _colds) in enumerate(per)
+    )
     recomputed_legacy = np.asarray(
         [cost.legacy_cycles for cost in recomputed_costs], np.int64)
     recomputed_list = np.asarray(

@@ -143,6 +143,8 @@ format_contract = {
         cavc_routing.FEATURE_BOOT_VRAM_SIDECAR.bit_length() - 1),
     "FEATURE_WORDBUF_RING_BIT": (
         cavc_routing.FEATURE_WORDBUF_RING.bit_length() - 1),
+    "FEATURE_SCROLL_BIT": (
+        cavc_routing.FEATURE_SCROLL.bit_length() - 1),
 }
 for name, expected in format_contract.items():
     actual = equ(sp_text, name, SP)

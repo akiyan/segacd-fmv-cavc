@@ -113,6 +113,39 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual((values.col0, values.row0), (2, 1))
         self.assertEqual(values.bmbytes, 113)
 
+    def test_scroll_requires_full_h40_lists_and_pattern_supply(self):
+        base = (
+            cavc_routing.FEATURE_COLD_RUNS
+            | cavc_routing.FEATURE_VBLANK_CADENCE
+            | cavc_routing.FEATURE_PATTERN_SUPPLY
+            | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS
+            | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS
+            | cavc_routing.FEATURE_SCROLL
+        )
+        values = player_constants.parse_header_sector(make_header(
+            mode=1, fps=24, features=base,
+            supply_counts=(880, 880, 256),
+        ))
+        self.assertTrue(values.features & cavc_routing.FEATURE_SCROLL)
+        for kwargs, message in (
+            ({"mode": 0, "features": base}, "full-screen H40"),
+            ({"mode": 1, "tcols": 36, "features": base}, "full-screen H40"),
+            ({"mode": 1, "features": base & ~cavc_routing.FEATURE_SHADOW_UPDATE_LISTS},
+             "update lists"),
+            ({"mode": 1, "features": base & ~cavc_routing.FEATURE_PATTERN_SUPPLY},
+             "pattern supply"),
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
+                    ValueError, message):
+                player_constants.parse_header_sector(make_header(
+                    fps=24, supply_counts=(880, 880, 256), **kwargs))
+
+    def test_removed_vertical_scroll_bit_is_reserved(self):
+        with self.assertRaisesRegex(ValueError, "reserved feature bits"):
+            player_constants.parse_header_sector(make_header(
+                features=(cavc_routing.FEATURE_COLD_RUNS
+                          | 0x0400)))
+
     def test_prg_jitter_constants_follow_content_fps(self):
         expected = {
             15: (374, 374, 40),
