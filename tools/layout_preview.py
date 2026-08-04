@@ -319,7 +319,7 @@ def dummy_data():
                 r2v_words=r2v_words, r2v_max=r2v_max,
                 tl=tl, supply_series=supply_series, tln=tln,
                 scroll=dict(active=True, axis="H", position=-248, speed=2,
-                            direction="right"),
+                            direction="left"),
                 time_s=42.0, frame=1260, total_frames=2712)
 
 
@@ -397,7 +397,7 @@ def draw_catmap(w, h, data):
             # 内容(色ブロック)を塗る
             d.rectangle([x0, y0, x1, y1], fill=((c * 11 + r * 7) % 256, (r * 13) % 256, (c * 17) % 256))
             style.draw_category_border(d, (x0, y0, x1, y1), k)
-    draw_scroll_edge(d, w, h, data.get("scroll"), cols, rows)
+    draw_scroll_edge(im, data.get("scroll"), cols, rows)
     return im
 
 
@@ -408,7 +408,8 @@ def swatch(d, x, y, sw, name, col):
 
 
 def draw_scroll_chevron(d, x, y, size, direction, color, width=2):
-    """One chevron centred at (x, y) pointing in the camera-pan direction."""
+    """One chevron centred at (x, y) pointing in the on-screen flow
+    direction (the way carried content visibly moves)."""
     s = int(size)
     if direction == "right":
         pts = [(x - s // 2, y - s), (x + s // 2, y), (x - s // 2, y + s)]
@@ -428,10 +429,10 @@ def draw_scroll_status(d, w, h, scroll):
 
     Drawn only for a movie with at least one adopted scroll window.  While
     hardware scroll is active the field shows two green chevrons pointing in
-    the camera-pan direction plus ``<axis>:<position> <speed>/f`` (axis H or
-    V, the absolute VDP scroll position, and the pan speed in pixels per
-    content frame).  Frames outside a scroll window dim the field to
-    ``SCROLL ---``.
+    the on-screen content-flow direction plus ``<axis>:<position> <speed>/f``
+    (axis H or V, the absolute VDP scroll position, and the scroll speed in
+    pixels per content frame).  Frames outside a scroll window dim the field
+    to ``SCROLL ---``.
     """
     sw = 14
     y = (h // 2) + (h // 2 - sw) // 2 - 1
@@ -450,52 +451,52 @@ def draw_scroll_status(d, w, h, scroll):
             style.COL_SCROLL)
 
 
-def draw_scroll_edge(d, w, h, scroll, cols, rows):
-    """Overlay the scroll entering edge on a category-map panel.
+def draw_scroll_edge(im, scroll, cols, rows):
+    """Overlay the scroll entering-edge band on a category-map panel image.
 
-    The viewport edge in the camera-pan direction is where fresh tile
-    columns/rows enter; its one-tile strip is outlined in the scroll green
-    and filled with chevrons pointing in the pan direction.  The chevrons
-    are phase-locked to the scroll position, so they march with the movie's
-    actual movement.  Cells inside the strip keep their normal category
-    borders; the strip only localizes where scroll-entry loads land.
+    ``direction`` is the on-screen content-flow direction, so fresh tile
+    columns/rows enter from the opposite edge.  That one-tile strip is a
+    translucent green band (a thin outline alone collapses into stray lines
+    at panel scale) with an outline and chevrons pointing in the flow
+    direction.  The chevron offset follows the scroll position itself
+    (position % 16), so the chevrons march exactly with the visible content.
+    Cells inside the band keep their normal category borders; the band only
+    localizes where scroll-entry loads land.
     """
     if not scroll or not scroll.get("active"):
         return
     direction = scroll["direction"]
-    position = int(scroll["position"])
-    col = style.COL_SCROLL
-    phase = ((-position) if direction in ("right", "down") else position) % 16
+    phase = int(scroll["position"]) % 16
+    w, h = im.size
+    band = (*style.COL_SCROLL, 52)
+    line = (*style.COL_SCROLL, 255)
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
     if direction in ("right", "left"):
         tw = w / max(1, int(cols))
-        if direction == "right":
+        if direction == "left":       # content flows left -> enters at right
             x0, x1 = int(w - tw), w - 1
             cx = x1 - 20 + phase
-            edge = x1 - 1
-        else:
+        else:                         # content flows right -> enters at left
             x0, x1 = 0, int(tw) - 1
-            cx = x0 + 20 - phase
-            edge = 1
-        d.rectangle([x0, 0, x1, h - 1], outline=col, width=1)
-        d.line([(edge, 0), (edge, h - 1)], fill=col, width=2)
+            cx = x0 + 5 + phase
+        d.rectangle([x0, 0, x1, h - 1], fill=band, outline=line, width=1)
         step = max(24, h // 8)
         for cy in range(step // 2, h, step):
-            draw_scroll_chevron(d, cx, cy, 5, direction, col)
+            draw_scroll_chevron(d, cx, cy, 5, direction, line)
     else:
         th = h / max(1, int(rows))
-        if direction == "down":
+        if direction == "up":         # content flows up -> enters at bottom
             y0, y1 = int(h - th), h - 1
             cy = y1 - 20 + phase
-            edge = y1 - 1
-        else:
+        else:                         # content flows down -> enters at top
             y0, y1 = 0, int(th) - 1
-            cy = y0 + 20 - phase
-            edge = 1
-        d.rectangle([0, y0, w - 1, y1], outline=col, width=1)
-        d.line([(0, edge), (w - 1, edge)], fill=col, width=2)
+            cy = y0 + 5 + phase
+        d.rectangle([0, y0, w - 1, y1], fill=band, outline=line, width=1)
         step = max(24, w // 8)
         for cx in range(step // 2, w, step):
-            draw_scroll_chevron(d, cx, cy, 5, direction, col)
+            draw_scroll_chevron(d, cx, cy, 5, direction, line)
+    im.paste(overlay, (0, 0), overlay)
 
 
 def draw_legend(w, h, data):

@@ -265,8 +265,8 @@ def frame_scroll(i):
 
     Returns None for a movie without any adopted scroll window (the legend
     indicator is omitted entirely), an inactive dict between windows, and an
-    active dict with the axis, absolute VDP position, camera-pan direction,
-    and pan speed (px per content frame) inside a window.
+    active dict with the axis, absolute VDP position, on-screen content-flow
+    direction, and scroll speed (px per content frame) inside a window.
     """
     if not SCROLL_ON:
         return None
@@ -282,12 +282,15 @@ def frame_scroll(i):
             SCROLL_POSITIONS[i - 1, 0] or SCROLL_POSITIONS[i - 1, 1])
     delta = position - previous
     # A zero-movement frame (fractional cadence) keeps the window's overall
-    # direction, recovered from the accumulated position's sign.
+    # direction, recovered from the accumulated position's sign.  The crop
+    # formula display = plane[(xy - position) % size] moves on-screen content
+    # by exactly the position delta, so a decreasing position flows the
+    # visible content left/up.
     toward = delta if delta else position
     if axis == "H":
-        direction = "right" if toward < 0 else "left"
+        direction = "left" if toward < 0 else "right"
     else:
-        direction = "down" if toward < 0 else "up"
+        direction = "up" if toward < 0 else "down"
     return dict(active=True, axis=axis, position=position,
                 speed=abs(delta), direction=direction)
 
@@ -1020,7 +1023,7 @@ def catmap_panel(i, sw, sh):
                 [x0, y0, x1, y1],
                 fill=style.CAT_MISS,
             )
-    L.draw_scroll_edge(d, sw, sh, frame_scroll(i), TCOLS, TROWS)
+    L.draw_scroll_edge(cm, frame_scroll(i), TCOLS, TROWS)
     return cm
 
 
