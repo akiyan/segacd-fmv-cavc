@@ -38,7 +38,6 @@ SHADOW_FRAME_TYPE_SHIFT = 13
 SHADOW_FRAME_TYPE_RESERVED = 3
 SHADOW_UPDATE_COUNT_MASK = 0x1FFF
 INLINE_CRAM_BYTES = 128
-VERSION = 25
 
 
 @dataclass(frozen=True)
@@ -59,13 +58,13 @@ class Stream:
 
 
 def frame_sectors(
-    routes: list[tuple[int, int]], version: int, fps: int, vsync_n: int,
+    routes: list[tuple[int, int]], fps: int, vsync_n: int,
     features: int,
 ) -> list[int]:
     """Reproduce the packer's versioned bounded accumulator for BODY slots."""
-    if version >= 24 and features & FEATURE_VBLANK_CADENCE and fps == 24:
+    if features & FEATURE_VBLANK_CADENCE and fps == 24:
         rate_numerators, rate_modulus = (2002, 3003), 800
-    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
+    elif features & FEATURE_VBLANK_CADENCE:
         rate_numerators, rate_modulus = (1001 * vsync_n,), 800
     else:
         rate_numerators, rate_modulus = (75,), fps
@@ -82,21 +81,11 @@ def frame_sectors(
     return out
 
 
-def decode_routes(
-    routing: bytes, nframes: int, version: int
-) -> list[tuple[int, int]]:
+def decode_routes(routing: bytes, nframes: int) -> list[tuple[int, int]]:
     """Decode routing without depending on the production packer."""
-    compact = version >= 7
-    entry_bytes = 1 if compact else 2
-    required = nframes * entry_bytes
+    required = nframes
     if len(routing) < required:
         raise AssertionError("routing table is truncated")
-    if not compact:
-        return [
-            (routing[frame * 2], routing[frame * 2 + 1])
-            for frame in range(nframes)
-        ]
-
     expected_bytes = ((nframes + SECTOR - 1) // SECTOR) * SECTOR
     if len(routing) != expected_bytes:
         raise AssertionError(
@@ -135,7 +124,7 @@ def decode_routes(
     return routes
 
 
-def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
+def pattern_supply_sectors(header: bytes, features: int) -> int:
     """Return the validated current boot-preload sector total."""
     if not features & FEATURE_PATTERN_SUPPLY:
         return 0
@@ -213,27 +202,26 @@ def parse_control(raw: bytes, seq: int, cells: int) -> ControlBlock:
 
 def read_stream(header_path: Path, body_path: Path) -> Stream:
     header = header_path.read_bytes()
-    magic, version, nfr, cols, rows, cells, _pool = struct.unpack_from(
-        ">4sHHHHHH", header
+    magic, nfr, cols, rows, cells, _pool = struct.unpack_from(
+        ">4sHHHHH", header
     )
-    if magic != b"TTRC" or version != VERSION:
-        raise AssertionError(
-            f"expected split TTRC v{VERSION}, got {magic!r} v{version}")
+    if magic != b"CAVC":
+        raise AssertionError(f"expected split CAVC, got {magic!r}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
-    routing_sec = struct.unpack_from(">L", header, 26)[0]
-    prebuf_sec = struct.unpack_from(">L", header, 30)[0]
-    f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", header, 40)
-    vsync_n = struct.unpack_from(">H", header, 52)[0]
-    fps = struct.unpack_from(">H", header, 56)[0] or 15
-    audio_preload_sec = struct.unpack_from(">H", header, 60)[0]
-    features = struct.unpack_from(">H", header, 62)[0]
+    routing_sec = struct.unpack_from(">L", header, 24)[0]
+    prebuf_sec = struct.unpack_from(">L", header, 28)[0]
+    f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", header, 38)
+    vsync_n = struct.unpack_from(">H", header, 50)[0]
+    fps = struct.unpack_from(">H", header, 54)[0] or 15
+    audio_preload_sec = struct.unpack_from(">H", header, 58)[0]
+    features = struct.unpack_from(">H", header, 60)[0]
     if features & FEATURE_SHADOW_UPDATE_LISTS \
             and not features & FEATURE_PATTERN_SUPPLY:
         raise AssertionError("shadow update lists require pattern supply")
     table_sec = ADPCM_TABLE_SECTORS
-    supply_sec = pattern_supply_sectors(header, version, features)
+    supply_sec = pattern_supply_sectors(header, features)
 
     routing_offset = (
         1 + paltab_sec + table_sec + supply_sec
@@ -241,7 +229,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     routing_raw = header[
         routing_offset : routing_offset + routing_sec * SECTOR
     ]
-    routes = decode_routes(routing_raw, nfr, version)
+    routes = decode_routes(routing_raw, nfr)
     if routes[0] != (0, 0, 0):
         raise AssertionError(f"frame 0 route must be (0, 0), got {routes[0]}")
     expected_header_len = (routing_offset // SECTOR + routing_sec + prebuf_sec) * SECTOR
@@ -258,7 +246,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
             body[frame0_offset : frame0_offset + frame0_len], 0, cells
         )
     ]
-    slots = frame_sectors(routes, version, fps, vsync_n, features)
+    slots = frame_sectors(routes, fps, vsync_n, features)
     body_pos = (
         audio_preload_sec + f0_ctrl_sec + f0_pat_sec
     ) * SECTOR

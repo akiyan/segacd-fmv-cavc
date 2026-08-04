@@ -1,7 +1,7 @@
 # Player constants build matrix
 
 This harness verifies the disc-specific Main/Sub assembly path without
-reusing stale packed movies. It creates current TTRC headers for H32 and H40
+reusing stale packed movies. It creates current CAVC headers for H32 and H40
 at 15, 24 and 30 fps, plus a centered H40 36x25 case, generates
 `player_constants.inc`, then assembles and links both the generic and
 specialized DEBUG players.

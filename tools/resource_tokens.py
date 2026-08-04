@@ -21,7 +21,7 @@ import time
 from typing import Iterable
 
 
-DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-ttrc/resources")
+DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-cavc/resources")
 HELD_STEMS_ENV = "SEGACD_HELD_STEM_LOCKS"
 
 

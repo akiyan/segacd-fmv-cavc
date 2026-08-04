@@ -12,17 +12,17 @@ import numpy as np
 import pack_stream as pack
 import shadow_updates
 import stream_schedule as schedule
-import ttrc_routing
+import cavc_routing
 
 
 class ControlLengthTests(unittest.TestCase):
     def test_player_cold_run_path_matches_rate_and_pattern_supply(self) -> None:
-        self.assertFalse(ttrc_routing.player_uses_packed_cold_runs(15, 0))
-        self.assertFalse(ttrc_routing.player_uses_packed_cold_runs(20, 0))
-        self.assertTrue(ttrc_routing.player_uses_packed_cold_runs(24, 0))
-        self.assertTrue(ttrc_routing.player_uses_packed_cold_runs(30, 0))
-        self.assertTrue(ttrc_routing.player_uses_packed_cold_runs(
-            15, ttrc_routing.FEATURE_PATTERN_SUPPLY))
+        self.assertFalse(cavc_routing.player_uses_packed_cold_runs(15, 0))
+        self.assertFalse(cavc_routing.player_uses_packed_cold_runs(20, 0))
+        self.assertTrue(cavc_routing.player_uses_packed_cold_runs(24, 0))
+        self.assertTrue(cavc_routing.player_uses_packed_cold_runs(30, 0))
+        self.assertTrue(cavc_routing.player_uses_packed_cold_runs(
+            15, cavc_routing.FEATURE_PATTERN_SUPPLY))
 
     def test_lengths_mix_bitmap_and_shadow_lists(self) -> None:
         lengths = schedule.control_block_lengths(

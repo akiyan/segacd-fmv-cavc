@@ -19,7 +19,7 @@ Run it against one completed encode:
 tools/python.sh harness/pattern_supply/verify.py \
   --header out/PROFILE/HEADER.DAT \
   --body out/PROFILE/BODY.DAT \
-  --decisions /dev/shm/segacd-fmv-ttrc/sim-.../data/decisions.pkl
+  --decisions /dev/shm/segacd-fmv-cavc/sim-.../data/decisions.pkl
 ```
 
 Success prints `O_LOADS v2 equivalence: OK` after the ordinary full display

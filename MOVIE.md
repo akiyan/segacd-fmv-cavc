@@ -18,17 +18,16 @@ it before issuing one continuous `ROM_READN` for the timed BODY suffix.
 
 ```text
 SECTOR         = 2048            # one Mode-1 CD sector
-MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 25
+MAGIC          = "CAVC"          # 0x43415643
 FRAME_SECTORS  = 5               # maximum useful sectors in a routing entry
 PAT            = 32              # one 8x8 4bpp tile pattern
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-The player accepts version 25. Bitmap controls insert one zero byte after an
-odd-sized bitmap so the following 16-bit entry array is word-aligned. List
-controls are already word-aligned. This pad does not change the run-suffix
-alignment or the complete even control length.
+The magic is identifying data; the runtime player does not branch on it.
+Bitmap controls insert one zero byte after an odd-sized bitmap so the following
+16-bit entry array is word-aligned. List controls are already word-aligned. This
+pad does not change the run-suffix alignment or the complete even control length.
 
 ## File layout
 
@@ -104,47 +103,47 @@ independent of the timed PrgBuf and its jitter reserve.
 
 ## Header
 
-The first 22 bytes are `struct ">4sHHHHHHHHH"`.
+The first 20 bytes are `struct ">4sHHHHHHHH"`. There is no independent
+format-version field.
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
-| 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | exactly `25` |
-| 6 | 2 | frames | total frame count (`nfr`) |
-| 8 | 2 | tcols | tile-grid columns |
-| 10 | 2 | trows | tile-grid rows |
-| 12 | 2 | cells | `tcols * trows` |
-| 14 | 2 | pool | resident VRAM tile-pool size |
-| 16 | 2 | base | tile index of physical slot 0 |
-| 18 | 2 | frame_sectors | maximum useful sectors per routing entry, `5` |
-| 20 | 2 | n_seg | palette-segment count, at most 16 (informational; the player's embedded paltab.bin is authoritative) |
+| 0 | 4 | magic | `"CAVC"` |
+| 4 | 2 | frames | total frame count (`nfr`) |
+| 6 | 2 | tcols | tile-grid columns |
+| 8 | 2 | trows | tile-grid rows |
+| 10 | 2 | cells | `tcols * trows` |
+| 12 | 2 | pool | resident VRAM tile-pool size |
+| 14 | 2 | base | tile index of physical slot 0 |
+| 16 | 2 | frame_sectors | maximum useful sectors per routing entry, `5` |
+| 18 | 2 | n_seg | palette-segment count, at most 16 (informational; the player's embedded paltab.bin is authoritative) |
 
 The next 16 bytes are `struct ">LLLL"`.
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
-| 22 | 4 | prebuf_pat | number of Prg patterns prebuffered before frame 1 |
-| 26 | 4 | routing_sec | sectors occupied by ROUTING |
-| 30 | 4 | prebuf_sec | sectors occupied by PREBUFFER |
-| 34 | 4 | ring_peak | peak physical PrgBuf use after delivery and before consumption |
+| 20 | 4 | prebuf_pat | number of Prg patterns prebuffered before frame 1 |
+| 24 | 4 | routing_sec | sectors occupied by ROUTING |
+| 28 | 4 | prebuf_sec | sectors occupied by PREBUFFER |
+| 32 | 4 | ring_peak | peak physical PrgBuf use after delivery and before consumption |
 
 The remaining fields are:
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
-| 38 | 1 | display_mode | `0` H32, `1` H40, `2` mode4 |
-| 39 | 1 | pad | zero |
-| 40 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sectors |
-| 44 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sectors |
-| 48 | 4 | paltab_sec | BOOT_STAGE sectors |
-| 52 | 2 | vsync_n | first authoritative display-VBlank interval, or a hint when bit 1 is clear |
-| 54 | 2 | audio_bytes | even decoded samples per effective playback frame |
-| 56 | 2 | fps_int | nominal content rate |
-| 58 | 2 | audio_fd | RF5C164 frequency delta |
-| 60 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors |
-| 62 | 2 | features | feature bits described below |
-| 64 | 128 | pad | zero |
-| 192 | 4 | player_signature | CRC-32 of bytes 0 through 63 |
+| 36 | 1 | display_mode | `0` H32, `1` H40, `2` mode4 |
+| 37 | 1 | pad | zero |
+| 38 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sectors |
+| 42 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sectors |
+| 46 | 4 | paltab_sec | BOOT_STAGE sectors |
+| 50 | 2 | vsync_n | first authoritative display-VBlank interval, or a hint when bit 1 is clear |
+| 52 | 2 | audio_bytes | even decoded samples per effective playback frame |
+| 54 | 2 | fps_int | nominal content rate |
+| 56 | 2 | audio_fd | RF5C164 frequency delta |
+| 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors |
+| 60 | 2 | features | feature bits described below |
+| 62 | 130 | pad | zero |
+| 192 | 4 | player_signature | CRC-32 of contract bytes 4 through 61; magic is excluded |
 | 196 | 26 | PSUP | pattern-supply extension when feature bit 3 is set |
 | 222 | 1826 | pad | zero |
 
@@ -550,17 +549,16 @@ timed BODY suffixへ1回の連続 `ROM_READN`を発行します。
 
 ```text
 SECTOR         = 2048            # Mode-1 CD sector 1個
-MAGIC          = "TTRC"          # 0x54545243
-VERSION        = 25
+MAGIC          = "CAVC"          # 0x43415643
 FRAME_SECTORS  = 5               # routing entry内の有効sector上限
 PAT            = 32              # 8x8 4bpp tile pattern 1個
 BASE           = 1               # VRAM tile index = BASE + physical slot
 ```
 
-player が受け付ける version は25です。bitmap controlではbitmapサイズが奇数byteの
-ときにzero byteを1つ置き、後続の16-bit entry配列をword境界に揃えます。list
-controlは元からword境界にあります。このpadはrun suffixの境界とcontrol全体の
-偶数長を変えません。
+magicは識別用dataであり、runtime playerはmagicで分岐しません。bitmap controlでは
+bitmapサイズが奇数byteのときにzero byteを1つ置き、後続の16-bit entry配列をword
+境界に揃えます。list controlは元からword境界にあります。このpadはrun suffixの
+境界とcontrol全体の偶数長を変えません。
 
 ## ファイル配置
 
@@ -631,47 +629,47 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 
 ## Header
 
-先頭22 byteは `struct ">4sHHHHHHHHH"` です。
+先頭20 byteは `struct ">4sHHHHHHHH"` です。独立したformat version fieldは
+ありません。
 
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
-| 0 | 4 | magic | `"TTRC"` |
-| 4 | 2 | version | 必ず `25` |
-| 6 | 2 | frames | 総frame数（`nfr`） |
-| 8 | 2 | tcols | tile gridの列数 |
-| 10 | 2 | trows | tile gridの行数 |
-| 12 | 2 | cells | `tcols * trows` |
-| 14 | 2 | pool | resident VRAM tile poolの大きさ |
-| 16 | 2 | base | physical slot 0のtile index |
-| 18 | 2 | frame_sectors | routing entry当たりの有効sector上限、`5` |
-| 20 | 2 | n_seg | palette segment数、最大16（情報提供のみ。正典はplayer内蔵のpaltab.bin） |
+| 0 | 4 | magic | `"CAVC"` |
+| 4 | 2 | frames | 総frame数（`nfr`） |
+| 6 | 2 | tcols | tile gridの列数 |
+| 8 | 2 | trows | tile gridの行数 |
+| 10 | 2 | cells | `tcols * trows` |
+| 12 | 2 | pool | resident VRAM tile poolの大きさ |
+| 14 | 2 | base | physical slot 0のtile index |
+| 16 | 2 | frame_sectors | routing entry当たりの有効sector上限、`5` |
+| 18 | 2 | n_seg | palette segment数、最大16（情報提供のみ。正典はplayer内蔵のpaltab.bin） |
 
 次の16 byteは `struct ">LLLL"` です。
 
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
-| 22 | 4 | prebuf_pat | frame 1より前にPrgBufへ置くpattern数 |
-| 26 | 4 | routing_sec | ROUTINGのsector数 |
-| 30 | 4 | prebuf_sec | PREBUFFERのsector数 |
-| 34 | 4 | ring_peak | delivery後、消費前の物理PrgBuf最大使用量 |
+| 20 | 4 | prebuf_pat | frame 1より前にPrgBufへ置くpattern数 |
+| 24 | 4 | routing_sec | ROUTINGのsector数 |
+| 28 | 4 | prebuf_sec | PREBUFFERのsector数 |
+| 32 | 4 | ring_peak | delivery後、消費前の物理PrgBuf最大使用量 |
 
 残りのfieldは次の通りです。
 
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
-| 38 | 1 | display_mode | `0` H32、`1` H40、`2` mode4 |
-| 39 | 1 | pad | zero |
-| 40 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sector数 |
-| 44 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sector数 |
-| 48 | 4 | paltab_sec | BOOT_STAGE sector数 |
-| 52 | 2 | vsync_n | 最初の正式なdisplay VBlank間隔。bit 1 clear時はhint |
-| 54 | 2 | audio_bytes | 実効playback frameごとの偶数decoded sample数 |
-| 56 | 2 | fps_int | nominal content rate |
-| 58 | 2 | audio_fd | RF5C164 frequency delta |
-| 60 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数 |
-| 62 | 2 | features | 下記のfeature bit |
-| 64 | 128 | pad | zero |
-| 192 | 4 | player_signature | byte 0〜63のCRC-32 |
+| 36 | 1 | display_mode | `0` H32、`1` H40、`2` mode4 |
+| 37 | 1 | pad | zero |
+| 38 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sector数 |
+| 42 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sector数 |
+| 46 | 4 | paltab_sec | BOOT_STAGE sector数 |
+| 50 | 2 | vsync_n | 最初の正式なdisplay VBlank間隔。bit 1 clear時はhint |
+| 52 | 2 | audio_bytes | 実効playback frameごとの偶数decoded sample数 |
+| 54 | 2 | fps_int | nominal content rate |
+| 56 | 2 | audio_fd | RF5C164 frequency delta |
+| 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数 |
+| 60 | 2 | features | 下記のfeature bit |
+| 62 | 130 | pad | zero |
+| 192 | 4 | player_signature | contract byte 4〜61のCRC-32。magicは対象外 |
 | 196 | 26 | PSUP | feature bit 3がsetのときのpattern-supply extension |
 | 222 | 1826 | pad | zero |
 

@@ -182,7 +182,7 @@ prevents the configured cap from being mistaken for the realized maximum:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data/decisions.pkl
+  /dev/shm/segacd-fmv-cavc/artifacts/SIM_ENTRY/data/decisions.pkl
 ```
 
 Write the persistent TSV immediately with the zero-frame analysis-data mode,
@@ -309,7 +309,7 @@ the analysis `status_cold` maximum equals the physical transfer trace:
 
 ```sh
 tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data/decisions.pkl \
+  /dev/shm/segacd-fmv-cavc/artifacts/SIM_ENTRY/data/decisions.pkl \
   --analysis-tsv logs/RUN_timeline.tsv
 ```
 

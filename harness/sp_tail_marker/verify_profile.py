@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import player_constants  # noqa: E402
-import ttrc_routing  # noqa: E402
+import cavc_routing  # noqa: E402
 
 
 def routing_bytes(header: bytes, constants: player_constants.PlayerConstants) -> bytes:
@@ -32,7 +32,7 @@ def routing_bytes(header: bytes, constants: player_constants.PlayerConstants) ->
     if len(region) != expected:
         raise ValueError(
             f"routing preload is truncated: {len(region)} bytes, expected {expected}")
-    ttrc_routing.validate_route_table(
+    cavc_routing.validate_route_table(
         region, constants.frames, constants.routing_sec)
     return region[:constants.frames]
 
@@ -48,7 +48,7 @@ def main() -> None:
         raw[:player_constants.SECTOR])
     routes = routing_bytes(raw, constants)
     word_counts = [
-        ttrc_routing.decode_word_sectors(entry)
+        cavc_routing.decode_word_sectors(entry)
         for entry in routes
     ]
     maximum = max(word_counts, default=0)

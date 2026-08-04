@@ -7,7 +7,7 @@ absolute-address alignment pad:
     n_runs:u16, repeated v12 indexed four-byte descriptors
 
 This checker does not import the packer.  It independently reads the real split
-TTRC v25 files and reconstructs every current control and payload byte. The
+CAVC files and reconstructs every current control and payload byte. The
 display entries remain in cell order, while the p39 suffix and physical pattern
 payload independently follow ascending VRAM-slot order.  The checker proves both
 views against the same decisions and proves the suffix consumes each physical
@@ -51,7 +51,6 @@ RUN_SOURCE_SHIFT = 14
 RUN_COUNT_MASK = 0x07FF
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_FRAME_TYPE_MASK = 0x6000
@@ -107,13 +106,13 @@ def take_pattern_region(
 
 
 def frame_sectors(
-    routes: list[tuple[int, int]], version: int, fps: int, vsync_n: int,
+    routes: list[tuple[int, int]], fps: int, vsync_n: int,
     features: int,
 ) -> list[int]:
     """Reproduce the v6+ bounded CD-1x BODY slot accumulator."""
-    if version >= 24 and features & FEATURE_VBLANK_CADENCE and fps == 24:
+    if features & FEATURE_VBLANK_CADENCE and fps == 24:
         rate_numerators, rate_modulus = (2002, 3003), 800
-    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
+    elif features & FEATURE_VBLANK_CADENCE:
         rate_numerators, rate_modulus = (1001 * vsync_n,), 800
     else:
         rate_numerators, rate_modulus = (75,), fps
@@ -130,21 +129,11 @@ def frame_sectors(
     return out
 
 
-def decode_routes(
-    routing: bytes, nframes: int, version: int
-) -> list[tuple[int, int]]:
+def decode_routes(routing: bytes, nframes: int) -> list[tuple[int, int]]:
     """Decode routing independently from the production packer."""
-    compact = version >= 7
-    entry_bytes = 1 if compact else 2
-    required = nframes * entry_bytes
+    required = nframes
     if len(routing) < required:
         raise AssertionError("routing table is truncated")
-    if not compact:
-        return [
-            (routing[frame * 2], routing[frame * 2 + 1])
-            for frame in range(nframes)
-        ]
-
     expected_bytes = ((nframes + SECTOR - 1) // SECTOR) * SECTOR
     if len(routing) != expected_bytes:
         raise AssertionError(
@@ -273,26 +262,25 @@ def parse_control(
 
 def read_stream(header_path: Path, body_path: Path) -> Stream:
     header = header_path.read_bytes()
-    magic, version, nfr, cols, rows, cells, pool, base = struct.unpack_from(
-        ">4sHHHHHHH", header
+    magic, nfr, cols, rows, cells, pool, base = struct.unpack_from(
+        ">4sHHHHHH", header
     )
-    if magic != b"TTRC" or version != VERSION:
-        raise AssertionError(
-            f"expected split TTRC v{VERSION}, got {magic!r} v{version}")
+    if magic != b"CAVC":
+        raise AssertionError(f"expected split CAVC, got {magic!r}")
     if cols * rows != cells:
         raise AssertionError(f"grid {cols}x{rows} does not equal {cells} cells")
 
-    prebuf_patterns = struct.unpack_from(">L", header, 22)[0]
-    routing_sectors = struct.unpack_from(">L", header, 26)[0]
-    prebuf_sectors = struct.unpack_from(">L", header, 30)[0]
+    prebuf_patterns = struct.unpack_from(">L", header, 20)[0]
+    routing_sectors = struct.unpack_from(">L", header, 24)[0]
+    prebuf_sectors = struct.unpack_from(">L", header, 28)[0]
     f0_ctrl_sectors, f0_pattern_sectors, palette_sectors = struct.unpack_from(
-        ">LLL", header, 40
+        ">LLL", header, 38
     )
-    decoded_audio_bytes = struct.unpack_from(">H", header, 54)[0]
-    vsync_n = struct.unpack_from(">H", header, 52)[0]
-    fps = struct.unpack_from(">H", header, 56)[0] or 15
-    audio_preload_sectors = struct.unpack_from(">H", header, 60)[0]
-    features = struct.unpack_from(">H", header, 62)[0]
+    decoded_audio_bytes = struct.unpack_from(">H", header, 52)[0]
+    vsync_n = struct.unpack_from(">H", header, 50)[0]
+    fps = struct.unpack_from(">H", header, 54)[0] or 15
+    audio_preload_sectors = struct.unpack_from(">H", header, 58)[0]
+    features = struct.unpack_from(">H", header, 60)[0]
     unknown_features = features & ~(
         FEATURE_COLD_RUNS | FEATURE_VBLANK_CADENCE
         | FEATURE_PATTERN_SUPPLY | FEATURE_SHADOW_UPDATE_LISTS
@@ -336,7 +324,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     routing_raw = header[
         routing_offset : routing_offset + routing_sectors * SECTOR
     ]
-    routes = decode_routes(routing_raw, nfr, version)
+    routes = decode_routes(routing_raw, nfr)
     if routes[0] != (0, 0, 0):
         raise AssertionError(f"frame 0 route must be (0, 0), got {routes[0]}")
 
@@ -381,7 +369,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     if frame0_cold * PATTERN_BYTES > f0_pattern_sectors * SECTOR:
         raise AssertionError("frame 0 pattern count exceeds its BODY-arm sectors")
 
-    slots = frame_sectors(routes, version, fps, vsync_n, features)
+    slots = frame_sectors(routes, fps, vsync_n, features)
     body_pos = (
         audio_preload_sectors + f0_ctrl_sectors + f0_pattern_sectors
     ) * SECTOR

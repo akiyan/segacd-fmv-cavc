@@ -238,7 +238,7 @@ the Sub iterate the header's validated `n_upd` entries directly instead of
 scanning all 896 bitmap cells a second time. The old bitmap walk remains on the
 Main CPU unchanged.
 
-TTRC v25 typed fade controls have `n_upd=0` and replace the bitmap/list field
+CAVC typed fade controls have `n_upd=0` and replace the bitmap/list field
 with 128 bytes of inline CRAM. Both independent walkers skip that image and
 continue at the fixed-size audio chunk; their descriptor proof still includes
 any future-pattern prefetch runs in the ordinary suffix.

@@ -173,7 +173,7 @@ the Replay-generation run as the baseline: Replay initial-state handling can cha
 audio boundary by one stereo PCM sample.
 
 ```sh
-REPLAY=/dev/shm/segacd-fmv-ttrc/artifacts/RECORD_ENTRY/data/replay/STEM_offline_input.replay
+REPLAY=/dev/shm/segacd-fmv-cavc/artifacts/RECORD_ENTRY/data/replay/STEM_offline_input.replay
 
 tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 --realtime-lossless \
   --preset ffv1-flac --input-replay "$REPLAY" \

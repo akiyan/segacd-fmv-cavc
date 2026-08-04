@@ -16,8 +16,8 @@ readable layout receipts, not visual guesses.
 
 ```sh
 tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
-  /dev/shm/segacd-fmv-ttrc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
-  /dev/shm/segacd-fmv-ttrc/artifacts/HUDLINE_ENTRY/STEM_hudline.png \
+  /dev/shm/segacd-fmv-cavc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
+  /dev/shm/segacd-fmv-cavc/artifacts/HUDLINE_ENTRY/STEM_hudline.png \
   --timeline-layout logs/STEM_TIMELINE_SHA10_timeline-layout.json \
   --hudline-layout logs/STEM_HUDLINE_SHA10_hudline-layout.json
 ```
@@ -38,7 +38,7 @@ tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
 
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  /dev/shm/segacd-fmv-ttrc/artifacts/MIXLINE_ENTRY/STEM_mixline.png \
+  /dev/shm/segacd-fmv-cavc/artifacts/MIXLINE_ENTRY/STEM_mixline.png \
   --description "SEGA-CD FMV mixed codec/HUD timeline: run label"
 ```
 

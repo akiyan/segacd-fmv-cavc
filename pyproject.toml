@@ -1,5 +1,5 @@
 [project]
-name = "segacd-fmv-ttrc-tools"
+name = "segacd-fmv-cavc-tools"
 version = "0.0.0"
 description = "Host-side tools for the SEGA-CD Tile Texture Reuse Codec"
 requires-python = ">=3.13.14,<3.15"

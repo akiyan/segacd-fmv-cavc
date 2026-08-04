@@ -25,7 +25,7 @@ import time
 import uuid
 
 
-DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-ttrc")
+DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-cavc")
 DEFAULT_MIN_FREE_BYTES = 4 * 1024 ** 3
 
 # Linux assigns the same quotactl_fd syscall number on the architectures used

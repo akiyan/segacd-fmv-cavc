@@ -350,7 +350,7 @@ requests `STAT_END` only after that frame has become visible. H32,
 non-specialized, periodic-cadence, and feature-clear paths use the same early
 handoff once a future frame exists.
 
-TTRC v25 controls store `n_runs` immediately followed by compact source-aware
+CAVC controls store `n_runs` immediately followed by compact source-aware
 run descriptors. Sub keeps the existing CDC polling cadence while resolving
 those descriptors into `O_LOADS v2`; Main schedules the expanded records
 against the runtime residual budget. Fixed N is the healthy fresh-budget
@@ -765,7 +765,7 @@ startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期reque
 requestします。H32、non-specialized、periodic-cadence、feature-clear pathも、
 future frameが存在すれば同じearly handoffを使います。
 
-TTRC v25 controlは`n_runs`の直後にcompactなsource-aware run descriptorを
+CAVC controlは`n_runs`の直後にcompactなsource-aware run descriptorを
 置きます。Subは既存のCDC polling cadenceを保ったままdescriptorを
 `O_LOADS v2`へ解決し、Mainがruntime残budgetに対して展開済みrecordをschedule
 します。Fixed Nはhealthyなfresh budget数で、N2は2本、N4は4本です。さらに

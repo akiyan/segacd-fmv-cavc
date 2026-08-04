@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import read_frameno  # noqa: E402
 import av_config  # noqa: E402
-import ttrc_routing  # noqa: E402
+import cavc_routing  # noqa: E402
 
 
 NATIVE_GEOMETRIES = {(256, 224), (320, 224)}
@@ -40,7 +40,6 @@ class CadenceError(RuntimeError):
 
 @dataclass(frozen=True)
 class HeaderInfo:
-    version: int
     frame_count: int
     vsync_n: int
     fps: int
@@ -92,26 +91,22 @@ def read_header(path: Path) -> HeaderInfo:
         raise CadenceError(f"cannot read HEADER.DAT: {path}: {exc}") from exc
     if len(data) < 58:
         raise CadenceError(f"HEADER.DAT is too short: {len(data)} bytes")
-    if data[:4] != b"TTRC":
-        raise CadenceError(f"not a TTRC HEADER.DAT: {path}")
-    version, frame_count = struct.unpack_from(">HH", data, 4)
-    vsync_n, _audio_bytes, fps = struct.unpack_from(">HHH", data, 52)
-    features = struct.unpack_from(">H", data, 62)[0]
+    if data[:4] != b"CAVC":
+        raise CadenceError(f"not a CAVC HEADER.DAT: {path}")
+    frame_count = struct.unpack_from(">H", data, 4)[0]
+    vsync_n, _audio_bytes, fps = struct.unpack_from(">HHH", data, 50)
+    features = struct.unpack_from(">H", data, 60)[0]
     if frame_count < 1:
         raise CadenceError("HEADER.DAT has no movie frames")
     if vsync_n < 1:
         raise CadenceError("HEADER.DAT has no valid VBlank cadence hint")
-    if version != ttrc_routing.VERSION:
-        raise CadenceError(
-            f"HEADER.DAT is TTRC v{version}, expected v{ttrc_routing.VERSION}")
     cadence = ()
-    if features & ttrc_routing.FEATURE_VBLANK_CADENCE:
+    if features & cavc_routing.FEATURE_VBLANK_CADENCE:
         cadence = av_config.vblank_cadence_pattern(fps) or ()
         if not cadence or cadence[0] != vsync_n:
             raise CadenceError(
                 f"HEADER.DAT cadence fps={fps}, vsync_n={vsync_n} is invalid")
     return HeaderInfo(
-        version=version,
         frame_count=frame_count,
         vsync_n=vsync_n,
         fps=fps,
@@ -454,7 +449,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{float(video.fps):.6f} fps, {decoded} capture frames)"
     )
     print(
-        f"header: TTRC v{header.version}, {header.frame_count} movie frames, "
+        f"header: CAVC, {header.frame_count} movie frames, "
         f"{header.fps}fps, cadence={','.join(map(str, cadence))}"
     )
     print(

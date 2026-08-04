@@ -358,30 +358,30 @@ ip_entry:
 	   モード依存のVDP設定と実行時変数を確定する(汎用化: H32/H40, mode4は将来) */
 	lea	(PROBE_BANK+STATUS_OFF+0x80), a0
 	.ifndef PLAYER_SPECIALIZED
-	move.w	6(a0), d0
+	move.w	4(a0), d0
 	subq.w	#1, d0
 	move.w	d0, md_final_frame
-	move.w	8(a0), md_tcols
-	move.w	10(a0), md_trows
-	move.w	12(a0), d0			/* cells; supported grids are multiples of 8 */
+	move.w	6(a0), md_tcols
+	move.w	8(a0), md_trows
+	move.w	10(a0), d0			/* cells; supported grids are multiples of 8 */
 	lsr.w	#3, d0
 	move.w	d0, md_bmbytes
 	/* HUD font is fixed at 0xD000 (HUD_FONT_ADDR/HUD_FONT_VTILE); no runtime
 	   base+pool computation needed. */
 	moveq	#0, d0
-	move.b	38(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
+	move.b	36(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
 	move.w	d0, md_mode
-	/* The first cadence interval is stored at offset 52. TTRC v25 derives any
+	/* The first cadence interval is stored at offset 50. CAVC derives any
 	   later interval from nominal fps, so 24fps becomes the periodic 2/3 path. */
-	move.w	52(a0), d0
+	move.w	50(a0), d0
 	bne	1f
 	moveq	#4, d0
 1:
 	clr.w	md_cadence_period
-	btst	#FEATURE_VBLANK_CADENCE_BIT, 63(a0)
+	btst	#FEATURE_VBLANK_CADENCE_BIT, 61(a0)
 	beq	1f
 	move.w	#1, md_cadence_period
-	cmpi.w	#24, 56(a0)
+	cmpi.w	#24, 54(a0)
 	bne.s	1f
 	move.w	#2, md_cadence_period
 1:

@@ -20,7 +20,6 @@ from pathlib import Path
 
 SECTOR = 2048
 PATTERN_BYTES = 32
-VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_VBLANK_CADENCE = 0x0002
@@ -521,24 +520,24 @@ def main() -> None:
     if len(header) < SECTOR:
         raise SystemExit("HEADER.DAT is shorter than one sector")
     (
-        magic, version, frames, cols, rows, cells, pool, base, _frame_sectors,
+        magic, frames, cols, rows, cells, pool, base, _frame_sectors,
         nseg,
-    ) = struct.unpack_from(">4s9H", header)
-    if magic != b"TTRC" or version != VERSION or cols * rows != cells:
+    ) = struct.unpack_from(">4s8H", header)
+    if magic != b"CAVC" or cols * rows != cells:
         raise SystemExit(
-            f"expected TTRC v{VERSION}, got {magic!r} v{version} {cols}x{rows}/{cells}")
+            f"expected CAVC, got {magic!r} {cols}x{rows}/{cells}")
     prebuf_patterns, routing_sectors, prebuf_sectors, _ring_peak = struct.unpack_from(
-        ">4L", header, 22)
+        ">4L", header, 20)
     f0_ctrl_sectors, f0_pattern_sectors, paltab_sectors = struct.unpack_from(
-        ">3L", header, 40)
+        ">3L", header, 38)
     vsync_n, decoded_audio, fps, _audio_fd, audio_preload, features = struct.unpack_from(
-        ">6H", header, 52)
+        ">6H", header, 50)
     required_supply_features = (
         FEATURE_COLD_RUNS | FEATURE_PATTERN_SUPPLY
         | FEATURE_DICBUF_INDEXED_RUNS)
     if features & required_supply_features != required_supply_features:
         raise SystemExit(
-            f"expected v25 cold-run/pattern-supply/indexed-DicBuf features, "
+            f"expected cold-run/pattern-supply/indexed-DicBuf features, "
             f"got 0x{features:04X}")
     if features & FEATURE_SHADOW_UPDATE_LISTS and not features & FEATURE_PATTERN_SUPPLY:
         raise SystemExit("shadow update lists require pattern supply")
@@ -546,7 +545,7 @@ def main() -> None:
         raise SystemExit(f"invalid supply timing N={vsync_n} fps={fps}")
     audio_bytes = 4 + decoded_audio // 2
     signature = struct.unpack_from(">L", header, 192)[0]
-    expected_signature = zlib.crc32(header[:64]) & 0xFFFFFFFF
+    expected_signature = zlib.crc32(header[:62]) & 0xFFFFFFFF
     if signature != expected_signature:
         raise AssertionError(
             f"header signature 0x{signature:08X} != 0x{expected_signature:08X}")

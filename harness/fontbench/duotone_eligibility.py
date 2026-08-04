@@ -37,7 +37,6 @@ sys.modules[_spec.name] = _verify
 _spec.loader.exec_module(_verify)
 
 SECTOR = _verify.SECTOR
-VERSION = _verify.VERSION
 SOURCE_PRG = _verify.SOURCE_PRG
 SOURCE_WR = _verify.SOURCE_WR
 SOURCE_DIC = _verify.SOURCE_DIC
@@ -65,18 +64,18 @@ def main() -> None:
     header = (args.stream_dir / "HEADER.DAT").read_bytes()
     body = (args.stream_dir / "BODY.DAT").read_bytes()
 
-    (magic, version, frames, cols, rows, cells, pool, base, _fsec,
-     _nseg) = struct.unpack_from(">4s9H", header)
-    if magic != b"TTRC" or version != VERSION:
-        raise SystemExit(f"expected TTRC v{VERSION}, got {magic!r} v{version}")
+    (magic, frames, cols, rows, cells, pool, base, _fsec,
+     _nseg) = struct.unpack_from(">4s8H", header)
+    if magic != b"CAVC":
+        raise SystemExit(f"expected CAVC, got {magic!r}")
     prebuf_patterns, routing_sectors, prebuf_sectors, _ring_peak = (
-        struct.unpack_from(">4L", header, 22))
+        struct.unpack_from(">4L", header, 20))
     f0_ctrl_sectors, f0_pattern_sectors, paltab_sectors = struct.unpack_from(
-        ">3L", header, 40)
+        ">3L", header, 38)
     vsync_n, decoded_audio, fps, _afd, audio_preload, features = (
-        struct.unpack_from(">6H", header, 52))
+        struct.unpack_from(">6H", header, 50))
     audio_bytes = 4 + decoded_audio // 2
-    if zlib.crc32(header[:64]) & 0xFFFFFFFF != struct.unpack_from(
+    if zlib.crc32(header[:62]) & 0xFFFFFFFF != struct.unpack_from(
             ">L", header, 192)[0]:
         raise SystemExit("header signature mismatch")
     supply = struct.unpack_from(">4s11H", header, 196)

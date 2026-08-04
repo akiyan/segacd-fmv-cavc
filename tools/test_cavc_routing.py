@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Regression tests for the current TTRC routing byte."""
+"""Regression tests for the current CAVC routing byte."""
 
 from __future__ import annotations
 
 import unittest
 
-import ttrc_routing as routing
+import cavc_routing as routing
 
 
 class RoutingEntryTests(unittest.TestCase):

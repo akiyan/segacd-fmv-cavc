@@ -14,7 +14,7 @@ import av_config
 import ima_adpcm
 import pattern_supply
 import sp_extension
-import ttrc_routing
+import cavc_routing
 import wordbuf_ring
 
 
@@ -118,32 +118,31 @@ def pc(name: str) -> int:
 
 # The format literals remain source-level invariants.
 format_contract = {
-    "ROUTING_VERSION": ttrc_routing.VERSION,
-    "ROUTING_MAX_FRAMES": ttrc_routing.MAX_FRAMES,
-    "ROUTING_SECTOR_BYTES": ttrc_routing.SECTOR_BYTES,
-    "ROUTING_CTRL_MASK": ttrc_routing.CTRL_MASK,
-    "ROUTING_CTRL_COUNT_MASK": ttrc_routing.CTRL_COUNT_MASK,
-    "ROUTING_WORD4_FLAG": ttrc_routing.WORD4_FLAG,
-    "ROUTING_TOTAL_SHIFT": ttrc_routing.TOTAL_SHIFT,
-    "ROUTING_TOTAL_MASK": ttrc_routing.CTRL_MASK << ttrc_routing.TOTAL_SHIFT,
-    "ROUTING_WORD_SHIFT": ttrc_routing.WORD_SHIFT,
-    "ROUTING_WORD_MASK": ttrc_routing.WORD_MASK,
-    "ROUTING_MAX_ENTRY": ttrc_routing.MAX_ENTRY,
-    "FEATURE_COLD_RUNS_BIT": ttrc_routing.FEATURE_COLD_RUNS.bit_length() - 1,
+    "ROUTING_MAX_FRAMES": cavc_routing.MAX_FRAMES,
+    "ROUTING_SECTOR_BYTES": cavc_routing.SECTOR_BYTES,
+    "ROUTING_CTRL_MASK": cavc_routing.CTRL_MASK,
+    "ROUTING_CTRL_COUNT_MASK": cavc_routing.CTRL_COUNT_MASK,
+    "ROUTING_WORD4_FLAG": cavc_routing.WORD4_FLAG,
+    "ROUTING_TOTAL_SHIFT": cavc_routing.TOTAL_SHIFT,
+    "ROUTING_TOTAL_MASK": cavc_routing.CTRL_MASK << cavc_routing.TOTAL_SHIFT,
+    "ROUTING_WORD_SHIFT": cavc_routing.WORD_SHIFT,
+    "ROUTING_WORD_MASK": cavc_routing.WORD_MASK,
+    "ROUTING_MAX_ENTRY": cavc_routing.MAX_ENTRY,
+    "FEATURE_COLD_RUNS_BIT": cavc_routing.FEATURE_COLD_RUNS.bit_length() - 1,
     "FEATURE_VBLANK_CADENCE_BIT": (
-        ttrc_routing.FEATURE_VBLANK_CADENCE.bit_length() - 1),
+        cavc_routing.FEATURE_VBLANK_CADENCE.bit_length() - 1),
     "FEATURE_PATTERN_SUPPLY_BIT": (
-        ttrc_routing.FEATURE_PATTERN_SUPPLY.bit_length() - 1),
+        cavc_routing.FEATURE_PATTERN_SUPPLY.bit_length() - 1),
     "FEATURE_SHADOW_UPDATE_LISTS_BIT": (
-        ttrc_routing.FEATURE_SHADOW_UPDATE_LISTS.bit_length() - 1),
+        cavc_routing.FEATURE_SHADOW_UPDATE_LISTS.bit_length() - 1),
     "FEATURE_VRAM_RAW_PREFETCH_BIT": (
-        ttrc_routing.FEATURE_VRAM_RAW_PREFETCH.bit_length() - 1),
+        cavc_routing.FEATURE_VRAM_RAW_PREFETCH.bit_length() - 1),
     "FEATURE_DICBUF_INDEXED_RUNS_BIT": (
-        ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS.bit_length() - 1),
+        cavc_routing.FEATURE_DICBUF_INDEXED_RUNS.bit_length() - 1),
     "FEATURE_BOOT_VRAM_SIDECAR_BIT": (
-        ttrc_routing.FEATURE_BOOT_VRAM_SIDECAR.bit_length() - 1),
+        cavc_routing.FEATURE_BOOT_VRAM_SIDECAR.bit_length() - 1),
     "FEATURE_WORDBUF_RING_BIT": (
-        ttrc_routing.FEATURE_WORDBUF_RING.bit_length() - 1),
+        cavc_routing.FEATURE_WORDBUF_RING.bit_length() - 1),
 }
 for name, expected in format_contract.items():
     actual = equ(sp_text, name, SP)
@@ -179,7 +178,7 @@ for name, expected in layout_contract.items():
     if actual != expected:
         sys.exit(
             f"check_player_ring: PC_{name}={actual:#x} != layout {expected:#x}")
-if pc("ROUTING_SEC") * ttrc_routing.SECTOR_BYTES != layout.routing_bytes:
+if pc("ROUTING_SEC") * cavc_routing.SECTOR_BYTES != layout.routing_bytes:
     sys.exit("check_player_ring: routing sectors do not match resident allocation")
 for parity in (0, 1):
     count = pc(f"WR{parity}_PATTERNS")
@@ -192,7 +191,7 @@ for parity in (0, 1):
         sys.exit(
             f"check_player_ring: Wr{parity} sectors {sectors} do not cover "
             f"{count} patterns")
-    if pc(f"WR{parity}_OFFSET") + sectors * ttrc_routing.SECTOR_BYTES > layout.status_offset:
+    if pc(f"WR{parity}_OFFSET") + sectors * cavc_routing.SECTOR_BYTES > layout.status_offset:
         sys.exit(
             f"check_player_ring: Wr{parity} sector padding reaches the fixed tail")
 if pc("DIC_PATTERNS") > pattern_supply.DIC_BUF_PATTERNS:
@@ -281,7 +280,7 @@ for removed in (
             f"check_player_ring: removed Main O_LOADS-v1 state returned: {removed}")
 
 
-# TTRC v25 has one startup command. HEADER contains only static boot state;
+# CAVC has one startup command. HEADER contains only static boot state;
 # BODY begins with the finite untimed arm. The player-only black state publishes
 # frame=FFFF, and the timed suffix must remain stopped until Main clears CMD_STREAM
 # after publishing frame 0. PCM must then wait for the first timed control
@@ -343,7 +342,7 @@ for forbidden in ("pump_poll_core", "pump1_core", "issue_file_readn"):
             "check_player_ring: timed CD service entered the untimed "
             f"frame-1/frame-0 interval through {forbidden}")
 print(
-    "check_player_ring: OK  v25 BODY arm and one-command "
+    "check_player_ring: OK  CAVC BODY arm and one-command "
     "frame -1/frame-0 startup; timed suffix begins at the frame-0 clear edge "
     "and PCM begins on its first control sector")
 
@@ -449,8 +448,8 @@ for name, (actual, expected) in hash_contract.items():
         sys.exit(
             f"check_player_ring: ADPCM {name} table hash {actual} != {expected}")
 expected_adpcm_sectors = (
-    ima_adpcm.FULL_TABLE_BYTES + ttrc_routing.SECTOR_BYTES - 1
-) // ttrc_routing.SECTOR_BYTES
+    ima_adpcm.FULL_TABLE_BYTES + cavc_routing.SECTOR_BYTES - 1
+) // cavc_routing.SECTOR_BYTES
 if equ(sp_text, "ADPCM_TABLE_SECTORS", SP) != expected_adpcm_sectors:
     sys.exit("check_player_ring: Sub ADPCM table sector count differs from Python")
 if equ(ip_text, "DIC_BUF_PATTERNS", IP) != pattern_supply.DIC_BUF_PATTERNS:
@@ -530,17 +529,17 @@ adpcm_deltas_end = equ(sp_text, "ADPCM_DELTAS_END", SP)
 adpcm_boot_copy = equ(sp_text, "ADPCM_BOOT_COPY", SP)
 max_f0_bytes = (
     (40 * 28 * pattern_supply.PATTERN_BYTES
-     + ttrc_routing.SECTOR_BYTES - 1)
-    // ttrc_routing.SECTOR_BYTES
-    * ttrc_routing.SECTOR_BYTES
+     + cavc_routing.SECTOR_BYTES - 1)
+    // cavc_routing.SECTOR_BYTES
+    * cavc_routing.SECTOR_BYTES
 )
-if ring_base + ring_size + ttrc_routing.SECTOR_BYTES != apply_base:
+if ring_base + ring_size + cavc_routing.SECTOR_BYTES != apply_base:
     sys.exit(
         "check_player_ring: PrgBuf plus third pending Word sector "
         "does not end at APPLY")
 if f0pat_tmp + max_f0_bytes != routing_tmp:
     sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
-if routing_tmp + ttrc_routing.ROUTE_BYTES > apply_base + apply_size:
+if routing_tmp + cavc_routing.ROUTE_BYTES > apply_base + apply_size:
     sys.exit("check_player_ring: maximum routing staging exceeds APPLY")
 if (
         iso_buf != av_config.SUB_BOOT_ISO_BUF_BASE
@@ -614,7 +613,7 @@ if (
     sys.exit(
         "check_player_ring: Sub extension preload does not follow the ADPCM "
         "table in ROUTING_TMP")
-adpcm_preload_capacity = expected_adpcm_sectors * ttrc_routing.SECTOR_BYTES
+adpcm_preload_capacity = expected_adpcm_sectors * cavc_routing.SECTOR_BYTES
 if ima_adpcm.FULL_TABLE_BYTES + extension_values.size > adpcm_preload_capacity:
     sys.exit("check_player_ring: Sub extension exceeds ADPCM sector padding")
 if "SUB_BANK_1M+PC_PCM_DEC_BUF_OFFSET" in sp_text:
@@ -676,7 +675,7 @@ for token in (
 if pc("ROUTING_SEC") <= 4:
     staged_extension_start = (
         routing_tmp + ima_adpcm.FULL_TABLE_BYTES + 0x58)
-    routing_end = routing_tmp + pc("ROUTING_SEC") * ttrc_routing.SECTOR_BYTES
+    routing_end = routing_tmp + pc("ROUTING_SEC") * cavc_routing.SECTOR_BYTES
     if routing_end > staged_extension_start:
         sys.exit(
             "check_player_ring: staged routing reaches the live extension "
@@ -757,7 +756,7 @@ for token in (
     if token not in pump:
         sys.exit(f"check_player_ring: route-aware pump is missing {token!r}")
 
-if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
+if pc("FEATURES") & cavc_routing.FEATURE_WORDBUF_RING:
     if (
             av_config.WORD_PENDING_SECTORS != 3
             or wordbuf_ring.MAX_WORD_STAGE_SECTORS
@@ -766,7 +765,7 @@ if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
         sys.exit(
             "check_player_ring: WordBuf planner and three pending destinations differ")
     if equ(ip_text, "FEATURE_WORDBUF_RING_BIT", IP) != (
-            ttrc_routing.FEATURE_WORDBUF_RING.bit_length() - 1):
+            cavc_routing.FEATURE_WORDBUF_RING.bit_length() - 1):
         sys.exit("check_player_ring: Main WordBuf-ring feature bit differs")
     for source, token, description in (
             (sp_text, ".equ INCLUDE_WORDBUF_RING, 1",
@@ -846,12 +845,12 @@ if pc("FEATURES") & ttrc_routing.FEATURE_WORDBUF_RING:
     word_pending3 = equ(sp_text, "WORD_PENDING3", SP)
     if not (
             word_pending0 == pcm_dec_buf_end
-            and word_pending1 == word_pending0 + ttrc_routing.SECTOR_BYTES
+            and word_pending1 == word_pending0 + cavc_routing.SECTOR_BYTES
             and word_pending_end
-            == word_pending1 + ttrc_routing.SECTOR_BYTES
+            == word_pending1 + cavc_routing.SECTOR_BYTES
             and word_pending_end <= sub_prg_safe_end
             and word_pending3 == ring_base + ring_size
-            and word_pending3 + ttrc_routing.SECTOR_BYTES == apply_base):
+            and word_pending3 + cavc_routing.SECTOR_BYTES == apply_base):
         sys.exit(
             "check_player_ring: pending Word sectors overlap or exceed their "
             "two safe-PRG and PrgBuf-tail allocations")

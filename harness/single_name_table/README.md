@@ -43,7 +43,7 @@ preview.
 
 ```sh
 tools/python.sh harness/single_name_table/detect_tearing.py \
-  /dev/shm/segacd-fmv-ttrc/PROFILE_emu_lossless.mkv \
+  /dev/shm/segacd-fmv-cavc/PROFILE_emu_lossless.mkv \
   logs/<run>_hud.tsv \
   --gpgx-vdp-tsv logs/<run>_gpgx_vdp.tsv \
   --output logs/<run>_single_nt_tearing.tsv
@@ -74,7 +74,7 @@ tools/python.sh harness/single_name_table/compare_aggregates.py \
   --candidate-gate logs/CANDIDATE_hud_gate.json \
   --main-sim-log logs/parallel-run/MAIN/PROFILE.log \
   --candidate-sim-log logs/parallel-run/CANDIDATE/PROFILE.log \
-  --candidate-sim-report /dev/shm/segacd-fmv-ttrc/.../report.txt \
+  --candidate-sim-report /dev/shm/segacd-fmv-cavc/.../report.txt \
   --output logs/PROFILE_main_vs_candidate_aggregates.tsv
 ```
 

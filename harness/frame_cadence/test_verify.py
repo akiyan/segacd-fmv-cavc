@@ -26,22 +26,21 @@ class IntegerTest(unittest.TestCase):
 class HeaderTest(unittest.TestCase):
     def test_reads_frame_count_and_vsync(self) -> None:
         data = bytearray(2048)
-        data[:4] = b"TTRC"
-        struct.pack_into(">HH", data, 4, verify.ttrc_routing.VERSION, 6576)
-        struct.pack_into(">H", data, 52, 2)
-        struct.pack_into(">H", data, 56, 30)
+        data[:4] = b"CAVC"
+        struct.pack_into(">H", data, 4, 6576)
+        struct.pack_into(">H", data, 50, 2)
+        struct.pack_into(">H", data, 54, 30)
         struct.pack_into(
-            ">H", data, 62, verify.ttrc_routing.FEATURE_VBLANK_CADENCE)
+            ">H", data, 60, verify.cavc_routing.FEATURE_VBLANK_CADENCE)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "HEADER.DAT"
             path.write_bytes(data)
             self.assertEqual(
                 verify.HeaderInfo(
-                    version=verify.ttrc_routing.VERSION,
                     frame_count=6576,
                     vsync_n=2,
                     fps=30,
-                    features=verify.ttrc_routing.FEATURE_VBLANK_CADENCE,
+                    features=verify.cavc_routing.FEATURE_VBLANK_CADENCE,
                     cadence=(2,),
                 ),
                 verify.read_header(path),
@@ -49,12 +48,12 @@ class HeaderTest(unittest.TestCase):
 
     def test_reads_24fps_two_three_cadence(self) -> None:
         data = bytearray(2048)
-        data[:4] = b"TTRC"
-        struct.pack_into(">HH", data, 4, verify.ttrc_routing.VERSION, 100)
-        struct.pack_into(">H", data, 52, 2)
-        struct.pack_into(">H", data, 56, 24)
+        data[:4] = b"CAVC"
+        struct.pack_into(">H", data, 4, 100)
+        struct.pack_into(">H", data, 50, 2)
+        struct.pack_into(">H", data, 54, 24)
         struct.pack_into(
-            ">H", data, 62, verify.ttrc_routing.FEATURE_VBLANK_CADENCE)
+            ">H", data, 60, verify.cavc_routing.FEATURE_VBLANK_CADENCE)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "HEADER.DAT"
             path.write_bytes(data)

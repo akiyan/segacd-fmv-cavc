@@ -22,7 +22,7 @@ import ima_adpcm  # noqa: E402
 import pattern_supply  # noqa: E402
 import player_constants  # noqa: E402
 import sp_extension  # noqa: E402
-import ttrc_routing  # noqa: E402
+import cavc_routing  # noqa: E402
 
 
 @dataclass(frozen=True)
@@ -63,29 +63,29 @@ def make_header(case: Case) -> bytes:
     trows = case.trows
     cells = tcols * trows
     frames = TEST_FRAMES
-    features = ttrc_routing.FEATURE_COLD_RUNS
+    features = cavc_routing.FEATURE_COLD_RUNS
     if av_config.uses_vblank_cadence(case.fps):
-        features |= ttrc_routing.FEATURE_VBLANK_CADENCE
+        features |= cavc_routing.FEATURE_VBLANK_CADENCE
     _rate, audio, _control = av_config.audio_frame_layout(case.fps)
     if case.pattern_supply:
         features |= (
-            ttrc_routing.FEATURE_PATTERN_SUPPLY
-            | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS)
+            cavc_routing.FEATURE_PATTERN_SUPPLY
+            | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS)
     audio_fd = av_config.rf5c164_fd(
         audio, av_config.playback_fps_for_content(case.fps))
     prefix = struct.pack(
-        ">4s9H4LBB3L6H",
-        b"TTRC", ttrc_routing.VERSION, frames, tcols, trows, cells,
+        ">4s8H4LBB3L6H",
+        b"CAVC", frames, tcols, trows, cells,
         av_config.VRAM_PATTERN_POOL_TILES, 1,
-        ttrc_routing.FRAME_SECTORS, 1,
-        12416, ttrc_routing.routing_sector_count(frames), 194, 12416,
+        cavc_routing.FRAME_SECTORS, 1,
+        12416, cavc_routing.routing_sector_count(frames), 194, 12416,
         case.mode, 0, 2, 18 if case.mode else 14,
         av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(case.fps), audio, case.fps,
         audio_fd, 30, features,
     )
     sector = bytearray(
-        prefix + bytes(128) + bytes(player_constants.SECTOR - 192))
+        prefix + bytes(130) + bytes(player_constants.SECTOR - 192))
     if case.pattern_supply:
         cold_cap = case.cold_cap
         layout = pattern_supply.word_ram_layout(

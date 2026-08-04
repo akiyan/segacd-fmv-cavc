@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Generate assembler constants bound to one packed ``HEADER.DAT``.
 
-The first 64 bytes are the complete fixed player contract.  The packer stores
-their CRC-32 in the otherwise reserved first sector at offset 192.  Both Main
+Bytes 4 through 61 are the complete fixed player contract.  The four-byte
+magic is identifying data only.  The packer stores the contract CRC-32 in the
+otherwise reserved first sector at offset 192.  Both Main
 and Sub objects include the generated file; the Sub compares the stored value
 before accepting the disc, so a player cannot silently run with another
 profile's HEADER.DAT.
@@ -16,17 +17,16 @@ import struct
 import zlib
 from pathlib import Path
 
-import ttrc_routing
+import cavc_routing
 import ima_adpcm
 import pattern_supply
 import av_config
 
 
 SECTOR = 2048
-FIXED_HEADER_BYTES = 64
-SEG0_BYTES = 128
-HEADER_SIGNATURE_OFFSET = FIXED_HEADER_BYTES + SEG0_BYTES
-HEADER_STRUCT = struct.Struct(">4s9H4LBB3L6H")
+FIXED_HEADER_BYTES = 62
+HEADER_SIGNATURE_OFFSET = 192
+HEADER_STRUCT = struct.Struct(">4s8H4LBB3L6H")
 PATTERN_SUPPLY_OFFSET = HEADER_SIGNATURE_OFFSET + 4
 PATTERN_SUPPLY_MAGIC = b"PSUP"
 PATTERN_SUPPLY_VERSION = 4
@@ -39,11 +39,11 @@ MODE_SPECS = {
 
 
 def header_signature(fixed_header: bytes) -> int:
-    """Return the deterministic 32-bit build signature for bytes 0..63."""
+    """Return the deterministic build signature for contract bytes 4..61."""
     if len(fixed_header) != FIXED_HEADER_BYTES:
         raise ValueError(
             f"fixed header must be {FIXED_HEADER_BYTES} bytes, got {len(fixed_header)}")
-    return zlib.crc32(fixed_header) & 0xFFFFFFFF
+    return zlib.crc32(fixed_header[4:]) & 0xFFFFFFFF
 
 
 def stamp_header_sector(sector: bytes) -> bytes:
@@ -60,7 +60,6 @@ def stamp_header_sector(sector: bytes) -> bytes:
 @dataclasses.dataclass(frozen=True)
 class PlayerConstants:
     signature: int
-    version: int
     frames: int
     tcols: int
     trows: int
@@ -137,24 +136,19 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         raise ValueError(f"header sector must be {SECTOR} bytes, got {len(sector)}")
     values = HEADER_STRUCT.unpack_from(sector)
     (
-        magic, version, frames, tcols, trows, cells, pool, base,
+        _magic, frames, tcols, trows, cells, pool, base,
         frame_sectors, nseg, prebuf_pat, routing_sec, prebuf_sec, ring_peak,
         mode, pad, f0_ctrl_sec, f0_pat_sec, paltab_sec, vsync_n,
         audio_bytes, fps_int, audio_fd, audio_preload_sec, features,
     ) = values
 
-    if magic != b"TTRC":
-        raise ValueError(f"bad HEADER.DAT magic: {magic!r}")
-    if version != ttrc_routing.VERSION:
-        raise ValueError(
-            f"HEADER.DAT version {version} != player routing version {ttrc_routing.VERSION}")
     if pad != 0:
-        raise ValueError(f"HEADER.DAT offset 39 must be zero, got {pad}")
+        raise ValueError(f"HEADER.DAT offset 37 must be zero, got {pad}")
     if (prebuf_pat * 32) % SECTOR:
         raise ValueError(
             f"prebuffer {prebuf_pat} patterns is not a whole number of CD "
             "sectors; the player's ring tail would be half-sector-misaligned")
-    if not 0 < frames <= ttrc_routing.MAX_FRAMES:
+    if not 0 < frames <= cavc_routing.MAX_FRAMES:
         raise ValueError(f"invalid frame count: {frames}")
     if tcols <= 0 or trows <= 0 or cells != tcols * trows:
         raise ValueError(
@@ -174,13 +168,13 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         raise ValueError(
             f"resident pool base {base} + {pool} tiles overlaps "
             f"HUD font tile {av_config.VRAM_HUD_FONT_TILE}")
-    expected_routing_sec = ttrc_routing.routing_sector_count(frames)
+    expected_routing_sec = cavc_routing.routing_sector_count(frames)
     if routing_sec != expected_routing_sec:
         raise ValueError(
             f"routing_sec={routing_sec} != ceil({frames}/2048)={expected_routing_sec}")
-    if frame_sectors != ttrc_routing.FRAME_SECTORS:
+    if frame_sectors != cavc_routing.FRAME_SECTORS:
         raise ValueError(
-            f"frame_sectors={frame_sectors} != {ttrc_routing.FRAME_SECTORS}")
+            f"frame_sectors={frame_sectors} != {cavc_routing.FRAME_SECTORS}")
     expected_paltab_sec = av_config.PALTAB_STAGE_KB * 1024 // SECTOR
     if paltab_sec != expected_paltab_sec:
         raise ValueError(
@@ -203,23 +197,23 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             f"HEADER.DAT signature 0x{signature:08X} != expected "
             f"0x{expected_signature:08X}")
 
-    vblank_cadence = bool(features & ttrc_routing.FEATURE_VBLANK_CADENCE)
+    vblank_cadence = bool(features & cavc_routing.FEATURE_VBLANK_CADENCE)
     known_features = (
-        ttrc_routing.FEATURE_COLD_RUNS
-        | ttrc_routing.FEATURE_VBLANK_CADENCE
-        | ttrc_routing.FEATURE_PATTERN_SUPPLY
-        | ttrc_routing.FEATURE_SHADOW_UPDATE_LISTS
-        | ttrc_routing.FEATURE_VRAM_RAW_PREFETCH
-        | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS
-        | ttrc_routing.FEATURE_BOOT_VRAM_SIDECAR
-        | ttrc_routing.FEATURE_WORDBUF_RING
+        cavc_routing.FEATURE_COLD_RUNS
+        | cavc_routing.FEATURE_VBLANK_CADENCE
+        | cavc_routing.FEATURE_PATTERN_SUPPLY
+        | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS
+        | cavc_routing.FEATURE_VRAM_RAW_PREFETCH
+        | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS
+        | cavc_routing.FEATURE_BOOT_VRAM_SIDECAR
+        | cavc_routing.FEATURE_WORDBUF_RING
     )
     unknown_features = features & ~known_features
     if unknown_features:
         raise ValueError(
             f"HEADER.DAT uses reserved feature bits 0x{unknown_features:04X}")
-    pattern_supply_enabled = bool(features & ttrc_routing.FEATURE_PATTERN_SUPPLY)
-    indexed_dicbuf = bool(features & ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS)
+    pattern_supply_enabled = bool(features & cavc_routing.FEATURE_PATTERN_SUPPLY)
+    indexed_dicbuf = bool(features & cavc_routing.FEATURE_DICBUF_INDEXED_RUNS)
     if audio_bytes & 1:
         raise ValueError(f"ADPCM decoded audio_bytes must be even, got {audio_bytes}")
     audio_control_bytes = ima_adpcm.encoded_bytes(audio_bytes)
@@ -298,7 +292,6 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
 
     return PlayerConstants(
         signature=signature,
-        version=version,
         frames=frames,
         tcols=tcols,
         trows=trows,
@@ -373,7 +366,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
 
 
 INCLUDE_ORDER = (
-    "signature", "version", "frames", "mode", "screen_cols", "screen_rows",
+    "signature", "frames", "mode", "screen_cols", "screen_rows",
     "tcols", "trows", "cells", "bmbytes", "col0", "row0", "vbudget",
     "pool", "base", "font_vtile", "font_addr", "frame_sectors", "nseg",
     "prebuf_pat", "routing_sec", "prebuf_sec", "ring_peak", "f0_ctrl_sec",

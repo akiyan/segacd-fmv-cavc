@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract per-frame Pass2/CD workload from a packed TTRC stream.
+"""Extract per-frame Pass2/CD workload from a packed CAVC stream.
 
 For every timed frame this emits the quantities that bound the fixed
 VBlank cadence: cell updates, physical pattern loads by source
@@ -7,7 +7,7 @@ VBlank cadence: cell updates, physical pattern loads by source
 runs), the Main-CPU Pass2 word total, the palette-switch flag, and the
 CD slot schedule (control/payload sectors, rate lead).
 
-Supports the current TTRC v25 stream, including PSUP v4 variable Word-RAM
+Supports the current CAVC stream, including PSUP v4 variable Word-RAM
 preload capacities.  The fixed per-frame audio size from HEADER.DAT locates
 the cold-run suffix: `n_runs`, then the run descriptors. The descriptors are
 cross-validated against the update entries. The low byte of `n_runs` can also
@@ -51,7 +51,6 @@ SHADOW_UPDATE_COUNT_MASK = 0x1FFF
 INLINE_CRAM_BYTES = 128
 WORDS_PER_PATTERN = 16
 SHORT_RUN_MAX_WORDS = 32
-VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 
 SOURCE_NAMES = ("prg", "wr", "dic")
@@ -84,8 +83,8 @@ def die(msg: str) -> None:
     raise AssertionError(msg)
 
 
-def pattern_supply_sectors(header: bytes, version: int, features: int) -> int:
-    if version < 10 or not features & FEATURE_PATTERN_SUPPLY:
+def pattern_supply_sectors(header: bytes, features: int) -> int:
+    if not features & FEATURE_PATTERN_SUPPLY:
         return 0
     values = player_constants.PATTERN_SUPPLY_STRUCT.unpack_from(
         header, player_constants.PATTERN_SUPPLY_OFFSET)
@@ -232,25 +231,25 @@ def parse_frame(raw: bytes, seq: int, cells: int, pool: int,
 def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     header = (pack_dir / "HEADER.DAT").read_bytes()
     body = (pack_dir / "BODY.DAT").read_bytes()
-    magic, version, nfr, cols, rows, cells, pool = struct.unpack_from(
-        ">4sHHHHHH", header)
-    if magic != b"TTRC" or version != VERSION:
-        die(f"expected TTRC v{VERSION}, got {magic!r} v{version}")
+    magic, nfr, cols, rows, cells, pool = struct.unpack_from(
+        ">4sHHHHH", header)
+    if magic != b"CAVC":
+        die(f"expected CAVC, got {magic!r}")
     if cols * rows != cells:
         die(f"grid {cols}x{rows} != {cells} cells")
-    routing_sec = struct.unpack_from(">L", header, 26)[0]
-    prebuf_sec = struct.unpack_from(">L", header, 30)[0]
-    f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", header, 40)
-    vsync_n = struct.unpack_from(">H", header, 52)[0]
-    audio_samples = struct.unpack_from(">H", header, 54)[0]
+    routing_sec = struct.unpack_from(">L", header, 24)[0]
+    prebuf_sec = struct.unpack_from(">L", header, 28)[0]
+    f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", header, 38)
+    vsync_n = struct.unpack_from(">H", header, 50)[0]
+    audio_samples = struct.unpack_from(">H", header, 52)[0]
     audio_control_bytes = ima_adpcm.encoded_bytes(audio_samples)
-    fps = struct.unpack_from(">H", header, 56)[0] or 15
-    audio_preload_sec = struct.unpack_from(">H", header, 60)[0]
-    features = struct.unpack_from(">H", header, 62)[0]
+    fps = struct.unpack_from(">H", header, 54)[0] or 15
+    audio_preload_sec = struct.unpack_from(">H", header, 58)[0]
+    features = struct.unpack_from(">H", header, 60)[0]
     if not features & FEATURE_COLD_RUNS:
         die("stream has no cold-run suffix; nothing to extract")
     table_sec = ADPCM_TABLE_SECTORS
-    supply_sec = pattern_supply_sectors(header, version, features)
+    supply_sec = pattern_supply_sectors(header, features)
 
     frame0_offset = audio_preload_sec * SECTOR
     frame0_len = struct.unpack_from(">H", body, frame0_offset)[0]
@@ -259,7 +258,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         features, audio_control_bytes)
     rows_out = [row0]
 
-    # v25: segment palette switches are the player-embedded PALIDX table written by
+    # Segment palette switches are the player-embedded PALIDX table written by
     # pack as palidx.bin beside the split stream (frame.u16, segment.u16
     # entries terminated by a 0xFFFF frame sentinel).
     palidx_switches: dict[int, int] = {}
@@ -278,8 +277,8 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     routes = decode_routes(
         header[routing_offset:routing_offset + routing_sec * SECTOR], nfr)
 
-    if not (version >= 24 and features & FEATURE_VBLANK_CADENCE):
-        die("only authoritative v25 VBlank cadence is supported")
+    if not features & FEATURE_VBLANK_CADENCE:
+        die("only authoritative VBlank cadence is supported")
     rate_numerators, rate_modulus = av_config.cd_sector_rate_steps(fps)
 
     accumulator = 0
@@ -319,7 +318,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
         rows_out.append(row)
         control_pos = block_len + control_pos
 
-    meta = dict(version=version, nframes=nfr, cells=cells, pool=pool,
+    meta = dict(nframes=nfr, cells=cells, pool=pool,
                 fps=fps, vsync_n=vsync_n, features=features)
     return rows_out, meta
 
@@ -370,7 +369,7 @@ def main() -> None:
         ap.error("--hud-tsv input must use the .tsv extension")
 
     rows, meta = read_pack(args.pack_dir)
-    print(f"{args.pack_dir}: TTRC v{meta['version']} frames={meta['nframes']} "
+    print(f"{args.pack_dir}: CAVC frames={meta['nframes']} "
           f"cells={meta['cells']} pool={meta['pool']} "
           f"features=0x{meta['features']:04X}")
 

@@ -3,7 +3,7 @@
 
 The Main CPU still needs the bitmap to map entries to cells.  The Sub CPU only
 needs cold entries in stream order to pop patterns and build DMA runs.  This
-checker walks every real control block in the packed TTRC files both ways and
+checker walks every real control block in the packed CAVC files both ways and
 verifies that the entry stream, cold-slot order and run grouping are identical.
 
 For current v25 it prefers the on-disc HEADER.DAT + BODY.DAT pair, verifies
@@ -35,7 +35,6 @@ SOURCE_WR = 1
 SOURCE_DIC = 2
 DIC_RUN_BLOCK = 256
 DIC_CAPACITY = 512
-VERSION = 25
 CONTROL_SUFFIX_HEADER_BYTES = 2
 SHADOW_UPDATE_LIST_TAG = 0x8000
 SHADOW_FRAME_TYPE_MASK = 0x6000
@@ -46,15 +45,12 @@ INLINE_CRAM_BYTES = 128
 
 
 def frame_sectors(
-    routes: list[tuple[int, int]], version: int, fps: int, vsync_n: int,
+    routes: list[tuple[int, int]], fps: int, vsync_n: int,
     features: int,
 ) -> list[int]:
-    """Return the v4+ bounded-accumulator sector schedule for frames 1+."""
-    if version >= 24 and features & FEATURE_VBLANK_CADENCE:
+    """Return the bounded-accumulator sector schedule for frames 1+."""
+    if features & FEATURE_VBLANK_CADENCE:
         rate_numerators, rate_modulus = av_config.cd_sector_rate_steps(fps)
-    elif version >= 8 and features & FEATURE_VBLANK_CADENCE:
-        rate_numerator, rate_modulus = av_config.fixed_cd_sector_rate(vsync_n)
-        rate_numerators = (rate_numerator,)
     else:
         rate_numerators, rate_modulus = (75,), fps
     acc = 0
@@ -70,21 +66,11 @@ def frame_sectors(
     return out
 
 
-def decode_routes(
-    routing: bytes, nframes: int, version: int
-) -> list[tuple[int, int]]:
+def decode_routes(routing: bytes, nframes: int) -> list[tuple[int, int]]:
     """Decode routing without importing the production packer."""
-    compact = version >= 7
-    entry_bytes = 1 if compact else 2
-    required = nframes * entry_bytes
+    required = nframes
     if len(routing) < required:
         raise AssertionError("truncated routing table")
-    if not compact:
-        return [
-            (routing[frame * 2], routing[frame * 2 + 1])
-            for frame in range(nframes)
-        ]
-
     expected_bytes = ((nframes + SECTOR - 1) // SECTOR) * SECTOR
     if len(routing) != expected_bytes:
         raise AssertionError(
@@ -140,7 +126,7 @@ def runs(entries: list[int]) -> list[tuple[int, int, int]]:
 
 
 def pattern_supply_layout(
-    header: bytes, version: int, features: int,
+    header: bytes, features: int,
 ) -> tuple[int, int]:
     """Return the validated boot-preload sector total and Dic pattern count."""
     if not features & FEATURE_PATTERN_SUPPLY:
@@ -284,7 +270,7 @@ def verify_block(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Verify direct entry walking and the packed TTRC delivery order."
+        description="Verify direct entry walking and the packed CAVC delivery order."
     )
     parser.add_argument(
         "stream",
@@ -310,58 +296,51 @@ def main() -> None:
         )
     data = stream_path.read_bytes()
 
-    magic, version, nfr, _cols, _rows, cells, pool = struct.unpack_from(
-        ">4sHHHHHH", data, 0
+    magic, nfr, _cols, _rows, cells, pool = struct.unpack_from(
+        ">4sHHHHH", data, 0
     )
-    if magic != b"TTRC" or version != VERSION:
-        raise SystemExit(
-            f"expected TTRC v{VERSION}, got {magic!r} v{version}")
-    prebuf_pat = struct.unpack_from(">L", data, 22)[0]
-    routing_sec = struct.unpack_from(">L", data, 26)[0]
-    prebuf_sec = struct.unpack_from(">L", data, 30)[0]
-    f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", data, 40)
-    vsync_n = struct.unpack_from(">H", data, 52)[0]
-    fps = struct.unpack_from(">H", data, 56)[0] or 15
-    audio_preload_sec = struct.unpack_from(">H", data, 60)[0]
-    features = struct.unpack_from(">H", data, 62)[0]
-    decoded_audio_bytes = struct.unpack_from(">H", data, 54)[0]
+    if magic != b"CAVC":
+        raise SystemExit(f"expected CAVC, got {magic!r}")
+    prebuf_pat = struct.unpack_from(">L", data, 20)[0]
+    routing_sec = struct.unpack_from(">L", data, 24)[0]
+    prebuf_sec = struct.unpack_from(">L", data, 28)[0]
+    f0_ctrl_sec, f0_pat_sec, paltab_sec = struct.unpack_from(">LLL", data, 38)
+    vsync_n = struct.unpack_from(">H", data, 50)[0]
+    fps = struct.unpack_from(">H", data, 54)[0] or 15
+    audio_preload_sec = struct.unpack_from(">H", data, 58)[0]
+    features = struct.unpack_from(">H", data, 60)[0]
+    decoded_audio_bytes = struct.unpack_from(">H", data, 52)[0]
     audio_bytes = 4 + decoded_audio_bytes // 2
     table_sec = ADPCM_TABLE_SECTORS
-    supply_sec, dic_patterns = pattern_supply_layout(data, version, features)
+    supply_sec, dic_patterns = pattern_supply_layout(data, features)
 
     routing_off = (
         1 + paltab_sec + table_sec + supply_sec
     ) * SECTOR
     routing_raw = data[routing_off : routing_off + routing_sec * SECTOR]
-    routes = decode_routes(routing_raw, nfr, version)
+    routes = decode_routes(routing_raw, nfr)
     if routes[0] != (0, 0, 0):
         raise AssertionError(f"frame 0 BODY-arm route must be zero, got {routes[0]}")
-    fsecs = frame_sectors(routes, version, fps, vsync_n, features)
+    fsecs = frame_sectors(routes, fps, vsync_n, features)
 
     frames_off = (routing_off // SECTOR + routing_sec + prebuf_sec) * SECTOR
     if len(data) < frames_off:
         raise AssertionError(
             f"truncated boot prefix: {len(data)} bytes, expected {frames_off}"
         )
-    if version >= 6:
-        if args.body:
-            if len(data) != frames_off:
-                raise AssertionError(
-                    "an explicit BODY.DAT requires a standalone HEADER.DAT"
-                )
-            body_path = Path(args.body)
-            frames = body_path.read_bytes()
-        elif len(data) == frames_off:
-            body_path = stream_path.with_name("BODY.DAT")
-            if not body_path.exists():
-                raise AssertionError(f"missing v6+ body file: {body_path}")
-            frames = body_path.read_bytes()
-        else:
-            body_path = None
-            frames = data[frames_off:]
+    if args.body:
+        if len(data) != frames_off:
+            raise AssertionError(
+                "an explicit BODY.DAT requires a standalone HEADER.DAT"
+            )
+        body_path = Path(args.body)
+        frames = body_path.read_bytes()
+    elif len(data) == frames_off:
+        body_path = stream_path.with_name("BODY.DAT")
+        if not body_path.exists():
+            raise AssertionError(f"missing BODY.DAT: {body_path}")
+        frames = body_path.read_bytes()
     else:
-        if args.body:
-            raise AssertionError("separate HEADER.DAT/BODY.DAT requires TTRC v6+")
         body_path = None
         frames = data[frames_off:]
 
@@ -378,10 +357,7 @@ def main() -> None:
         frame = frames[cursor : cursor + frame_len]
         if len(frame) != frame_len:
             raise AssertionError(f"frame {i}: truncated sector slot")
-        if version >= 6:
-            control_stream += frame[: n_ctrl * SECTOR]
-        else:
-            control_stream += frame[n_pay * SECTOR : (n_pay + n_ctrl) * SECTOR]
+        control_stream += frame[: n_ctrl * SECTOR]
         cursor += frame_len
     if cursor != len(frames):
         raise AssertionError(
@@ -408,35 +384,34 @@ def main() -> None:
         cold += frame_cold
         prg_by_frame.append(frame_prg)
 
-    if version >= 6:
-        control_delivered = 0
-        control_needed = 0
-        payload_delivered = prebuf_pat
-        payload_needed = 0
-        for seq in range(1, nfr):
-            n_pay, n_ctrl, n_word = routes[seq]
-            control_delivered += n_ctrl * SECTOR
-            control_needed += len(controls[seq])
-            if control_delivered < control_needed:
-                raise AssertionError(
-                    f"frame {seq}: control is not ready "
-                    f"({control_delivered} delivered, {control_needed} needed)"
-                )
+    control_delivered = 0
+    control_needed = 0
+    payload_delivered = prebuf_pat
+    payload_needed = 0
+    for seq in range(1, nfr):
+        n_pay, n_ctrl, n_word = routes[seq]
+        control_delivered += n_ctrl * SECTOR
+        control_needed += len(controls[seq])
+        if control_delivered < control_needed:
+            raise AssertionError(
+                f"frame {seq}: control is not ready "
+                f"({control_delivered} delivered, {control_needed} needed)"
+            )
 
-            # v10 boot-preloaded Wr/Main patterns are already armed. Only Prg
-            # patterns consume the timed prebuffer/BODY payload delivery.
-            payload_needed += prg_by_frame[seq]
-            if payload_delivered < payload_needed:
-                raise AssertionError(
-                    f"frame {seq}: cold payload is not armed before control "
-                    f"({payload_delivered} patterns delivered, {payload_needed} needed)"
-                )
-            # WordBuf refill sectors ride the payload prefix and do not
-            # deliver Prg patterns.
-            payload_delivered += (n_pay - n_word) * (SECTOR // 32)
+        # Boot-preloaded Wr/Main patterns are already armed. Only Prg patterns
+        # consume the timed prebuffer/BODY payload delivery.
+        payload_needed += prg_by_frame[seq]
+        if payload_delivered < payload_needed:
+            raise AssertionError(
+                f"frame {seq}: cold payload is not armed before control "
+                f"({payload_delivered} patterns delivered, {payload_needed} needed)"
+            )
+        # WordBuf refill sectors ride the payload prefix and do not deliver
+        # Prg patterns.
+        payload_delivered += (n_pay - n_word) * (SECTOR // 32)
 
     print(
-        f"entry-walk equivalence: OK (v{version}, {nfr} frames, {updates} entries, "
+        f"entry-walk equivalence: OK (CAVC, {nfr} frames, {updates} entries, "
         f"{cold} cold, {cells} cells)"
     )
 

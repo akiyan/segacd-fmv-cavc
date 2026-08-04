@@ -24,7 +24,7 @@ release history or narrate transitions between versions.
 ### Repository reference
 
 The removal diff is fixed at commit
-[`85fa2c838bae480931a30c806613ce1841219b4f`](https://github.com/akiyan/segacd-fmv-ttrc/commit/85fa2c838bae480931a30c806613ce1841219b4f).
+[`85fa2c838bae480931a30c806613ce1841219b4f`](https://github.com/akiyan/segacd-fmv-cavc/commit/85fa2c838bae480931a30c806613ce1841219b4f).
 
 ### Boundary and purpose
 
@@ -145,7 +145,7 @@ limit, and physical CD/PrgBuf scheduling remain valid without it.
 ### Repository上の参照先
 
 削除diffはcommit
-[`85fa2c838bae480931a30c806613ce1841219b4f`](https://github.com/akiyan/segacd-fmv-ttrc/commit/85fa2c838bae480931a30c806613ce1841219b4f)
+[`85fa2c838bae480931a30c806613ce1841219b4f`](https://github.com/akiyan/segacd-fmv-cavc/commit/85fa2c838bae480931a30c806613ce1841219b4f)
 で固定されています。
 
 ### 境界と目的

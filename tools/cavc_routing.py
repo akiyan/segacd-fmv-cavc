@@ -1,14 +1,13 @@
-"""TTRC one-byte routing entry codec and current stream version."""
+"""CAVC one-byte routing entry codec."""
 
 from __future__ import annotations
 
 import operator
 
 
-VERSION = 25
 FEATURE_COLD_RUNS = 0x0001
 FEATURE_VBLANK_CADENCE = 0x0002
-# 0x0004 was the removed optional-audio-codec flag. TTRC v17 is ADPCM-only.
+# 0x0004 is reserved. CAVC supports only checkpointed IMA ADPCM.
 FEATURE_PATTERN_SUPPLY = 0x0008
 FEATURE_SHADOW_UPDATE_LISTS = 0x0010
 FEATURE_VRAM_RAW_PREFETCH = 0x0020

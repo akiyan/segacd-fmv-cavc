@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "tools"))
 
 from harness.pipeline_speedup.verify_main_fastpaths import read_stream  # noqa: E402
 import player_constants  # noqa: E402
-import ttrc_routing  # noqa: E402
+import cavc_routing  # noqa: E402
 
 
 MAIN_CLOCK_HZ = 7_670_454
@@ -70,7 +70,7 @@ def main() -> None:
         args.header.read_bytes()[:player_constants.SECTOR]
     )
     if (
-        not constants.features & ttrc_routing.FEATURE_VBLANK_CADENCE
+        not constants.features & cavc_routing.FEATURE_VBLANK_CADENCE
         or constants.cadence_period != 1
         or constants.vsync_n != 2
     ):

@@ -101,8 +101,8 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     by the profile/settings identity and are not encoder build revisions.
     Likewise, do not bump `p` merely because a different profile or stream is
     played. When bumping, set the date to today if it differs. This is the
-    title build version only — the on-disc `HEADER.DAT` format-version field is
-    separate and must NOT be touched. Update `tools/av_version.txt` whenever
+    title build version only; the on-disc `HEADER.DAT` layout has no independent
+    version field. Update `tools/av_version.txt` whenever
     you bump.
   - Example: `SEGA-CD FMV of <Work> - mode4 max resolution 256x176/32x22 20260710.e1.p1`.
 - **Description structure** (in both languages, in this order):
@@ -130,7 +130,7 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   4. What the encoder does — first a short list of the techniques applied, then
      the details for each.
   5. Project link — always include the source repository URL:
-     `https://github.com/akiyan/segacd-fmv-ttrc` . Put it in every description
+     `https://github.com/akiyan/segacd-fmv-cavc` . Put it in every description
      (both the English and the Japanese section).
 - **Describe only what the current build renders.** Take every panel, meter,
   and category name from `tools/layout_preview.py` and `tools/analysis_style.py`
@@ -236,9 +236,9 @@ tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
 
 The on-disc stream is split into static boot state in `HEADER.DAT` and an
 untimed audio/frame-0 arm followed by timed frame-1+ slots in `BODY.DAT`.
-On-disc data compatibility across format versions (including between
-specialized and generic player builds) is not maintained: bump the format
-version and update every consumer of the shared format together.
+On-disc data compatibility across layout changes (including between specialized
+and generic player builds) is not maintained: update every consumer of the
+shared format together.
 The packer also writes a concatenated `MOVIE.DAT` compatibility container for
 offline tools; the player does not read it.
 
@@ -250,7 +250,7 @@ within Sega CD limits, not fixed presets:
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
   CPU through full lookup tables installed once in Sub PRG-RAM. It is the only
-  audio format in on-disc format version 25. Physical
+  audio format in the on-disc CAVC layout. Physical
   hardware and additional modes/cadences are broader compatibility checks
   rather than implementation blockers (see [ADPCM.md](ADPCM.md)). Z80 offload
   remains shelved because BUSREQ-based feeding contends with Main CPU video
@@ -266,7 +266,7 @@ pair is `out/PROFILE.iso` + `out/PROFILE.cue`.
 ## Output Paths (tmpfs and logs/)
 
 All generated media and image artifacts are disposable and live directly in
-the project-managed tmpfs workspace at `/dev/shm/segacd-fmv-ttrc`: native
+the project-managed tmpfs workspace at `/dev/shm/segacd-fmv-cavc`: native
 lossless emulator captures, analysis/straight-sim/preview/compilation MP4s,
 recording sidecars, verification stills, and timeline/hudline/mixline PNGs.
 Disposable sim directories live there too. Tools print the actual path that

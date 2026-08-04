@@ -11,7 +11,7 @@ import numpy as np
 import av_config
 import pattern_supply
 import stream_schedule
-import ttrc_routing
+import cavc_routing
 
 
 BASE = 1
@@ -21,7 +21,7 @@ WORD = pattern_supply.SOURCE_WR
 MANDATORY_PRG = 3
 PATTERNS_PER_SECTOR = stream_schedule.PATTERNS_PER_SECTOR
 MAX_WORD_STAGE_SECTORS = av_config.WORD_PENDING_SECTORS
-MAX_SLOT_SECTORS = ttrc_routing.FRAME_SECTORS
+MAX_SLOT_SECTORS = cavc_routing.FRAME_SECTORS
 BOOT_REFILL_RESERVE_SECTORS = (2, 0)
 PRG_BACKUP_TRIGGER_PATTERNS = (
     MAX_WORD_STAGE_SECTORS * PATTERNS_PER_SECTOR

@@ -149,11 +149,11 @@ def _word_rgb_sum(word):
 
 
 def check_header(path, log=None):
-    """v25: the packed segment palettes live in paltab.bin beside HEADER.DAT."""
+    """The packed segment palettes live in paltab.bin beside HEADER.DAT."""
     data = Path(path).read_bytes()
-    if len(data) < 2 * SECTOR or data[:4] != b"TTRC":
-        raise SystemExit(f"{path}: not a complete TTRC HEADER.DAT")
-    nseg = struct.unpack_from(">H", data, 20)[0]
+    if len(data) < 2 * SECTOR or data[:4] != b"CAVC":
+        raise SystemExit(f"{path}: not a complete CAVC HEADER.DAT")
+    nseg = struct.unpack_from(">H", data, 18)[0]
     paltab_path = Path(path).with_name("paltab.bin")
     paltab = paltab_path.read_bytes()
     if len(paltab) != nseg * 128:

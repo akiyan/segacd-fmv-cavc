@@ -60,7 +60,7 @@ import r2v_model  # noqa: E402
 import resource_tokens  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
-import ttrc_routing  # noqa: E402
+import cavc_routing  # noqa: E402
 import wordbuf_ring  # noqa: E402
 import sim_artifact_cache  # noqa: E402
 import tmpfs_workspace  # noqa: E402
@@ -321,9 +321,9 @@ PATTERN_SUPPLY_ON = True
 # permutation optimized for the suffix's physical-slot-sorted order can turn a
 # few long runs into hundreds of one-tile runs.  The contiguous logical
 # allocator already emits the legacy order correctly; keep its identity map.
-PACKED_COLD_RUN_EXECUTION = ttrc_routing.player_uses_packed_cold_runs(
+PACKED_COLD_RUN_EXECUTION = cavc_routing.player_uses_packed_cold_runs(
     FPS,
-    ttrc_routing.FEATURE_PATTERN_SUPPLY if PATTERN_SUPPLY_ON else 0,
+    cavc_routing.FEATURE_PATTERN_SUPPLY if PATTERN_SUPPLY_ON else 0,
 )
 # 近似流用(Near/Flbk)が「この秒数」以上そのまま居座ったら、格上げ優先度を Miss級(sev=0)へ
 # 昇格させる。一過性の近似は目に見えないが、居座った近似は静的なゴースト=視線が固定される。時間で切る
@@ -640,8 +640,8 @@ def segment_and_train(frames, frame_cache=None):
 
 
 OUT = sim_work_dir()
-# 実機TTRCエンコード用の決定ログ出力先。既定off(mp4出力に一切影響しない・追加のみ)。
-# 毎フレームの「更新セル(cell,pal,key)」＋区間パレットを吐き、pack_streamが再生してTTRC化する。
+# 実機CAVCエンコード用の決定ログ出力先。既定off(mp4出力に一切影響しない・追加のみ)。
+# 毎フレームの「更新セル(cell,pal,key)」＋区間パレットを吐き、pack_streamが再生してCAVC化する。
 _EMIT_DEC_ENV = os.environ.get("CBRSIM_EMIT_DEC", "").strip()
 # Boolean-looking values select the conventional file beside the other sim
 # artifacts.  An explicit path remains supported for one-off comparisons.
@@ -2052,7 +2052,7 @@ def main():
         max_cold_patterns=frame_cold_caps,
         prebuffer_capacity_patterns=(
             PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-        frame_sectors=ttrc_routing.FRAME_SECTORS,
+        frame_sectors=cavc_routing.FRAME_SECTORS,
         fps=FPS,
         ring_capacity_patterns=(
             PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
@@ -2063,7 +2063,7 @@ def main():
         "physical budget: one-pass cadence-sector prefix ledger; "
         f"Prg desired={int(predicted_prg_demand.sum())} patterns; "
         f"per-frame Prg cap={MAX_COLD}, cold cap={COLD_CAP_SPEC}; "
-        f"timed route={ttrc_routing.FRAME_SECTORS} useful sectors/slot; "
+        f"timed route={cavc_routing.FRAME_SECTORS} useful sectors/slot; "
         "every exact prefix also stays within cumulative CD-1x time",
         flush=True,
     )
@@ -3758,7 +3758,7 @@ def main():
         physical_budget_plan.realized_control_block_bytes,
         prebuffer_capacity_patterns=(
             PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-        frame_sectors=ttrc_routing.FRAME_SECTORS,
+        frame_sectors=cavc_routing.FRAME_SECTORS,
         fps=FPS,
     )
     print(
@@ -3866,7 +3866,7 @@ def main():
                 PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
             prebuffer_capacity_patterns=(
                 PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-            frame_sectors=ttrc_routing.FRAME_SECTORS,
+            frame_sectors=cavc_routing.FRAME_SECTORS,
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             fill=av_config.PACK_FORWARD_FILL,
             control_sector_envelope=None,
@@ -3900,7 +3900,7 @@ def main():
             control_lengths,
             prebuffer_capacity_patterns=(
                 PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-            frame_sectors=ttrc_routing.FRAME_SECTORS,
+            frame_sectors=cavc_routing.FRAME_SECTORS,
             fps=FPS,
         )
         physical_schedule = (
@@ -3913,7 +3913,7 @@ def main():
                     PRG_DELIVERY_CAP_KB * 1024 // PATTERN_BYTES),
                 prebuffer_capacity_patterns=(
                     PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-                frame_sectors=ttrc_routing.FRAME_SECTORS,
+                frame_sectors=cavc_routing.FRAME_SECTORS,
                 fill=av_config.PACK_FORWARD_FILL,
                 control_sector_envelope=None,
             )
@@ -4569,7 +4569,7 @@ def main():
         )
     print("wrote stats.npz + miss_masks.npy; analysis PNGs are deferred")
 
-    # 実機TTRCエンコード用の決定ログ(既定off)。品質決定(区間パレット/ディザ/Near/Flbk/画質予算/fill)は
+    # 実機CAVCエンコード用の決定ログ(既定off)。品質決定(区間パレット/ディザ/Near/Flbk/画質予算/fill)は
     # すべてこのログに畳み込まれる=pack_streamは再生するだけでmp4と同じ画を出せる(唯一の真実源)。
     if EMIT_DEC:
         import pickle

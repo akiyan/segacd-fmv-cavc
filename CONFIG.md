@@ -38,7 +38,7 @@ exclusive lock per media `<stem>`.
 | `CBRSIM_WORKERS` | available CPU tokens | Worker count and exact CPU-token request for one heavy stage. |
 | `SEGACD_GPU_TOKENS` | 1 | Concurrent GPU palette/quantization or NVENC stages. |
 | `SEGACD_EMU_TOKENS` | 2 | Concurrent `run_headless.sh` emulator instances. |
-| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-ttrc/resources` | Lock-file root. |
+| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-cavc/resources` | Lock-file root. |
 
 Sim acquires CPU/GPU tokens only for Extract, Palette, and Quantize.
 `render_analysis.py` and record-preview transcoding use the same token pool.
@@ -165,14 +165,14 @@ playback.
 
 ## Audio
 
-On-disc format version 25 uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
+The on-disc CAVC layout uses checkpointed 22.05 kHz mono IMA ADPCM only. Sub decodes each
 chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
 | decoded `AUDIO_BYTES` | normally 1472 / 920 / 736 at 15 / 24 / 30 fps | cfg / pack / sp | Even decoded samples per effective playback frame. |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | Predictor, step index, reserved byte, and packed IMA codes. |
-| `audio_fd` | header offset 58 | cfg / pack / sp | RF5C164 frequency delta derived from chunk size and playback cadence. |
+| `audio_fd` | header offset 56 | cfg / pack / sp | RF5C164 frequency delta derived from chunk size and playback cadence. |
 | ADPCM table image | 8,800 B in five sectors | pack / sp | Unchanged lookup bytes copied once to Sub PRG: next-index at `0x07400`, output LUT at `0x09600`, and signed deltas at `0x0C000`. No Word-RAM copy remains. |
 | PCM work buffer | 1,536 B at Sub PRG `0x08000..0x085FF` | sp | Reconstructed chunk; no matching Word-RAM reservation remains. |
 | Sub preload extension | 940 B staged at Sub PRG `0x7D260` | make / pack / sp | Position-fixed boot table install, PCM initialization, routing preparation, and queue initialization in existing five-sector padding. The qualified first 88 B execute at `0x76800`; the PCM entry runs at `0x7D560`; with routing up to 8 KiB the second entry executes in place at `0x7D2B8` after prebuffer, while longer-route builds copy the complete extension and use `0x76858`. Size/address/hash and overlap are checked before assembly. |
@@ -471,7 +471,8 @@ physical supplies are fixed behavior.
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
 
-Specialized builds compare the CRC-32 header signature before playback. The
+Specialized builds compare the CRC-32 header-contract signature before playback.
+The identifying magic bytes are excluded from that signature. The
 disc system area reserves `0x6000..0x73FF` for an at-most-5-KiB SP, which the
 BIOS loads contiguously at Sub PRG `0x6000`. Boot-only 64-KiB ISO directory
 scratch uses `0x67000..0x76FFF` before the timed ring or frame-0 stage owns that
@@ -544,7 +545,7 @@ media `<stem>` ごとのexclusive lockを実装します。
 | `CBRSIM_WORKERS` | 使用可能なCPU token数 | 1つのheavy stageのworker数かつ正確なCPU token要求数。 |
 | `SEGACD_GPU_TOKENS` | 1 | 同時GPU palette/quantizationまたはNVENC stage数。 |
 | `SEGACD_EMU_TOKENS` | 2 | 同時 `run_headless.sh` emulator instance数。 |
-| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-ttrc/resources` | lock file root。 |
+| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-cavc/resources` | lock file root。 |
 
 simはExtract、Palette、Quantizeの間だけCPU/GPU tokenを取得します。
 `render_analysis.py` とrecord preview transcodeも同じtoken poolを使います。
@@ -654,14 +655,14 @@ untimed BODY armが構築するため対象外です。
 
 ## Audio
 
-On-disc format version 25のaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
+On-disc CAVC layoutのaudioはcheckpointed 22.05 kHz mono IMA ADPCMだけです。Subが各chunkを
 RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
 | decoded `AUDIO_BYTES` | 15 / 24 / 30 fpsで通常1472 / 920 / 736 | cfg / pack / sp | 実効playback frameごとの偶数decoded sample数。 |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | predictor、step index、reserved byte、packed IMA code。 |
-| `audio_fd` | header offset 58 | cfg / pack / sp | chunk sizeとplayback cadenceから導出するRF5C164 frequency delta。 |
+| `audio_fd` | header offset 56 | cfg / pack / sp | chunk sizeとplayback cadenceから導出するRF5C164 frequency delta。 |
 | ADPCM table image | 5 sectors内の8,800 B | pack / sp | 変更しないlookup byteをSub PRGへ1回copyする。next-indexは`0x07400`、output LUTは`0x09600`、signed deltaは`0x0C000`。Word-RAM copyはない。 |
 | PCM work buffer | Sub PRG `0x08000..0x085FF`の1,536 B | sp | 再構築chunk。対応するWord-RAM予約はない。 |
 | Sub preload extension | Sub PRG `0x7D260`へstageする940 B | make / pack / sp | 既存5-sector padding内のposition-fixed boot table install・PCM initialization・routing preparation・queue initialization。Qualified済み先頭88 Bは`0x76800`、PCM入口は`0x7D560`で実行する。routingが8 KiB以下ならprebuffer後に第2入口を`0x7D2B8`でそのまま実行し、長いroutingのbuildはextension全体をcopyして`0x76858`を使う。assemble前にsize/address/hashとoverlapを検査する。 |
@@ -937,7 +938,8 @@ resident pool、segmented palette、Near、boot prefetch、4つの物理供給�
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
 
-specialized buildはplayback前にCRC-32 header signatureを比較します。Resident Subの
+specialized buildはplayback前にCRC-32 header contract signatureを比較します。
+識別用magic byteはsignatureの対象外です。Resident Subの
 disc system areaは`0x6000..0x73FF`を最大5 KiBのSP用に予約し、BIOSがSub PRG
 `0x6000`へ連続loadします。Boot専用64 KiB ISO directory scratchは、timed ringや
 frame-0 stageがそのrangeを所有する前に`0x67000..0x76FFF`を使います。このboot配置は

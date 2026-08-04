@@ -7,12 +7,17 @@
 #   (boot/movieplay_*.s) changes in a way that alters output.
 # - Bump one or both as appropriate; never decrease either.
 # - When bumping, if today's date differs from `date` below, set `date` to today.
-# - This is the YouTube-title build version only. The HEADER.DAT format-version
-#   field is separate and must NOT be touched.
+# - This is the YouTube-title build version only. HEADER.DAT has no independent
+#   format-version field.
 #
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e179/p145: Rename the on-disc identifier from TTRC to CAVC and remove the
+#         independent header version word. Shift the fixed fields two bytes
+#         earlier while preserving the signature and PSUP offsets at 192/196.
+#         The runtime player treats magic as data and validates the specialized
+#         signature or generic field bounds instead of branching on magic.
 #   e178: Sector-align the WordBuf-ring schedule's Prg prebuffer. The 24 fps
 #         389 KiB ceiling produced a 12,448-pattern (194.5-sector) prebuffer;
 #         the player prefills exactly that many bytes and continues BODY
@@ -1228,6 +1233,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260803
-e=178
-p=144
+date=20260804
+e=179
+p=145

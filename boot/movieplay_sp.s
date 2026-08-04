@@ -1,5 +1,5 @@
 /*
- * Phase B5: TTRC delta-stream player, Sub CPU side.
+ * Phase B5: CAVC delta-stream player, Sub CPU side.
  *
  * HEADER.DAT contains only static boot state through PREBUFFER. BODY.DAT begins
  * with an untimed arm prefix (audio + frame-0 control/patterns), followed by the
@@ -124,8 +124,7 @@
 .equ DIC_BUF, 0x00FFBA40
 .equ DIC_BUF_END, 0x00FFFA40
 
-/* --- TTRC BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.equ ROUTING_VERSION,       25
+/* --- CAVC BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
@@ -373,7 +372,7 @@
 
 .equ HEADER_SECTORS,  1
 /* frames/tcols/trows/cells/pool/base/prebuf/routing/mode は HEADER.DAT の
-   v25ヘッダから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
+   CAVC headerから起動時に読む(h_* 変数)。焼き込み定数の手動更新は廃止。 */
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
@@ -476,24 +475,14 @@ stream_start:
 	move.l	header_lba, d0
 	move.l	header_total, d1
 	bsr	issue_file_readn		/* complete startup file */
-	/* ヘッダ1secをSTAGEへ取り込み、マジック "TTRC" を検証(MOVIE.md) */
+	/* ヘッダ1secをSTAGEへ取り込む。magicは識別データでありruntime判定には使わない。 */
 	moveq	#HEADER_SECTORS, d0
 	lea	PAD_SCR, a0
 	bsr	drain_lin
-	cmpi.l	#0x54545243, (PAD_SCR).l	/* "TTRC" */
-	bne	bad_header_magic
-	cmpi.w	#ROUTING_VERSION, (PAD_SCR+4).l
-	beq	1f
-	move.w	#0xBAD7, (COMSTAT1).l		/* packed-routing format required */
-	bra	bad_header
-bad_header_magic:
-	move.w	#0xBAD0, (COMSTAT1).l		/* 不一致: 診断マーカーを出して停止 */
-bad_header:
-	bra	bad_header
-1:
-	/* ヘッダ解析(>4sHHHHHHHHH + >LLLL + mode@38)。焼き込み定数を廃し実行時に読む */
+	/* ヘッダ解析(>4sHHHHHHHH + >LLLL + mode@36)。焼き込み定数を廃し実行時に読む */
 .ifdef PLAYER_SPECIALIZED
-	/* The generated constants came from these exact first 64 bytes.  A different
+	/* The generated constants came from contract bytes 4..61; magic bytes 0..3
+	   are identifying data only. A different
 	   profile has a different signature at offset 192 and must stop before any
 	   immediate geometry/timing value can reach the hot path. */
 	cmpi.l	#PC_SIGNATURE, (PAD_SCR+192).l
@@ -509,35 +498,35 @@ bad_header:
 .else
 	lea	PAD_SCR, a0
 	moveq	#0, d1
-	move.w	6(a0), d1
-	beq.s	bad_header
+	move.w	4(a0), d1
+	beq	bad_header
 	cmpi.w	#ROUTING_MAX_FRAMES, d1		/* one-byte table: 16KB = 16384 frames */
-	bhi.s	bad_header
+	bhi	bad_header
 	move.w	d1, h_frames
 	addi.w	#ROUTING_SECTOR_BYTES-1, d1
 	lsr.w	#ROUTING_SECTOR_SHIFT_A, d1
 	lsr.w	#ROUTING_SECTOR_SHIFT_B, d1	/* exact routing_sec = ceil(frames/2048) */
-	cmp.l	26(a0), d1			/* long compare also rejects a nonzero high half */
-	bne.s	bad_header
+	cmp.l	24(a0), d1			/* long compare also rejects a nonzero high half */
+	bne	bad_header
 	move.w	d1, h_routing_sec
-	move.w	14(a0), h_pool			/* tile pool slots; validates run-descriptor bounds */
-	move.w	12(a0), d0			/* cells */
+	move.w	12(a0), h_pool			/* tile pool slots; validates run-descriptor bounds */
+	move.w	10(a0), d0			/* cells */
 	move.w	d0, h_cells
 	addq.w	#7, d0
 	lsr.w	#3, d0
 	move.w	d0, h_bmbytes			/* ceil(cells/8) */
-	move.l	30(a0), d0
+	move.l	28(a0), d0
 	move.w	d0, h_prebuf_sec
-	move.l	22(a0), h_prebuf_pat
-	move.l	40(a0), d0			/* v25: BODY-arm frame0 control sectors @offset40 */
+	move.l	20(a0), h_prebuf_pat
+	move.l	38(a0), d0			/* BODY-arm frame0 control sectors */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_ctrl_sec
-	move.l	44(a0), d0			/* v25: BODY-arm frame0 pattern sectors @offset44 */
+	move.l	42(a0), d0			/* BODY-arm frame0 pattern sectors */
 	tst.w	d0
 	beq	bad_header
 	move.w	d0, h_f0_pat_sec
-	move.l	48(a0), d0			/* v13: boot-stage sectors @offset48 */
+	move.l	46(a0), d0			/* boot-stage sectors */
 	cmpi.w	#12, d0				/* v13 boot-stage upper bound: 24KB=12 sectors */
 	bls	1f
 	moveq	#12, d0
@@ -547,7 +536,7 @@ bad_header:
 	   supply independently selects the cold-run parser at every cadence. */
 	move.w	#0x03FF, d1
 	move.w	#0x01FF, d2
-	move.w	56(a0), d0			/* nominal fps; zero safely selects dense polling */
+	move.w	54(a0), d0			/* nominal fps; zero safely selects dense polling */
 	cmp.w	#24, d0
 	bhs	pm_set
 	moveq	#63, d1
@@ -557,22 +546,22 @@ pm_set:
 	move.w	d2, wave_pump_mask
 	tst.w	d0
 	beq	bad_header			/* v9 rate modulus must be nonzero */
-	move.w	54(a0), d0
+	move.w	52(a0), d0
 	move.w	d0, h_audio_bytes
-	move.w	58(a0), d1			/* v9: RF5C164 frequency delta for fixed chunks */
+	move.w	56(a0), d1			/* RF5C164 frequency delta for fixed chunks */
 	tst.w	d1
 	beq	bad_header
 	move.w	d1, h_audio_fd
-	move.w	62(a0), h_features		/* v25 optional stream features */
+	move.w	60(a0), h_features		/* optional stream features */
 	btst	#2, h_features+1
-	bne	bad_header			/* removed audio-codec flag is reserved in v25 */
+	bne	bad_header			/* removed audio-codec flag is reserved */
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
 	btst	#FEATURE_PATTERN_SUPPLY_BIT, h_features+1
 	beq	bad_header			/* list controls require authoritative run suffixes */
 1:
-	btst	#FEATURE_PATTERN_SUPPLY_BIT, 63(a0)
+	btst	#FEATURE_PATTERN_SUPPLY_BIT, 61(a0)
 	bne	bad_header			/* supply needs generated preload counts/addresses */
 	move.w	d0, d1
 	btst	#0, d1				/* two decoded samples per packed byte */
@@ -584,13 +573,13 @@ pm_set:
 	   1001*N/800 sectors per frame. Nominal 24fps uses two steps, 2002/800
 	   then 3003/800, in the same phase as Main's 2/3-VBlank display cadence. */
 	clr.w	sec_cadence_period
-	move.w	56(a0), d0			/* nominal fps */
+	move.w	54(a0), d0			/* nominal fps */
 	move.w	d0, d2				/* legacy modulus = nominal fps */
 	move.w	#75, d1				/* precompute 75/fps quotient+remainder once */
-	btst	#FEATURE_VBLANK_CADENCE_BIT, 63(a0)
+	btst	#FEATURE_VBLANK_CADENCE_BIT, 61(a0)
 	beq	2f
 	move.w	#1, sec_cadence_period
-	move.w	52(a0), d3			/* first authoritative VBlank interval */
+	move.w	50(a0), d3			/* first authoritative VBlank interval */
 	tst.w	d3
 	beq	bad_header
 	cmpi.w	#4, d3				/* current routing/stopwatch contract supports N1..N4 */
@@ -625,7 +614,7 @@ pm_set:
 	move.w	sec_rem, sec_alt_rem
 1:
 	/* Controls carry future chunks, so no live audio write is skipped. */
-	move.w	60(a0), h_audio_pre_sec
+	move.w	58(a0), h_audio_pre_sec
 	beq	bad_header
 	move.w	h_audio_pre_sec, d0
 	add.w	h_f0_ctrl_sec, d0
@@ -635,6 +624,10 @@ pm_set:
 	clr.w	sec_phase
 	clr.w	lead
 .endif
+	bra.s	header_accepted
+bad_header:
+	bra	bad_header
+header_accepted:
 	/* MDへヘッダ写しを渡す(frame0と同じバンクに書く=swap後にMDが読める) */
 	lea	(O_HDR).l, a1
 	moveq	#32-1, d1			/* 64B */
@@ -2074,7 +2067,7 @@ ef_bm:
 	bne.s	ef_list_audio
 	cmpi.w	#FRAME_TYPE_FADE_IN, d7		/* first non-normal type */
 	bhs.s	ef_inline_audio
-	/* v25 retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
+	/* CAVC retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
 .ifdef PLAYER_SPECIALIZED
@@ -2494,7 +2487,7 @@ ef_finalize:
 ef_store:
 .ifdef DEBUG_PRGBUF_Q
 .ifndef INCLUDE_PATTERN_SUPPLY
-	/* Canonical v25 streams use run descriptors above. Retain a final-balance
+	/* Canonical CAVC streams use run descriptors above. Retain a final-balance
 	   diagnostic for legacy builds without that suffix. */
 	tst.w	f0_expand
 	bne.s	8f
@@ -2981,7 +2974,7 @@ h_fps_int:
 	.space 2				/* v4: nominal fps from header offset 56 */
 	.endif
 h_audio_pre_sec:
-	.space 2				/* v25: BODY-arm audio sectors (one chunk per sector) */
+	.space 2				/* CAVC: BODY-arm audio sectors (one chunk per sector) */
 h_body_arm_sec:
 	.space 2				/* audio + frame0 control + frame0 patterns */
 h_features:

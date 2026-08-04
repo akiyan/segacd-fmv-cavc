@@ -109,7 +109,7 @@ defines the values-only hardware/emulator DEBUG HUD.
   outputs, and a versioned full-encode timing example.
 - [`CONFIG.md`](CONFIG.md): profile schema, encoder settings, throttles,
   capacities, physical limits, and DEBUG gate thresholds.
-- [`MOVIE.md`](MOVIE.md): the exact version 25 `HEADER.DAT` and `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): the exact `HEADER.DAT` and `BODY.DAT`
   on-disc binary format.
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf, WordBuf0, WordBuf1, and DicBuf
   assignment plus whole-movie quality planning.
@@ -446,7 +446,7 @@ timed-work valueとgraph maximumから除外します。
   version付き全編encode実測例。
 - [`CONFIG.md`](CONFIG.md): profile schema、encoder設定、throttle、容量、
   物理limit、DEBUG gate threshold。
-- [`MOVIE.md`](MOVIE.md): version 25の正確なon-disc `HEADER.DAT` / `BODY.DAT`
+- [`MOVIE.md`](MOVIE.md): 正確なon-disc `HEADER.DAT` / `BODY.DAT`
   binary format。
 - [`BUEFFERING.md`](BUEFFERING.md): PrgBuf、WordBuf0、WordBuf1、DicBufの
   割り当てとmovie全体quality planning。

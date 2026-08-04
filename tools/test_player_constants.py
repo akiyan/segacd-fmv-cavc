@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 import player_constants
-import ttrc_routing
+import cavc_routing
 import pattern_supply
 import av_config
 
@@ -13,9 +13,9 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
                 supply_counts=(0, 0, 0), pool=1400, base=1,
                 tcols=None, trows=28, cold_cap=190):
     if features is None:
-        features = ttrc_routing.FEATURE_COLD_RUNS
+        features = cavc_routing.FEATURE_COLD_RUNS
         if av_config.uses_vblank_cadence(fps):
-            features |= ttrc_routing.FEATURE_VBLANK_CADENCE
+            features |= cavc_routing.FEATURE_VBLANK_CADENCE
     if tcols is None:
         tcols = 32 if mode == 0 else 40
     cells = tcols * trows
@@ -23,16 +23,16 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
     if audio_bytes is None:
         audio_bytes = {15: 1472, 24: 920, 30: 736}.get(fps, 736)
     prefix = struct.pack(
-        ">4s9H4LBB3L6H",
-        b"TTRC", ttrc_routing.VERSION, frames, tcols, trows, cells,
-        pool, base, ttrc_routing.FRAME_SECTORS, 13,
-        12416, ttrc_routing.routing_sector_count(frames), 194, 12416,
+        ">4s8H4LBB3L6H",
+        b"CAVC", frames, tcols, trows, cells,
+        pool, base, cavc_routing.FRAME_SECTORS, 13,
+        12416, cavc_routing.routing_sector_count(frames), 194, 12416,
         mode, 0, 2, 14, av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(fps),
         audio_bytes, fps, audio_fd, 30, features,
     )
-    sector = bytearray(prefix + bytes(128) + bytes(player_constants.SECTOR - 192))
-    if features & ttrc_routing.FEATURE_PATTERN_SUPPLY:
+    sector = bytearray(prefix + bytes(130) + bytes(player_constants.SECTOR - 192))
+    if features & cavc_routing.FEATURE_PATTERN_SUPPLY:
         wr0, wr1, dic = supply_counts
         layout = pattern_supply.word_ram_layout(frames, cells, cold_cap)
         player_constants.PATTERN_SUPPLY_STRUCT.pack_into(
@@ -80,8 +80,8 @@ class PlayerConstantsTest(unittest.TestCase):
         values = player_constants.parse_header_sector(
             make_header(
                 mode=1, fps=15,
-                features=(ttrc_routing.FEATURE_COLD_RUNS
-                          | ttrc_routing.FEATURE_VBLANK_CADENCE)))
+                features=(cavc_routing.FEATURE_COLD_RUNS
+                          | cavc_routing.FEATURE_VBLANK_CADENCE)))
         self.assertEqual(values.screen_cols, 40)
         self.assertEqual(values.vsync_n, 4)
         self.assertEqual(values.vbudget, 3200)
@@ -135,17 +135,40 @@ class PlayerConstantsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "signature"):
             player_constants.parse_header_sector(bytes(sector))
 
+    def test_magic_is_identifying_data_not_a_player_parser_guard(self):
+        sector = bytearray(make_header())
+        sector[:4] = b"TTRC"
+        self.assertEqual(
+            player_constants.parse_header_sector(bytes(sector)).frames, 2714)
+
+    def test_legacy_layout_is_bounded_without_a_magic_guard(self):
+        prefix = struct.pack(
+            ">4s9H4LBB3L6H",
+            b"TTRC", 25, 2714, 32, 28, 896, 1400, 1,
+            cavc_routing.FRAME_SECTORS, 13,
+            12416, 2, 194, 12416,
+            0, 0, 2, 14, av_config.PALTAB_STAGE_KB * 1024 // 2048,
+            2, 736, 30, 0x345, 30,
+            cavc_routing.FEATURE_COLD_RUNS,
+        )
+        sector = bytearray(
+            prefix + bytes(128) + bytes(player_constants.SECTOR - 192))
+        sector = player_constants.stamp_header_sector(sector)
+        with self.assertRaises(ValueError) as caught:
+            player_constants.parse_header_sector(sector)
+        self.assertNotIn("magic", str(caught.exception).lower())
+
     def test_rejects_noncanonical_boot_stage_size(self):
         sector = bytearray(make_header())
-        sector[48:52] = struct.pack(">L", 1)
+        sector[46:50] = struct.pack(">L", 1)
         sector = player_constants.stamp_header_sector(sector)
         with self.assertRaisesRegex(ValueError, "fixed boot-stage size"):
             player_constants.parse_header_sector(sector)
 
     def test_adpcm_derives_control_and_table_sizes(self):
         values = player_constants.parse_header_sector(make_header(
-            features=(ttrc_routing.FEATURE_COLD_RUNS
-                      | ttrc_routing.FEATURE_VBLANK_CADENCE),
+            features=(cavc_routing.FEATURE_COLD_RUNS
+                      | cavc_routing.FEATURE_VBLANK_CADENCE),
             audio_bytes=736,
         ))
         self.assertEqual(values.audio_bytes, 736)
@@ -155,17 +178,17 @@ class PlayerConstantsTest(unittest.TestCase):
     def test_removed_audio_feature_bit_is_reserved(self):
         with self.assertRaisesRegex(ValueError, "reserved feature bits"):
             player_constants.parse_header_sector(make_header(
-                features=(ttrc_routing.FEATURE_COLD_RUNS | 0x0004),
+                features=(cavc_routing.FEATURE_COLD_RUNS | 0x0004),
             ))
 
     def test_pattern_supply_extension(self):
         layout = pattern_supply.word_ram_layout(
             frames=2714, cells=32 * 28, cold_cap=190)
         values = player_constants.parse_header_sector(make_header(
-            features=(ttrc_routing.FEATURE_COLD_RUNS
-                      | ttrc_routing.FEATURE_VBLANK_CADENCE
-                      | ttrc_routing.FEATURE_PATTERN_SUPPLY
-                      | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
+            features=(cavc_routing.FEATURE_COLD_RUNS
+                      | cavc_routing.FEATURE_VBLANK_CADENCE
+                      | cavc_routing.FEATURE_PATTERN_SUPPLY
+                      | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS),
             supply_counts=(
                 layout.wr0_patterns, layout.wr1_patterns,
                 pattern_supply.DIC_BUF_PATTERNS),
@@ -189,10 +212,10 @@ class PlayerConstantsTest(unittest.TestCase):
         values = player_constants.parse_header_sector(make_header(
             mode=1,
             fps=15,
-            features=(ttrc_routing.FEATURE_COLD_RUNS
-                      | ttrc_routing.FEATURE_VBLANK_CADENCE
-                      | ttrc_routing.FEATURE_PATTERN_SUPPLY
-                      | ttrc_routing.FEATURE_DICBUF_INDEXED_RUNS),
+            features=(cavc_routing.FEATURE_COLD_RUNS
+                      | cavc_routing.FEATURE_VBLANK_CADENCE
+                      | cavc_routing.FEATURE_PATTERN_SUPPLY
+                      | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS),
             supply_counts=(880, 880, 256),
             cold_cap=360,
         ))
@@ -204,7 +227,7 @@ class PlayerConstantsTest(unittest.TestCase):
 
     def test_vblank_cadence_rejects_a_stale_vsync_hint(self):
         header = bytearray(make_header(fps=15))
-        header[52:54] = struct.pack(">H", 2)
+        header[50:52] = struct.pack(">H", 2)
         header = player_constants.stamp_header_sector(header)
         with self.assertRaisesRegex(ValueError, "VBlank-cadence header"):
             player_constants.parse_header_sector(header)
@@ -212,9 +235,9 @@ class PlayerConstantsTest(unittest.TestCase):
     def test_pattern_supply_requires_indexed_dicbuf_feature(self):
         with self.assertRaisesRegex(ValueError, "indexed DicBuf"):
             player_constants.parse_header_sector(make_header(
-                features=(ttrc_routing.FEATURE_COLD_RUNS
-                          | ttrc_routing.FEATURE_VBLANK_CADENCE
-                          | ttrc_routing.FEATURE_PATTERN_SUPPLY),
+                features=(cavc_routing.FEATURE_COLD_RUNS
+                          | cavc_routing.FEATURE_VBLANK_CADENCE
+                          | cavc_routing.FEATURE_PATTERN_SUPPLY),
                 supply_counts=(1, 1, 1),
             ))
 

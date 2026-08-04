@@ -275,7 +275,7 @@ wheels = [
 ]
 
 [[package]]
-name = "segacd-fmv-ttrc-tools"
+name = "segacd-fmv-cavc-tools"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

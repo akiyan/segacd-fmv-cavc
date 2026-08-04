@@ -26,7 +26,7 @@ and include the settings that explain the result.
 tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
   logs/YYYYMMDD-HHMMSS-ffffff_PROFILE_SHA10_eNN_pNN_timeline.tsv \
   --config profiles/PROFILE.toml \
-  --sim-out /dev/shm/segacd-fmv-ttrc/artifacts/SIM_ENTRY/data \
+  --sim-out /dev/shm/segacd-fmv-cavc/artifacts/SIM_ENTRY/data \
   --r2v-workload-tsv logs/PROFILE_eNN_pNN_r2v_workload.tsv \
   --label "short adjustment label" \
   --evaluation-end-frame FRAME
@@ -45,7 +45,7 @@ tools/python.sh .agents/skills/timeline/scripts/render_timeline.py \
 
 ```sh
 tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
-  /dev/shm/segacd-fmv-ttrc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
+  /dev/shm/segacd-fmv-cavc/artifacts/TIMELINE_ENTRY/STEM_timeline.png \
   --description "SEGA-CD FMV codec timeline: adjustment label"
 ```
 
@@ -62,7 +62,7 @@ tools/python.sh .agents/skills/timeline/scripts/publish_gist.py \
 ```sh
 PY="$HOME/.config/youtube/venv/bin/python"
 "$PY" .agents/skills/timeline/scripts/sync_youtube_description.py \
-  /dev/shm/segacd-fmv-ttrc/artifacts/ANALYSIS_ENTRY/STEM_analysis.mp4 \
+  /dev/shm/segacd-fmv-cavc/artifacts/ANALYSIS_ENTRY/STEM_analysis.mp4 \
   --timeline-receipt logs/STEM_SHA10_timeline-gist.json \
   --description-file "$ANALYSIS_DESCRIPTION"
 ```

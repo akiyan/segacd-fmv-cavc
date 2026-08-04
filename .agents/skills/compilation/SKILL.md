@@ -126,7 +126,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    タイトル、英語→日本語の説明、CRAM切り替え回数、公開範囲、カテゴリ、再アップロード
    の扱いは `AGENTS.md` の「YouTube Upload Style」を唯一の規約として使う。ここへ
    同じ規約を複製しない。アップロードはunlisted、category 20とし、説明文の英日
-   両方に `https://github.com/akiyan/segacd-fmv-ttrc` を含める。
+   両方に `https://github.com/akiyan/segacd-fmv-cavc` を含める。
    Public codec名は両言語とも **Sega CD Constraint-Aware Video Codec** とし、
    binary magicをcodec名やformat名として使わない。
    送信する説明文はUTF-8 text fileへ保存し、YouTubeの上限である5,000文字以下を
@@ -138,7 +138,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    PY="$HOME/.config/youtube/venv/bin/python"
    tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["PLAYBACK_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
    "$PY" "$HOME/.claude/skills/youtube/youtube.py" upload \
-     /dev/shm/segacd-fmv-ttrc/artifacts/COMPILATION_ENTRY/STEM_emu.mp4 \
+     /dev/shm/segacd-fmv-cavc/artifacts/COMPILATION_ENTRY/STEM_emu.mp4 \
      --title "$TITLE" --desc "$DESCRIPTION" \
      --privacy unlisted --category 20
    ```

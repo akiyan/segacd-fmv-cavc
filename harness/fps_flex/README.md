@@ -90,7 +90,7 @@ Done + verified:
   30->180); mode and tile count do not affect it.
 - `AUDIO` fps-derived in the pack (15->887, 30->443).
 - **MOVIE.DAT v4**: variable frames (no 5-sector padding; each frame = n_pay+n_ctrl
-  sectors), header offset 52 = N (VBlanks/frame), 54 = AUDIO. Sonic H32 30fps packs to
+  sectors), header offset 50 = N (VBlanks/frame), 52 = AUDIO. Sonic H32 30fps packs to
   6552 frame-sectors < 6777 CD-1x, `decode_verify` pixel-identical, ring under=0.
 
 Remaining player work (v4), all delicate + emulator-tested:

@@ -78,7 +78,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             output = profile.output_dir
         self.assertTrue(str(output).startswith(
-            "/dev/shm/segacd-fmv-ttrc/artifacts/sim-"))
+            "/dev/shm/segacd-fmv-cavc/artifacts/sim-"))
         self.assertEqual(output.name, "data")
         self.assertFalse(output.is_symlink())
 
@@ -97,7 +97,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             text=True,
         )
         self.assertTrue(result.stdout.strip().startswith(
-            "/dev/shm/segacd-fmv-ttrc/artifacts/sim-"))
+            "/dev/shm/segacd-fmv-cavc/artifacts/sim-"))
 
     def test_missing_required_profile_is_rejected(self) -> None:
         with self.assertRaisesRegex(SystemExit, "profile is required.*positional"):

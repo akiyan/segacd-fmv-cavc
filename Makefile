@@ -290,7 +290,7 @@ $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue: $(OUT_DIR)/CPUVRAMBENCH_$(CPUVR
 
 movieplay-internal: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 
-# A disc build must never trust stream files left by an older routing format,
+# A disc build must never trust stream files left by another stream layout,
 # profile, or decision log.  Pack from the authenticated current decisions on
 # every build, removing the complete old set first so a failed pack cannot fall
 # through to a stale disc.
@@ -322,7 +322,7 @@ PLAYER_SPECIALIZE ?= 1
 # (or vice versa).
 movieplay-force:
 
-$(PLAYER_CONSTANTS): $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT tools/player_constants.py tools/ttrc_routing.py tools/ima_adpcm.py | movieplay-setup
+$(PLAYER_CONSTANTS): $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT tools/player_constants.py tools/cavc_routing.py tools/ima_adpcm.py | movieplay-setup
 	$(PYTHON) tools/player_constants.py $< --output $@
 
 $(SP_EXTENSION_OBJ): $(BOOT_DIR)/movieplay_sp_ext.s $(CFG_DIR)/sp_ext.ld tools/av_config.py tools/ima_adpcm.py movieplay-force | movieplay-setup
@@ -340,7 +340,7 @@ $(MOVIEPLAY_SECURITY): $(BOOT_DIR)/sec_$(SECURITY_REGION).bin | movieplay-setup
 $(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
 	$(PYTHON) tools/gen_debugfont.py --output $@
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
@@ -356,7 +356,7 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 			exit 1; \
 		fi
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/ttrc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),$(PYTHON) harness/sp_tail_marker/verify_profile.py --header $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT --max-pending-sectors 2)
 	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--defsym ISO_VERIFY_SP_TAIL=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@

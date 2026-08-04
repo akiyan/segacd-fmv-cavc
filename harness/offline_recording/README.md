@@ -54,7 +54,7 @@ tmpfs workspace. Reuse that exact replay for the realtime baseline and repeat
 offline capture, and use the two printed lossless paths for comparison:
 
 ```sh
-REPLAY=/dev/shm/segacd-fmv-ttrc/.../offline_record_input.replay
+REPLAY=/dev/shm/segacd-fmv-cavc/.../offline_record_input.replay
 
 tools/record_movie.sh \
   --disc out/ps2-sakura-op-h32.cue --no-build \
