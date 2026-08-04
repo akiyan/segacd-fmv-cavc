@@ -6,6 +6,8 @@ import unittest
 from pathlib import Path
 import sys
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tile_alloc import (
     FrameTransitionGuard,
@@ -278,6 +280,56 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
         self.assertTrue(result[1])
         self.assertTrue(alloc.is_resident(b"keep-next"))
         self.assertEqual(alloc.prefetch_cache_evictions, 1)
+
+    def test_display_rebase_copies_slots_and_releases_guard(self) -> None:
+        alloc = TileAllocator(8, 8)
+        alloc.place_frame([
+            (2, b"left"),
+            (3, b"right"),
+            (4, b"guard"),
+        ], 0)
+        old_slots = alloc.cur_slot.copy()
+        old_previous = alloc.prev_slot.copy()
+
+        alloc.replace_display_cells(((0, 3), (1, 4)), clear_others=True)
+
+        self.assertEqual(int(alloc.cur_slot[0]), int(old_slots[3]))
+        self.assertEqual(int(alloc.cur_slot[1]), int(old_slots[4]))
+        self.assertTrue(np.all(alloc.cur_slot[2:] == -1))
+        self.assertTrue(np.array_equal(alloc.prev_slot, old_previous))
+        self.assertEqual(int(alloc.slot_refs.sum()), 2)
+
+    def test_display_rebase_reads_sources_before_writing_destinations(self) -> None:
+        alloc = TileAllocator(3, 3)
+        alloc.place_frame([(0, b"a"), (1, b"b"), (2, b"c")], 0)
+        before = alloc.cur_slot.copy()
+
+        alloc.replace_display_cells(((0, 1), (1, 2), (2, 0)))
+
+        self.assertEqual(
+            alloc.cur_slot.tolist(),
+            [int(before[1]), int(before[2]), int(before[0])],
+        )
+
+    def test_display_rebase_rejects_duplicate_destinations(self) -> None:
+        alloc = TileAllocator(3, 3)
+        with self.assertRaisesRegex(ValueError, "destinations must be unique"):
+            alloc.replace_display_cells(((0, 1), (0, 2)))
+
+    def test_cell_domain_expansion_preserves_cache_and_maps_history(self) -> None:
+        alloc = TileAllocator(2, 4)
+        alloc.place_frame([(0, b"a"), (1, b"b")], 0)
+        before_keys = dict(alloc.key_slot)
+
+        alloc.expand_cell_domain(8, ((0, 0), (4, 1)))
+
+        self.assertEqual(alloc.C_CELLS, 8)
+        self.assertEqual(alloc.key_slot, before_keys)
+        self.assertEqual(int(alloc.cur_slot[0]), before_keys[b"a"])
+        self.assertEqual(int(alloc.cur_slot[4]), before_keys[b"b"])
+        self.assertEqual(int(alloc.prev_slot[0]), before_keys[b"a"])
+        self.assertEqual(int(alloc.prev_slot[4]), before_keys[b"b"])
+        self.assertEqual(int(alloc.slot_refs.sum()), 2)
 
 
 class ColdRunTests(unittest.TestCase):
