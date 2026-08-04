@@ -4191,8 +4191,11 @@ def main():
         f_fixed = budget // (
             PATTERN_BYTES + update_entry_bytes
             + stream_schedule.RUN_DESCRIPTOR_BYTES)
+        # The tx column is the mutually-exclusive DISPLAY Raw category. A
+        # scroll guard's Raw-funded load is real payment accounting
+        # (tile_records_log) but shows no display cell this frame.
         stat_rows.append((
-            i, f_fixed, want, upd, miss, C_CELLS - want, dedup_saved, tile_recs, carry, age_max,
+            i, f_fixed, want, upd, miss, C_CELLS - want, dedup_saved, raw_count, carry, age_max,
             want / C_CELLS, int(near_eff.sum()), flbk_count, prg_hits,
             int(prg_source_mask.sum()), int(wr0_source_mask.sum()),
             int(wr1_source_mask.sum()), int(dic_source_mask.sum()),
