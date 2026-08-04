@@ -1490,11 +1490,15 @@ def main():
     # implementation deliberately targets the complete H40 40x28 aperture,
     # because its player owns the exact 64x32 Plane A rolling geometry and the
     # fixed DEBUG Window/sprite HUD path.
+    # CBRSIM_SCROLL=0 is a diagnostic isolation knob: it disables adoption so
+    # the ordinary no-scroll allocation path can be A/B tested on the same
+    # source (e.g. reproducing issue #113 without a rolling plane).
     scroll_supported = bool(
         MODE.upper() == "H40"
         and TCOLS == 40
         and TROWS == 28
         and PATTERN_SUPPLY_ON
+        and os.environ.get("CBRSIM_SCROLL", "1") != "0"
     )
     scroll_estimates = ()
     scroll_segments = ()
