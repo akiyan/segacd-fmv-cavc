@@ -1036,14 +1036,23 @@ def draw_waveform_real(output_frame):
     minima, maxima = analysis_audio.waveform_extrema(
         AUDIO_SAMPLES, start=start, stop=stop, columns=bw)
     scale = bh * 0.46 / AUDIO_FULL_SCALE
+    prev_top = prev_bottom = None
     for x in range(bw):
         top = mid - round(int(maxima[x]) * scale)
         bottom = mid - round(int(minima[x]) * scale)
-        if top != bottom:
-            d.line(
-                [(x, top), (x, bottom)],
-                fill=L.AUDIO_TRACE_COLOR,
-            )
+        # Bridge a vertical gap to the previous column so the trace stays
+        # continuous; the column's own extrema still bound the next bridge.
+        draw_top, draw_bottom = top, bottom
+        if prev_bottom is not None:
+            if draw_top > prev_bottom:
+                draw_top = prev_bottom + 1
+            elif draw_bottom < prev_top:
+                draw_bottom = prev_top - 1
+        d.line(
+            [(x, draw_top), (x, draw_bottom)],
+            fill=L.AUDIO_TRACE_COLOR,
+        )
+        prev_top, prev_bottom = top, bottom
     return im
 
 
