@@ -13,6 +13,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e183: Fix the pack raw-prefetch replay divergence (issue #113). The sim's
+#         organic prefetch-slot choice consults its full-frame quantized
+#         target keys, which the decision log does not carry; the pack now
+#         applies the recorded slot as the frozen decision (display-safety
+#         verified) instead of re-deriving the choice from the log's smaller
+#         key set. Forced non-relocated placement leaves the clock hand one
+#         past the chosen slot, exactly like the organic scan.
 #   e182: World-mosaic guard sampling (issue #29). Guard edges are quantized
 #         once from the first window frame that fully reveals the edge, so a
 #         guard key no longer depends on runtime plane state or the reveal
@@ -1258,5 +1265,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
-e=182
+e=183
 p=147

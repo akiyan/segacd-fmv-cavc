@@ -1644,6 +1644,7 @@ def main():
     cur_key = [None] * C_CELLS          # 表示中パターン(idx bytes)
     cur_pal = np.full(C_CELLS, -1, np.int16)
     committed_plain = [None] * C_CELLS  # 内容変化検出用: 直近commitのplainキー(Flbkは表示した近似キー)
+    import tile_alloc
     from tile_alloc import (
         FrameTransitionGuard,
         TileAllocator,
@@ -4131,6 +4132,7 @@ def main():
             -1 if logical is None else int(logical)
             for logical in update_logical_cells
         ))
+        tile_alloc.trace_state(alloc, i)
         prefetch_requests_log.append(frame_prefetch_requests)
         prefetch_cold_log.append(len(prefetch_cold_slots))
         prg_used = sum(

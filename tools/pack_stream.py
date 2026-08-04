@@ -57,6 +57,7 @@ from encode_config import load_profile
 from cbr_paths import sim_work_dir
 from quantize_global4_tiles import pals_to_bytes
 from quantize_md_video import rgb333_to_rgb888
+import tile_alloc
 from tile_alloc import (
     TileAllocator,
     cold_transfer_order,
@@ -562,22 +563,30 @@ def resolve(log, POOL, mode="lru"):
                      relocate) = request
                     forced_slot = expected_slot
                 elif len(request) == 6:
+                    # The recorded slot is part of the frozen decisions. The
+                    # sim's organic choice consulted its full-frame quantized
+                    # target keys, which the log does not carry, so the pack
+                    # applies the recorded slot directly and verifies only
+                    # display safety (issue #113: re-deriving the choice from
+                    # the decision log's smaller key set picked a neighbour
+                    # slot on content where the two avoid sets differed).
                     (key, deadline, expected_slot, mandatory,
-                     relocate, force_destination) = request
-                    forced_slot = (
-                        expected_slot if bool(force_destination) else None)
+                     relocate, _force_destination) = request
+                    forced_slot = expected_slot
                 else:
                     raise SystemExit(
                         f"pack: malformed raw-prefetch request at frame {i}")
-                deadline_keys = {
-                    item[2] for item in frames[int(deadline)]
-                }
+                avoid_keys = ()
+                if forced_slot is None:
+                    avoid_keys = {
+                        item[2] for item in frames[int(deadline)]
+                    }
                 result = alloc.prefetch(
                     key,
                     i,
                     int(deadline),
                     forced_slot=forced_slot,
-                    avoid_keys=deadline_keys,
+                    avoid_keys=avoid_keys,
                     mandatory=bool(mandatory),
                     relocate=bool(relocate),
                 )
@@ -615,6 +624,7 @@ def resolve(log, POOL, mode="lru"):
                 raise SystemExit(
                     f"pack: slot display mismatch at frame {i}, "
                     f"cell {cell}, physical slot {physical_slot}")
+        tile_alloc.trace_state(alloc, i)
         prefetch_per.append(frame_prefetch)
         transfer_orders.append(transfer_order)
         per.append((cells, entries, colds))

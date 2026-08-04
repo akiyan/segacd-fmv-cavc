@@ -22,6 +22,28 @@ neighbouring VRAM slots so the Main CPU can DMA them in long runs. Displayed til
 import numpy as np
 
 
+def trace_state(alloc, frame):
+    """Append this frame's allocator digest to CBRSIM_ALLOC_TRACE.
+
+    Diagnostic only (issue #113). With CBRSIM_ALLOC_TRACE_DUMP=N the full
+    snapshot of frame N is pickled next to the trace for a field diff.
+    """
+
+    import os
+
+    path = os.environ.get("CBRSIM_ALLOC_TRACE")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{int(frame)}\t{alloc.state_digest()}\n")
+    dump = os.environ.get("CBRSIM_ALLOC_TRACE_DUMP")
+    if dump and int(dump) == int(frame):
+        import pickle
+
+        with open(f"{path}.f{int(frame)}.snap", "wb") as handle:
+            pickle.dump(alloc.state_snapshot(), handle)
+
+
 def cold_transfer_order(placements):
     """Return cold update indices sorted by ascending physical VRAM slot.
 
@@ -160,6 +182,49 @@ class TileAllocator:
         self.prefetch_evictions = 0
         self.mandatory_prefetch_evictions = 0
         self.prefetch_cache_evictions = 0
+
+    def state_digest(self):
+        """Return a short deterministic hash of the complete allocator state.
+
+        Diagnostic only (issue #113): the sim and the pack replay the same
+        frozen decisions through this allocator, so their digests must match
+        at every frame boundary. The first differing frame localizes a replay
+        divergence without guessing.
+        """
+
+        import hashlib
+
+        digest = hashlib.sha256()
+        digest.update(self.cur_slot.tobytes())
+        digest.update(self.prev_slot.tobytes())
+        digest.update(self.slot_refs.tobytes())
+        digest.update(self.slot_lastuse.tobytes())
+        digest.update(self.slot_pin_until.tobytes())
+        digest.update(self.slot_pin_mandatory.tobytes())
+        digest.update(int(self.hand).to_bytes(8, "little", signed=True))
+        digest.update(int(self.pinned_count).to_bytes(8, "little", signed=True))
+        digest.update(repr(self.free).encode())
+        for key in sorted(self.key_slot):
+            digest.update(key)
+            digest.update(int(self.key_slot[key]).to_bytes(
+                4, "little", signed=True))
+        return digest.hexdigest()[:16]
+
+    def state_snapshot(self):
+        """Return the raw state fields for a field-by-field divergence diff."""
+
+        return {
+            "cur_slot": self.cur_slot.copy(),
+            "prev_slot": self.prev_slot.copy(),
+            "slot_refs": self.slot_refs.copy(),
+            "slot_lastuse": self.slot_lastuse.copy(),
+            "slot_pin_until": self.slot_pin_until.copy(),
+            "slot_pin_mandatory": self.slot_pin_mandatory.copy(),
+            "hand": int(self.hand),
+            "pinned_count": int(self.pinned_count),
+            "free": tuple(self.free),
+            "key_slot": dict(self.key_slot),
+        }
 
     # ---- residency query (used by the sim for cold/reuse + resident matching) ----
     def is_resident(self, key):
@@ -480,11 +545,14 @@ class TileAllocator:
                 self.free.remove(slot)
             else:
                 self._evict(slot)
-                # A forced fade destination is part of a separately managed
+                # A relocated fade destination is part of a separately managed
                 # block.  Redirecting the ordinary allocation hand into that
                 # block would make the next visible frame consume its still
-                # empty destinations and split otherwise contiguous runs.
-                if not mandatory:
+                # empty destinations and split otherwise contiguous runs.  An
+                # ordinary (non-relocated) choice, forced only to replay a
+                # frozen decision, must leave the hand exactly where the
+                # organic clock scan would have: one past the chosen slot.
+                if not relocate:
                     self.hand = (slot + 1) % self.POOL
         elif self.free:
             slot = self.free.pop()
