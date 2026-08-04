@@ -318,15 +318,21 @@ def select_shadow_update_lists(
         for index, frame in enumerate(frames)
     )
     forced_lists = scroll.copy()
+    fade = np.isin(types, (
+        shadow_updates.FRAME_FADE_IN,
+        shadow_updates.FRAME_FADE_OUT,
+    ))
     legacy_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
         update_lists=forced_lists, frame_types=types)
+    # Fade controls are update-free and may never carry a list, so they are
+    # excluded from both the exploratory all-list estimate and eligibility.
     all_list_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
-        update_lists=np.ones(n_upd.shape, np.bool_), frame_types=types)
+        update_lists=~fade, frame_types=types)
     eligible = np.asarray([
         bool(forced_lists[index]) or (
-        index > 0 and cost.saved_cycles > 0
+        index > 0 and not bool(fade[index]) and cost.saved_cycles > 0
         and int(all_list_lengths[index]) <= int(max_control_bytes)
         )
         for index, cost in enumerate(costs)
