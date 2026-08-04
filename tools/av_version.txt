@@ -13,6 +13,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p150: Fix the DEBUG-build Window horizontal strip (reg17 0x9180 -> 0x9100).
+#         The right-side strip from x=0 made the Window plane cover every
+#         line below the HUD row, and Window row 24 col 0..1 aliases the
+#         HScroll table at 0xFC00, so nonzero horizontal scroll values
+#         rendered as two garbage name-table entries fixed at screen
+#         (24,0)-(24,1) during scroll windows. Release builds were
+#         unaffected.
 #   e184/p149: VRAM layout compaction (+80 resident tiles). The HUD font
 #         moves to 0xDA00 and the 640-byte sprite table to 0xDC00 (the
 #         highest 0x400-aligned base below the name table), so the resident
@@ -1277,4 +1284,4 @@
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
 e=184
-p=149
+p=150

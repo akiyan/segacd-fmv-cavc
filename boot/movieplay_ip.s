@@ -361,7 +361,12 @@ ip_entry:
 	move.w	#0, (VDP_DATA).l
 	move.w	#0, (VDP_DATA).l
 	.ifdef DEBUG
-	move.w	#0x9180, (VDP_CTRL).l		/* Window from x=0 through the right edge */
+	/* reg18 alone makes lines 0..7 full-width Window. reg17 must stay 0: a
+	   right-side strip from x=0 would put the Window plane over every later
+	   line too, and Window row 24 col 0..1 (0xF000+24*128 = 0xFC00) is the
+	   HScroll table, so nonzero scroll values would render as NT entries at
+	   screen (24,0)-(24,1). */
+	move.w	#0x9100, (VDP_CTRL).l		/* no Window side strip */
 	move.w	#0x9201, (VDP_CTRL).l		/* Window above row 1: fixed top 8 pixels */
 	.else
 	move.w	#0x9100, (VDP_CTRL).l		/* no Window side strip */
