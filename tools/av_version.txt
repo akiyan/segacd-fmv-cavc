@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e182: World-mosaic guard sampling (issue #29). Guard edges are quantized
+#         once from the first window frame that fully reveals the edge, so a
+#         guard key no longer depends on runtime plane state or the reveal
+#         phase. Repeating edges skip their already-committed cells and the
+#         WordBuf guard reserve funds only the crossing frames.
 #   e181/p147: Vertical scroll adoption and playback (issue #29). The encoder
 #         adopts axis-only vertical windows; the FRAME_SCROLL position item
 #         carries (HScroll, VScroll) with exactly one nonzero axis. Vertical
@@ -1253,5 +1258,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
-e=181
+e=182
 p=147

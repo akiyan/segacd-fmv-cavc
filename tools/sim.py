@@ -1542,6 +1542,45 @@ def main():
         )
         scroll_states = scroll_plan.build_frame_states(
             scroll_windows, columns=TCOLS, rows=TROWS)
+        # World-mosaic guard sampling: every guard edge is quantized from the
+        # first window frame where that edge is completely inside the source
+        # viewport. The pan premise makes world content static, so the fully
+        # revealed pixels are the exact future display; the guard key then
+        # depends on neither runtime plane state nor the reveal phase, stays
+        # identical while the same edge repeats, and survives the cell's later
+        # promotion into the primary viewport.
+        scroll_guard_full_view = {}
+        for window in scroll_windows:
+            for frame in range(window.anchor + 1, window.end + 1):
+                state = scroll_states[frame]
+                if not state.guard_cells:
+                    continue
+                if window.axis == scroll_frames.AXIS_HORIZONTAL:
+                    low = min(column for _row, column in state.world_guard)
+                    high = max(column for _row, column in state.world_guard)
+                    span = TCOLS * TILE
+
+                    def _fully(position, low=low, high=high, span=span):
+                        return (low * TILE >= -position
+                                and (high + 1) * TILE <= -position + span)
+                    axis_position = (
+                        lambda probe: scroll_states[probe].hscroll)
+                else:
+                    low = min(row for row, _column in state.world_guard)
+                    high = max(row for row, _column in state.world_guard)
+                    span = TROWS * TILE
+
+                    def _fully(position, low=low, high=high, span=span):
+                        return (low * TILE >= -position
+                                and (high + 1) * TILE <= -position + span)
+                    axis_position = (
+                        lambda probe: scroll_states[probe].vscroll)
+                sample = window.end
+                for probe in range(frame, window.end + 1):
+                    if _fully(int(axis_position(probe))):
+                        sample = probe
+                        break
+                scroll_guard_full_view[frame] = int(sample)
         for window in scroll_windows:
             # The anchor remains an ordinary frame.  The first moving frame
             # seeds the rolling shadow and carries the first absolute control.
@@ -1840,6 +1879,21 @@ def main():
         assignments = assign_palette(flattened, palette)
         indices = idx_for(flattened, assignments, palette)
         primary = C_CELLS
+        if state.guard_cells:
+            (
+                guard_detail,
+                guard_assign,
+                guard_idx,
+            ) = quantize_guard_edge(frame, state, palette)
+            return (
+                detail[:primary].astype(np.float32),
+                assignments[:primary],
+                indices[:primary],
+                guard_detail,
+                guard_assign,
+                guard_idx,
+                aligned[primary:],
+            )
         return (
             detail[:primary].astype(np.float32),
             assignments[:primary],
@@ -1849,6 +1903,64 @@ def main():
             indices[primary:],
             aligned[primary:],
         )
+
+    scroll_guard_cache = {}
+
+    def quantize_guard_edge(frame, state, palette):
+        """Quantize the guard edge once from its fully revealed source frame.
+
+        The world-mosaic sample makes the guard key independent of runtime
+        plane state and of the per-frame reveal phase: the same edge yields
+        the same key every frame, the guard pass skips already-committed
+        cells, and the later primary quantization of the identical static
+        world content reproduces the key.
+        """
+
+        sample = int(scroll_guard_full_view.get(int(frame), int(frame)))
+        key = (sample, state.world_guard)
+        hit = scroll_guard_cache.get(key)
+        if hit is not None:
+            return hit
+        sample_state = scroll_states[sample]
+        source = np.asarray(
+            Image.open(frames[sample]).convert("RGB"), np.uint8)
+        height, width = source.shape[:2]
+        rows = tuple(int(row) for row, _column in state.world_guard)
+        columns = tuple(int(column) for _row, column in state.world_guard)
+        top = min(rows)
+        left = min(columns)
+        canvas = np.zeros(
+            ((max(rows) - top + 1) * TILE,
+             (max(columns) - left + 1) * TILE, 3), np.uint8)
+        for row, column in state.world_guard:
+            source_y = int(row) * TILE + int(sample_state.vscroll)
+            source_x = int(column) * TILE + int(sample_state.hscroll)
+            if not (0 <= source_y and source_y + TILE <= height
+                    and 0 <= source_x and source_x + TILE <= width):
+                continue                    # never-revealed tail edge stays 0
+            y = (int(row) - top) * TILE
+            x = (int(column) - left) * TILE
+            canvas[y:y + TILE, x:x + TILE] = source[
+                source_y:source_y + TILE, source_x:source_x + TILE]
+        quantized = to_rgb333(canvas)
+        rgb333 = np.stack([
+            quantized[
+                (int(row) - top) * TILE:(int(row) - top + 1) * TILE,
+                (int(column) - left) * TILE:(int(column) - left + 1) * TILE,
+            ]
+            for row, column in state.world_guard
+        ])
+        flattened, guard_detail = flatten_low_detail(
+            rgb333.reshape(len(state.world_guard), TILE * TILE, 3))
+        guard_assign = assign_palette(flattened, palette)
+        guard_idx = idx_for(flattened, guard_assign, palette)
+        hit = (
+            guard_detail.astype(np.float32),
+            guard_assign,
+            guard_idx,
+        )
+        scroll_guard_cache[key] = hit
+        return hit
 
     # A black anchor is an ordinary full-refresh frame whose hidden indexed
     # image is the following shot's bright reference.  Every fade frame then
@@ -2234,23 +2346,32 @@ def main():
             int(wordram_layout.wr0_patterns),
             int(wordram_layout.wr1_patterns),
         )
+        # World-mosaic guard keys are stable while the same edge repeats, so
+        # a guard column/row only loads on the frame where the edge becomes a
+        # NEW set of cells. Fund exactly those crossing frames' complete
+        # edges from the boot preload in chronological order; the heaviest
+        # scroll frames can then never depend on same-frame Prg payload for
+        # their mandatory guards.
+        def _guard_need(frame):
+            state = scroll_states[frame]
+            previous = scroll_states.get(frame - 1)
+            if previous is not None and (
+                    previous.guard_cells == state.guard_cells):
+                return 0
+            return len(state.guard_cells)
+
         for parity, capacity in enumerate(capacities):
             frames_for_scroll = [
                 int(frame) for frame in np.flatnonzero(scroll_active)
                 if int(frame) % 2 == parity
             ]
             remaining = int(capacity)
-            if frames_for_scroll:
-                even_share, extra = divmod(
-                    remaining, len(frames_for_scroll))
-                for index, frame in enumerate(frames_for_scroll):
-                    guard = len(scroll_states[frame].guard_cells)
-                    count = min(
-                        guard,
-                        even_share + int(index < extra),
-                    )
-                    reserved_wr[frame] = count
-                    remaining -= count
+            for frame in frames_for_scroll:
+                count = min(_guard_need(frame), remaining)
+                reserved_wr[frame] = count
+                remaining -= count
+                if remaining <= 0:
+                    break
             for frame in np.argsort(-original_wr, kind="stable"):
                 frame = int(frame)
                 if remaining <= 0:
