@@ -52,18 +52,24 @@
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
-.equ HUD_SPRITE_TABLE, 0xD400
+/* DEBUG HUD hexadecimal font: 16 tiles packed directly under the sprite
+   table so the resident movie-pattern pool below stays one contiguous run.
+   Detailed usage notes live at the DBGFONT definitions further down. */
+.equ HUD_FONT_ADDR, 0xDA00
+.equ HUD_SPRITE_TABLE, 0xDC00
 .equ HUD_SPRITE_TABLE_BYTES, 80*8
 .equ HUD_SPRITE_REG, 0x8500 | (HUD_SPRITE_TABLE >> 9)
 
 /* H40 ignores the low sprite-table base bit, so the physical table must be
-   0x400-aligned. Keep its complete 80-record hardware footprint inside the
-   free VRAM gap below the movie name table. In particular, it must not alias
-   the full-screen Window map at 0xF000 as the old 0xF800 placement did. */
+   0x400-aligned; 0xDC00 is the highest such base whose complete 80-record
+   hardware footprint still ends below the movie name table. It sits directly
+   above the HUD font so the resident pool below stays one contiguous run. In
+   particular, it must not alias the full-screen Window map at 0xF000 as the
+   old 0xF800 placement did. */
 .if (HUD_SPRITE_TABLE & 0x03FF)
 .error "H40 HUD sprite table is not 0x400-aligned"
 .endif
-.if (HUD_SPRITE_TABLE < 0xD200) || ((HUD_SPRITE_TABLE + HUD_SPRITE_TABLE_BYTES) > MOVIE_NT)
+.if (HUD_SPRITE_TABLE < HUD_FONT_ADDR+0x200) || ((HUD_SPRITE_TABLE + HUD_SPRITE_TABLE_BYTES) > MOVIE_NT)
 .error "HUD sprite table is outside the free VRAM gap"
 .endif
 
@@ -102,13 +108,13 @@
 .equ CG_OP_ADVANCE_SHADOW,     0x43E9	/* lea 16(a1),a1 */
 .equ CG_SHADOW_BYTE_ADVANCE,   16
 .equ CG_OP_BRA_W,              0x6000
-/* DEBUG HUD: only hexadecimal glyphs. Fixed at VRAM 0xD000 (tiles 1664..1679),
+/* DEBUG HUD: only hexadecimal glyphs. Fixed at VRAM 0xDA00 (tiles 1744..1759),
    immediately above the contiguous movie-pattern pool. The single movie name
    table starts at 0xE000. DEBUG and release, generic and specialized builds all
-   share this physical layout. */
+   share this physical layout. HUD_FONT_ADDR itself is defined next to the
+   sprite table so the layout asserts can reference both. */
 .equ DBGFONT_N, 16
-.equ HUD_FONT_ADDR, 0xD000
-.equ HUD_FONT_VTILE, HUD_FONT_ADDR/32	/* = 1664; name-table tile index (11-bit, fits) */
+.equ HUD_FONT_VTILE, HUD_FONT_ADDR/32	/* = 1744; name-table tile index (11-bit, fits) */
 /* リリースビルドが既定。make movieplay DEBUG=1 でオーバーレイ一式を有効化
    (画面表示専用。ストリームにDEBUG専用データは持たない) */
 /* CRAM pre-load: 全区間パレット表(paltab.bin)と切替表(palidx.bin)はpackが書く
@@ -348,7 +354,7 @@ ip_entry:
 	move.w	#0x8B00, (VDP_CTRL).l		/* reg11 scroll full-screen */
 	move.w	#0x8407, (VDP_CTRL).l		/* reg4  Plane B NT = movie NT 0xE000 */
 	move.w	#0x833C, (VDP_CTRL).l		/* reg3  Window NT = 0xF000 */
-	move.w	#HUD_SPRITE_REG, (VDP_CTRL).l	/* reg5  sprite table = 0xD400 */
+	move.w	#HUD_SPRITE_REG, (VDP_CTRL).l	/* reg5  sprite table = 0xDC00 */
 	move.w	#0x8D3F, (VDP_CTRL).l		/* reg13 hscroll 0xFC00 */
 	move.w	#0x8238, (VDP_CTRL).l		/* reg2  Plane A = single movie NT 0xE000 */
 	move.l	#0x40000010, (VDP_CTRL).l	/* VSRAM=0 */
@@ -397,7 +403,7 @@ ip_entry:
 	move.w	10(a0), d0			/* cells; supported grids are multiples of 8 */
 	lsr.w	#3, d0
 	move.w	d0, md_bmbytes
-	/* HUD font is fixed at 0xD000 (HUD_FONT_ADDR/HUD_FONT_VTILE); no runtime
+	/* HUD font is fixed at 0xDA00 (HUD_FONT_ADDR/HUD_FONT_VTILE); no runtime
 	   base+pool computation needed. */
 	moveq	#0, d0
 	move.b	36(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
@@ -2421,9 +2427,9 @@ dbg_hex_pairs:
 	.set dbg_hex_byte, dbg_hex_byte + 1
 	.endr
 .endif
-	/* The pool ends at 0xCFFF; keep the font below the single 0xE000 movie NT. */
-	.if HUD_FONT_ADDR != 0xD000 || (HUD_FONT_VTILE + DBGFONT_N > MOVIE_NT/32)
-	.error "hexadecimal font must start at 0xD000 and fit below the movie NT"
+	/* The pool ends at 0xD9FF; keep the font below the single 0xE000 movie NT. */
+	.if HUD_FONT_ADDR != 0xDA00 || (HUD_FONT_VTILE + DBGFONT_N > MOVIE_NT/32)
+	.error "hexadecimal font must start at 0xDA00 and fit below the movie NT"
 .endif
 
 	.bss

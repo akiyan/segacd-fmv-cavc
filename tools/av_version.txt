@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e184/p149: VRAM layout compaction (+80 resident tiles). The HUD font
+#         moves to 0xDA00 and the 640-byte sprite table to 0xDC00 (the
+#         highest 0x400-aligned base below the name table), so the resident
+#         pool grows from 1,663 to 1,743 contiguous tiles with only a
+#         384-byte tail gap left below the 0xE000 movie NT.
 #   p148: Fix the boot-VRAM sidecar loader's stale TTRC header offsets
 #         (issue #112). The CAVC rename moved the fixed fields two bytes
 #         earlier, but load_boot_vram_sidecar still tested the features low
@@ -1271,5 +1276,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
-e=183
-p=148
+e=184
+p=149

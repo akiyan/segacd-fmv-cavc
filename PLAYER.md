@@ -41,7 +41,7 @@ and are listed in place.
 | Sub PRG-RAM | `SP-GAP` 224 B, `SCRATCH` 256 B, and `RING-ALIGN` 448 B |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
 | Main RAM | `M-FREE` 10.38 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
-| VRAM | `0xD200..0xD3FF` 512 B and `0xD680..0xDFFF` 2.375 KiB; unused Window/HScroll table rows remain reserved to those VDP structures |
+| VRAM | `0xDE80..0xDFFF` 384 B; unused Window/HScroll table rows remain reserved to those VDP structures |
 
 ## Sub PRG-RAM Map
 
@@ -227,11 +227,10 @@ switch selects another table.
 | Name | Address | Size | Contents |
 |---|---|---:|---|
 | blank tile | `0x0000..0x001F` | 32 B | fixed transparent tile 0 |
-| resident pool | `0x0020..0xCFFF` | 1,663 tiles | contiguous movie-pattern slots 1–1,663 |
-| HUD font | `0xD000..0xD1FF` | 16 tiles | hexadecimal glyphs shared by DEBUG and release startup |
-| gap | `0xD200..0xD3FF` | 512 B | unallocated VRAM |
-| sprite table | `0xD400..0xD67F` | 640 B | complete 80-record hardware SAT footprint; DEBUG uses at most 88 B (11 H32 or 3 H40 records) |
-| gap | `0xD680..0xDFFF` | 2.375 KiB | unallocated VRAM |
+| resident pool | `0x0020..0xD9FF` | 1,743 tiles | contiguous movie-pattern slots 1–1,743 |
+| HUD font | `0xDA00..0xDBFF` | 16 tiles | hexadecimal glyphs shared by DEBUG and release startup |
+| sprite table | `0xDC00..0xDE7F` | 640 B | complete 80-record hardware SAT footprint at the highest 0x400-aligned base below the name table; DEBUG uses at most 88 B (11 H32 or 3 H40 records) |
+| gap | `0xDE80..0xDFFF` | 384 B | unallocated VRAM |
 | movie NT | `0xE000..0xEFFF` | 4 KiB | single 64x32 Plane A table |
 | HUD Window row | `0xF000..0xF04F` | up to 80 B | first DEBUG row; H32 uses 64 B, H40 uses 80 B |
 | horizontal scroll | `0xFC00..0xFC03` | 4 B | fixed full-screen scroll words |
@@ -465,7 +464,7 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 | Sub PRG-RAM | `SP-GAP` 224 B、`SCRATCH` 256 B、`RING-ALIGN` 448 B |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
 | Main RAM | `M-FREE` 10.38 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
-| VRAM | `0xD200..0xD3FF` 512 Bと`0xD680..0xDFFF` 2.375 KiB。未使用Window/HScroll table rowは各VDP structure用に予約したまま |
+| VRAM | `0xDE80..0xDFFF` 384 B。未使用Window/HScroll table rowは各VDP structure用に予約したまま |
 
 ## Sub PRG-RAM map
 
@@ -645,11 +644,10 @@ register-2 switchはありません。
 | Name | Address | Size | 内容 |
 |---|---|---:|---|
 | blank tile | `0x0000..0x001F` | 32 B | 固定transparent tile 0 |
-| resident pool | `0x0020..0xCFFF` | 1,663 tiles | 連続movie-pattern slot 1〜1,663 |
-| HUD font | `0xD000..0xD1FF` | 16 tiles | DEBUGとrelease startupで共有するhexadecimal glyph |
-| gap | `0xD200..0xD3FF` | 512 B | 未割当VRAM |
-| sprite table | `0xD400..0xD67F` | 640 B | 80 record分の完全なhardware SAT領域。DEBUGの実使用は最大88 B（H32は11、H40は3 record） |
-| gap | `0xD680..0xDFFF` | 2.375 KiB | 未割当VRAM |
+| resident pool | `0x0020..0xD9FF` | 1,743 tiles | 連続movie-pattern slot 1〜1,743 |
+| HUD font | `0xDA00..0xDBFF` | 16 tiles | DEBUGとrelease startupで共有するhexadecimal glyph |
+| sprite table | `0xDC00..0xDE7F` | 640 B | name table直下の最上位0x400整列baseに置いた80 record分の完全なhardware SAT領域。DEBUGの実使用は最大88 B（H32は11、H40は3 record） |
+| gap | `0xDE80..0xDFFF` | 384 B | 未割当VRAM |
 | movie NT | `0xE000..0xEFFF` | 4 KiB | 単一64x32 Plane A table |
 | HUD Window row | `0xF000..0xF04F` | 最大80 B | DEBUG先頭行。H32は64 B、H40は80 B |
 | horizontal scroll | `0xFC00..0xFC03` | 4 B | 固定full-screen scroll word |

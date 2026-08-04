@@ -176,10 +176,12 @@ CRAM_QUALITY_PRIORITY_SEARCH_FRAMES = 4
 
 # --- Fixed encoder/player resources ---
 # The resident movie-pattern pool starts at tile 1 and ends immediately before
-# the fixed HUD font at VRAM 0xD000. The single movie name table starts at
-# 0xE000, so DEBUG and release builds share the same contiguous pool.
+# the fixed HUD font at VRAM 0xDA00. The font and the 640-byte sprite table
+# (0xDC00, the highest 0x400-aligned base below the name table) are packed
+# directly under the single movie name table at 0xE000, so DEBUG and release
+# builds share one contiguous 1,743-tile pool with only a 384-byte tail gap.
 VRAM_PATTERN_BASE_TILE = 1
-VRAM_HUD_FONT_TILE = 0xD000 // 32
+VRAM_HUD_FONT_TILE = 0xDA00 // 32
 VRAM_MOVIE_NT_TILE = 0xE000 // 32
 VRAM_FIRST_MOVIE_NT_TILE = VRAM_MOVIE_NT_TILE
 VRAM_PATTERN_POOL_TILES = (
