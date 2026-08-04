@@ -221,7 +221,10 @@ sp_tail_check_end:
 
 /* Boot-only wave-RAM clear and channel setup. d0 supplies the RF5C164
    frequency delta from the authenticated profile header. Keeping this large
-   one-shot loop out of the resident image makes 0x7400 the hard SP boundary. */
+   one-shot loop out of the resident image makes 0x7400 the hard SP boundary.
+   Real hardware powers up with undefined wave RAM and channel registers, so
+   clear the complete 64 KiB wave RAM (all 16 4-KiB banks) and drop every
+   channel to known-silent values; emulators start zeroed and hide this. */
 .org PCM_BOOT_INIT_OFF
 .global pcm_boot_init
 pcm_boot_init:
@@ -230,24 +233,52 @@ pcm_boot_init:
 	move.b	#0xFF, (PCM_ONOFF).l
 	moveq	#0, d2
 1:
-	move.w	d2, d1
-	andi.w	#0x0FFF, d1
-	bne.s	2f
 	move.w	d2, d0
-	lsr.w	#8, d0
-	lsr.w	#4, d0
 	ori.b	#0x80, d0
 	move.b	d0, (PCM_CTRL).l
-2:
 	lea	(PCM_WAVE).l, a0
-	add.w	d1, d1
-	adda.w	d1, a0
+	move.w	#0x1000-1, d1
+2:
 	move.b	#0x00, (a0)
+	addq.l	#2, a0
+	dbra	d1, 2b
 	addq.w	#1, d2
-	cmp.w	#WAVE_RING_END, d2
+	cmp.w	#16, d2
 	blo.s	1b
+	/* The full clear erased the ring loop-end marker: rewrite it last. */
 	move.b	#0x88, (PCM_CTRL).l
 	move.b	#0xFF, (PCM_WAVE).l
+	/* Park ch1..ch7 registers at silent known values. PCM_ONOFF already holds
+	   all channels off; pcm start later re-enables ch0 only (0xFE). */
+	moveq	#1, d2
+1:
+	move.w	d2, d0
+	ori.b	#0xC0, d0
+	move.b	d0, (PCM_CTRL).l
+	move.b	#0x00, (PCM_ENV).l
+	nop
+	nop
+	move.b	#0x00, (PCM_PAN).l
+	nop
+	nop
+	move.b	#0x00, (PCM_FDL).l
+	nop
+	nop
+	move.b	#0x00, (PCM_FDH).l
+	nop
+	nop
+	move.b	#0x00, (PCM_LSL).l
+	nop
+	nop
+	move.b	#0x00, (PCM_LSH).l
+	nop
+	nop
+	move.b	#0x00, (PCM_ST).l
+	nop
+	nop
+	addq.w	#1, d2
+	cmp.w	#8, d2
+	blo.s	1b
 	move.b	#0xC0, (PCM_CTRL).l
 	move.b	#0xFF, (PCM_ENV).l
 	nop
