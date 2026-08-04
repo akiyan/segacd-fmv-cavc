@@ -8,7 +8,8 @@ import numpy as np
 
 BAYER = "bayer"
 EDGE_ATTENUATED_BAYER = "edge-attenuated-bayer"
-MODES = (BAYER, EDGE_ATTENUATED_BAYER)
+NONE = "none"
+MODES = (BAYER, EDGE_ATTENUATED_BAYER, NONE)
 
 
 BAYER8 = np.array([
@@ -129,6 +130,14 @@ def edge_attenuated_bayer_rgb333(image: np.ndarray) -> np.ndarray:
     ).astype(np.uint8)
 
 
+def nearest_rgb333(image: np.ndarray) -> np.ndarray:
+    """Round every pixel to its nearest RGB333 level with no dither."""
+    rgb = _check_rgb888(image)
+    return np.clip(
+        np.rint(rgb.astype(np.float32) * (7.0 / 255.0)), 0, 7
+    ).astype(np.uint8)
+
+
 def normalize_mode(value: str) -> str:
     """Return one supported profile spelling for an output-dither mode."""
     mode = str(value).strip().lower()
@@ -143,4 +152,6 @@ def quantize_rgb333(image: np.ndarray, mode: str = BAYER) -> np.ndarray:
     selected = normalize_mode(mode)
     if selected == BAYER:
         return bayer_rgb333(image)
+    if selected == NONE:
+        return nearest_rgb333(image)
     return edge_attenuated_bayer_rgb333(image)

@@ -289,11 +289,16 @@ UPGRADE_ON = os.environ.get("CBRSIM_UPGRADE", "1") != "0"
 # Executable encodes always receive the explicit profile value. Import-only
 # utility callers use the full grid because they do not produce an artifact.
 # frame0 は下の frame_max_cold で別途免除。
-MAX_COLD = av_config.cold_cap(
+_COLD_CAP_REQUEST = (
     C_CELLS if CONFIG_PROFILE is None
     and not os.environ.get("CBRSIM_COLD_CAP", "").strip()
     else None
 )
+MAX_COLD = av_config.cold_cap(_COLD_CAP_REQUEST)
+# Canonical spec string ("225" or "2:170,3:250"). A per-interval spec gives
+# each frame the cap of its own VBlank slot; MAX_COLD stays the reservation
+# ceiling for layout/envelope sizing.
+COLD_CAP_SPEC = av_config.cold_cap_spec(_COLD_CAP_REQUEST)
 MAX_RUN_CONTROL_BYTES = stream_schedule.max_run_control_reservation(
     MAX_COLD, ACTIVE_TILES)
 # Boot VRAM prefetch uses otherwise-unused frame-0 HEADER/staging capacity and
@@ -1364,7 +1369,10 @@ def main():
                 f"{measured_active_tiles} tiles that are ever non-black")
     print(f"  {n} frames @ {W}x{H} ({TCOLS}x{TROWS}={C_CELLS} cells, "
           f"active={ACTIVE_TILES})")
-    print(f"  cold cap={MAX_COLD}: profile; fps={FPS:g}")
+    frame_cold_caps = np.asarray(
+        av_config.frame_cold_caps(n, FPS, _COLD_CAP_REQUEST), np.int64)
+    print(f"  cold cap={COLD_CAP_SPEC} (ceiling {MAX_COLD}): profile; "
+          f"fps={FPS:g}")
 
     # The source WAV remains the packer's input.  Analysis must instead audition
     # the exact stream reconstructed by the Sub CPU and quantized for RF5C164.
@@ -1869,7 +1877,7 @@ def main():
             vram_tiles=VRAM_TILES,
             name_bytes=NAME_BYTES,
             pattern_bytes=PATTERN_BYTES,
-            max_cold=MAX_COLD,
+            max_cold=frame_cold_caps,
             protected_frames=main_protected,
             forced_update_frames=cram_switch_frames,
         )
@@ -1878,7 +1886,7 @@ def main():
             Q_assign,
             main_protected,
             vram_tiles=VRAM_TILES,
-            max_cold=MAX_COLD,
+            max_cold=frame_cold_caps,
         )
         frame0_keys = tuple(dict.fromkeys(
             Q_pidx[0][cell].tobytes() for cell in range(C_CELLS)))
@@ -1912,7 +1920,7 @@ def main():
                 vram_tiles=VRAM_TILES,
                 name_bytes=NAME_BYTES,
                 pattern_bytes=PATTERN_BYTES,
-                max_cold=MAX_COLD,
+                max_cold=frame_cold_caps,
                 protected_frames=main_protected,
                 forced_update_frames=cram_switch_frames,
                 boot_prefetch_requests=boot_prefetch_plan,
@@ -1950,7 +1958,7 @@ def main():
                 Q_assign,
                 main_protected,
                 vram_tiles=VRAM_TILES,
-                max_cold=MAX_COLD,
+                max_cold=frame_cold_caps,
                 boot_prefetch_requests=boot_prefetch_plan,
             )
         else:
@@ -2032,7 +2040,7 @@ def main():
             C_CELLS,
             0,
         ).astype(np.int64),
-        np.full(n, MAX_COLD, np.int64),
+        frame_cold_caps,
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
         frame_types=frame_types,
@@ -2041,7 +2049,7 @@ def main():
     physical_budget_state = physical_budget.SharedSectorPlanner(
         n,
         max_prg_patterns=MAX_COLD,
-        max_cold_patterns=MAX_COLD,
+        max_cold_patterns=frame_cold_caps,
         prebuffer_capacity_patterns=(
             PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
         frame_sectors=ttrc_routing.FRAME_SECTORS,
@@ -2054,7 +2062,7 @@ def main():
     print(
         "physical budget: one-pass cadence-sector prefix ledger; "
         f"Prg desired={int(predicted_prg_demand.sum())} patterns; "
-        f"per-frame Prg/cold cap={MAX_COLD}; "
+        f"per-frame Prg cap={MAX_COLD}, cold cap={COLD_CAP_SPEC}; "
         f"timed route={ttrc_routing.FRAME_SECTORS} useful sectors/slot; "
         "every exact prefix also stays within cumulative CD-1x time",
         flush=True,
@@ -2084,7 +2092,8 @@ def main():
     fade_prepare_demand = np.where(
         fade_prepare_mask,
         C_CELLS * NAME_BYTES
-        + MAX_COLD * (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES),
+        + frame_cold_caps
+        * (PATTERN_BYTES + stream_schedule.RUN_DESCRIPTOR_BYTES),
         0,
     ).astype(np.int64)
     fade_prefetch_demand = np.zeros(n, np.int64)
@@ -4440,6 +4449,8 @@ def main():
     ], np.int64)
     np.savez(OUT / "stats.npz", stats=stats, cols=cols, fps=FPS, cells=C_CELLS,
              active_tiles=ACTIVE_TILES, max_cold=MAX_COLD,
+             cold_cap_spec=COLD_CAP_SPEC,
+             frame_cold_caps=frame_cold_caps,
              raw_prefetch=np.asarray(prefetch_cold_log, np.int64),
              raw_prefetch_cap=np.int64(max(
                  1, RAW_PREFETCH_MAX_REQUESTS_PER_FRAME)),
@@ -4610,6 +4621,7 @@ def main():
                 "prg_physical_ring_kb": int(av_config.RING_SIZE_KB),
                 "quality_budget_kb": int(QUALITY_BUDGET_KB),
                 "max_cold": int(MAX_COLD),
+                "cold_cap_spec": COLD_CAP_SPEC,
             },
             "encoder": {
                 "detail_alpha": float(DETAIL_ALPHA),
@@ -4923,6 +4935,7 @@ def main():
             "vram_tiles": int(VRAM_TILES),
             # エンコード時の実効パラメータを焼き込む(pack/解析が同一値を使い二重管理を防ぐ)。
             "max_cold": int(MAX_COLD),
+            "cold_cap_spec": COLD_CAP_SPEC,
             "prg_buf_kb": int(PRG_BUF_CAP_KB),
             "prg_delivery_cap_kb": int(PRG_DELIVERY_CAP_KB),
             "prg_jitter_headroom_kb": int(PRG_JITTER_HEADROOM_KB),
@@ -4968,7 +4981,7 @@ def _tmpfs_key():
         height=H,
         fps=FPS_STR,
         fit=GEOMETRY_FIT,
-        cold_cap=MAX_COLD,
+        cold_cap=av_config.cold_cap_key(_COLD_CAP_REQUEST),
     )
 
 

@@ -15,9 +15,11 @@ mode = "H32"
 width = 256
 height = 224
 fit = "pad"
+# Dither-free comparison build: nearest-colour RGB333 rounding only.
+output_dither = "none"
 
 [output]
-directory = "tmpfs/lunar_sss_op_H32_256x224_adpcm22/sim"
+directory = "tmpfs/lunar_sss_op_H32_256x224_adpcm22_nodither/sim"
 reuse = false
 emit_decisions = true
 

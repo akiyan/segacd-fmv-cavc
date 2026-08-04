@@ -188,7 +188,7 @@ class SharedSectorPlanner:
     def __init__(
             self, frame_count: int, *,
             max_prg_patterns: int,
-            max_cold_patterns: int,
+            max_cold_patterns: int | Sequence[int] | np.ndarray,
             prebuffer_capacity_patterns: int,
             frame_sectors: int,
             fps=None,
@@ -198,13 +198,16 @@ class SharedSectorPlanner:
         count = int(frame_count)
         if count <= 0:
             raise ValueError("shared sector planner needs at least one frame")
-        if int(max_prg_patterns) < 0 or int(max_cold_patterns) < 0:
+        if int(max_prg_patterns) < 0:
             raise ValueError("shared sector limits must be non-negative")
         if int(frame_sectors) <= 0:
             raise ValueError("frame sector capacity must be positive")
         self.frame_count = count
         self.max_prg_patterns = int(max_prg_patterns)
-        self.max_cold_patterns = int(max_cold_patterns)
+        self.max_cold_patterns = _frame_vector(
+            max_cold_patterns, count, name="maximum cold patterns")
+        if int(self.max_cold_patterns.min()) < 0:
+            raise ValueError("shared sector limits must be non-negative")
         self.prebuffer_patterns = (
             int(prebuffer_capacity_patterns)
             // stream_schedule.PATTERNS_PER_SECTOR
@@ -366,7 +369,7 @@ class SharedSectorPlanner:
                 self.useful_sector_capacity[frame])
             limit = SharedSectorFrameLimit(
                 int(prg_limit),
-                int(self.max_cold_patterns),
+                int(self.max_cold_patterns[frame]),
                 int(control_limit),
                 int(cumulative_prg_limit),
                 int(cumulative_control_limit),

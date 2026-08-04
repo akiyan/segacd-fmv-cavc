@@ -22,7 +22,9 @@ reuse = true
 emit_decisions = true
 
 [encoder]
-cold_cap = 225
+# 24 fps alternates 2- and 3-VBlank display slots; give each slot its own
+# qualified decode ceiling instead of one shared middle value.
+cold_cap = "2:180,3:230"
 
 [palette]
 algorithm = "mosaic-gm"

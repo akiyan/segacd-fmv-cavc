@@ -239,15 +239,21 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             f"{profile_path}: video.active_tiles must be within 1..{total_tiles}")
     requested_cold_cap = data["encoder"]["cold_cap"]
     if isinstance(requested_cold_cap, bool) or not isinstance(
-            requested_cold_cap, int):
+            requested_cold_cap, (int, str)):
         raise ValueError(
-            f"{profile_path}: encoder.cold_cap must be an integer")
-    if requested_cold_cap <= 0:
+            f"{profile_path}: encoder.cold_cap must be an integer or a "
+            "'vblanks:cap' spec string")
+    try:
+        cold_ceiling = av_config.cold_cap(requested_cold_cap)
+        # A per-interval spec must match the profile's VBlank cadence; fail
+        # at profile load instead of deep inside sim/pack.
+        av_config.frame_cold_caps(
+            2, str(data["source"]["fps"]), requested_cold_cap)
+    except ValueError as exc:
+        raise ValueError(f"{profile_path}: encoder.cold_cap: {exc}") from exc
+    if cold_ceiling > av_config.VRAM_PATTERN_POOL_TILES:
         raise ValueError(
-            f"{profile_path}: encoder.cold_cap must be positive")
-    if requested_cold_cap > av_config.VRAM_PATTERN_POOL_TILES:
-        raise ValueError(
-            f"{profile_path}: encoder.cold_cap {requested_cold_cap} exceeds "
+            f"{profile_path}: encoder.cold_cap {cold_ceiling} exceeds "
             f"the {av_config.VRAM_PATTERN_POOL_TILES}-tile resident pool")
     cram_priority_search_frames = data.get(
         "encoder", {}).get("cram_quality_priority_search_frames")
@@ -270,10 +276,10 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             "bilinear, lanczos, or neighbor")
     output_dither = str(
         data["video"].get("output_dither", "bayer")).lower()
-    if output_dither not in {"bayer", "edge-attenuated-bayer"}:
+    if output_dither not in {"bayer", "edge-attenuated-bayer", "none"}:
         raise ValueError(
-            f"{profile_path}: video.output_dither must be bayer or "
-            "edge-attenuated-bayer")
+            f"{profile_path}: video.output_dither must be bayer, "
+            "edge-attenuated-bayer, or none")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")

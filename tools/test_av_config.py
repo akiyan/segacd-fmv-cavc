@@ -213,6 +213,35 @@ class ColdCapTests(unittest.TestCase):
         self.assertEqual(av_config.cold_realized_ceiling(180), 180)
         self.assertEqual(av_config.cold_realized_ceiling(225), 225)
 
+    def test_interval_spec_parses_and_reports_the_ceiling(self) -> None:
+        self.assertEqual(av_config.cold_cap("2:170,3:250"), 250)
+        self.assertEqual(av_config.cold_cap_spec("3:250, 2:170"), "2:170,3:250")
+        self.assertEqual(av_config.cold_cap_spec(225), "225")
+        self.assertEqual(av_config.cold_cap_key("2:170,3:250"), "2x170-3x250")
+        self.assertEqual(av_config.cold_cap_key("225"), "225")
+
+    def test_interval_spec_rejects_bad_entries(self) -> None:
+        for value in ("2:170,2:250", "0:100", "5:100", "2:0", "2:a", "2:"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                av_config.cold_cap(value)
+
+    def test_frame_cold_caps_follow_the_24fps_cadence(self) -> None:
+        caps = av_config.frame_cold_caps(6, 24, "2:170,3:250")
+        # Frame 1 uses cadence element zero (2 VBlanks), like rate_deltas.
+        self.assertEqual(caps, [250, 170, 250, 170, 250, 170])
+        self.assertEqual(
+            av_config.frame_cold_caps(4, 30, 200), [200, 200, 200, 200])
+
+    def test_frame_cold_caps_reject_mismatched_cadence(self) -> None:
+        with self.assertRaisesRegex(ValueError, "delivery-paced"):
+            av_config.frame_cold_caps(4, 26, "2:170,3:250")
+        with self.assertRaisesRegex(ValueError, "lacks caps"):
+            av_config.frame_cold_caps(4, 24, "2:170")
+        with self.assertRaisesRegex(ValueError, "never uses"):
+            av_config.frame_cold_caps(4, 30, "2:170,3:250")
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            av_config.frame_cold_caps(0, 24, "2:170,3:250")
+
 
 if __name__ == "__main__":
     unittest.main()

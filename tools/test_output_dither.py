@@ -93,6 +93,14 @@ class OutputDitherTests(unittest.TestCase):
             output_dither.edge_attenuated_bayer_rgb333(image),
         )
 
+    def test_none_mode_matches_nearest_colour_rounding(self) -> None:
+        image = np.random.default_rng(111).integers(
+            0, 256, (16, 24, 3), dtype=np.uint8)
+        nearest = output_dither.quantize_rgb333(image, output_dither.NONE)
+        np.testing.assert_array_equal(nearest, rgb888_to_rgb333(image))
+        self.assertTrue(np.any(
+            nearest != output_dither.bayer_rgb333(image)))
+
     def test_unknown_profile_mode_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "output dither"):
             output_dither.quantize_rgb333(

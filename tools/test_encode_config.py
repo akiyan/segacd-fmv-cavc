@@ -123,7 +123,9 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             {
                 "bad-apple.toml",
                 "lunar-sss-op-h32.toml",
+                "lunar-sss-op-h32-nodither.toml",
                 "lunar-sss-op-h40.toml",
+                "lunar-sss-op-h40-nodither.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
                 "ps2-sakura-op-h32.toml",
@@ -302,7 +304,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_profile_cold_cap_must_be_positive_and_fit_the_grid(self) -> None:
         for value, message in (
-                ("0", "cold_cap must be positive"),
+                ("0", "cold cap must be positive"),
                 ("1664", "exceeds the 1663-tile resident pool")):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "invalid-cold-cap.toml"
@@ -310,6 +312,29 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                     "cold_cap = 200", f"cold_cap = {value}"))
                 with self.assertRaisesRegex(ValueError, message):
                     load_profile(path)
+
+    def test_profile_interval_cold_cap_spec_matches_the_cadence(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "multi-cold-cap.toml"
+            path.write_text(PROFILE.replace(
+                'fps = "30"', 'fps = "24"').replace(
+                "cold_cap = 200", 'cold_cap = "2:170,3:250"'))
+            env = apply_profile_env(load_profile(path), {})
+            self.assertEqual(env["CBRSIM_COLD_CAP"], "2:170,3:250")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "multi-cold-cap-pool.toml"
+            path.write_text(PROFILE.replace(
+                'fps = "30"', 'fps = "24"').replace(
+                "cold_cap = 200", 'cold_cap = "2:170,3:1664"'))
+            with self.assertRaisesRegex(
+                    ValueError, "exceeds the 1663-tile resident pool"):
+                load_profile(path)
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "multi-cold-cap-30.toml"
+            path.write_text(PROFILE.replace(
+                "cold_cap = 200", 'cold_cap = "2:170,3:250"'))
+            with self.assertRaisesRegex(ValueError, "never uses"):
+                load_profile(path)
 
     def test_profile_may_override_cram_quality_priority_search_frames(
         self,

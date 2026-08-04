@@ -31,6 +31,16 @@ def _truthy(value):
     return str(value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _cold_cap_key(env):
+    """Return the artifact-name cold cap identity for the effective env."""
+    raw = env.get("CBRSIM_COLD_CAP", "").strip()
+    if not raw:
+        return "0"
+    import av_config
+
+    return av_config.cold_cap_key(raw)
+
+
 def _below_retired_media_dir(path):
     try:
         Path(path).absolute().relative_to((PROJECT_ROOT / "videos").absolute())
@@ -58,7 +68,7 @@ def sim_cache_key(environ=None):
         height=int(env.get("CBRSIM_H", "144")),
         fps=env.get("CBRSIM_FPS", "15"),
         fit=env.get("CBRSIM_GEOMETRY_FIT", "pad"),
-        cold_cap=int(env.get("CBRSIM_COLD_CAP", "0")),
+        cold_cap=_cold_cap_key(env),
     )
 
 
