@@ -347,23 +347,11 @@ NEAR_KEEP_ACCURATE_ONLY = os.environ.get("CBRSIM_NEAR_ACCURATE_ONLY", "1") != "0
 # remain byte-identical across frames. Edge attenuation is opt-in.
 OUTPUT_DITHER = output_dither.normalize_mode(os.environ.get(
     "CBRSIM_OUTPUT_DITHER", output_dither.BAYER))
-# pal-bayer moves the ordered dither from the RGB333 cube to the assigned
-# palette line: training/assignment see nearest rounding and the index stage
-# mixes each pixel's two best palette entries with the same Bayer matrix. This
-# keeps a soft dark halo from snapping to the line's forced black entry.
 # A palette line only lends its deep-black entries to colour reproduction
 # when the segment's source demonstrably contains such darkness. Demand is the
 # fraction of the segment's Bayer-view pixels that are exactly (0,0,0).
 DEEP_BLACK_DEMAND_MIN = float(os.environ.get(
     "CBRSIM_DEEP_BLACK_DEMAND_MIN", "0.03"))
-PAL_MULTI_ON = OUTPUT_DITHER == output_dither.PAL_MULTI
-PAL_DITHER_ON = OUTPUT_DITHER in (
-    output_dither.PAL_BAYER, output_dither.PAL_MULTI)
-# Mixing-plan length for pal-multi. It must divide 64 so the position-fixed
-# Bayer matrix maps evenly onto plan slots. Longer plans approximate the
-# target more finely at proportionally more search cost.
-PAL_DITHER_PLAN_SIZE = int(os.environ.get(
-    "CBRSIM_PAL_DITHER_PLAN_SIZE", "16"))
 # Optional source preprocessing, applied before both the master and raw paths.
 # Out-of-range defaults disable it for profiles without endpoint_snap.
 PREPROCESS_BLACK_MAX = int(os.environ.get(
@@ -744,14 +732,9 @@ def _frame_features(path):
     fade_probe = image_u8.reshape(
         TROWS, TILE, TCOLS, TILE, 3
     ).mean(axis=(1, 3)).reshape(C_CELLS, 3).astype(np.float32)
-    if PAL_DITHER_ON:
-        dither_targets = _flatten_dither_targets(image_u8, flatten_mask)
-    else:
-        dither_targets = None
     return (
         tiles, strengths, detail.astype(np.float32),
         flatten_mask, flat_color, fade_probe, dark, uniform,
-        dither_targets,
     )
 
 
@@ -767,9 +750,6 @@ class FrameFeatureCache:
         self.flatten_mask = np.empty((n, C_CELLS), dtype=bool)
         self.flat_color = np.empty((n, C_CELLS, 3), dtype=np.uint8)
         self.fade_probe = np.empty((n, C_CELLS, 3), dtype=np.float32)
-        self.dither_targets = (
-            np.empty((n, C_CELLS, 64, 3), dtype=np.uint8)
-            if PAL_DITHER_ON else None)
         dark = np.empty(n, dtype=np.float64)
         uniform = np.empty(n, dtype=np.float64)
 
@@ -791,9 +771,7 @@ class FrameFeatureCache:
                 (self.tiles[index], self.edge_strength[index], self.detail[index],
                  self.flatten_mask[index], self.flat_color[index],
                  self.fade_probe[index],
-                 dark[index], uniform[index], targets) = result
-                if self.dither_targets is not None:
-                    self.dither_targets[index] = targets
+                 dark[index], uniform[index]) = result
         finally:
             if pool is not None:
                 pool.shutdown(wait=True)
@@ -802,7 +780,6 @@ class FrameFeatureCache:
             self.tiles.nbytes + self.edge_strength.nbytes + self.detail.nbytes
             + self.flatten_mask.nbytes + self.flat_color.nbytes
             + self.fade_probe.nbytes
-            + (self.dither_targets.nbytes if self.dither_targets is not None else 0)
             + dark.nbytes + uniform.nbytes)
         print(f"  palette frame cache: {resident / (1024 ** 2):.1f} MiB", flush=True)
 
@@ -1118,21 +1095,6 @@ def _quant_init(frames, seg_pals, frame_seg, seg_black_wanted=None):
     _WG["seg_black_wanted"] = dict(seg_black_wanted or {})
 
 
-def _flatten_dither_targets(image_u8, flatten_mask):
-    """Return RGB888 tiles with low-detail tiles flattened to their mean.
-
-    pal-bayer's index stage dithers from the pre-quantization pixels; a tile
-    the RGB333 path flattened must present one flat colour here too, or the
-    dither would reintroduce the texture the flattening removed.
-    """
-    tiles888 = tile_blocks(image_u8).astype(np.uint8, copy=True)
-    if flatten_mask.any():
-        means = np.rint(
-            tiles888[flatten_mask].astype(np.float64).mean(axis=1))
-        tiles888[flatten_mask] = means.astype(np.uint8)[:, None, :]
-    return tiles888
-
-
 def _quant_one(i):
     # 重い部分(割当/索引)だけ並列で。plain_rgb は逐次側で render_cells(軽い)＝IPCを小さく保つ。
     seg = int(_WG["frame_seg"][i])
@@ -1149,29 +1111,15 @@ def _quant_one(i):
     else:
         assign = assign_palette(flat, cur_pals, exclude_deep_black=no_black)
         pidx = idx_for(flat, assign, cur_pals, exclude_deep_black=no_black)
-    if PAL_DITHER_ON:
-        targets = _flatten_dither_targets(image_u8, detail < FLATTEN_STD)
-        if PAL_MULTI_ON:
-            pidx = output_dither.palette_multi_candidate_indices(
-                targets, assign, np.asarray(cur_pals),
-                plan_size=PAL_DITHER_PLAN_SIZE)
-        else:
-            pidx = output_dither.palette_aware_indices(
-                targets, assign, np.asarray(cur_pals))
     return detail.astype(np.float32), assign, pidx
 
 
 def _quant_one_flat(i):
     # GPU モード用: 割当/索引は GPU 側でやるので、ここは読込→333化→タイル化→平坦化まで。
     # 各ワーカーは cupy に触れない(fork と CUDA は両立しない)。flat を親へ返す。
-    image_u8 = np.asarray(Image.open(_WG["frames"][i]).convert("RGB"))
-    m333 = to_rgb333(image_u8)
+    m333 = to_rgb333(np.asarray(Image.open(_WG["frames"][i]).convert("RGB")))
     flat, detail = flatten_low_detail(tile_blocks(m333))
-    if PAL_DITHER_ON:
-        targets = _flatten_dither_targets(image_u8, detail < FLATTEN_STD)
-    else:
-        targets = None
-    return detail.astype(np.float32), flat.astype(np.uint8), targets
+    return detail.astype(np.float32), flat.astype(np.uint8)
 
 
 def n_workers():
@@ -1282,35 +1230,22 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
                 f"precompute quantization: {n} cached frames + GPU assign/idx ...",
                 flush=True,
             )
-        if PAL_MULTI_ON:
-            thresholds = (
-                output_dither.BAYER8.astype(np.int64).reshape(64)
-                * PAL_DITHER_PLAN_SIZE) // 64
-        elif PAL_DITHER_ON:
-            thresholds = output_dither.tile_bayer_numerators()
-        else:
-            thresholds = None
-        plan_size = PAL_DITHER_PLAN_SIZE if PAL_MULTI_ON else 0
         wanted = dict(seg_black_wanted or {})
         if frame_cache is not None:
             for i in range(n):
                 details[i] = frame_cache.detail[i].copy()
                 flat = frame_cache.flattened_frame(i)
-                targets = (
-                    frame_cache.dither_targets[i] if PAL_DITHER_ON else None)
                 assigns[i], pidxs[i] = gpu_quant.assign_idx_one(
                     flat, int(frame_seg[i]), seg_pals, cache,
                     coherent_shape=((TROWS, TCOLS) if PAL_ALGO == MOSAIC_GM else None),
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
-                    dither_targets=targets, dither_thresholds=thresholds,
-                    dither_plan_size=plan_size,
                     exclude_deep_black=not wanted.get(int(frame_seg[i]), True))
         elif w > 1:
             import multiprocessing as mp
             with mp.get_context(quant_pool_start_method(gpu_on)).Pool(
                     w, initializer=_quant_init, initargs=(frames, seg_pals, frame_seg)) as pool:
-                for i, (det, flat, targets) in enumerate(
+                for i, (det, flat) in enumerate(
                         pool.imap(_quant_one_flat, range(n), chunksize=8)):
                     details[i] = det
                     assigns[i], pidxs[i] = gpu_quant.assign_idx_one(
@@ -1318,20 +1253,18 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
                         coherent_shape=((TROWS, TCOLS) if PAL_ALGO == MOSAIC_GM else None),
                         seam_weight=PAL_SEAM_WEIGHT,
                         seam_iterations=PAL_SEAM_ITERATIONS,
-                        dither_targets=targets, dither_thresholds=thresholds,
-                    dither_plan_size=plan_size)
+                        exclude_deep_black=not wanted.get(
+                            int(frame_seg[i]), True))
         else:
             _quant_init(frames, seg_pals, frame_seg)
             for i in range(n):
-                det, flat, targets = _quant_one_flat(i)
+                det, flat = _quant_one_flat(i)
                 details[i] = det
                 assigns[i], pidxs[i] = gpu_quant.assign_idx_one(
                     flat, int(frame_seg[i]), seg_pals, cache,
                     coherent_shape=((TROWS, TCOLS) if PAL_ALGO == MOSAIC_GM else None),
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
-                    dither_targets=targets, dither_thresholds=thresholds,
-                    dither_plan_size=plan_size,
                     exclude_deep_black=not wanted.get(int(frame_seg[i]), True))
         return (details, assigns, pidxs)
 
@@ -5307,7 +5240,6 @@ def main(demoted_fade_anchors=frozenset()):
     report = "\n".join([
         f"resolution={W}x{H} cells/frame={C_CELLS} active_tiles={ACTIVE_TILES} fps={FPS}",
         f"output_dither={OUTPUT_DITHER}",
-        f"pal_dither_plan_size={PAL_DITHER_PLAN_SIZE}",
         f"body_gross_bytes_per_frame={body_gross_bytes[1:].mean():.1f} "
         f"(exact sectors {sorted(set(int(x // stream_schedule.SECTOR_BYTES) for x in body_gross_bytes[1:]))})",
         f"body_fixed_control_bytes_per_frame={body_fixed_control_bytes[1:].mean():.1f}",

@@ -127,15 +127,12 @@ def _coherent_assignment(cp, perr, keys, index, pals, rows, cols,
 
 
 def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
-                   seam_weight=0.0, seam_iterations=2, dither_targets=None,
-                   dither_thresholds=None, dither_plan_size=0,
+                   seam_weight=0.0, seam_iterations=2,
                    exclude_deep_black=False):
     """1コマ分。flat (C,64,3) uint8 rgb333 -> (assign int8 (C,), pidx uint8 (C,64) 1..15)。
 
     CPU版 assign_palette/idx_for と同一結果(argmin の最初の最小=同じtie挙動)。
-    ``dither_targets`` (C,64,3) uint8 RGB888 を渡すと、索引段が
-    output_dither.palette_aware_indices と同じ2候補順序ディザになる
-    (``dither_thresholds`` は tile_bayer_numerators() の (64,) 整数分子)。
+    ``exclude_deep_black`` は palette_lut と同じく、深い黒entryを候補から外す。
     """
     cp = _STATE["cp"]
     error, index, pals = cache.get(
@@ -152,55 +149,8 @@ def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
             float(seam_weight), int(seam_iterations))
     else:
         a = perr.argmin(1)                                    # (C,) 最良パレット
-    if dither_targets is None:
-        p = index[a[:, None], keys] + 1                        # (C,64) 1..15
-        return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p).astype(np.uint8)
-    # Palette-aware ordered dither, integer-exact vs the NumPy reference.
-    t255 = cp.asarray(dither_targets, dtype=cp.int64) * 7      # (C,64,3)
-    if int(dither_plan_size) > 0:
-        plan_size = int(dither_plan_size)
-        cells = t255.shape[0]
-        rows_m = pals.astype(cp.int64)[a] * 255                # (C,15,3)
-        so_far = cp.zeros_like(t255)
-        plan = cp.empty(t255.shape[:2] + (plan_size,), dtype=cp.int64)
-        for step in range(plan_size):
-            want = (step + 1) * t255
-            delta = (so_far[:, :, None, :] + rows_m[:, None, :, :]
-                     - want[:, :, None, :])
-            plan[:, :, step] = (delta * delta).sum(-1).argmin(-1)
-            so_far = so_far + cp.take_along_axis(
-                rows_m, plan[:, :, step][..., None], axis=1)
-        levels = pals.astype(cp.int64)[a]
-        luma = (77 * levels[..., 0] + 150 * levels[..., 1]
-                + 29 * levels[..., 2])
-        key = luma * 16 + cp.arange(levels.shape[1], dtype=cp.int64)
-        plan_key = cp.take_along_axis(
-            key, plan.reshape(cells, -1), axis=1).reshape(plan.shape)
-        order = cp.argsort(plan_key, axis=-1, kind="stable")
-        ordered = cp.take_along_axis(plan, order, axis=-1)
-        slot = cp.asarray(dither_thresholds, dtype=cp.int64)
-        picks = cp.broadcast_to(slot[None, :, None], (cells, 64, 1))
-        chosen = cp.take_along_axis(ordered, picks, axis=-1)[..., 0]
-        return (cp.asnumpy(a).astype(np.int8),
-                cp.asnumpy(chosen + 1).astype(np.uint8))
-    rows_c = pals.astype(cp.int64)[a] * 255                    # (C,15,3)
-    diff1 = t255[:, :, None, :] - rows_c[:, None, :, :]
-    dist1 = (diff1 * diff1).sum(-1)                            # (C,64,15)
-    c1 = dist1.argmin(-1)                                      # (C,64)
-    e1 = cp.take_along_axis(rows_c, c1[..., None], axis=1)
-    mirror = 2 * t255 - e1
-    diff2 = mirror[:, :, None, :] - rows_c[:, None, :, :]
-    far_cost = (diff2 * diff2).sum(-1)                         # (C,64,15)
-    c2 = far_cost.argmin(-1)
-    e2 = cp.take_along_axis(rows_c, c2[..., None], axis=1)
-    d = t255 - e1
-    e = e2 - e1
-    num = (d * e).sum(-1)
-    den = (e * e).sum(-1)
-    thr = cp.asarray(dither_thresholds, dtype=cp.int64)[None, :]
-    chosen = cp.where(((128 * num) > (thr * den)) & (den > 0), c2, c1)
-    p = (chosen + 1).astype(cp.uint8)
-    return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p)
+    p = index[a[:, None], keys] + 1                            # (C,64) 1..15
+    return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p).astype(np.uint8)
 
 
 def _tile_err(cp, keys, pal, T):
