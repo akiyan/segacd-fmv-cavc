@@ -133,6 +133,13 @@ Visible updates may reclaim a prefetched slot when the pool is temporarily
 full; the automatically sized preparation window includes retry room for both
 display protection and reclaimed entries. The derived catch-up schedule
 restores them before the anchor or rejects the fade as infeasible.
+Feasibility is proved by the decision replay itself. When a preparation
+deadline cannot complete — typically a fade-out whose reference sits at the
+end of a detailed moving shot, where visible updates keep reclaiming the
+advance pins — the encoder demotes that shot to ordinary frames and re-plans
+the encode without it. The palette tables keep the demoted shot's segment
+boundaries with an unscaled entry palette, and every fade whose preparation
+completes is unchanged.
 Connected shots similarly use the earlier static interval when a one-frame
 black gap is too short. Audio, prefetch/refill work, APPLY flow, physical
 pattern delivery, and the cold-run suffix continue on the update-free fade
@@ -690,6 +697,11 @@ DMAより前に複数VBlankへまたがる場合があるため、prefetchは現
 poolが一時的に満杯なら表示updateがprefetch済みslotを回収できますが、自動算出する準備windowは
 表示保護とentry回収の両方にretry容量を持ちます。catch-up scheduleがanchorまでに復元し、
 間に合わないfadeは不成立として退けます。
+実現可能性はdecision replay自体で証明します。準備deadlineが完了できない場合
+（典型的には、fade直前まで動き続ける細部の多いshotの末尾に参照があり、可視updateが
+事前搬入のpinを回収し続けるfade-out）、encoderはそのshotを通常frameへ降格し、
+そのfadeを除いて再計画します。palette表は降格shotのsegment境界を無scaleの
+entry paletteのまま保持し、準備が完了するfadeは一切変わりません。
 1-frameの黒gapが短すぎる連続shotも同様に、前のstatic intervalを使って次のreferenceを
 prefetchします。このupdate-free fade controlでもaudio、prefetch/refill、
 APPLY flow、物理pattern delivery、cold-run suffixは継続します。

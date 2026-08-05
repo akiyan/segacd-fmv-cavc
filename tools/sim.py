@@ -1258,7 +1258,21 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
     return ([q[0] for q in Q], [q[1] for q in Q], [q[2] for q in Q])
 
 
-def main():
+class FadeDeadlineInfeasible(SystemExit):
+    """A fade preparation deadline could not complete in the decision replay.
+
+    The runner treats this as a re-plan request: the failed shot's anchor is
+    demoted and the encode restarts without that fade. Deriving from
+    SystemExit keeps a non-retrying caller failing loudly with the full
+    diagnostics.
+    """
+
+    def __init__(self, anchor, message):
+        super().__init__(message)
+        self.anchor = int(anchor)
+
+
+def main(demoted_fade_anchors=frozenset()):
     global DEDITHER_VF, RAW_VF
     if (sys.version_info[:3] == (3, 14, 4)
             and np.__version__ == "2.5.1"):
@@ -1989,6 +2003,52 @@ def main():
             np.asarray(Q_assign[reference], np.int8).copy(),
             np.asarray(Q_detail[reference]).copy(),
         )
+    # Fade feasibility is proved by the decision replay itself: when a
+    # preparation deadline cannot complete, the runner re-plans with that
+    # shot's anchor demoted to ordinary frames. Static estimates cannot
+    # separate a survivable window from a churning one (a moving detailed
+    # shot keeps reclaiming the advance pins), so no planning-side estimator
+    # decides adoption. The palette segment tables keep the demoted shot's
+    # boundaries; its entry palette is unscaled, so ordinary frames simply
+    # play through them.
+    demoted_fade_shots = [
+        shot for shot in fade_layout.shots
+        if int(shot.anchor) in demoted_fade_anchors]
+    kept_fade_shots = [
+        shot for shot in fade_layout.shots
+        if int(shot.anchor) not in demoted_fade_anchors]
+    if demoted_fade_shots:
+        for shot in demoted_fade_shots:
+            print(
+                "  fade demotion: "
+                f"anchor=f{int(shot.anchor)} kind={shot.kind} "
+                "(decision replay proved its preparation deadline "
+                "infeasible)",
+                flush=True,
+            )
+        (fade_reference_frames, fade_desired_scales, fade_phases,
+         fade_preparation_frames,
+         fade_preparation_deadlines) = fade_frames.overlay_shot_targets(
+            kept_fade_shots, n)
+        fade_entry_scales = list(fade_layout.entry_scales)
+        for shot in demoted_fade_shots:
+            fade_entry_scales[
+                int(fade_layout.frame_segments[int(shot.anchor)])] = 1.0
+        fade_layout = dataclasses.replace(
+            fade_layout,
+            shots=tuple(kept_fade_shots),
+            entry_scales=tuple(fade_entry_scales),
+            reference_frames=fade_reference_frames,
+            desired_scales=fade_desired_scales,
+            phases=fade_phases,
+            preparation_frames=fade_preparation_frames,
+            preparation_deadlines=fade_preparation_deadlines,
+        )
+        palette_stats["fade_detection"]["demoted_infeasible"] = sorted(
+            int(shot.anchor) for shot in demoted_fade_shots)
+        palette_stats["fade_detection"]["selected_shots"] = len(
+            fade_layout.shots)
+
     for frame, raw_reference in enumerate(fade_layout.reference_frames):
         reference = int(raw_reference)
         if reference < 0:
@@ -3460,6 +3520,9 @@ def main():
             # and require exact completion only on that run's final frame.
             # Retry blocked cells because a later cell can load a shared key
             # that makes an earlier name-only update affordable.
+            resident_before = sum(
+                1 for c in order
+                if alloc.is_resident(plain_keys[c]))
             pending = list(order)
             while pending:
                 deferred = []
@@ -3472,9 +3535,51 @@ def main():
                 pending = deferred
                 if not progressed:
                     break
+            if i in fade_prepare_deadlines:
+                print(
+                    "  fade prepare: "
+                    f"f{i} cells={len(order)} "
+                    f"resident_before={resident_before} "
+                    f"cold={cold_spent}/{frame_max_cold} "
+                    f"Prg={prg_spent}/{frame_max_prg} "
+                    f"remaining={len(pending)}",
+                    flush=True,
+                )
             if pending and i in fade_prepare_deadlines:
                 c = int(pending[0])
-                raise SystemExit(
+                blocked = {
+                    "funded": 0, "control": 0, "transition": 0,
+                    "prg_source": 0, "cold_limit": 0,
+                }
+                for probe in pending:
+                    key = plain_keys[probe]
+                    source = preload_source(key)
+                    cost = update_entry_bytes + (
+                        0 if source != pattern_supply.SOURCE_PRG
+                        else PATTERN_BYTES)
+                    if reserved_variable_spend(
+                            spent_tiles + cost,
+                            cold_spent + 1) > decision_budget:
+                        blocked["funded"] += 1
+                    ctrl = (
+                        int(body_fixed_control_bytes[i])
+                        + (name_recs + 1) * update_entry_bytes
+                        + (cold_spent + 1)
+                        * stream_schedule.RUN_DESCRIPTOR_BYTES)
+                    if ctrl > visible_control_block_limit:
+                        blocked["control"] += 1
+                    if not transition_guard.fits(probe, key):
+                        blocked["transition"] += 1
+                    if not prg_source_fits(source, probe):
+                        blocked["prg_source"] += 1
+                    if (cold_limit_active
+                            and cold_spent >= visible_frame_max_cold):
+                        blocked["cold_limit"] += 1
+                deadline_shot = next(
+                    shot for shot in fade_layout.shots
+                    if int(shot.preparation_end) == i)
+                raise FadeDeadlineInfeasible(
+                    int(deadline_shot.anchor),
                     f"automatic fade preparation deadline {i} cannot "
                     f"prepare exact cell {c} within its frozen "
                     f"quality/cold limits "
@@ -3483,7 +3588,14 @@ def main():
                     f"Prg={prg_spent}/{frame_max_prg}, "
                     f"work={current_reserved_spend()}/{decision_budget}B, "
                     f"control={int(body_fixed_control_bytes[i]) + name_recs * update_entry_bytes + cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES}/"
-                    f"{frame_control_block_limit}B)")
+                    f"{frame_control_block_limit}B; "
+                    f"blocked_by funded={blocked['funded']} "
+                    f"control={blocked['control']} "
+                    f"transition={blocked['transition']} "
+                    f"prg_source={blocked['prg_source']} "
+                    f"cold_limit={blocked['cold_limit']}; "
+                    f"guard_used={transition_guard.used}/"
+                    f"{transition_guard.capacity})")
         elif MIDFAR_ON:
             # Phase 1: establish every free/cheap result without allowing a
             # cold load to consume a later cell's fallback entry.
@@ -5899,7 +6011,23 @@ if __name__ == "__main__":
         _standalone_completed = False
         try:
             if _standalone_lease is None or not _standalone_lease.reused:
-                main()
+                _demoted_fade_anchors = set()
+                while True:
+                    try:
+                        main(demoted_fade_anchors=frozenset(
+                            _demoted_fade_anchors))
+                        break
+                    except FadeDeadlineInfeasible as exc:
+                        if exc.anchor in _demoted_fade_anchors:
+                            raise
+                        _demoted_fade_anchors.add(exc.anchor)
+                        import gc as _retry_gc
+                        _retry_gc.enable()
+                        print(
+                            f"fade preparation infeasible at f{exc.anchor}; "
+                            "re-planning without that fade",
+                            flush=True,
+                        )
                 _standalone_completed = True
             else:
                 print(
