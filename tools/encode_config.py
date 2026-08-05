@@ -50,6 +50,7 @@ ENV_MAP = {
     ("video", "resize_filter"): "CBRSIM_RESIZE_FILTER",
     ("video", "master_denoise"): "CBRSIM_MASTER_DENOISE",
     ("video", "output_dither"): "CBRSIM_OUTPUT_DITHER",
+    ("video", "output_dither_pair_cap_sq"): "CBRSIM_PAL_DITHER_PAIR_CAP_SQ",
     ("video", "master_filter"): "CBRSIM_MASTER_VF",
     ("video", "raw_filter"): "CBRSIM_RAW_VF",
     ("output", "directory"): "CBRSIM_OUT",
@@ -72,6 +73,7 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_RESIZE_FILTER": "lanczos",
     "CBRSIM_MASTER_DENOISE": "1",
     "CBRSIM_OUTPUT_DITHER": "bayer",
+    "CBRSIM_PAL_DITHER_PAIR_CAP_SQ": "0",
     "CBRSIM_GPU": "1",
     "CBRSIM_VRAM_TILES": str(av_config.VRAM_PATTERN_POOL_TILES),
     "CBRSIM_SEGPAL": "1",
@@ -282,6 +284,15 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         raise ValueError(
             f"{profile_path}: video.output_dither must be bayer, "
             "edge-attenuated-bayer, pal-bayer, or none")
+    pair_cap = data["video"].get("output_dither_pair_cap_sq", 0)
+    if not isinstance(pair_cap, int) or isinstance(pair_cap, bool) or pair_cap < 0:
+        raise ValueError(
+            f"{profile_path}: video.output_dither_pair_cap_sq must be a "
+            "non-negative integer")
+    if pair_cap and output_dither != "pal-bayer":
+        raise ValueError(
+            f"{profile_path}: video.output_dither_pair_cap_sq applies only to "
+            "output_dither = \"pal-bayer\"")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")

@@ -117,7 +117,7 @@ def _coherent_assignment(cp, perr, keys, index, pals, rows, cols,
 
 def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
                    seam_weight=0.0, seam_iterations=2, dither_targets=None,
-                   dither_thresholds=None):
+                   dither_thresholds=None, dither_pair_cap_sq=0):
     """1コマ分。flat (C,64,3) uint8 rgb333 -> (assign int8 (C,), pidx uint8 (C,64) 1..15)。
 
     CPU版 assign_palette/idx_for と同一結果(argmin の最初の最小=同じtie挙動)。
@@ -149,9 +149,22 @@ def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
     dist1 = (diff1 * diff1).sum(-1)                            # (C,64,15)
     c1 = dist1.argmin(-1)                                      # (C,64)
     e1 = cp.take_along_axis(rows_c, c1[..., None], axis=1)
-    masked = dist1.copy()
-    cp.put_along_axis(masked, c1[..., None], cp.iinfo(cp.int64).max, axis=-1)
-    c2 = masked.argmin(-1)
+    mirror = 2 * t255 - e1
+    diff2 = mirror[:, :, None, :] - rows_c[:, None, :, :]
+    far_cost = (diff2 * diff2).sum(-1)                         # (C,64,15)
+    c2 = far_cost.argmin(-1)
+    if int(dither_pair_cap_sq) > 0:
+        cap = int(dither_pair_cap_sq)
+        levels = pals.astype(cp.int64)[a]                      # (C,15,3)
+        e1_levels = cp.take_along_axis(levels, c1[..., None], axis=1)
+        span = levels[:, None, :, :] - e1_levels[:, :, None, :]
+        span_sq = (span * span).sum(-1)                         # (C,64,15)
+        eligible = (span_sq <= cap) & (span_sq > 0)
+        capped_cost = cp.where(eligible, far_cost, cp.iinfo(cp.int64).max)
+        c2_capped = capped_cost.argmin(-1)
+        too_far = cp.take_along_axis(
+            span_sq, c2[..., None], axis=-1)[..., 0] > cap
+        c2 = cp.where(too_far & eligible.any(-1), c2_capped, c2)
     e2 = cp.take_along_axis(rows_c, c2[..., None], axis=1)
     d = t255 - e1
     e = e2 - e1

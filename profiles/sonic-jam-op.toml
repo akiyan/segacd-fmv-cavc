@@ -21,6 +21,8 @@ master_filter = "setsar=1,guided=radius=1:eps=0.002:planes=15"
 raw_filter = "setsar=1"
 # Experimental palette-aware dither under evaluation on this branch.
 output_dither = "pal-bayer"
+# Bound the mixing pair so a dark halo cannot blend with the line black entry.
+output_dither_pair_cap_sq = 3
 
 [output]
 directory = "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold210/sim"

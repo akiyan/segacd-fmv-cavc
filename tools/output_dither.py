@@ -154,15 +154,17 @@ def palette_aware_indices(
         targets888: np.ndarray,
         assign: np.ndarray,
         pals_arr: np.ndarray,
+        pair_cap_sq: int = 0,
 ) -> np.ndarray:
     """Ordered-dither tiles between their two best palette entries.
 
     ``targets888`` is (C, 64, 3) uint8 source pixels (pre-quantization),
     ``assign`` is (C,) palette-line selection, ``pals_arr`` is (4, 15, 3)
     RGB333.  For each pixel the first candidate is the nearest palette entry;
-    the second is the nearest remaining entry; the position-fixed Bayer
-    threshold picks between them by the projection fraction along the
-    c1-to-c2 axis.  All arithmetic is integer so CPU and GPU agree bit for bit.
+    the second reflects the target across the first, so the pair straddles it;
+    the position-fixed Bayer threshold picks between them by the projection
+    fraction along the c1-to-c2 axis. ``pair_cap_sq`` bounds the squared
+    RGB333-level distance between the two entries (0 disables the bound).  All arithmetic is integer so CPU and GPU agree bit for bit.
 
     Returns (C, 64) uint8 CRAM indices 1..15.
     """
@@ -178,12 +180,33 @@ def palette_aware_indices(
     dist1 = (diff1 * diff1).sum(-1)                           # (C,64,15)
     c1 = dist1.argmin(-1)                                     # (C,64)
     e1 = np.take_along_axis(rows, c1[..., None], axis=1)      # (C,64,3)
-    # The mixing partner is the nearest entry other than c1, so a gentle
-    # gradient always dithers between its two closest colours instead of
-    # collapsing to flat c1 patches.
-    masked = dist1.copy()
-    np.put_along_axis(masked, c1[..., None], np.iinfo(np.int64).max, axis=-1)
-    c2 = masked.argmin(-1)
+    # The natural partner reflects the target across c1, so the pair straddles
+    # the target and their Bayer mix keeps the mean colour. Picking the merely
+    # nearest entry instead flattens gradients and makes neighbouring tiles
+    # choose different pairs, which reads as tile-boundary noise.
+    mirror = 2 * t255 - e1
+    diff2 = mirror[:, :, None, :] - rows[:, None, :, :]
+    far_cost = (diff2 * diff2).sum(-1)                        # (C,64,15)
+    c2 = far_cost.argmin(-1)
+    if pair_cap_sq > 0:
+        # Bound how far apart a mixing pair may sit. Beyond the cap the mix
+        # spans unrelated colours (a dark halo blended with black reads as
+        # isolated black specks). Move the partner only as close as the cap
+        # requires, keeping the best remaining match to the reflected target
+        # rather than collapsing to the nearest entry. With no eligible
+        # partner inside the cap the far one stands.
+        levels = np.asarray(pals_arr, dtype=np.int64)[
+            np.asarray(assign, dtype=np.int64)]               # (C,15,3)
+        e1_levels = np.take_along_axis(
+            levels, c1[..., None], axis=1)                    # (C,64,3)
+        span = levels[:, None, :, :] - e1_levels[:, :, None, :]
+        span_sq = (span * span).sum(-1)                       # (C,64,15)
+        eligible = (span_sq <= int(pair_cap_sq)) & (span_sq > 0)
+        capped_cost = np.where(eligible, far_cost, np.iinfo(np.int64).max)
+        c2_capped = capped_cost.argmin(-1)
+        too_far = np.take_along_axis(
+            span_sq, c2[..., None], axis=-1)[..., 0] > int(pair_cap_sq)
+        c2 = np.where(too_far & eligible.any(-1), c2_capped, c2)
     e2 = np.take_along_axis(rows, c2[..., None], axis=1)
     d = t255 - e1
     e = e2 - e1

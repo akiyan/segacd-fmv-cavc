@@ -352,6 +352,12 @@ OUTPUT_DITHER = output_dither.normalize_mode(os.environ.get(
 # mixes each pixel's two best palette entries with the same Bayer matrix. This
 # keeps a soft dark halo from snapping to the line's forced black entry.
 PAL_DITHER_ON = OUTPUT_DITHER == output_dither.PAL_BAYER
+# Bound the squared RGB333-level distance between a pal-bayer mixing pair.
+# 0 keeps the unbounded reflected partner. Sweeping this is how the mode is
+# tuned: too small collapses toward flat nearest-colour tiles, too large lets
+# a dark halo mix with the line's black entry.
+PAL_DITHER_PAIR_CAP_SQ = int(os.environ.get(
+    "CBRSIM_PAL_DITHER_PAIR_CAP_SQ", "0"))
 # Optional source preprocessing, applied before both the master and raw paths.
 # Out-of-range defaults disable it for profiles without endpoint_snap.
 PREPROCESS_BLACK_MAX = int(os.environ.get(
@@ -1132,7 +1138,8 @@ def _quant_one(i):
     if PAL_DITHER_ON:
         targets = _flatten_dither_targets(image_u8, detail < FLATTEN_STD)
         pidx = output_dither.palette_aware_indices(
-            targets, assign, np.asarray(cur_pals))
+            targets, assign, np.asarray(cur_pals),
+            pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
     return detail.astype(np.float32), assign, pidx
 
 
@@ -1269,7 +1276,8 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                     coherent_shape=((TROWS, TCOLS) if PAL_ALGO == MOSAIC_GM else None),
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
-                    dither_targets=targets, dither_thresholds=thresholds)
+                    dither_targets=targets, dither_thresholds=thresholds,
+                    dither_pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
         elif w > 1:
             import multiprocessing as mp
             with mp.get_context(quant_pool_start_method(gpu_on)).Pool(
@@ -1282,7 +1290,8 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                         coherent_shape=((TROWS, TCOLS) if PAL_ALGO == MOSAIC_GM else None),
                         seam_weight=PAL_SEAM_WEIGHT,
                         seam_iterations=PAL_SEAM_ITERATIONS,
-                        dither_targets=targets, dither_thresholds=thresholds)
+                        dither_targets=targets, dither_thresholds=thresholds,
+                    dither_pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
         else:
             _quant_init(frames, seg_pals, frame_seg)
             for i in range(n):
@@ -1293,7 +1302,8 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                     coherent_shape=((TROWS, TCOLS) if PAL_ALGO == MOSAIC_GM else None),
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
-                    dither_targets=targets, dither_thresholds=thresholds)
+                    dither_targets=targets, dither_thresholds=thresholds,
+                    dither_pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
         return (details, assigns, pidxs)
 
     print(f"precompute quantization: {n} frames on {w} workers ...", flush=True)
@@ -5245,6 +5255,7 @@ def main(demoted_fade_anchors=frozenset()):
     report = "\n".join([
         f"resolution={W}x{H} cells/frame={C_CELLS} active_tiles={ACTIVE_TILES} fps={FPS}",
         f"output_dither={OUTPUT_DITHER}",
+        f"pal_dither_pair_cap_sq={PAL_DITHER_PAIR_CAP_SQ}",
         f"body_gross_bytes_per_frame={body_gross_bytes[1:].mean():.1f} "
         f"(exact sectors {sorted(set(int(x // stream_schedule.SECTOR_BYTES) for x in body_gross_bytes[1:]))})",
         f"body_fixed_control_bytes_per_frame={body_fixed_control_bytes[1:].mean():.1f}",
