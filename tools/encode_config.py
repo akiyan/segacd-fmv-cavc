@@ -277,10 +277,11 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             "bilinear, lanczos, or neighbor")
     output_dither = str(
         data["video"].get("output_dither", "bayer")).lower()
-    if output_dither not in {"bayer", "edge-attenuated-bayer", "none"}:
+    if output_dither not in {
+            "bayer", "edge-attenuated-bayer", "pal-bayer", "none"}:
         raise ValueError(
             f"{profile_path}: video.output_dither must be bayer, "
-            "edge-attenuated-bayer, or none")
+            "edge-attenuated-bayer, pal-bayer, or none")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")
