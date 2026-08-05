@@ -40,12 +40,17 @@ Japanese Mega-CD BIOS from `original/jp_mcd2_9212.bin` into a private per-run
 RetroArch system directory and prints its SHA-256. Replay generation spans the BIOS/CD-player
 transition with one START press per second; do not replace it with a
 revision-specific fixed head cue.
-Use these overrides only when needed. `SYSTEM_DIR` deliberately replaces the
-private default, so do not point concurrent runs at one shared directory:
+Use these overrides only when needed. The BIOS never changes, so the default
+`SYSTEM_DIR` is one shared read-only directory at `tmp/retroarch-system` that
+concurrent runs use together; the image is installed atomically. Keep any
+override short: Genesis Plus GX composes its BIOS filenames in a 256-byte
+buffer and silently truncates a longer path, which surfaces only as
+`Failed to load content` before emulation starts. `run_headless.sh` refuses an
+over-long `SYSTEM_DIR` rather than letting the core fail that way.
 
 ```sh
 CORE=/path/to/genesis_plus_gx_libretro.so
-SYSTEM_DIR=/path/to/retroarch/system
+SYSTEM_DIR=/short/path/system
 ```
 
 The high-level recorder always replaces `OUTDIR` with one leased managed-tmpfs
@@ -85,7 +90,10 @@ Defaults and rules:
 - Use an explicit `--disc CUE --no-build` only for a previously verified image.
 - Build with `DEBUG=1` by default. The Window-row/SAT HUD is part of the normal recording artifact.
 - Use `--release-build` only when the user explicitly asks for a release build. It changes the
-  harness build to `make disc CONFIG=profiles/PROFILE.toml DEBUG=0`.
+  harness build to `make disc CONFIG=profiles/PROFILE.toml DEBUG=0`. A release build draws no
+  HUD, so the capture has no HUD TSV and no schema-16 gate and cannot reach `compilation`
+  through the normal precondition. Use the `release` skill, which qualifies such a capture
+  against a gate-PASS DEBUG recording of the byte-identical packed stream.
 - Keep the startup sequence. The default is `--trim 0`; omitting `--trim` has the same result.
 - Treat `--seconds` as the final duration from emulator launch. Include enough time for the
   startup screens, the full movie, and a short tail. With the default

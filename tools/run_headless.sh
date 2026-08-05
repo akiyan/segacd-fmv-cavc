@@ -56,8 +56,12 @@
 #                under vendor/gpgx-logvdp; no system-core fallback)
 #   BIOS_IMAGE  Japanese Mega-CD BIOS staged as bios_CD_J.bin
 #               (default: original/jp_mcd2_9212.bin)
-#   SYSTEM_DIR  RetroArch system dir receiving bios_CD_J.bin
-#               (default: a private per-run temporary directory)
+#   SYSTEM_DIR  RetroArch system dir holding bios_CD_J.bin (default:
+#               <repo>/tmp/retroarch-system). The BIOS is immutable, so every
+#               run shares this one read-only directory. Keep the path short:
+#               Genesis Plus GX builds its BIOS filenames in a 256-byte buffer
+#               and silently truncates a longer path, which then fails as
+#               "Failed to load content".
 #   OUTDIR       capture output dir (default: <repo>/tmp/<disc-stem>/record)
 #
 # Outputs: $OUTDIR/<tag>_NN.png, $OUTDIR/<tag>_sheet.jpg, compact RetroArch
@@ -191,8 +195,27 @@ OUTDIR="${OUTDIR:-$ROOT/tmp/$DISC_STEM/record}"
 mkdir -p "$OUTDIR"
 RA_LOG="$OUTDIR/retroarch_${TAG}.log"
 GPGX_FULL_LOG="$OUTDIR/gpgx_logvdp_${TAG}.log.gz"
+SYSTEM_DIR="${SYSTEM_DIR:-$ROOT/tmp/retroarch-system}"
+
+# Genesis Plus GX composes every optional BIOS/ROM filename into a 256-byte
+# buffer rooted at the RetroArch system directory. A longer path is silently
+# truncated, the Mega-CD BIOS is then not found, and the run dies with
+# "Failed to load content" long before any emulation starts. Refuse that
+# configuration here with an actionable message instead of letting the core
+# fail opaquely. The longest name the core probes is 13 characters
+# ("bios_CD_J.bin"), plus its separator. Check this before creating the runtime
+# directory so the early exit leaves nothing behind.
+CORE_SYSTEM_PATH_MAX=255
+CORE_SYSTEM_LONGEST_NAME=14
+if [ $(( ${#SYSTEM_DIR} + CORE_SYSTEM_LONGEST_NAME )) -gt "$CORE_SYSTEM_PATH_MAX" ]; then
+  echo "RetroArch system directory path is too long for the libretro core:" >&2
+  echo "  $SYSTEM_DIR (${#SYSTEM_DIR} chars)" >&2
+  echo "  the core truncates BIOS paths at $CORE_SYSTEM_PATH_MAX chars" >&2
+  echo "  set SYSTEM_DIR= to a shorter directory" >&2
+  exit 2
+fi
+
 RUNTIME_DIR="$(mktemp -d "$OUTDIR/.${TAG}.runtime.XXXXXX")"
-SYSTEM_DIR="${SYSTEM_DIR:-$RUNTIME_DIR/system}"
 RA_PID="$RUNTIME_DIR/retroarch.pid"
 XVFB_PID="$RUNTIME_DIR/xvfb.pid"
 DISPLAY_FILE="$RUNTIME_DIR/display"
@@ -267,10 +290,19 @@ fi
 COMMAND_PORT=$((55355 + DISPLAY_ID % 1000))
 echo "X display: $DISPLAY_NUM command_port=$COMMAND_PORT"
 
-install -d -m 700 "$SYSTEM_DIR"
-install -m 600 "$BIOS_IMAGE" "$SYSTEM_DIR/bios_CD_J.bin"
 BIOS_SHA="$(sha256sum "$BIOS_IMAGE" | awk '{print $1}')"
-echo "BIOS: $BIOS_IMAGE sha256=$BIOS_SHA -> $SYSTEM_DIR/bios_CD_J.bin"
+# The BIOS never changes, so concurrent runs share one read-only system
+# directory instead of each copying it into a private per-run path. Install it
+# atomically so a second run never observes a partially written image.
+install -d -m 700 "$SYSTEM_DIR"
+STAGED_BIOS="$SYSTEM_DIR/bios_CD_J.bin"
+if [ ! -f "$STAGED_BIOS" ] ||
+   [ "$(sha256sum "$STAGED_BIOS" | awk '{print $1}')" != "$BIOS_SHA" ]; then
+  BIOS_TMP="$(mktemp "$SYSTEM_DIR/.bios_CD_J.bin.XXXXXX")"
+  install -m 600 "$BIOS_IMAGE" "$BIOS_TMP"
+  mv -f "$BIOS_TMP" "$STAGED_BIOS"
+fi
+echo "BIOS: $BIOS_IMAGE sha256=$BIOS_SHA -> $STAGED_BIOS"
 
 # Portable RetroArch config generated at run time (no absolute paths committed).
 CFG="$RUNTIME_DIR/retroarch.cfg"

@@ -200,6 +200,16 @@ class EncodeProfile:
     def disc_cue(self) -> Path:
         return ARTIFACT_ROOT / f"{self.artifact_stem}.cue"
 
+    # A release build (DEBUG=0) writes its own disc so it never overwrites the
+    # DEBUG disc built from the same packed stream.
+    @property
+    def release_disc_iso(self) -> Path:
+        return ARTIFACT_ROOT / f"{self.artifact_stem}_release.iso"
+
+    @property
+    def release_disc_cue(self) -> Path:
+        return ARTIFACT_ROOT / f"{self.artifact_stem}_release.cue"
+
 
 def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     profile_path = Path(path).expanduser().resolve()
@@ -461,6 +471,8 @@ def main() -> None:
             "disc_staging": str(profile.disc_staging_dir),
             "iso": str(profile.disc_iso),
             "cue": str(profile.disc_cue),
+            "release_iso": str(profile.release_disc_iso),
+            "release_cue": str(profile.release_disc_cue),
         }, indent=2, sort_keys=True))
     else:
         print(json.dumps({"path": str(profile.path), "sha256": profile.sha256,
