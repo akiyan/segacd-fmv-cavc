@@ -13,14 +13,18 @@ def _clean_part(value):
     return re.sub(r"[^A-Za-z0-9._-]+", "_", text).strip("_") or "unknown"
 
 
-def sim_stem(src=None, mode=None, width=None, height=None):
+# The codec has one display mode; the stem keeps naming it so an artifact path
+# stays self-describing.
+DISPLAY_MODE = "H40"  # av_config.DISPLAY_MODE, inlined to keep this import-free
+
+
+def sim_stem(src=None, width=None, height=None):
     src = src or os.environ.get("CBRSIM_SRC", "movies/disc1/061.mp4")
-    mode = mode or os.environ.get("CBRSIM_MODE", "H32")
-    width = int(width or os.environ.get("CBRSIM_W", "256"))
+    width = int(width or os.environ.get("CBRSIM_W", "320"))
     height = int(height or os.environ.get("CBRSIM_H", "144"))
     return "%s_%s_%dx%d_%s" % (
         _clean_part(Path(src).stem),
-        _clean_part(mode),
+        DISPLAY_MODE,
         width,
         height,
         "adpcm22",
@@ -63,8 +67,8 @@ def sim_cache_key(environ=None):
     )
     return sim_artifact_cache.readable_key(
         identity,
-        mode=env.get("CBRSIM_MODE", "H32"),
-        width=int(env.get("CBRSIM_W", "256")),
+        mode=DISPLAY_MODE,
+        width=int(env.get("CBRSIM_W", "320")),
         height=int(env.get("CBRSIM_H", "144")),
         fps=env.get("CBRSIM_FPS", "15"),
         fit=env.get("CBRSIM_GEOMETRY_FIT", "pad"),

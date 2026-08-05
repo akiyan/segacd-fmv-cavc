@@ -22,7 +22,7 @@ from typing import Any, MutableMapping
 import av_config
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 ARTIFACT_ROOT = Path("out")
 TEMP_ROOT = Path("tmp")
 _ARTIFACT_STEM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -43,7 +43,6 @@ ENV_MAP = {
     ("source", "duration"): "CBRSIM_DURATION",
     ("source", "sar"): "CBRSIM_SOURCE_SAR",
     ("source", "audio_filter"): "CBRSIM_AUDIO_AF",
-    ("video", "mode"): "CBRSIM_MODE",
     ("video", "width"): "CBRSIM_W",
     ("video", "height"): "CBRSIM_H",
     ("video", "active_tiles"): "CBRSIM_ACTIVE_TILES",
@@ -109,7 +108,7 @@ ALLOWED = {
 }
 REQUIRED = {
     "source": {"path", "fps", "duration"},
-    "video": {"mode", "width", "height", "fit"},
+    "video": {"width", "height", "fit"},
     "output": {"directory", "emit_decisions"},
     "encoder": {"cold_cap"},
     "palette": {"algorithm"},
@@ -169,7 +168,6 @@ class EncodeProfile:
         from cbr_paths import sim_stem
         return sim_stem(
             self.data["source"]["path"],
-            self.data["video"]["mode"],
             self.data["video"]["width"],
             self.data["video"]["height"],
         )
@@ -227,11 +225,14 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         if missing:
             raise ValueError(
                 f"{profile_path}: missing [{section}] keys: {', '.join(sorted(missing))}")
-    mode = str(data["video"]["mode"]).upper()
-    if mode not in {"H32", "H40", "MODE4"}:
-        raise ValueError(f"{profile_path}: unsupported video.mode {mode!r}")
     if int(data["video"]["width"]) % 8 or int(data["video"]["height"]) % 8:
         raise ValueError(f"{profile_path}: video width and height must be multiples of 8")
+    if (int(data["video"]["width"]) > av_config.SCREEN_WIDTH
+            or int(data["video"]["height"]) > av_config.SCREEN_HEIGHT):
+        raise ValueError(
+            f"{profile_path}: video {data['video']['width']}x"
+            f"{data['video']['height']} exceeds the H40 "
+            f"{av_config.SCREEN_WIDTH}x{av_config.SCREEN_HEIGHT} aperture")
     total_tiles = int(data["video"]["width"]) * int(data["video"]["height"]) // 64
     active_tiles = int(data["video"].get("active_tiles", total_tiles))
     if not 1 <= active_tiles <= total_tiles:

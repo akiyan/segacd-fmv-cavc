@@ -8,9 +8,9 @@ that the packed bitmap/palette order still matches the encoder decisions.
 
 The name-table proof models the 68000's big-endian longword write as two VDP
 data-port word writes, high word first.  Four longword writes therefore copy
-one eight-word group, followed by a scalar tail when needed. Every real H32
-shadow row and deterministic synthetic width from 1 through 40 must match the
-scalar word loop exactly.
+one eight-word group, followed by a scalar tail when needed. Every real shadow
+row and deterministic synthetic width from 1 through 40 must match the scalar
+word loop exactly.
 """
 
 from __future__ import annotations
@@ -380,14 +380,13 @@ def verify_decisions(stream: Stream, decisions_path: Path) -> None:
 
 
 def verify_name_table_rows(stream: Stream, shadows: list[list[int]]) -> tuple[int, int]:
-    h32_rows = 0
-    if stream.cols == 32:
-        for shadow in shadows:
-            for row in range(stream.rows):
-                words = shadow[row * 32 : (row + 1) * 32]
-                if grouped_nt_copy(words) != scalar_nt_copy(words):
-                    raise AssertionError("real H32 row grouped copy changed word order")
-                h32_rows += 1
+    real_rows = 0
+    for shadow in shadows:
+        for row in range(stream.rows):
+            words = shadow[row * stream.cols : (row + 1) * stream.cols]
+            if grouped_nt_copy(words) != scalar_nt_copy(words):
+                raise AssertionError("real row grouped copy changed word order")
+            real_rows += 1
 
     rng = random.Random(0x68000)
     synthetic_rows = 4096
@@ -399,7 +398,7 @@ def verify_name_table_rows(stream: Stream, shadows: list[list[int]]) -> tuple[in
             ]
             if grouped_nt_copy(words) != scalar_nt_copy(words):
                 raise AssertionError(f"synthetic width {width} row changed word order")
-    return h32_rows, synthetic_rows
+    return real_rows, synthetic_rows
 
 
 def main() -> None:
@@ -454,7 +453,7 @@ def main() -> None:
     if not all(path_counts):
         raise AssertionError(f"real stream did not exercise all three paths: {path_counts}")
 
-    real_h32_rows, synthetic_rows = verify_name_table_rows(stream, shadows)
+    real_rows, synthetic_rows = verify_name_table_rows(stream, shadows)
     print(
         "main fast-path equivalence: OK "
         f"({len(stream.controls)} frames, {entries} entries, "
@@ -462,7 +461,7 @@ def main() -> None:
     )
     print(
         "name-table eight-word grouping: OK "
-        f"({real_h32_rows} real H32 rows, {synthetic_rows} deterministic rows each "
+        f"({real_rows} real rows, {synthetic_rows} deterministic rows each "
         "for widths 1..40; scalar tails 1..7 covered)"
     )
 

@@ -25,31 +25,28 @@ class AnalysisDmaTests(unittest.TestCase):
         self.assertEqual(layout.run_label_template(), "Run:0000")
 
     def test_dma_tile_capacity_pays_for_current_display_publication(self) -> None:
-        # H40/24: 2.5 VBLANKs * 7790 B - (1768 + 52) * 2 B, then / 32 B.
-        self.assertEqual(layout.dma_tile_capacity("H40", 24, 40, 28), 494)
+        # 24 fps: 2.5 VBLANKs * 7790 B - (1768 + 52) * 2 B, then / 32 B.
+        self.assertEqual(layout.dma_tile_capacity(24, 40, 28), 494)
 
     def test_r2v_name_table_words_match_single_nt_and_debug_routes(self) -> None:
         self.assertEqual(
-            r2v_model.name_table_words("H40", 40, 28, 30),
+            r2v_model.name_table_words(40, 28, 30),
             1768 + 52,
         )
         self.assertEqual(
-            r2v_model.name_table_words("H40", 40, 28, 24),
+            r2v_model.name_table_words(40, 28, 24),
             1768 + 52,
         )
         self.assertEqual(
-            r2v_model.name_table_words("H40", 40, 19, 15),
+            r2v_model.name_table_words(40, 19, 15),
             1192 + 52,
         )
         self.assertEqual(
-            r2v_model.name_table_words("H32", 32, 18, 30),
-            1120 + 76,
+            r2v_model.name_table_words(40, 28, 24, debug_hud_words=0),
+            1768,
         )
-        self.assertEqual(
-            r2v_model.name_table_words(
-                "H32", 32, 28, 24, debug_hud_words=0),
-            1760,
-        )
+        with self.assertRaises(ValueError):
+            r2v_model.name_table_words(41, 28, 30)
 
     def test_r2v_components_repair_every_dma_run(self) -> None:
         components = r2v_model.calculate_words(

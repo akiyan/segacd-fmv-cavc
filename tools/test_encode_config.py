@@ -21,7 +21,7 @@ from encode_config import (
 
 
 PROFILE = """\
-schema_version = 4
+schema_version = 5
 
 [source]
 path = "assets/source.mp4"
@@ -29,8 +29,7 @@ fps = "30"
 duration = "1"
 
 [video]
-mode = "H32"
-width = 256
+width = 320
 height = 224
 fit = "pad"
 
@@ -47,12 +46,29 @@ algorithm = "mosaic-gm"
 
 
 class EncodeProfileArtifactTests(unittest.TestCase):
-    def test_removed_schema_v3_is_rejected(self) -> None:
+    def test_removed_schema_v4_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old-schema.toml"
             path.write_text(PROFILE.replace(
-                "schema_version = 4", "schema_version = 3"))
-            with self.assertRaisesRegex(ValueError, "schema_version must be 4"):
+                "schema_version = 5", "schema_version = 4"))
+            with self.assertRaisesRegex(ValueError, "schema_version must be 5"):
+                load_profile(path)
+
+    def test_removed_video_mode_key_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "with-mode.toml"
+            path.write_text(PROFILE.replace(
+                "[video]", '[video]\nmode = "H40"'))
+            with self.assertRaisesRegex(
+                    ValueError, "unknown \\[video\\] keys.*mode"):
+                load_profile(path)
+
+    def test_raster_wider_than_the_h40_aperture_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "too-wide.toml"
+            path.write_text(PROFILE.replace("width = 320", "width = 328"))
+            with self.assertRaisesRegex(
+                    ValueError, "exceeds the H40 320x224 aperture"):
                 load_profile(path)
 
     def test_required_profile_is_consumed_as_first_positional_argument(self) -> None:
@@ -169,7 +185,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(env["CBRSIM_FPS"], "30")
         self.assertEqual(env["CBRSIM_DURATION"], "90.466667")
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
-        self.assertEqual(env["CBRSIM_MODE"], "H40")
         self.assertEqual(env["CBRSIM_W"], "288")
         self.assertEqual(env["CBRSIM_H"], "200")
         self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "900")
@@ -433,7 +448,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad-active-tiles.toml"
             path.write_text(PROFILE.replace(
-                'fit = "pad"', 'fit = "pad"\nactive_tiles = 897'))
+                'fit = "pad"', 'fit = "pad"\nactive_tiles = 1121'))
             with self.assertRaisesRegex(ValueError, "video.active_tiles"):
                 load_profile(path)
 
@@ -453,8 +468,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             path = Path(tmp) / "h40-15-900.toml"
             path.write_text(
                 PROFILE.replace('fps = "30"', 'fps = "15"')
-                .replace('mode = "H32"', 'mode = "H40"')
-                .replace('width = 256', 'width = 320')
                 .replace('fit = "pad"', 'fit = "pad"\nactive_tiles = 900'))
             env = apply_profile_env(load_profile(path), {})
         self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
@@ -485,18 +498,18 @@ class EncodeProfileArtifactTests(unittest.TestCase):
 
     def test_artifacts_follow_toml_filename(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "sakura-h32.toml"
+            path = Path(tmp) / "sakura-op.toml"
             path.write_text(PROFILE)
             profile = load_profile(path)
 
-        self.assertEqual(profile.artifact_stem, "sakura-h32")
-        self.assertEqual(profile.artifact_dir, Path("out/sakura-h32"))
-        self.assertEqual(profile.pack_output, Path("out/sakura-h32/MOVIE.DAT"))
-        self.assertEqual(profile.temp_dir, Path("tmp/sakura-h32"))
-        self.assertEqual(profile.build_dir, Path("tmp/sakura-h32/build"))
-        self.assertEqual(profile.disc_staging_dir, Path("tmp/sakura-h32/disc"))
-        self.assertEqual(profile.disc_iso, Path("out/sakura-h32.iso"))
-        self.assertEqual(profile.disc_cue, Path("out/sakura-h32.cue"))
+        self.assertEqual(profile.artifact_stem, "sakura-op")
+        self.assertEqual(profile.artifact_dir, Path("out/sakura-op"))
+        self.assertEqual(profile.pack_output, Path("out/sakura-op/MOVIE.DAT"))
+        self.assertEqual(profile.temp_dir, Path("tmp/sakura-op"))
+        self.assertEqual(profile.build_dir, Path("tmp/sakura-op/build"))
+        self.assertEqual(profile.disc_staging_dir, Path("tmp/sakura-op/disc"))
+        self.assertEqual(profile.disc_iso, Path("out/sakura-op.iso"))
+        self.assertEqual(profile.disc_cue, Path("out/sakura-op.cue"))
 
     def test_removed_pack_output_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

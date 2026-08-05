@@ -31,61 +31,33 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertEqual(frame, read_frameno.FRAME_MINUS_ONE)
         self.assertGreaterEqual(confidence, 0.99)
 
-    def test_combined_layout_wraps_at_each_native_width(self) -> None:
-        self.assertEqual(read_frameno.HUD_H32_COMBINED_CELLS, 43)
-        self.assertEqual(read_frameno.HUD_H40_COMBINED_CELLS, 43)
+    def test_combined_layout_wraps_at_the_native_width(self) -> None:
+        self.assertEqual(read_frameno.HUD_CELLS, 43)
         self.assertEqual(
-            read_frameno.hud_layout_dimensions(
-                read_frameno.HUD_H32_COMBINED_LAYOUT
-            ),
-            (32, 2),
-        )
-        self.assertEqual(
-            read_frameno.hud_layout_dimensions(
-                read_frameno.HUD_H40_COMBINED_LAYOUT
-            ),
+            read_frameno.hud_layout_dimensions(read_frameno.HUD_LAYOUT),
             (40, 2),
         )
         self.assertEqual(
             read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H32_COMBINED_LAYOUT, 32
+                read_frameno.HUD_LAYOUT, 40
             ),
             (0, 1),
         )
         self.assertEqual(
             read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H40_COMBINED_LAYOUT, 40
-            ),
-            (0, 1),
-        )
-        self.assertEqual(
-            read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H32_COMBINED_LAYOUT, 42
-            ),
-            (10, 1),
-        )
-        self.assertEqual(
-            read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H40_COMBINED_LAYOUT, 42
+                read_frameno.HUD_LAYOUT, 42
             ),
             (2, 1),
         )
         transfer_vblank_col = next(
             col for name, col, _digits
-            in read_frameno.HUD_H32_COMBINED_LAYOUT
+            in read_frameno.HUD_LAYOUT
             if name == "transfer_vblanks"
         )
         self.assertEqual(transfer_vblank_col, 36)
         self.assertEqual(
             read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H32_COMBINED_LAYOUT,
-                transfer_vblank_col,
-            ),
-            (4, 1),
-        )
-        self.assertEqual(
-            read_frameno.hud_layout_field_position(
-                read_frameno.HUD_H40_COMBINED_LAYOUT,
+                read_frameno.HUD_LAYOUT,
                 transfer_vblank_col,
             ),
             (36, 0),
@@ -103,7 +75,7 @@ class FrameMinusOneTest(unittest.TestCase):
             "vblank_spill_transfer_ticks", read_frameno.HUD_FIELDS)
 
     def test_packed_cells_are_unpacked_losslessly(self) -> None:
-        layout = read_frameno.HUD_H40_COMBINED_LAYOUT
+        layout = read_frameno.HUD_LAYOUT
         width, height = read_frameno.hud_layout_dimensions(layout)
         image = np.zeros(
             (height * read_frameno.CELL, width * read_frameno.CELL),
@@ -146,15 +118,8 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertEqual(hud["reader_ahead_frames"][0], 0xC)
         self.assertEqual(hud["reader_slot_sector"][0], 0x5)
 
-    def test_native_width_selects_current_combined_layout(self) -> None:
-        self.assertIs(
-            read_frameno.hud_layout_for_width(256),
-            read_frameno.HUD_H32_COMBINED_LAYOUT,
-        )
-        self.assertIs(
-            read_frameno.hud_layout_for_width(320),
-            read_frameno.HUD_H40_COMBINED_LAYOUT,
-        )
+    def test_default_layout_is_the_single_native_layout(self) -> None:
+        self.assertIs(read_frameno.hud_layout(), read_frameno.HUD_LAYOUT)
 
 
 if __name__ == "__main__":

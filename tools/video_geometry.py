@@ -1,16 +1,11 @@
 #!/usr/bin/env python3
 """Source-to-Mega-Drive geometry helpers.
 
-The two Mega Drive horizontal modes use different pixel widths.  Their dot
-ratios compensate for that difference:
-
-* H32: 256 pixels, HAR/PAR 8:7
-* H40: 320 pixels, HAR/PAR 32:35
-
-Both modes therefore describe the same visible NTSC aperture (64:49) when
-224 lines are shown.  The default ``pad`` fit preserves every source pixel;
-``crop`` is an explicit, HAR-aware object-fit-cover conversion that fills the
-output raster and may discard active pixels at the source edges.
+The codec outputs the H40 raster: 320 pixels wide with HAR/PAR 32:35, which
+describes a 64:49 visible NTSC aperture when 224 lines are shown.  The default
+``pad`` fit preserves every source pixel; ``crop`` is an explicit, HAR-aware
+object-fit-cover conversion that fills the output raster and may discard active
+pixels at the source edges.
 """
 
 from __future__ import annotations
@@ -19,37 +14,18 @@ import argparse
 import json
 import math
 import subprocess
-from dataclasses import dataclass
 
-
-@dataclass(frozen=True)
-class ModeGeometry:
-    name: str
-    har_num: int
-    har_den: int
-    default_width: int
-    default_height: int
-
-    @property
-    def har(self) -> float:
-        return self.har_num / self.har_den
-
-    def display_aspect(self, width: int, height: int) -> float:
-        return (width / height) * self.har
-
-
-MODES = {
-    "H32": ModeGeometry("H32", 8, 7, 256, 224),
-    "H40": ModeGeometry("H40", 32, 35, 320, 224),
-}
+MODE_NAME = "H40"
+HAR_NUM = 32
+HAR_DEN = 35
+HAR = HAR_NUM / HAR_DEN
+DEFAULT_WIDTH = 320
+DEFAULT_HEIGHT = 224
 RESIZE_FILTERS = {"area", "bicubic", "bilinear", "lanczos", "neighbor"}
 
 
-def mode_geometry(mode: str) -> ModeGeometry:
-    key = mode.upper()
-    if key not in MODES:
-        raise ValueError(f"unsupported mode {mode!r}; choose H32 or H40")
-    return MODES[key]
+def display_aspect(width: int, height: int) -> float:
+    return (width / height) * HAR
 
 
 def parse_ratio(value: str | None) -> tuple[int, int]:
@@ -110,25 +86,24 @@ def center_crop(src_w: int, src_h: int, target_dar: float,
     return _even(src_w), _even(src_h), 0, 0
 
 
-def geometry_plan(mode: str, width: int, height: int, src_w: int, src_h: int,
+def geometry_plan(width: int, height: int, src_w: int, src_h: int,
                   src_sar_num: int = 1, src_sar_den: int = 1,
                   fit: str = "pad") -> dict:
-    g = mode_geometry(mode)
     if fit not in {"pad", "crop"}:
         raise ValueError("fit must be pad or crop")
-    dar = g.display_aspect(width, height)
+    dar = display_aspect(width, height)
     src_sar = src_sar_num / src_sar_den
     cw, ch, cx, cy = center_crop(src_w, src_h, dar, src_sar)
     src_dar = (src_w / src_h) * src_sar
     if src_dar > dar:
         fit_w = width
-        fit_h = _even(math.floor(width * g.har / src_dar))
+        fit_h = _even(math.floor(width * HAR / src_dar))
     else:
         fit_h = height
-        fit_w = _even(math.floor(height * src_dar / g.har))
+        fit_w = _even(math.floor(height * src_dar / HAR))
     return {
-        "mode": g.name,
-        "har": f"{g.har_num}:{g.har_den}",
+        "mode": MODE_NAME,
+        "har": f"{HAR_NUM}:{HAR_DEN}",
         "src": [src_w, src_h],
         "src_sar": f"{src_sar_num}:{src_sar_den}",
         "crop": [cw, ch, cx, cy],
@@ -139,7 +114,7 @@ def geometry_plan(mode: str, width: int, height: int, src_w: int, src_h: int,
     }
 
 
-def source_filter(mode: str, width: int, height: int, src_w: int, src_h: int,
+def source_filter(width: int, height: int, src_w: int, src_h: int,
                   *, src_sar_num: int = 1, src_sar_den: int = 1,
                   fit: str = "pad",
                   denoise: bool = True,
@@ -150,21 +125,21 @@ def source_filter(mode: str, width: int, height: int, src_w: int, src_h: int,
         raise ValueError(
             f"unsupported resize filter {resize_filter!r}; "
             f"choose {', '.join(sorted(RESIZE_FILTERS))}")
-    p = geometry_plan(mode, width, height, src_w, src_h,
+    p = geometry_plan(width, height, src_w, src_h,
                       src_sar_num, src_sar_den, fit)
     cw, ch, cx, cy = p["crop"]
     fw, fh = p["fit_size"]
     if fit == "crop":
         vf = ["setsar=1", f"crop={cw}:{ch}:{cx}:{cy}"]
-        # The crop already has the output mode's displayed aspect after HAR.
+        # The crop already has the displayed aspect after HAR.
         # Scale it to the complete coded raster: this is object-fit: cover,
         # not merely removal of black source margins.
         iw, ih = width, height
         current_w, current_h = cw, ch
     else:
         # Normalize source SAR, then scale the complete source to the largest
-        # raster with the target mode's displayed aspect. Padding never drops
-        # source pixels; crop remains an explicit opt-in.
+        # raster with the output's displayed aspect. Padding never drops source
+        # pixels; crop remains an explicit opt-in.
         vf = ["setsar=1"]
         iw, ih = fw, fh
         current_w, current_h = src_w, src_h
@@ -181,11 +156,11 @@ def source_filter(mode: str, width: int, height: int, src_w: int, src_h: int,
     return ",".join(vf)
 
 
-def raw_filter(mode: str, width: int, height: int, src_w: int, src_h: int,
+def raw_filter(width: int, height: int, src_w: int, src_h: int,
                *, src_sar_num: int = 1, src_sar_den: int = 1,
                fit: str = "pad",
                resize_filter: str = "lanczos") -> str:
-    return source_filter(mode, width, height, src_w, src_h,
+    return source_filter(width, height, src_w, src_h,
                          src_sar_num=src_sar_num, src_sar_den=src_sar_den,
                          fit=fit,
                          denoise=False,
@@ -195,7 +170,6 @@ def raw_filter(mode: str, width: int, height: int, src_w: int, src_h: int,
 def _main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--src", required=True)
-    ap.add_argument("--mode", choices=sorted(MODES), required=True)
     ap.add_argument("--width", type=int)
     ap.add_argument("--height", type=int)
     ap.add_argument("--fit", choices=("pad", "crop"), default="pad")
@@ -203,22 +177,21 @@ def _main() -> None:
     ap.add_argument("--no-master-denoise", action="store_true")
     ap.add_argument("--source-sar", help="override input SAR, e.g. 25:27 for a 576x400 file intended as 4:3")
     args = ap.parse_args()
-    g = mode_geometry(args.mode)
-    w = args.width or g.default_width
-    h = args.height or g.default_height
+    w = args.width or DEFAULT_WIDTH
+    h = args.height or DEFAULT_HEIGHT
     sw, sh, sar_num, sar_den = probe_source(args.src)
     if args.source_sar:
         sar_num, sar_den = parse_ratio(args.source_sar)
-    p = geometry_plan(args.mode, w, h, sw, sh, sar_num, sar_den, args.fit)
-    p["master_vf"] = source_filter(args.mode, w, h, sw, sh,
-                                    src_sar_num=sar_num, src_sar_den=sar_den,
-                                    fit=args.fit,
-                                    denoise=not args.no_master_denoise,
-                                    resize_filter=args.resize_filter)
-    p["raw_vf"] = raw_filter(args.mode, w, h, sw, sh,
-                              src_sar_num=sar_num, src_sar_den=sar_den,
-                              fit=args.fit,
-                              resize_filter=args.resize_filter)
+    p = geometry_plan(w, h, sw, sh, sar_num, sar_den, args.fit)
+    p["master_vf"] = source_filter(w, h, sw, sh,
+                                   src_sar_num=sar_num, src_sar_den=sar_den,
+                                   fit=args.fit,
+                                   denoise=not args.no_master_denoise,
+                                   resize_filter=args.resize_filter)
+    p["raw_vf"] = raw_filter(w, h, sw, sh,
+                             src_sar_num=sar_num, src_sar_den=sar_den,
+                             fit=args.fit,
+                             resize_filter=args.resize_filter)
     print(json.dumps(p, indent=2, ensure_ascii=False))
 
 

@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 
 # Issue #29 horizontal-scroll iteration clip: lunar_sss_op source frames
 # 1008..1487 (42.0s..62.0s).  The pan interval 0x0477..0x0537 (source
@@ -18,7 +18,6 @@ sar = "1:1"
 audio_filter = "aformat=channel_layouts=mono,volume=7.9dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
-mode = "H40"
 width = 320
 height = 224
 fit = "pad"

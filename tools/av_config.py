@@ -100,6 +100,20 @@ RING_JITTER_REFERENCE_KB = 20
 # otherwise-unused APPLY ring. It is not part of the timed PrgBuf occupancy.
 FRAME0_PATTERN_STAGING_KB = 36
 
+# The codec outputs one display mode: H40, 320x224 visible pixels in a 40x28
+# cell aperture, PAR 32:35, and a conservative 3,200-word VBlank DMA budget.
+# Every other module derives its screen geometry from these.
+DISPLAY_MODE = "H40"
+# HEADER.DAT offset 36 carries the display mode; H40 is value 1.
+DISPLAY_MODE_BYTE = 1
+SCREEN_WIDTH = 320
+SCREEN_HEIGHT = 224
+SCREEN_COLS = SCREEN_WIDTH // 8
+SCREEN_ROWS = SCREEN_HEIGHT // 8
+PIXEL_ASPECT_NUM = 32
+PIXEL_ASPECT_DEN = 35
+VBLANK_DMA_WORDS = 3200
+
 # Derived fixed physical limits — do not set these independently anywhere else.
 BACKPRESSURE_KB = RING_SIZE_KB - RING_PHYSICAL_GUARD_KB
 DELIVERY_CAP_KB = BACKPRESSURE_KB - RING_DELIVERY_GUARD_KB

@@ -171,7 +171,7 @@ def draw_segment_chart(path, palettes, usage, frame_seg, fps, upload_offset):
     mono = font(14, mono=True)
     mono_small = font(12, mono=True)
 
-    draw.text((24, 18), "Bad Apple H32: current CRAM palettes by segment", font=title, fill=(245, 246, 250))
+    draw.text((24, 18), "Bad Apple: current CRAM palettes by segment", font=title, fill=(245, 246, 250))
     draw.text(
         (24, 66),
         "P0-P3 are tile palette lines. Gold = referenced by displayed tiles; dim = table-only. Index 00 is transparent.",
@@ -246,7 +246,7 @@ def draw_global_chart(path, global_data, source_frames):
     mono = font(16, mono=True)
 
     neutral = sum(len(set(key_colour(key))) == 1 for key in keys)
-    draw.text((28, 20), "Bad Apple H32: unique colours displayed across the full movie", font=title, fill=(245, 246, 250))
+    draw.text((28, 20), "Bad Apple: unique colours displayed across the full movie", font=title, fill=(245, 246, 250))
     draw.text(
         (28, 76),
         f"Displayed: {len(keys)} colours ({neutral} neutral gray + {len(keys) - neutral} off-gray).  "
@@ -349,7 +349,7 @@ def write_summary(
     keys, slot_count, pixel_count, _locations, segments, source_hist = global_data
     source_keys = set(int(key) for key in np.flatnonzero(source_hist))
     lines = [
-        "Bad Apple H32 palette audit",
+        "Bad Apple palette audit",
         f"Output dither: {output_dither}",
         f"CRAM segments: {len(palettes)}",
         f"Displayed unique colours: {len(keys)}",

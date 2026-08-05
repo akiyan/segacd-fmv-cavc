@@ -3,11 +3,11 @@
 
 方針(2026-07 更新):
 - 前処理でディザ除去: 元動画は低解像度+ディザなので、`video_geometry.py` が
-  H32/H40のHARに合わせて全画素を保持したpad変換を行い、一度拡大してフルカラー化、
+  H40のHARに合わせて全画素を保持したpad変換を行い、一度拡大してフルカラー化、
   hqdn3d+gblur後に出力ラスタへ縮小する。
-- 表示アスペクト: H32はHAR 8:7、H40は32:35。どちらも224ラインでは
-  64:49の可視比になる。`CBRSIM_GEOMETRY_FIT=crop`を明示した場合だけ
-  その比率へcropし、既定では黒帯が最小になるpadで情報を落とさない。
+- 表示アスペクト: H40のHARは32:35で、224ラインでは64:49の可視比になる。
+  `CBRSIM_GEOMETRY_FIT=crop`を明示した場合だけその比率へcropし、既定では
+  黒帯が最小になるpadで情報を落とさない。
 - パレット: 4本×15色をパレットセグメント単位で学習し、セグメント内では固定・共有
   (per-frameではない)。セグメント境界でCRAMを切り替える。
 - 分散が非常に低い(=ほぼ単色)タイルだけ平均色へ均して単純化(FLATTEN_STD)。
@@ -91,10 +91,9 @@ from video_geometry import (  # noqa: E402
 # 対象動画・寸法・fps は env で差し替え可(既定はサンプル動画)。
 # Profile実行ではcbr_pathsがdeterministicなtmpfs実体pathを返す。
 SRC = os.environ.get("CBRSIM_SRC", "movies/disc1/061.mp4")
-MODE = os.environ.get("CBRSIM_MODE", "H32")
-# Keep the historical 144-line codec height, but choose the matching native
-# horizontal raster when the mode changes (H32=256, H40=320).
-W = int(os.environ.get("CBRSIM_W", "320" if MODE.upper() == "H40" else "256"))
+MODE = av_config.DISPLAY_MODE
+# Keep the historical 144-line codec height on the H40 native raster.
+W = int(os.environ.get("CBRSIM_W", str(av_config.SCREEN_WIDTH)))
 H = int(os.environ.get("CBRSIM_H", "144"))
 GEOMETRY_FIT = os.environ.get("CBRSIM_GEOMETRY_FIT", "pad").lower()
 RESIZE_FILTER = os.environ.get("CBRSIM_RESIZE_FILTER", "lanczos").lower()
@@ -1273,14 +1272,14 @@ def main():
         src_w, src_h, src_sar_num, src_sar_den = probe_source(SRC)
         if SOURCE_SAR_OVERRIDE:
             src_sar_num, src_sar_den = parse_ratio(SOURCE_SAR_OVERRIDE)
-        # H32/H40のHARを考慮した既定変換。明示的なVF指定は優先する。
+        # H40のHARを考慮した既定変換。明示的なVF指定は優先する。
         DEDITHER_VF = DEDITHER_VF or source_filter(
-            MODE, W, H, src_w, src_h,
+            W, H, src_w, src_h,
             src_sar_num=src_sar_num, src_sar_den=src_sar_den,
             fit=GEOMETRY_FIT, denoise=MASTER_DENOISE,
             resize_filter=RESIZE_FILTER)
         RAW_VF = RAW_VF or raw_filter(
-            MODE, W, H, src_w, src_h,
+            W, H, src_w, src_h,
             src_sar_num=src_sar_num, src_sar_den=src_sar_den,
             fit=GEOMETRY_FIT, resize_filter=RESIZE_FILTER)
     if SOURCE_PREPROCESS_VF:
@@ -1487,7 +1486,7 @@ def main():
 
     # Scroll: source-wide automatic detection only.  No profile time range or
     # hand-authored frame interval participates in adoption.  Adoption needs
-    # the full-width H40 40-column grid: HScroll shifts every scanline, so a
+    # the full-width 40-column grid: HScroll shifts every scanline, so a
     # narrower centered grid would roll its side borders, while a letterboxed
     # 40xN grid keeps its top/bottom border rows uniform and the player DMAs
     # the same PC_ROW0-offset 64-column band it stages for normal frames.
@@ -1498,8 +1497,7 @@ def main():
     # the ordinary no-scroll allocation path can be A/B tested on the same
     # source (e.g. reproducing issue #113 without a rolling plane).
     scroll_supported = bool(
-        MODE.upper() == "H40"
-        and TCOLS == 40
+        TCOLS == av_config.SCREEN_COLS
         and PATTERN_SUPPLY_ON
         and os.environ.get("CBRSIM_SCROLL", "1") != "0"
     )
@@ -1636,8 +1634,8 @@ def main():
         )
     else:
         print(
-            "automatic scroll: disabled; requires full-width H40 (40 columns) "
-            "with pattern supply",
+            "automatic scroll: disabled; requires the full-width 40-column "
+            "grid with pattern supply",
             flush=True,
         )
 
@@ -4930,8 +4928,7 @@ def main():
             (np.asarray(frame_seg[1:]) != np.asarray(frame_seg[:-1]))
             | (np.asarray(frame_types[1:]) != shadow_updates.FRAME_NORMAL)
         )
-    r2v_nt_words = r2v_model.name_table_words(
-        MODE, TCOLS, TROWS, FPS)
+    r2v_nt_words = r2v_model.name_table_words(TCOLS, TROWS, FPS)
     r2v_nt_word_counts = np.full(n, r2v_nt_words, np.int64)
     if scroll_plane_enabled:
         # A horizontal scroll frame extends the staged band across the full
@@ -5330,7 +5327,7 @@ def main():
                     if CONFIG_PROFILE else {}),
             },
             "video": {
-                "mode": MODE.upper(), "width": int(W), "height": int(H),
+                "mode": MODE, "width": int(W), "height": int(H),
                 "cols": int(TCOLS), "rows": int(TROWS), "cells": int(C_CELLS),
                 "active_tiles": int(ACTIVE_TILES),
                 "tile": int(TILE), "fit": GEOMETRY_FIT,
@@ -5396,7 +5393,7 @@ def main():
         pickle.dump({
             "config": frozen_config,
             "geom": (int(TCOLS), int(TROWS), int(C_CELLS), int(TILE)),
-            "mode": MODE.upper(),                              # header display mode
+            "mode": MODE,                                      # header display mode
             "fps_str": str(FPS_STR),
             "pal_algo": PAL_ALGO,
             "pal_stats": palette_stats,

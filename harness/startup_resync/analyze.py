@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Extract and aggregate the 43-cell DEBUG HUD from a native recording.
 
-Every output field uses a descriptive snake_case name. H32 wraps the sequence
-after 32 cells; H40 wraps after 40. The OCR layer unpacks Main VBlank spill from
+Every output field uses a descriptive snake_case name. The sequence wraps after
+40 cells, the H40 screen width. The OCR layer unpacks Main VBlank spill from
 the transfer stopwatch, APPLY back-pressure from the pump-gap word, and reader
 frame/sector lead from their shared byte.
 
@@ -127,7 +127,7 @@ def iter_samples(
     # Only the top-left HUD area is sent through the pipe.  Decoding still sees
     # every source frame, while pipe traffic stays small even for an upscaled MP4.
     available_width = probe.width - crop_x
-    layout = read_frameno.hud_layout_for_width(available_width)
+    layout = read_frameno.hud_layout()
     fields = read_frameno.hud_fields_for_layout(layout)
     hud_width_cells, hud_height_cells = read_frameno.hud_layout_dimensions(
         layout
@@ -1060,7 +1060,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--crop-x", type=int, default=0,
-        help="left edge of the native HUD crop (default: 0; legacy centered H32 may use 32)",
+        help="left edge of the native HUD crop (default: 0)",
     )
     parser.add_argument(
         "--max-gap", type=int, default=3,

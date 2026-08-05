@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Mode-aware Main-CPU writes into VDP memory for one displayed frame."""
+"""Main-CPU writes into VDP memory for one displayed frame."""
 
 from __future__ import annotations
 
@@ -15,13 +15,16 @@ DMA_REPAIR_WORDS = 1
 CRAM_WORDS = 64
 NT_STAGE_PITCH = 64
 
+# The H40 aperture the codec targets.
+SCREEN_COLS = av_config.SCREEN_COLS
+SCREEN_ROWS = av_config.SCREEN_ROWS
+
 # DEBUG players publish this many cells. The first screen-width row uses the
 # Window name table; any remaining cells use four-word sprite-table records.
 DEBUG_HUD_WORDS = 43
 
 
 def name_table_words(
-    mode: str,
     cols: int,
     rows: int,
     fps: float,
@@ -29,12 +32,9 @@ def name_table_words(
     debug_hud_words: int = DEBUG_HUD_WORDS,
 ) -> int:
     """Return the per-frame name-table and DEBUG HUD word count."""
-    normalized = str(mode).upper()
     cols = int(cols)
     rows = int(rows)
     debug_hud_words = int(debug_hud_words)
-    if normalized not in {"H32", "H40", "MODE4"}:
-        raise ValueError(f"unsupported display mode: {mode!r}")
     if cols <= 0 or rows <= 0:
         raise ValueError(f"invalid tile grid: {cols}x{rows}")
     if debug_hud_words < 0:
@@ -42,13 +42,12 @@ def name_table_words(
     # Keep fps in the public call shape: the physical publication workload no
     # longer changes with cadence.
     av_config.vsync_n_for_fps(fps)
-    screen_cols = 40 if normalized == "H40" else 32
-    if cols > screen_cols or rows > 28:
+    if cols > SCREEN_COLS or rows > SCREEN_ROWS:
         raise ValueError(
-            f"tile grid {cols}x{rows} exceeds the {normalized} aperture")
+            f"tile grid {cols}x{rows} exceeds the H40 aperture")
     movie_words = (rows - 1) * NT_STAGE_PITCH + cols
-    window_words = min(debug_hud_words, screen_cols)
-    sprite_words = max(0, debug_hud_words - screen_cols) * 4
+    window_words = min(debug_hud_words, SCREEN_COLS)
+    sprite_words = max(0, debug_hud_words - SCREEN_COLS) * 4
     return movie_words + window_words + sprite_words
 
 

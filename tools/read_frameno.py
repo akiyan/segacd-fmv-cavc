@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Read descriptive fields from native DEBUG playback HUD recordings.
 
-The standard layout has 43 digits. H32 wraps after 32 digits; H40 wraps after
-40 digits. Small cumulative counters use one digit. The four-digit pattern-transfer
+The standard layout has 43 digits and wraps after 40, the H40 screen width, so
+the last three digits occupy a second row. Small cumulative counters use one
+digit. The four-digit pattern-transfer
 word packs ``vblank_spill`` in its high nibble and ``transfer_ticks`` in its
 low 12 bits. The pump-gap word packs ``apply_backpressure`` in bit 15 and
 ``pump_gap_ticks`` in its low 12 bits. The reader byte stores
@@ -89,19 +90,10 @@ def _make_layout(field_digits):
     return tuple(fields), col
 
 
-HUD_H32_COMBINED_LAYOUT, HUD_H32_COMBINED_CELLS = _make_layout(
-    HUD_COMBINED_FIELD_DIGITS
-)
-HUD_H40_COMBINED_LAYOUT, HUD_H40_COMBINED_CELLS = _make_layout(
-    HUD_COMBINED_FIELD_DIGITS
-)
-HUD_LAYOUT = HUD_H32_COMBINED_LAYOUT
-HUD_CELLS = HUD_H32_COMBINED_CELLS
-HUD_H40_LAYOUT = HUD_H40_COMBINED_LAYOUT
-HUD_H40_CELLS = HUD_H40_COMBINED_CELLS
-HUD_H32_COMBINED_ROW_CELLS = 32
-HUD_H40_COMBINED_ROW_CELLS = 40
-H40_NATIVE_WIDTH = 320
+HUD_LAYOUT, HUD_CELLS = _make_layout(HUD_COMBINED_FIELD_DIGITS)
+# The HUD row is as wide as the H40 screen; digit 40 onward wraps to row 1.
+HUD_ROW_CELLS = 40
+NATIVE_WIDTH = 320
 
 
 def hud_fields_for_layout(layout):
@@ -116,20 +108,12 @@ def hud_fields_for_layout(layout):
 
 
 HUD_FIELDS = hud_fields_for_layout(HUD_LAYOUT)
-HUD_H40_FIELDS = hud_fields_for_layout(HUD_H40_LAYOUT)
-HUD_H32_COMBINED_FIELDS = HUD_FIELDS
-HUD_H40_COMBINED_FIELDS = HUD_H40_FIELDS
 
 
 def hud_layout_field_position(layout, logical_col):
     """Return the physical cell column and row for one logical HUD digit."""
-    row_cells = None
-    if layout is HUD_H32_COMBINED_LAYOUT:
-        row_cells = HUD_H32_COMBINED_ROW_CELLS
-    elif layout is HUD_H40_COMBINED_LAYOUT:
-        row_cells = HUD_H40_COMBINED_ROW_CELLS
-    if row_cells is not None:
-        return logical_col % row_cells, logical_col // row_cells
+    if layout is HUD_LAYOUT:
+        return logical_col % HUD_ROW_CELLS, logical_col // HUD_ROW_CELLS
     return logical_col, 0
 
 
@@ -145,16 +129,9 @@ def hud_layout_dimensions(layout):
     return width, height
 
 
-def hud_common_layout_for_width(width):
-    """Return the current standard layout from captured frame width."""
-    return hud_layout_for_width(width)
-
-
-def hud_layout_for_width(width):
-    """Return the current standard combined layout for a native recording."""
-    if width >= H40_NATIVE_WIDTH:
-        return HUD_H40_COMBINED_LAYOUT
-    return HUD_H32_COMBINED_LAYOUT
+def hud_layout():
+    """Return the standard combined layout for a native DEBUG recording."""
+    return HUD_LAYOUT
 
 
 def _ncc(a, b):
@@ -258,11 +235,11 @@ def read_frameno(img):
 def read_hud(img, layout=None):
     """Read the values-only HUD, optionally using an explicit native layout.
 
-    Current native H32/H40 frames default to their 43-cell standard layouts.
+    A native frame defaults to the 43-cell standard layout.
     """
     gray = _gray(img)
     if layout is None:
-        layout = hud_layout_for_width(gray.shape[1])
+        layout = hud_layout()
     width_cells, height_cells = hud_layout_dimensions(layout)
     x0, y, fconf = _find_origin(gray, width_cells * CELL)
     if y + height_cells * CELL > gray.shape[0]:
@@ -294,7 +271,7 @@ if __name__ == "__main__":
     for p in sys.argv[1:]:
         image = Image.open(p)
         hud = read_hud(image)
-        layout = hud_layout_for_width(image.width)
+        layout = hud_layout()
         fields = hud_fields_for_layout(layout)
         parts = " ".join(
             "%s=%X(%.2f)" % (k, hud[k][0], hud[k][1])
