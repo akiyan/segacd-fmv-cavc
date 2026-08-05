@@ -382,7 +382,7 @@ active scroll window; Prg/Wr0/Wr1/Dic describe the physical source.
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | Distance-weighted waiting pressure, capped at 7×. |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | Error reference and maximum pressure increase per frame. |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | Continuous approximation duration before Miss severity. |
-| `video.output_dither` | `bayer` | Profile option. `bayer` uses the standard position-fixed 8x8 pattern. `edge-attenuated-bayer` preserves that pattern through gentle gradients, expands strong-edge influence one pixel into the resampled fringe, then fades its strength to nearest-colour rounding across a 3x3 luma range of 32 to 96. `none` disables dithering entirely and rounds every pixel to its nearest RGB333 level. |
+| `video.output_dither` | `bayer` | Profile option. `pal-bayer` (experimental) dithers each pixel between the two best entries of its assigned palette line using the position-fixed 8x8 Bayer matrix, so mixing stays between nearby colours and a soft dark halo cannot snap to the line's black entry. `bayer` is the RGB333-cube ordered dither. `edge-attenuated-bayer` preserves that pattern through gentle gradients, expands strong-edge influence one pixel into the resampled fringe, then fades its strength to nearest-colour rounding across a 3x3 luma range of 32 to 96. `none` disables dithering entirely and rounds every pixel to its nearest RGB333 level. |
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
 | boot VRAM prefetch | on | Fixed encoder behavior; `CBRSIM_BOOT_VRAM_PREFETCH=0` disables it for diagnosis only. |
@@ -505,10 +505,14 @@ tmp/<profile>/
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
 the output raster while preserving displayed aspect and may discard outer
 source pixels. `resize_filter` defaults to `lanczos`; `master_denoise` defaults
-to true. `output_dither` defaults to `bayer`; set it to
-`edge-attenuated-bayer` only for sources whose strong boundaries need the
-local 3x3 luma-based attenuation, or to `none` for dither-free
-nearest-colour rounding. The H40 pixel aspect is 32:35.
+to true. `output_dither` defaults to `bayer`, the RGB333-cube ordered dither.
+`pal-bayer` is an experimental mode that mixes each pixel's two best entries
+of its assigned palette line with the same matrix; it suppresses dark-halo
+black specks but does not yet preserve mean colour off the two-entry axis.
+Set `edge-attenuated-bayer`
+only for sources whose strong boundaries need the local 3x3 luma-based
+attenuation, or to `none` for dither-free nearest-colour rounding. The H40
+pixel aspect is 32:35.
 
 `active_tiles` is the number of tiles ever non-black after conversion. Omission
 uses the full grid. A smaller value is verified against every master frame.
@@ -926,7 +930,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | `AGING_ALPHA` / `WAIT_CAP` | 0.6 / 10 | distance-weighted waiting pressure、最大7倍。 |
 | `CBRSIM_AGING_DIST_REF` / `_STEP_CAP` | 24 / 2.0 | error基準とframeごとのpressure増加上限。 |
 | `CBRSIM_GHOST_ESCALATE_SEC` | 0.2 s | 連続近似をMiss severityへ上げるまでの時間。 |
-| `video.output_dither` | `bayer` | profile option。`bayer` は画面位置固定の標準8x8 patternを使います。`edge-attenuated-bayer` は強い境界の影響をresize後のfringeへ1px広げ、なだらかな階調ではpatternを保ちながら、3x3近傍の輝度差が32から96へ強くなる間にディザ量を最も近い色への丸めまで連続的に絞ります。`none` はディザを完全に無効化し、全画素を最も近いRGB333レベルへ丸めます。 |
+| `video.output_dither` | `bayer` | profile option。`pal-bayer` (実験的)は各画素を、割り当てられたpalette lineの最良2 entryの間で位置固定8x8 Bayer行列により混合します。混合は近い色同士に限られ、柔らかい暗部haloがlineの黒entryへ吸われません。`bayer` はRGB333立方体上の順序ディザです。`edge-attenuated-bayer` は強い境界の影響をresize後のfringeへ1px広げ、なだらかな階調ではpatternを保ちながら、3x3近傍の輝度差が32から96へ強くなる間にディザ量を最も近い色への丸めまで連続的に絞ります。`none` はディザを完全に無効化し、全画素を最も近いRGB333レベルへ丸めます。 |
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
 | boot VRAM prefetch | on | 固定encoder behavior。診断時のみ`CBRSIM_BOOT_VRAM_PREFETCH=0`で無効化。 |
@@ -1041,9 +1045,13 @@ tmp/<profile>/
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
 保ってoutput rasterを埋めるため、source外周を捨てる場合があります。
 `resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。
-`output_dither` defaultは `bayer` です。強い境界で局所3x3輝度差による減衰が必要な
-sourceだけ `edge-attenuated-bayer` を、ディザ無しの最近色丸めには `none` を
-指定します。H40 pixel aspectは32:35です。
+`output_dither` defaultは `bayer` (RGB333立方体上の順序ディザ)です。
+`pal-bayer` は実験的modeで、各画素を割り当てられたpalette lineの最良2 entryの
+間で同じ行列により混合します。暗部haloの黒点は抑えますが、2 entry軸から
+外れた色の平均色はまだ保存できません。強い境界で局所3x3輝度差による減衰が
+必要なsourceだけ
+`edge-attenuated-bayer` を、ディザ無しの最近色丸めには `none` を指定します。
+H40 pixel aspectは32:35です。
 
 `active_tiles` は変換後に一度でもnon-blackになるtile数です。省略時はfull gridを使い、
 小さい値は全master frameに対して検証します。accountingには影響しますがprofileの

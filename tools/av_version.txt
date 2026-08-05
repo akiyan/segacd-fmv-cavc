@@ -1324,6 +1324,14 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
+#   e189: Add the experimental opt-in pal-bayer output dither. The index
+#         stage mixes each pixel's two best entries of its assigned palette
+#         line with the position-fixed Bayer matrix, integer-exact on CPU and
+#         GPU; training/assignment keep the Bayer view. It stops soft dark
+#         edge halos from snapping to the line's forced black entry (isolated
+#         too-black specks on Sonic Jam OP) but does not yet preserve mean
+#         colour off the two-entry axis, so the default stays bayer and the
+#         mode is a per-profile experiment.
 date=20260805
-e=188
+e=189
 p=152

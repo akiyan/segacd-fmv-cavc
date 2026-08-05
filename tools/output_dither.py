@@ -8,8 +8,9 @@ import numpy as np
 
 BAYER = "bayer"
 EDGE_ATTENUATED_BAYER = "edge-attenuated-bayer"
+PAL_BAYER = "pal-bayer"
 NONE = "none"
-MODES = (BAYER, EDGE_ATTENUATED_BAYER, NONE)
+MODES = (BAYER, EDGE_ATTENUATED_BAYER, PAL_BAYER, NONE)
 
 
 BAYER8 = np.array([
@@ -138,6 +139,62 @@ def nearest_rgb333(image: np.ndarray) -> np.ndarray:
     ).astype(np.uint8)
 
 
+def tile_bayer_numerators() -> np.ndarray:
+    """Return the 8x8 Bayer thresholds as (64,) integer numerators over 128.
+
+    ``(BAYER8 + 0.5) / 64`` equals ``(2 * BAYER8 + 1) / 128`` exactly, so the
+    palette-aware comparison ``fraction > threshold`` can run entirely in
+    integers.  Tiles are 8-pixel aligned to the screen, so every tile sees the
+    same complete matrix.
+    """
+    return (2 * BAYER8.astype(np.int64) + 1).reshape(64)
+
+
+def palette_aware_indices(
+        targets888: np.ndarray,
+        assign: np.ndarray,
+        pals_arr: np.ndarray,
+) -> np.ndarray:
+    """Ordered-dither tiles between their two best palette entries.
+
+    ``targets888`` is (C, 64, 3) uint8 source pixels (pre-quantization),
+    ``assign`` is (C,) palette-line selection, ``pals_arr`` is (4, 15, 3)
+    RGB333.  For each pixel the first candidate is the nearest palette entry;
+    the second is the nearest remaining entry; the position-fixed Bayer
+    threshold picks between them by the projection fraction along the
+    c1-to-c2 axis.  All arithmetic is integer so CPU and GPU agree bit for bit.
+
+    Returns (C, 64) uint8 CRAM indices 1..15.
+    """
+    targets = np.asarray(targets888)
+    if targets.ndim != 3 or targets.shape[1:] != (64, 3):
+        raise ValueError(
+            f"targets must have shape (C, 64, 3), got {targets.shape}")
+    # Work in units of 1/255 RGB333 level: t255 = pixel * 7, entry255 = e * 255.
+    t255 = targets.astype(np.int64) * 7                       # (C,64,3)
+    rows = np.asarray(pals_arr, dtype=np.int64)[
+        np.asarray(assign, dtype=np.int64)] * 255             # (C,15,3)
+    diff1 = (t255[:, :, None, :] - rows[:, None, :, :])       # (C,64,15,3)
+    dist1 = (diff1 * diff1).sum(-1)                           # (C,64,15)
+    c1 = dist1.argmin(-1)                                     # (C,64)
+    e1 = np.take_along_axis(rows, c1[..., None], axis=1)      # (C,64,3)
+    # The mixing partner is the nearest entry other than c1, so a gentle
+    # gradient always dithers between its two closest colours instead of
+    # collapsing to flat c1 patches.
+    masked = dist1.copy()
+    np.put_along_axis(masked, c1[..., None], np.iinfo(np.int64).max, axis=-1)
+    c2 = masked.argmin(-1)
+    e2 = np.take_along_axis(rows, c2[..., None], axis=1)
+    d = t255 - e1
+    e = e2 - e1
+    num = (d * e).sum(-1)                                     # projection numerator
+    den = (e * e).sum(-1)                                     # |e|^2 (0 when c1==c2)
+    thr = tile_bayer_numerators()[None, :]                    # (1,64) /128
+    take_second = (128 * num) > (thr * den)
+    chosen = np.where(take_second & (den > 0), c2, c1)
+    return (chosen + 1).astype(np.uint8)
+
+
 def normalize_mode(value: str) -> str:
     """Return one supported profile spelling for an output-dither mode."""
     mode = str(value).strip().lower()
@@ -151,6 +208,11 @@ def quantize_rgb333(image: np.ndarray, mode: str = BAYER) -> np.ndarray:
     """Convert RGB888 to RGB333 with the selected deterministic dither."""
     selected = normalize_mode(mode)
     if selected == BAYER:
+        return bayer_rgb333(image)
+    if selected == PAL_BAYER:
+        # pal-bayer defers its own dithering to the palette-aware index stage.
+        # Training and line assignment keep the Bayer view so palettes stay
+        # identical to the plain-bayer pipeline.
         return bayer_rgb333(image)
     if selected == NONE:
         return nearest_rgb333(image)

@@ -116,10 +116,14 @@ def _coherent_assignment(cp, perr, keys, index, pals, rows, cols,
 
 
 def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
-                   seam_weight=0.0, seam_iterations=2):
+                   seam_weight=0.0, seam_iterations=2, dither_targets=None,
+                   dither_thresholds=None):
     """1コマ分。flat (C,64,3) uint8 rgb333 -> (assign int8 (C,), pidx uint8 (C,64) 1..15)。
 
     CPU版 assign_palette/idx_for と同一結果(argmin の最初の最小=同じtie挙動)。
+    ``dither_targets`` (C,64,3) uint8 RGB888 を渡すと、索引段が
+    output_dither.palette_aware_indices と同じ2候補順序ディザになる
+    (``dither_thresholds`` は tile_bayer_numerators() の (64,) 整数分子)。
     """
     cp = _STATE["cp"]
     error, index, pals = cache.get(cp, seg, seg_pals)         # LUTs (4,512), colours (4,15,3)
@@ -135,8 +139,28 @@ def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
             float(seam_weight), int(seam_iterations))
     else:
         a = perr.argmin(1)                                    # (C,) 最良パレット
-    p = index[a[:, None], keys] + 1                            # (C,64) 1..15
-    return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p).astype(np.uint8)
+    if dither_targets is None:
+        p = index[a[:, None], keys] + 1                        # (C,64) 1..15
+        return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p).astype(np.uint8)
+    # Palette-aware ordered dither, integer-exact vs the NumPy reference.
+    t255 = cp.asarray(dither_targets, dtype=cp.int64) * 7      # (C,64,3)
+    rows_c = pals.astype(cp.int64)[a] * 255                    # (C,15,3)
+    diff1 = t255[:, :, None, :] - rows_c[:, None, :, :]
+    dist1 = (diff1 * diff1).sum(-1)                            # (C,64,15)
+    c1 = dist1.argmin(-1)                                      # (C,64)
+    e1 = cp.take_along_axis(rows_c, c1[..., None], axis=1)
+    masked = dist1.copy()
+    cp.put_along_axis(masked, c1[..., None], cp.iinfo(cp.int64).max, axis=-1)
+    c2 = masked.argmin(-1)
+    e2 = cp.take_along_axis(rows_c, c2[..., None], axis=1)
+    d = t255 - e1
+    e = e2 - e1
+    num = (d * e).sum(-1)
+    den = (e * e).sum(-1)
+    thr = cp.asarray(dither_thresholds, dtype=cp.int64)[None, :]
+    chosen = cp.where(((128 * num) > (thr * den)) & (den > 0), c2, c1)
+    p = (chosen + 1).astype(cp.uint8)
+    return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p)
 
 
 def _tile_err(cp, keys, pal, T):
