@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release Playback Build"
+  short_description: "Build, record and qualify a HUD-free release playback capture"
+  default_prompt: "Use $release to build the release (DEBUG=0) disc for this profile, record its HUD-free playback, and qualify it against the existing gate-PASS DEBUG recording with the LOGVDP comparison and visual inspection."

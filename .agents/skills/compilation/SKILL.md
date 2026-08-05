@@ -41,6 +41,12 @@ description: Prepare and upload an existing, verified record lossless playback c
 - 対応するsim出力ディレクトリ（CRAM切り替え回数用）
 - `tools/av_version.txt` の現行ビルド版
 
+HUDを描かないrelease buildの録画は例外で、gate JSONを自分では持てない。その録画は
+`release` skillが別の証跡で資格付けする: packed streamがgate `PASS`済みのDEBUG録画と
+byte同一であること、LOGVDP DMA traceの比較、そして目視確認。`release`が提示した
+その連鎖を入力条件として受け取り、DEBUGのgate JSONを手で流用しない。以下の
+DEBUG HUD条件は、それ以外の通常録画に適用する。
+
 アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
 `recording`、`recording_size`、`recording_mtime_ns`が入力MKVと一致しない、全映画
 フレームを含まない、またはgateが`FAIL`なら変換・アップロード前に停止して
