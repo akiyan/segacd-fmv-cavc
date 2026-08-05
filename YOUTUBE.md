@@ -33,8 +33,10 @@ someone who has never heard of this project, so do not append specs, a build
 version, or a sequence number to them. `tools/encode_config.py` rejects a title
 over 100 characters, the point where YouTube truncates.
 
-A diagnostic DEBUG capture of the same encode appends ` (DEBUG HUD)` to
-`playback_title`, so the HUD-free recording keeps the plain public title.
+A capture that carries the on-screen counter row appends
+` (with on-screen counters)` to `playback_title`, so the plain recording keeps
+the unmarked public title. Do not put `DEBUG`, `release`, or any other build
+term in a title or description: a viewer does not build this project.
 
 Because no version appears in the title, the description's closing line is the
 only record of which build a video shows. It is mandatory; see below.
@@ -96,8 +98,8 @@ cross-reference each other as complements, never as a prerequisite.
 Never describe analysis panels, meters, timelines, or the category legend in a
 playback description. Those elements are not on screen there, so naming them
 misleads the viewer. Describe what a playback video actually shows: the
-Mega-CD startup, the transition into the movie, the movie itself, and the DEBUG
-HUD row when the build carries one.
+Mega-CD startup, the transition into the movie, the movie itself, and the
+on-screen counter row when one is present.
 
 The codec itself — what it is, what it achieves on this hardware, and which
 constraints shape the picture — belongs in both kinds.
@@ -129,8 +131,8 @@ Playback only:
 
 4. **What the recording contains** — that it starts at the emulator launch and
    keeps the Mega-CD startup and CD-player transition before playback begins,
-   whether a DEBUG HUD row is drawn, and how the native raster was enlarged for
-   delivery.
+   whether an on-screen counter row is present, and how the native raster was
+   enlarged for delivery.
 
 Both kinds end with:
 
@@ -216,8 +218,9 @@ playback_title = "Custom Sega CD FMV Codec Demo – Work Name at 30 FPS"
 `tools/encode_config.py` は100文字を超えるtitleを拒否します。100文字はYouTubeが
 titleを切る位置です。
 
-同じencodeの診断用DEBUG captureは`playback_title`へ ` (DEBUG HUD)` を足します。
-HUDの無い録画が素の公開titleを保つためです。
+画面上のカウンタ行が入るcaptureは`playback_title`へ ` (with on-screen counters)`
+を足し、素の録画が無印の公開titleを保ちます。titleにも説明文にも`DEBUG`や
+`release`といったbuildの用語を書きません。視聴者はこのprojectをbuildしません。
 
 titleにversionが入らないため、説明文末尾の行がその動画のbuildを示す唯一の記録に
 なります。必須です。下記を参照してください。
@@ -275,7 +278,7 @@ hardwareの限界を書きます。説明はその技術の中に収めます。
 playbackの説明文に解析panel、meter、timeline、category legendを書いては
 いけません。そこには映っていないので、名前を出すこと自体が視聴者を誤らせます。
 playbackで実際に映るもの、すなわちMega-CDの起動画面、映画への遷移、映画本体、
-そしてbuildが持つ場合のDEBUG HUD行を書きます。
+そして在る場合は画面上のカウンタ行を書きます。
 
 codec自体が何であるか、このhardwareで何を成しているか、どの制約が絵を
 決めているかは、両方の種類に書きます。
@@ -305,7 +308,7 @@ Analysisのみ:
 Playbackのみ:
 
 4. **録画に何が入っているか** — emulator起動から始まり、再生前のMega-CD起動
-   画面とCD playerの遷移を保っていること、DEBUG HUD行が描かれるかどうか、
+   画面とCD playerの遷移を保っていること、画面上のカウンタ行があるかどうか、
    そしてnative rasterを配信用にどう拡大したか。
 
 両方の末尾:

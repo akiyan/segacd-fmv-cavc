@@ -50,6 +50,17 @@ CHANGELOG_TERMS = [
     r"なくなりました",
 ]
 
+# Build-system vocabulary. A viewer does not build this project, so DEBUG and
+# release mean nothing to them; describe what is on screen instead.
+BUILD_JARGON = [
+    r"\brelease build\b",
+    r"\bdebug build\b",
+    r"\bdebug overlay\b",
+    r"\bDEBUG HUD\b",
+    r"release\s*build",
+    r"DEBUG\s*build",
+]
+
 # Analysis-only vocabulary. A playback video has none of these on screen.
 ANALYSIS_ONLY_TERMS = [
     "category map",
@@ -94,6 +105,10 @@ def check_title(title: str, expected: str | None, failures: list[str],
             f"title is {length} characters; YouTube cuts it at {TITLE_MAX}")
     if re.search(r"\bv\d{2,}\b", title):
         failures.append("title carries a sequence version (vNNN)")
+    for pattern in BUILD_JARGON:
+        if re.search(pattern, title, re.IGNORECASE):
+            failures.append(
+                f"title carries build-system wording matching {pattern!r}")
     if BUILD_VERSION.search(title):
         failures.append(
             "title carries a build version; it belongs on the description's "
@@ -168,6 +183,13 @@ def check_description(text: str, kind: str, expected_build: str | None,
             failures.append(
                 f"changelog wording {match.group(0)!r} at offset "
                 f"{match.start()}; describe this build absolutely")
+
+    for pattern in BUILD_JARGON:
+        for match in re.finditer(pattern, text, re.IGNORECASE):
+            failures.append(
+                f"build-system wording {match.group(0)!r} at offset "
+                f"{match.start()}; a viewer does not build this project, so "
+                "describe what is on screen instead")
 
     if kind == "playback":
         lowered = text.lower()

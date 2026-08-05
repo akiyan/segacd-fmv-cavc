@@ -48,6 +48,10 @@ Description, both kinds:
 - a closing `Build: YYYYMMDD.eN.pM` line, last in the English section, matching
   `--build` when given. Since the title carries no version, this line is the
   only record of which build the video shows;
+- no build-system wording. "release build", "DEBUG build", "debug overlay",
+  and "DEBUG HUD" describe how the artifact was compiled, which the viewer
+  neither knows nor needs; say what is on screen instead. The title is checked
+  for the same terms;
 - no changelog wording. The list covers "no longer", "previously", "instead of
   before", "improved", "regressed", "this version adds/fixes/changes",
   "compared to the previous", and the Japanese equivalents. A description
