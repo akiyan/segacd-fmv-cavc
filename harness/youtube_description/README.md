@@ -66,7 +66,9 @@ Verification uploads (`--kind verification`) are diagnostic records, not
 published works, so none of the public rules apply. The checker requires only
 that the title and description carry the build version, that the description is
 not empty, and that it fits YouTube's limits. Describing what changed is
-expected there.
+expected there, and the description is Japanese only: the English half the
+public kinds carry would be noise in a record written for this project's own
+author.
 
 ## What it deliberately does not check
 

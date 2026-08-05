@@ -97,9 +97,11 @@ cross-reference each other as complements, never as a prerequisite.
   back later, such as a run carrying the on-screen counter row. It is not a
   published work and none of the rules below for the two public kinds apply to
   it. Its title uses the older descriptive form ending in the build version,
-  and its description carries just that version and what the encoder change
-  was. Stating what changed is the point there, not a violation. Do not
-  cross-link a verification upload from a public description.
+  and its description is Japanese only, carrying just that version and what the
+  encoder change was. Stating what changed is the point there, not a violation,
+  and the English half the public kinds need would only be noise in a record
+  written for this project's own author. Do not cross-link a verification
+  upload from a public description.
 
 Never describe analysis panels, meters, timelines, or the category legend in a
 playback description. Those elements are not on screen there, so naming them
@@ -283,9 +285,10 @@ hardwareの限界を書きます。説明はその技術の中に収めます。
 - **Verification** — 後からそのbuildを見返すためだけに残す診断用のcapture。
   画面上のカウンタ行が入った録画などがこれにあたります。公開作品ではないので、
   以下の公開2種類の規約は適用しません。titleは従来の説明的な形式でbuild
-  versionを末尾に置き、説明文はそのversionとencoderの変更内容だけを持ちます。
-  そこでは変更内容を書くことが目的であり、違反ではありません。公開動画の
-  説明文からverification uploadへcross-linkしません。
+  versionを末尾に置き、説明文は日本語のみで、そのversionとencoderの変更内容
+  だけを持ちます。そこでは変更内容を書くことが目的であり、違反ではありません。
+  公開2種類が持つ英語節は、このprojectの作者自身のための記録では雑音にしか
+  なりません。公開動画の説明文からverification uploadへcross-linkしません。
 
 playbackの説明文に解析panel、meter、timeline、category legendを書いては
 いけません。そこには映っていないので、名前を出すこと自体が視聴者を誤らせます。
