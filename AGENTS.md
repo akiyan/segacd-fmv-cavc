@@ -105,10 +105,31 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     version field. Update `tools/av_version.txt` whenever
     you bump.
   - Example: `SEGA-CD FMV of <Work> - max resolution 320x224/40x28 20260710.e1.p1`.
+- **Write the description absolutely, never as a changelog.** Each description
+  stands alone as a statement of what this build is and does, as though it
+  were the only description ever written. Do not compare the video to an
+  earlier upload, do not say what changed, improved, regressed, or was fixed,
+  and do not put a build revision in the prose. "Now", "no longer",
+  "previously", "instead of before", "this version adds", and measured
+  before/after pairs belong to development notes; the title's `<ver>` is the
+  only place a build revision appears. When a technique exists because of a
+  hardware constraint, state the constraint and the resulting behavior, not
+  the history of arriving at it. A reader who has seen no other video in the
+  series must still understand the whole picture.
+- **Explain what a viewer cannot infer from the picture.** A viewer sees
+  dithering, a limited palette, a picture that may not fill the screen, areas
+  that update at different times, and colours that shift at scene boundaries.
+  Say why each is there: the hardware's 9-bit colour and 4-bit tile indices,
+  the fixed aperture and per-source raster, the per-frame update budget under
+  a single-speed CD, and the per-segment CRAM palettes. Prefer naming the
+  concrete limit over calling something an optimization.
 - **Description structure** (in both languages, in this order):
-  1. Overview — one or two lines on what the video is.
-     Name the codec **Sega CD Constraint-Aware Video Codec**. Do not use the
-     current binary magic as a public codec or format name.
+  1. Introduction — what the Sega CD Constraint-Aware Video Codec is: full
+     motion video that unmodified Sega CD / Mega-CD hardware decodes and
+     displays itself while reading one single-speed CD, and what this
+     particular video shows. Name the codec **Sega CD Constraint-Aware Video
+     Codec**. Do not use the current binary magic as a public codec or format
+     name.
   2. Output and source specs — the SEGA-CD output (mode, grid WxH, tile count,
      fps, audio, Prg/Wr0/Wr1/Dic capacities, CRAM palette switch count) and the
      Source (resolution, fps, audio).
@@ -137,8 +158,11 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   4. What the encoder does — first a short list of the techniques applied, then
      the details for each.
   5. Project link — always include the source repository URL:
-     `https://github.com/akiyan/segacd-fmv-cavc` . Put it in every description
-     (both the English and the Japanese section).
+     `https://github.com/akiyan/segacd-fmv-cavc` . Every description carries
+     it, but URLs appear **only once, in the English section**. A URL is not
+     language-specific, so repeating it in the Japanese half adds nothing.
+     This applies to every link, including timeline links and cross-links to
+     related uploads: put them all at the end of the English section.
 - **Describe only what the current build renders.** Take every panel, meter,
   and category name from `tools/layout_preview.py` and `tools/analysis_style.py`
   and spell them the same way. Describe an encoder technique only when

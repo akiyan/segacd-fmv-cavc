@@ -321,14 +321,14 @@ Read the CRAM palette switch count with `tools/cram_switches.py` and state it in
 the spec section of both language halves. Do not generate YouTube chapters or
 description timestamp links. Build the title and
 English-then-Japanese description from the current `AGENTS.md` convention,
-including the repository URL in both language sections and never adding source
-bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
+including the repository URL, which like every URL appears only in the English
+section, and never adding source bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
 public codec name; never expose the binary magic as a codec or format name.
 Save the exact description to a UTF-8 text file and
 measure it before upload. YouTube's description limit is 5,000 characters:
 target 4,800 or fewer and hard-fail above 5,000. If it is too long, shorten
 explanatory prose without removing the CRAM switch count, required specs/layout/
-technique sections, both project links, or the current timeline links.
+technique sections, the project link, or the current timeline links.
 
 ```sh
 tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
