@@ -216,9 +216,9 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     pattern_supply_enabled = bool(features & cavc_routing.FEATURE_PATTERN_SUPPLY)
     indexed_dicbuf = bool(features & cavc_routing.FEATURE_DICBUF_INDEXED_RUNS)
     scroll_enabled = bool(features & cavc_routing.FEATURE_SCROLL)
-    if scroll_enabled and (mode != 1 or tcols != 40 or trows != 28):
+    if scroll_enabled and (mode != 1 or tcols != 40):
         raise ValueError(
-            "rolling-plane scroll requires full-screen H40 40x28 geometry")
+            "rolling-plane scroll requires full-width H40 40-column geometry")
     if scroll_enabled and not (
             features & cavc_routing.FEATURE_SHADOW_UPDATE_LISTS):
         raise ValueError("rolling-plane scroll requires shadow update lists")

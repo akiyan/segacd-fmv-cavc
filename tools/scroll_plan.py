@@ -15,6 +15,10 @@ import scroll_frames
 PLANE_COLUMNS = 64
 PLANE_ROWS = 32
 TILE_SIZE = 8
+# Vertical windows roll the plane's 32 rows behind the viewport, so they need
+# the full-screen H40 28-row grid; a letterboxed grid would scroll its visible
+# letterbox rows.  Horizontal windows only need the full-width 40-column grid.
+VERTICAL_VIEWPORT_ROWS = 28
 
 
 @dataclass(frozen=True)
@@ -78,13 +82,18 @@ class FrameScrollState:
 def _window_metrics(
         rows: Sequence[scroll_frames.AdoptionMeasurement],
 ) -> tuple[float, float, float]:
+    # Window economics use the graded per-tile costs: a fractional-speed pan
+    # keeps a mild subpixel residual on part of its frames, which the codec
+    # carries as an approximation instead of reloading, so those tiles must
+    # not be priced like hard content changes.  The changed-tile counts stay
+    # in the trace for diagnostics only.
     if not rows:
         return 0.0, 0.0, float("inf")
-    fixed = sum(int(row.fixed_changed) for row in rows)
-    scrolling = sum(int(row.scroll_changed) for row in rows)
-    gain = fixed / max(scrolling, 1)
+    fixed = sum(float(row.fixed_cost) for row in rows)
+    scrolling = sum(float(row.scroll_cost) for row in rows)
+    gain = fixed / max(scrolling, 1.0)
     beneficial = float(np.mean([
-        row.scroll_changed < row.fixed_changed for row in rows
+        row.scroll_cost < row.fixed_cost for row in rows
     ]))
     rmse95 = float(np.percentile(
         [row.overlap_rmse for row in rows], 95))

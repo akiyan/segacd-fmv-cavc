@@ -55,7 +55,8 @@ class ScrollPlanTests(unittest.TestCase):
             frame: scroll_frames.AdoptionMeasurement(
                 frame=frame, fixed_changed=900, edge_tiles=28,
                 residual_changed=60, scroll_changed=88,
-                gain=900 / 88, overlap_rmse=5.0)
+                gain=900 / 88, overlap_rmse=5.0,
+                fixed_cost=900.0, residual_cost=60.0, scroll_cost=88.0)
             for frame in range(segment.start, segment.end + 1)
         }
         windows = scroll_plan.select_windows(
@@ -71,7 +72,7 @@ class ScrollPlanTests(unittest.TestCase):
         segment = lunar_segment()
         measurements = {
             frame: scroll_frames.AdoptionMeasurement(
-                frame, 900, 28, 40, 68, 10.0, 4.0)
+                frame, 900, 28, 40, 68, 10.0, 4.0, 900.0, 40.0, 68.0)
             for frame in range(segment.start, segment.end + 1)
         }
         windows = scroll_plan.select_windows(

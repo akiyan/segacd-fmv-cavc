@@ -70,7 +70,18 @@ class ScrollSegment:
 
 @dataclass(frozen=True)
 class AdoptionMeasurement:
-    """Fixed-grid and motion-compensated master costs for one transition."""
+    """Fixed-grid and motion-compensated master costs for one transition.
+
+    ``fixed_changed``/``residual_changed``/``scroll_changed`` are plain
+    changed-tile counts kept for diagnostics.  ``fixed_cost`` and
+    ``scroll_cost`` are the graded update costs that ``gain`` and window
+    selection use: a tile whose residual sits just above the change
+    threshold is a subpixel approximation the codec can carry, not a
+    mandatory reload, so its cost ramps up with the residual instead of
+    jumping to one.  A fractional-speed pan (for example 3.4 px/frame on an
+    integer HScroll) keeps a mild residual on half its frames; the graded
+    cost prices that honestly while hard content changes still cost one.
+    """
 
     frame: int
     fixed_changed: int
@@ -79,6 +90,9 @@ class AdoptionMeasurement:
     scroll_changed: int
     gain: float
     overlap_rmse: float
+    fixed_cost: float
+    residual_cost: float
+    scroll_cost: float
 
 
 def _candidate_shifts(max_shift: int) -> tuple[tuple[int, int], ...]:
@@ -492,13 +506,14 @@ def _tile_change_count(
         *,
         tile_size: int,
         threshold: float,
-) -> tuple[int, float]:
+        saturation: float,
+) -> tuple[int, float, float]:
     height = min(first.shape[0], second.shape[0])
     width = min(first.shape[1], second.shape[1])
     height = height // tile_size * tile_size
     width = width // tile_size * tile_size
     if not height or not width:
-        return 0, float("inf")
+        return 0, 0.0, float("inf")
     delta = first[:height, :width].astype(np.float32) - second[:height, :width]
     squared = np.mean(delta * delta, axis=2)
     tiles = squared.reshape(
@@ -506,7 +521,14 @@ def _tile_change_count(
         width // tile_size, tile_size,
     ).transpose(0, 2, 1, 3)
     rmse = np.sqrt(np.mean(tiles, axis=(2, 3)))
-    return int(np.count_nonzero(rmse > float(threshold))), float(np.sqrt(np.mean(squared)))
+    cost = float(np.sum(np.clip(
+        (rmse - float(threshold)) / (float(saturation) - float(threshold)),
+        0.0, 1.0)))
+    return (
+        int(np.count_nonzero(rmse > float(threshold))),
+        cost,
+        float(np.sqrt(np.mean(squared))),
+    )
 
 
 def measure_adoption(
@@ -518,15 +540,25 @@ def measure_adoption(
         delta: int,
         tile_size: int = 8,
         tile_rmse_threshold: float = 8.0,
+        tile_rmse_saturation: float = 16.0,
 ) -> AdoptionMeasurement:
-    """Compare a fixed screen grid with scroll plus edge/residual updates."""
+    """Compare a fixed screen grid with scroll plus edge/residual updates.
 
+    Both paths use one graded per-tile cost: zero at or below
+    ``tile_rmse_threshold`` (the codec carries the tile as a Same/Near-band
+    approximation), one at or above ``tile_rmse_saturation`` (a mandatory
+    reload), linear between.  Every mandatory incoming-edge tile costs one.
+    """
+
+    if float(tile_rmse_saturation) <= float(tile_rmse_threshold):
+        raise ValueError("tile_rmse_saturation must exceed the threshold")
     prev = _as_rgb(previous)
     curr = _as_rgb(current)
     if prev.shape != curr.shape:
         raise ValueError("adoption frame dimensions differ")
-    fixed, _fixed_rmse = _tile_change_count(
-        prev, curr, tile_size=tile_size, threshold=tile_rmse_threshold)
+    fixed, fixed_cost, _fixed_rmse = _tile_change_count(
+        prev, curr, tile_size=tile_size, threshold=tile_rmse_threshold,
+        saturation=tile_rmse_saturation)
     dx = int(delta) if axis == AXIS_HORIZONTAL else 0
     dy = int(delta) if axis == AXIS_VERTICAL else 0
     x0 = max(0, dx)
@@ -535,11 +567,12 @@ def measure_adoption(
     y1 = min(prev.shape[0], prev.shape[0] + dy)
     prev_overlap = prev[y0 - dy:y1 - dy, x0 - dx:x1 - dx]
     curr_overlap = curr[y0:y1, x0:x1]
-    residual, overlap_rmse = _tile_change_count(
+    residual, residual_cost, overlap_rmse = _tile_change_count(
         prev_overlap,
         curr_overlap,
         tile_size=tile_size,
         threshold=tile_rmse_threshold,
+        saturation=tile_rmse_saturation,
     )
     if axis == AXIS_HORIZONTAL:
         edge = int(np.ceil(abs(dx) / tile_size)) * (prev.shape[0] // tile_size)
@@ -548,10 +581,14 @@ def measure_adoption(
     else:
         edge = 0
     scroll = int(edge + residual)
+    scroll_cost = float(edge) + residual_cost
     return AdoptionMeasurement(
         frame=int(frame), fixed_changed=int(fixed), edge_tiles=int(edge),
         residual_changed=int(residual), scroll_changed=scroll,
-        gain=float(fixed / max(scroll, 1)), overlap_rmse=overlap_rmse,
+        gain=float(fixed_cost / max(scroll_cost, 1.0)),
+        overlap_rmse=overlap_rmse,
+        fixed_cost=fixed_cost, residual_cost=residual_cost,
+        scroll_cost=scroll_cost,
     )
 
 
@@ -590,7 +627,7 @@ def adopt_segment(
         return False
     gains = np.asarray([row.gain for row in rows], np.float64)
     beneficial = np.asarray(
-        [row.scroll_changed < row.fixed_changed for row in rows], bool)
+        [row.scroll_cost < row.fixed_cost for row in rows], bool)
     residuals = np.asarray([row.overlap_rmse for row in rows], np.float64)
     return bool(
         float(gains.mean()) >= float(minimum_mean_gain)

@@ -13,6 +13,22 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e186: Graded per-tile cost in the scroll adoption model (issue #29). A
+#         motion-compensated residual just above the change threshold is a
+#         subpixel approximation the codec carries as Near-band reuse, not a
+#         mandatory reload, so adoption prices each tile with a linear ramp
+#         from RMSE 8 (free) to 16 (full reload) on both the fixed-grid and
+#         scroll paths. Fractional-speed pans (for example 3.4 px/frame on
+#         integer HScroll) are no longer rejected by half their frames'
+#         subpixel blur being priced as hard changes.
+#   e185/p151: Allow horizontal rolling-plane scroll on every full-width H40
+#         grid (issue #29). HScroll shifts every scanline, so a letterboxed
+#         40xN grid keeps its uniform border rows invisible while the player
+#         DMAs the same PC_ROW0-offset TROWS-row 64-column band; the encoder,
+#         header validation, and player build gate now require only the
+#         40-column width. Vertical windows still require the full-screen
+#         28-row grid (they roll all 32 plane rows); the packer rejects a
+#         vertical control on a letterboxed grid.
 #   p150: Fix the DEBUG-build Window horizontal strip (reg17 0x9180 -> 0x9100).
 #         The right-side strip from x=0 made the Window plane cover every
 #         line below the HUD row, and Window row 24 col 0..1 aliases the
@@ -1283,5 +1299,5 @@
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
 date=20260804
-e=184
-p=150
+e=186
+p=151

@@ -22,7 +22,7 @@ MOVIE.DAT はツール互換用の HEADER.DAT || BODY.DAT 連結コンテナ。
 paltab.bin / palidx.bin としてplayerビルド入力へ書き、Main-IPイメージが内蔵する。
 control block: >H total_len >H frame_seq >H type|n_upd
                normal: aligned bitmap/list + entries; fade: 128-byte inline CRAM
-               scroll: >h hscroll >h reserved_zero + 64x32 physical update list
+               scroll: >h hscroll >h vscroll + 64x32 physical update list
                audio [even pad]
                >H n_runs n_runs*(>H slot_start >H count)
   通常palette切替はboot搭載のM-PALIDX表起点。自動fadeはcontrol内の128-byte CRAM。
@@ -356,6 +356,15 @@ def scroll_control_arrays(log, frame_count):
         raise SystemExit(
             f"pack: scroll frame {frame} has no position; the player derives "
             "the band and rebase axis from the nonzero component")
+    # The header-side FEATURE_SCROLL validation already rejects non-40-column
+    # geometry at generate_include time; only the axis choice is per-frame.
+    vertical = active & (raw_positions[:, 1] != 0)
+    if np.any(vertical) and TROWS != scroll_plan.VERTICAL_VIEWPORT_ROWS:
+        frame = int(np.flatnonzero(vertical)[0])
+        raise SystemExit(
+            f"pack: vertical scroll frame {frame} requires the full-screen "
+            f"{scroll_plan.VERTICAL_VIEWPORT_ROWS}-row grid; a letterboxed "
+            "grid would scroll its letterbox rows")
     if count and bool(active[0]):
         raise SystemExit("pack: frame 0 cannot be a streamed scroll control")
     return active, raw_positions.astype(np.int16)

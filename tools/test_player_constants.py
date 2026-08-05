@@ -127,9 +127,15 @@ class PlayerConstantsTest(unittest.TestCase):
             supply_counts=(880, 880, 256),
         ))
         self.assertTrue(values.features & cavc_routing.FEATURE_SCROLL)
+        letterboxed = player_constants.parse_header_sector(make_header(
+            mode=1, fps=24, trows=18, features=base,
+            supply_counts=(880, 880, 256),
+        ))
+        self.assertTrue(letterboxed.features & cavc_routing.FEATURE_SCROLL)
+        self.assertEqual((letterboxed.col0, letterboxed.row0), (0, 5))
         for kwargs, message in (
-            ({"mode": 0, "features": base}, "full-screen H40"),
-            ({"mode": 1, "tcols": 36, "features": base}, "full-screen H40"),
+            ({"mode": 0, "features": base}, "full-width H40"),
+            ({"mode": 1, "tcols": 36, "features": base}, "full-width H40"),
             ({"mode": 1, "features": base & ~cavc_routing.FEATURE_SHADOW_UPDATE_LISTS},
              "update lists"),
             ({"mode": 1, "features": base & ~cavc_routing.FEATURE_PATTERN_SUPPLY},

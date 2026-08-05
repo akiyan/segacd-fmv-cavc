@@ -1486,20 +1486,27 @@ def main():
     _t = _mark("Palette", _t)
 
     # Scroll: source-wide automatic detection only.  No profile time range or
-    # hand-authored frame interval participates in adoption.  The first
-    # implementation deliberately targets the complete H40 40x28 aperture,
-    # because its player owns the exact 64x32 Plane A rolling geometry and the
-    # fixed DEBUG Window/sprite HUD path.
+    # hand-authored frame interval participates in adoption.  Adoption needs
+    # the full-width H40 40-column grid: HScroll shifts every scanline, so a
+    # narrower centered grid would roll its side borders, while a letterboxed
+    # 40xN grid keeps its top/bottom border rows uniform and the player DMAs
+    # the same PC_ROW0-offset 64-column band it stages for normal frames.
+    # Vertical windows roll the 64x32 plane through all 32 rows behind the
+    # full-screen viewport, so they additionally need the 28-row grid; a
+    # letterboxed grid would scroll its letterbox rows on screen.
     # CBRSIM_SCROLL=0 is a diagnostic isolation knob: it disables adoption so
     # the ordinary no-scroll allocation path can be A/B tested on the same
     # source (e.g. reproducing issue #113 without a rolling plane).
     scroll_supported = bool(
         MODE.upper() == "H40"
         and TCOLS == 40
-        and TROWS == 28
         and PATTERN_SUPPLY_ON
         and os.environ.get("CBRSIM_SCROLL", "1") != "0"
     )
+    scroll_axes = (
+        (scroll_frames.AXIS_HORIZONTAL, scroll_frames.AXIS_VERTICAL)
+        if TROWS == scroll_plan.VERTICAL_VIEWPORT_ROWS
+        else (scroll_frames.AXIS_HORIZONTAL,))
     scroll_estimates = ()
     scroll_segments = ()
     scroll_measurements = {}
@@ -1524,10 +1531,7 @@ def main():
                 raw_frames, backend="auto")
             axis_segments = tuple(
                 segment for segment in scroll_segments
-                if segment.axis in (
-                    scroll_frames.AXIS_HORIZONTAL,
-                    scroll_frames.AXIS_VERTICAL,
-                ))
+                if segment.axis in scroll_axes)
             for segment in axis_segments:
                 for row in scroll_frames.measure_segment_adoption(
                         segment, frames):
@@ -1607,7 +1611,8 @@ def main():
         with detection_path.open("w", encoding="utf-8", newline="\n") as stream:
             stream.write(
                 "frame\taxis\tdelta\tsupport\tresidual\tgain\taccepted\t"
-                "fixed_changed\tscroll_changed\toverlap_rmse\tselected\n")
+                "fixed_changed\tscroll_changed\tfixed_cost\tscroll_cost\t"
+                "overlap_rmse\tselected\n")
             for row in scroll_estimates:
                 adoption = scroll_measurements.get(int(row.frame))
                 stream.write(
@@ -1616,6 +1621,8 @@ def main():
                     f"{float(row.gain):.6f}\t{int(bool(row.accepted))}\t"
                     f"{int(adoption.fixed_changed) if adoption else 0}\t"
                     f"{int(adoption.scroll_changed) if adoption else 0}\t"
+                    f"{float(adoption.fixed_cost) if adoption else 0.0:.2f}\t"
+                    f"{float(adoption.scroll_cost) if adoption else 0.0:.2f}\t"
                     f"{float(adoption.overlap_rmse) if adoption else 0.0:.6f}\t"
                     f"{int(int(row.frame) in selected_by_frame)}\n")
         print(
@@ -1629,7 +1636,8 @@ def main():
         )
     else:
         print(
-            "automatic scroll: disabled; requires H40 320x224 with pattern supply",
+            "automatic scroll: disabled; requires full-width H40 (40 columns) "
+            "with pattern supply",
             flush=True,
         )
 

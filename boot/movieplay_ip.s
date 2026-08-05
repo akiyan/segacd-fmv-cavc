@@ -210,10 +210,14 @@
 .if (PC_FEATURES & 0x0200)
 /* Rolling-plane horizontal scroll: nt_stage grows into the persistent 64x32
    plane band, scroll controls stage the full 64-column band, and the flip
-   VBlank rewrites the Plane A/B HScroll pair at VRAM 0xFC00. */
+   VBlank rewrites the Plane A/B HScroll pair at VRAM 0xFC00. HScroll shifts
+   every scanline, so the grid must span the full 40-column H40 width; a
+   letterboxed grid keeps its uniform border rows and DMAs the same
+   PC_ROW0-offset band. The packer only emits vertical windows on the
+   full-screen 28-row grid, because they roll all 32 plane rows. */
 .equ INCLUDE_SCROLL, 1
-.if (PC_TCOLS != 40) || (PC_TROWS != 28)
-.error "rolling-plane scroll requires the full-screen H40 40x28 grid"
+.if (PC_TCOLS != 40) || (PC_COL0 != 0)
+.error "rolling-plane scroll requires the full-width 40-column H40 grid"
 .endif
 .equ NT_SCROLL_BAND_WORDS, PC_TROWS*NT_STAGE_PITCH
 .equ NT_SCROLL_VBAND_WORDS, 32*NT_STAGE_PITCH

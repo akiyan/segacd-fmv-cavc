@@ -104,6 +104,33 @@ class ScrollFrameTests(unittest.TestCase):
             support=1.0, residual=0.0, gain=10.0, multiframe_support=1.0)
         self.assertTrue(scroll_frames.adopt_segment(segment, [measurement]))
 
+    def test_fractional_pan_residual_costs_less_than_its_tile_count(self):
+        # A 4.5 px/frame pan compensated by an integer 4 px shift leaves a
+        # half-pixel blur on every overlap tile.  The graded cost must price
+        # that mild residual below a hard content change, while the fixed
+        # grid's full 4.5 px misalignment stays expensive.
+        rng = np.random.default_rng(9)
+        base = rng.integers(0, 256, (128, 192, 3)).astype(np.float32)
+        for axis in (0, 1):
+            base = (
+                np.roll(base, -1, axis=axis)
+                + base
+                + np.roll(base, 1, axis=axis)
+            ) / 3
+        previous = np.clip(base, 0, 255).astype(np.uint8)
+        shifted4 = translate(previous, dx=-4)
+        shifted5 = translate(previous, dx=-5)
+        current = ((shifted4.astype(np.uint16)
+                    + shifted5.astype(np.uint16)) // 2).astype(np.uint8)
+        measurement = scroll_frames.measure_adoption(
+            previous, current, frame=1, axis="x", delta=-4)
+        self.assertGreater(measurement.residual_changed, 100)
+        self.assertLess(
+            measurement.residual_cost, 0.5 * measurement.residual_changed)
+        self.assertGreater(measurement.gain, 2.0)
+        binary_gain = measurement.fixed_changed / measurement.scroll_changed
+        self.assertLess(binary_gain, 2.0)
+
 
 if __name__ == "__main__":
     unittest.main()

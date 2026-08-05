@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 
 import pack_stream
+import scroll_plan
 import shadow_updates
 import stream_schedule
 import cavc_routing
@@ -118,8 +119,24 @@ class PackScrollTests(unittest.TestCase):
     def test_vertical_controls_select_scroll_feature(self):
         vertical = self.scroll_log()
         vertical["scroll"]["positions"][1] = (0, -5)
+        pack_stream.TROWS = scroll_plan.VERTICAL_VIEWPORT_ROWS
         self.assertEqual(
             pack_stream.scroll_feature_bits(vertical, 2),
+            cavc_routing.FEATURE_SCROLL,
+        )
+
+    def test_vertical_controls_reject_a_letterboxed_grid(self):
+        vertical = self.scroll_log()
+        vertical["scroll"]["positions"][1] = (0, -5)
+        pack_stream.TROWS = 18
+        with self.assertRaisesRegex(SystemExit, "letterbox"):
+            pack_stream.scroll_feature_bits(vertical, 2)
+
+    def test_horizontal_controls_accept_a_letterboxed_grid(self):
+        horizontal = self.scroll_log()
+        pack_stream.TROWS = 18
+        self.assertEqual(
+            pack_stream.scroll_feature_bits(horizontal, 2),
             cavc_routing.FEATURE_SCROLL,
         )
 
