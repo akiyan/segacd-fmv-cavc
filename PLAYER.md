@@ -231,10 +231,10 @@ switch selects another table.
 | blank tile | `0x0000..0x001F` | 32 B | fixed transparent tile 0 |
 | resident pool | `0x0020..0xD9FF` | 1,743 tiles | contiguous movie-pattern slots 1–1,743 |
 | HUD font | `0xDA00..0xDBFF` | 16 tiles | hexadecimal glyphs shared by DEBUG and release startup |
-| sprite table | `0xDC00..0xDE7F` | 640 B | complete 80-record hardware SAT footprint at the highest 0x400-aligned base below the name table; DEBUG uses at most 88 B (11 H32 or 3 H40 records) |
+| sprite table | `0xDC00..0xDE7F` | 640 B | complete 80-record hardware SAT footprint at the highest 0x400-aligned base below the name table; DEBUG uses 24 B (3 records) |
 | gap | `0xDE80..0xDFFF` | 384 B | unallocated VRAM |
 | movie NT | `0xE000..0xEFFF` | 4 KiB | single 64x32 Plane A table |
-| HUD Window row | `0xF000..0xF04F` | up to 80 B | first DEBUG row; H32 uses 64 B, H40 uses 80 B |
+| HUD Window row | `0xF000..0xF04F` | 80 B | first DEBUG row; one word per each of the 40 screen columns |
 | horizontal scroll | `0xFC00..0xFC03` | 4 B | Plane A/B full-screen HScroll pair; zero outside a scroll window, rewritten every flip inside one |
 
 VSRAM entries 0 and 1 carry the Plane A/B VScroll. The stream's scroll value
@@ -245,11 +245,11 @@ a scroll window and republished in the same VBlank as the band DMA.
 Main expands the logical grid into a zero-gapped, 64-entry-pitch Main-RAM
 stage. During the cadence-final VBlank it DMAs the contiguous band from the
 grid's centered top-left cell through its final cell into `movie NT`. The
-transfer length is `(rows - 1) * 64 + cols`: 1,192 words for 40x19, 1,768 for
-full-height H40, and 1,760 for full-height H32. Inside a scroll window the
+transfer length is `(rows - 1) * 64 + cols`: 1,192 words for 40x19 and 1,768
+for the full-height 40x28 grid. Inside a scroll window the
 DMA instead covers the full 64-column band — `rows * 64` words, or all 32
 plane rows (2,048 words) on a vertical window. DEBUG then sends the first
-screen-width HUD row to the Window table and its 3 or 11 spill digits as
+screen-width HUD row to the Window table and its three spill digits as
 sprites. Generic and specialized players use the same routes at every cadence.
 
 ## Startup and Per-Frame CPU Sequence
@@ -308,7 +308,7 @@ block, a routing entry, or a HUD TSV row.
 
 ### Timed playback
 
-On every generic and specialized H32/H40 path, Main returns the consumed Word
+On every generic and specialized path, Main returns the consumed Word
 RAM bank as soon as its final pattern and status reads are complete. The bank
 exchange is started without blocking, before Main finishes the name-table,
 HUD, CRAM, and publication work for frame `N`.
@@ -354,8 +354,8 @@ CRAM is copied to `M-FCRAM` before the request, so Main makes no further access
 to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
 the startup `CMD_STREAM` ownership through its publication, so frame 1 is
 acquired by the ordinary synchronous request. The final frame is also excluded: Main
-requests `STAT_END` only after that frame has become visible. H32,
-non-specialized, periodic-cadence, and feature-clear paths use the same early
+requests `STAT_END` only after that frame has become visible.
+Non-specialized, periodic-cadence, and feature-clear paths use the same early
 handoff once a future frame exists.
 
 On a scroll build, a type-3 control takes a dedicated apply path: item 0
@@ -375,10 +375,10 @@ bounded but raises a HUD warning. A light N4 frame may open only one or two
 budgets and leave the remaining cadence windows empty. These counters record
 explicit budget openings.
 
-For fixed-cadence H32 and H40 playback, one transfer deadline can serve both
+For fixed-cadence playback, one transfer deadline can serve both
 the final cold-run tail and display publication. The Main CPU uses a
 conservative
-2,800 H32 or 3,200 H40 DMA-word-equivalent budget for each VBlank. A DMA word
+3,200 DMA-word-equivalent budget for each VBlank. A DMA word
 costs one unit. Every pattern run uses DMA. A Word-RAM DMA also pays four units
 for its required CPU first-word repair. Main grants a budget only after waiting for a
 new VBlank or while the V counter is still on its first blank line (`E0`).
@@ -669,10 +669,10 @@ register-2 switchはありません。
 | blank tile | `0x0000..0x001F` | 32 B | 固定transparent tile 0 |
 | resident pool | `0x0020..0xD9FF` | 1,743 tiles | 連続movie-pattern slot 1〜1,743 |
 | HUD font | `0xDA00..0xDBFF` | 16 tiles | DEBUGとrelease startupで共有するhexadecimal glyph |
-| sprite table | `0xDC00..0xDE7F` | 640 B | name table直下の最上位0x400整列baseに置いた80 record分の完全なhardware SAT領域。DEBUGの実使用は最大88 B（H32は11、H40は3 record） |
+| sprite table | `0xDC00..0xDE7F` | 640 B | name table直下の最上位0x400整列baseに置いた80 record分の完全なhardware SAT領域。DEBUGの実使用は24 B（3 record） |
 | gap | `0xDE80..0xDFFF` | 384 B | 未割当VRAM |
 | movie NT | `0xE000..0xEFFF` | 4 KiB | 単一64x32 Plane A table |
-| HUD Window row | `0xF000..0xF04F` | 最大80 B | DEBUG先頭行。H32は64 B、H40は80 B |
+| HUD Window row | `0xF000..0xF04F` | 80 B | DEBUG先頭行。40 screen columnそれぞれに1 word |
 | horizontal scroll | `0xFC00..0xFC03` | 4 B | Plane A/Bのfull-screen HScroll対。scroll window外では0、window中は毎flip書き換え |
 
 VSRAM entry 0と1はPlane A/BのVScrollを運びます。streamのscroll値は
@@ -683,10 +683,10 @@ VBlank内でrepublishします。
 Mainはlogical gridをzero gap付き64-entry-pitch Main-RAM stageへ展開します。
 Cadence-final VBlank中に、gridのcentered top-left cellからfinal cellまでの連続bandを
 `movie NT`へDMAします。Transfer lengthは`(rows - 1) * 64 + cols`で、40x19は
-1,192 word、full-height H40は1,768、full-height H32は1,760です。scroll window中は
+1,192 word、full-height 40x28 gridは1,768です。scroll window中は
 代わりに64列band全体をDMAします。horizontalは`rows * 64` word、verticalは
 32 plane行すべて（2,048 word）です。DEBUGは続いて
-先頭screen-width HUD rowをWindow tableへ、spillする3桁または11桁をspriteとして
+先頭screen-width HUD rowをWindow tableへ、spillする3桁をspriteとして
 送ります。Generic / specialized playerは全cadenceで同じrouteを使います。
 
 ## StartupとframeごとのCPU sequence
@@ -745,7 +745,7 @@ entry、HUD TSV rowは追加しません。
 
 ### Timed playback
 
-すべてのgeneric / specialized H32/H40 pathで、Mainは最後のpattern readとstatus readを
+すべてのgeneric / specialized pathで、Mainは最後のpattern readとstatus readを
 終えた時点で、消費済みWord RAM bankを返します。Frame `N`のname-table、
 HUD、CRAM、publication処理を終える前に、bank交換をblockingせず開始します。
 
@@ -790,7 +790,7 @@ CRAMはrequest前に`M-FCRAM`へcopyするため、Mainは`CMD_SWAP` assert後�
 bankへアクセスしません。Frame 0はpublicationまで
 startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期requestで
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
-requestします。H32、non-specialized、periodic-cadence、feature-clear pathも、
+requestします。Non-specialized、periodic-cadence、feature-clear pathも、
 future frameが存在すれば同じearly handoffを使います。
 
 scroll buildでは、type 3 controlが専用のapply pathを通ります。item 0が絶対
@@ -808,8 +808,8 @@ budgetを開く処理はboundedのままですがHUD warningになります。�
 1〜2 budgetだけを開き、残るcadence windowを空きにできます。このcounterは
 explicitなbudget openingを記録します。
 
-Fixed-cadence H32/H40再生では、1個のtransfer deadlineを最後のcold-run tailと
-display publicationで共有できます。Main CPUは各VBlankに、安全側のH32 2,800 / H40
+Fixed-cadence再生では、1個のtransfer deadlineを最後のcold-run tailと
+display publicationで共有できます。Main CPUは各VBlankに、安全側の
 3,200 DMA-word相当budgetを使います。DMA wordは1 unitで、全pattern runがDMAを使います。
 Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新しいVBlankを待った
 直後、またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。

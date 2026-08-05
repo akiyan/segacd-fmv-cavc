@@ -131,7 +131,7 @@ The remaining fields are:
 
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
-| 36 | 1 | display_mode | `0` H32, `1` H40, `2` mode4 |
+| 36 | 1 | display_mode | display mode; `1` (H40) is the only defined value, and the player rejects any other |
 | 37 | 1 | pad | zero |
 | 38 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sectors |
 | 42 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sectors |
@@ -691,7 +691,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
-| 36 | 1 | display_mode | `0` H32、`1` H40、`2` mode4 |
+| 36 | 1 | display_mode | display mode。定義値は `1`（H40）のみで、playerは他の値を拒否する |
 | 37 | 1 | pad | zero |
 | 38 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sector数 |
 | 42 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sector数 |

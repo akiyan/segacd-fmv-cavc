@@ -178,7 +178,7 @@ Hardware-scroll adoption is fully automatic: there is no profile key and no
 source time range. The encoder detects sustained axis-only camera scrolls,
 adopts only the windows that are measurably cheaper than the fixed grid, and
 emits frame type 3 scroll controls (see [`MOVIE.md`](MOVIE.md)). Eligibility
-requires the full-width H40 40-column grid and pattern supply; vertical
+requires the full-width 40-column grid and pattern supply; vertical
 windows additionally require the full-screen 28-row grid. Window anchors
 avoid palette-segment boundaries, fade frames, and fade-preparation frames.
 `CBRSIM_SCROLL=0` disables adoption for diagnostic A/B isolation only.
@@ -288,14 +288,13 @@ slot order while name updates remain in cell order.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
-| `VB_WORDS_H40` | 3,200 DMA-word equivalents/VBlank | ip | Conservative H40 VBlank work budget. |
-| `VB_WORDS_H32` | 2,800 DMA-word equivalents/VBlank | ip | Conservative H32 VBlank work budget. |
+| `VB_WORDS` | 3,200 DMA-word equivalents/VBlank | ip | Conservative VBlank work budget. |
 | `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU bitmap handlers. |
 | movie name-table DMA | `(rows - 1) * 64 + cols` words/frame | ip / analysis | One statically trimmed 64-pitch band into the single table at `0xE000`. |
 | scroll-frame name-table DMA | `rows * 64` words (horizontal) or `32 * 64` = 2,048 words (vertical), plus the HScroll/VScroll pair at CPU word cost | ip / analysis | A scroll build publishes the full 64-column rolling-plane band instead of the trimmed grid band. |
-| DEBUG HUD DMA | H32 76 / H40 52 words/frame | ip / analysis | One Window-row word per screen column plus one four-word sprite record per spill digit. |
+| DEBUG HUD DMA | 52 words/frame | ip / analysis | One Window-row word per screen column (40) plus one four-word sprite record per spill digit (3). |
 | `O_LOADS v2` records | at most the grid cell count; a scroll frame is bounded by the 2,048-cell 64x32 plane instead; exact parity peaks in PSUP | sp / ip / sim / pack | Sub-built source-aware physical transfer plan consumed by Main in place. |
 | run record size | 22 bytes | sp / ip | Pre-swizzled VDP length/source registers, command, raw destination, and raw source. |
 
@@ -309,10 +308,10 @@ are all charged before playback. Each parity's Word-RAM reservation is sized
 from the exact whole-encode record and inline-Prg peak, so there is no separate
 Main-RAM record limit.
 
-Every generic and specialized H32/H40 player publishes the movie table in the
+Every generic and specialized player publishes the movie table in the
 cadence-final VBlank; frame cadence does not change this workload. A 40x19
-grid transfers 1,192 movie words, full-height H40 transfers 1,768, and
-full-height H32 transfers 1,760. DEBUG then transfers its Window row and spill
+grid transfers 1,192 movie words and a full-height 40x28 grid transfers
+1,768. DEBUG then transfers its Window row and spill
 sprites separately. These physical words are included in the R2V analysis
 value and in the final-VBlank reserve. Release builds omit the HUD words.
 
@@ -459,7 +458,7 @@ materialized by `tools/stream_schedule.py`.
 
 ## Per-source TOML profiles
 
-Use one `schema_version = 4` file per source/mode combination.
+Use one `schema_version = 5` file per source.
 
 ```sh
 tools/python.sh tools/sim.py profiles/<profile>.toml
@@ -487,7 +486,7 @@ tmp/<profile>/
 | `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | Input and native timing. `sar` repairs source metadata. `audio_filter` is an ffmpeg `-af` chain applied to the source audio before the mono 22.05 kHz conversion (e.g. `loudnorm=I=-8:TP=-1:LRA=7` to raise a quiet master's loudness); omission extracts the audio as-is. |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[source.preprocess]` | optional `auto_range` | Whole-movie automatic black/white dynamic-range expansion after extraction. |
-| `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
+| `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct tmpfs path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
@@ -499,7 +498,7 @@ source pixels. `resize_filter` defaults to `lanczos`; `master_denoise` defaults
 to true. `output_dither` defaults to `bayer`; set it to
 `edge-attenuated-bayer` only for sources whose strong boundaries need the
 local 3x3 luma-based attenuation, or to `none` for dither-free
-nearest-colour rounding. H32 pixel aspect is 8:7 and H40 is 32:35.
+nearest-colour rounding. The H40 pixel aspect is 32:35.
 
 `active_tiles` is the number of tiles ever non-black after conversion. Omission
 uses the full grid. A smaller value is verified against every master frame.
@@ -516,8 +515,9 @@ raw sequences are then rewritten through one linear LUT shared by all channels
 Sources whose histogram already touches the endpoints, or whose near-endpoint
 region is a smooth ramp rather than a spike, stay unchanged. Default off.
 
-The loader rejects unknown keys, unsupported modes, unknown output-dither
-names, non-tile-aligned dimensions, unsafe profile names, a
+The loader rejects unknown keys, a raster larger than the H40 320x224
+aperture, unknown output-dither names, non-tile-aligned dimensions,
+unsafe profile names, a
 missing/non-positive/malformed cold cap, a cold cap above the resident-pool
 size, an interval cold-cap spec that does not match the profile fps cadence,
 and a negative or non-integer CRAM-risk search length. GPU, the
@@ -546,7 +546,7 @@ timed-ring tail and runs its wave-RAM initializer from staged offset `+0x300`.
 The routing entry executes after prebuffer from the protected stage tail when
 the route is at most 8 KiB; longer-route builds copy the complete extension
 before staging routing. That entry also initializes the ring, APPLY, and
-frame-0 queue state. Standard specialized H32/H40 DEBUG keeps
+frame-0 queue state. Standard specialized DEBUG keeps
 its G state and measurement inline in the resident SP. Startup shows four hexadecimal digits containing safe PrgBuf
 preload KiB; a failure shows `BADx`.
 
@@ -727,7 +727,7 @@ untimed BODY armが構築するため対象外です。
 Hardware-scroll採用は完全自動です。profile keyもsourceのtime range指定もありません。
 Encoderは持続する単一軸のcamera scrollを検出し、固定gridより実測で安くなるwindow
 だけを採用してframe type 3のscroll controlを出力します（[`MOVIE.md`](MOVIE.md)参照）。
-採用条件は全幅H40 40列gridとpattern supplyで、vertical windowは全画面28行gridが
+採用条件は全幅40列gridとpattern supplyで、vertical windowは全画面28行gridが
 追加で必要です。Window anchorはpalette segment境界、fade frame、fade準備frameを
 避けます。`CBRSIM_SCROLL=0` は診断用A/B分離としてのみ採用を無効化します。
 
@@ -830,14 +830,13 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
-| `VB_WORDS_H40` | 3,200 DMA-word相当/VBlank | ip | 安全側のH40 VBlank work budget。 |
-| `VB_WORDS_H32` | 2,800 DMA-word相当/VBlank | ip | 安全側のH32 VBlank work budget。 |
+| `VB_WORDS` | 3,200 DMA-word相当/VBlank | ip | 安全側のVBlank work budget。 |
 | `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。 |
 | movie name-table DMA | `(rows - 1) * 64 + cols` word/frame | ip / analysis | `0xE000`の単一tableへ送る、静的にtrimした1本の64-pitch band。 |
 | scroll-frame name-table DMA | horizontalは`rows * 64` word、verticalは`32 * 64` = 2,048 word。加えてHScroll/VScroll対をCPU word costで送る | ip / analysis | scroll buildはtrim済みgrid bandの代わりに64列rolling plane band全体を送る。 |
-| DEBUG HUD DMA | H32 76 / H40 52 word/frame | ip / analysis | screen columnごとのWindow-row wordと、spill digitごとの4-word sprite record。 |
+| DEBUG HUD DMA | 52 word/frame | ip / analysis | screen columnごとのWindow-row word（40）と、spill digitごとの4-word sprite record（3）。 |
 | `O_LOADS v2` records | grid cell数以下。scroll frameは代わりに2,048 cellの64x32 planeが上限。正確なparityピークはPSUP | sp / ip / sim / pack | Subが構築しMainがin-placeで消費するsource-aware physical transfer計画。 |
 | run record size | 22 bytes | sp / ip | 事前変換済みVDP length/source register、command、raw destination、raw source。 |
 
@@ -849,9 +848,9 @@ descriptorはpack前にparity ring末尾でも分割するため、追加control
 Word-RAM予約はencode全体の正確なrecordとinline Prgピークから決めるため、独立した
 Main-RAM record上限はありません。
 
-すべてのgeneric / specialized H32/H40 playerはcadence-final VBlankでmovie tableを
+すべてのgeneric / specialized playerはcadence-final VBlankでmovie tableを
 publishし、frame cadenceによってこのworkloadは変わりません。40x19 gridはmovie
-wordを1,192、full-height H40は1,768、full-height H32は1,760転送します。DEBUGは
+wordを1,192、full-height 40x28 gridは1,768転送します。DEBUGは
 続けてWindow rowとspill spriteを別DMAします。これらの物理wordはR2V解析値と
 final-VBlank reserveに含まれます。Release buildはHUD wordを省きます。
 
@@ -989,7 +988,7 @@ scheduleは `tools/physical_budget.py` が構築し、`tools/stream_schedule.py`
 
 ## SourceごとのTOML profile
 
-source/modeの組み合わせごとに `schema_version = 4` のfileを1つ使います。
+sourceごとに `schema_version = 5` のfileを1つ使います。
 
 ```sh
 tools/python.sh tools/sim.py profiles/<profile>.toml
@@ -1016,7 +1015,7 @@ tmp/<profile>/
 | `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | inputとnative timing。`sar` はsource metadataを補正する。`audio_filter` はmono 22.05kHz変換前のsource audioへ適用するffmpeg `-af` chain（例: 音圧の低いmasterを持ち上げる `loudnorm=I=-8:TP=-1:LRA=7`）。省略時は無加工で抽出する。 |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[source.preprocess]` | optional `auto_range` | 展開後に動画全編で判定する黒/白dynamic-range自動拡張。 |
-| `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
+| `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
@@ -1027,7 +1026,7 @@ tmp/<profile>/
 `resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。
 `output_dither` defaultは `bayer` です。強い境界で局所3x3輝度差による減衰が必要な
 sourceだけ `edge-attenuated-bayer` を、ディザ無しの最近色丸めには `none` を
-指定します。H32 pixel aspectは8:7、H40は32:35です。
+指定します。H40 pixel aspectは32:35です。
 
 `active_tiles` は変換後に一度でもnon-blackになるtile数です。省略時はfull gridを使い、
 小さい値は全master frameに対して検証します。accountingには影響しますがprofileの
@@ -1042,7 +1041,8 @@ sourceを示します。検出時はmasterとrawの両sequenceを全channel共�
 変わりません)。histogramが既に端へ達しているsourceや、端付近がspikeではなく
 滑らかな勾配のsourceは変更しません。defaultはoffです。
 
-loaderは未知key、未対応mode、未知のoutput-dither名、tile境界に揃わないdimension、
+loaderは未知key、H40 320x224 apertureを超えるraster、未知のoutput-dither名、
+tile境界に揃わないdimension、
 安全でないprofile名、未指定・非positive・不正形式のcold cap、resident-pool sizeを
 超えるcold cap、profileのfps cadenceと一致しない間隔別cold capスペック、
 負または非integerのCRAM-risk search長を拒否します。GPU、1,743-tile
@@ -1069,7 +1069,7 @@ tailへcopyし、staged offset `+0x300`からwave-RAM initializerを実行しま
 routingが8 KiB以下ならrouting入口はprebuffer後に保護済みstage tailから実行し、
 長いroutingのbuildはrouting stage前にextension全体をcopyします。同じ入口が
 timed playback前にring、APPLY、frame-0 queue stateを初期化します。
-Standard specialized H32/H40 DEBUGのG stateとmeasurementはresident SP内にinlineで保持します。
+Standard specialized DEBUGのG stateとmeasurementはresident SP内にinlineで保持します。
 startupは安全に受信済みのPrgBuf preload
 KiBを4桁hexで表示し、failureは`BADx`を表示します。
 

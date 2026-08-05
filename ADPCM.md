@@ -106,7 +106,7 @@ Mega-CD stopwatch ticks, about 0.1229 ms.
 
 The codec implementation, complete-stream reconstruction, player build matrix,
 and emulator recording gate are part of the normal `/run` workflow. Physical
-Mega-CD playback and additional display-mode or cadence combinations remain
+Mega-CD playback and additional cadence combinations remain
 broader portability checks rather than alternate-codec fallbacks.
 
 ---
@@ -209,5 +209,5 @@ DEBUG HUDの`adpcm_decode_units` fieldは、low-rate profileでのopportunistic 
 ## Qualification範囲
 
 Codec実装、全stream復元、player build matrix、emulator recording gateは通常の
-`/run` workflowに含まれます。物理Mega-CD再生と追加のdisplay mode・cadenceの組み合わせは、
+`/run` workflowに含まれます。物理Mega-CD再生と追加のcadenceの組み合わせは、
 別codecへのfallbackではなく、より広いportability checkです。

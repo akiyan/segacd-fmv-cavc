@@ -40,8 +40,8 @@ frames that need new patterns.
   rolling-plane band and republishes the Plane A/B scroll pair in the same
   VBlank. The 1M/1M Word-RAM handoff connects them once per frame,
   and a pending handoff takes priority over future-data prefetch.
-- **Reuse VRAM residents.** Tiles 1–1,743 form one persistent pool shared by
-  H32 and H40, ending just below the fixed HUD font at VRAM `0xDA00`. An exact
+- **Reuse VRAM residents.** Tiles 1–1,743 form one persistent pool ending just
+  below the fixed HUD font at VRAM `0xDA00`. An exact
   resident needs only a name-table entry. Near uses a
   visually close resident, and Flbk uses a resident that improves the current
   display. A new 32-byte pattern is cold-loaded only when needed.
@@ -63,7 +63,7 @@ frames that need new patterns.
   CRAM switches, audio, Prg payload, and pad share one physical-sector plan,
   while quality funding remains separate from the physical pattern source.
 - **Keep VBlank and audio on dedicated paths.** Screen geometry and cold work
-  stay inside the mode-specific Main-CPU transfer budget. A custom IMA ADPCM
+  stay inside the Main-CPU transfer budget. A custom IMA ADPCM
   decoder on the Sub CPU converts 22.05 kHz mono audio into RF5C164 samples,
   preserving CD bandwidth for video.
 
@@ -71,8 +71,8 @@ frames that need new patterns.
 
 Each source has a strict TOML profile.
 
-- **Display:** H32, H40, or mode4; tile-aligned output geometry and
-  aspect-aware pad/crop conversion.
+- **Display:** tile-aligned output geometry inside the H40 320x224 aperture,
+  with aspect-aware pad/crop conversion.
 - **Frame rate:** the source's native rate; 24 fps uses a qualified repeating
   two/three-VBlank cadence at 24000/1001 fps.
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM.
@@ -80,6 +80,14 @@ Each source has a strict TOML profile.
   through that profile.
 - **Palette algorithm:** `stl4` or `mosaic-gm`.
 - **Analysis canvas:** optional and never changes the encoded stream.
+
+H40 is the only display mode, and every profile here uses it. H32's wider dots
+make the dither this codec relies on read as coarse texture rather than tone,
+and its narrower VBlank transfer budget forces a lower cold cap, so the smaller
+tile grid it needs is more than cancelled by the fewer tiles it can deliver.
+One raster also keeps a mode branch out of the player, the encoder, and the
+analysis renderer. See [`REMOVED.md`](REMOVED.md) for what an H32
+reimplementation would need.
 
 See [`CONFIG.md`](CONFIG.md) for the complete schema and limits.
 
@@ -173,10 +181,10 @@ run.
 |---|---|
 | `movieplay` / `disc` | Codec player disc. |
 | `cdcbench` | Continuous and restarted CD-read measurement. |
-| `dmabench` | Maximum VRAM DMA per VBlank and screen mode. |
+| `dmabench` | Maximum VRAM DMA per VBlank. |
 | `cpuvrambench` | CPU-to-VRAM data-port write throughput during VBlank. |
 | `fontbench` | Gate-array font bit vs CPU LUT 1bpp-to-4bpp expansion benchmark. |
-| `still256` | Static H32 display bring-up. |
+| `still256` | Static display bring-up. |
 | `streamtest` | Minimal continuous stream test. |
 | `pcmtest` | RF5C164 register and wave-RAM test. |
 | `adpcmtest` | ADPCM decode and PCM playback test. |
@@ -399,7 +407,7 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
   Plane A/Bのscroll値も更新します。
   1M/1M Word RAM handoffで両者をframe単位に接続し、
   pending handoffを将来dataの先読みより優先します。
-- **VRAM residentを再利用する。** tile 1〜1,743をH32/H40共通のpersistent poolとして
+- **VRAM residentを再利用する。** tile 1〜1,743を1つのpersistent poolとして
   使います（固定HUD font `0xDA00`の直前まで）。Exact residentはname-table entryだけ、
   Nearは見た目が近いresident、Flbkは
   現在表示を改善するresidentを参照します。新しい32-byte patternは必要なときだけ
@@ -417,7 +425,7 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
   予測し、重いframeのためのquality allowanceとboot-preload creditを逆算します。
   control、run descriptor、CRAM switch、audio、Prg payload、padを同じphysical-sector
   planへ入れ、quality fundingと物理pattern sourceを分離します。
-- **VBlankとaudioを専用pathへ収める。** Screen geometryとcold workをmode別Main-CPU
+- **VBlankとaudioを専用pathへ収める。** Screen geometryとcold workをMain-CPU
   transfer budget内に制限します。Sub CPU上の自前IMA ADPCM decoderが22.05 kHz mono
   audioをRF5C164 sampleへ変換し、映像用のCD帯域を確保します。
 
@@ -425,13 +433,21 @@ VBlank transferを節約し、その余裕を新しいpatternが必要なframe�
 
 sourceごとにstrict TOML profileを使います。
 
-- **Display:** H32、H40、mode4。tile-aligned output geometryとaspect-awareなpad/crop。
+- **Display:** H40 320x224 aperture内のtile-aligned output geometryと、
+  aspect-awareなpad/crop。
 - **Frame rate:** source native rate。24 fpsは認定済みの2/3 VBlank反復cadenceを
   使い、実効24000/1001 fpsで再生。
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
 - **Analysis canvas:** optionalで、encoded streamは変えない。
+
+display modeはH40だけで、ここにある全profileがH40です。H32はドットが大きいため、
+このcodecが前提とするditherが階調ではなく粗いテクスチャとして見えます。さらに
+VBlankのtransfer budgetが狭くcold capも下がるので、必要なtile gridが小さくなっても、
+1コマで転送できるtile数の減少がそれを上回ります。rasterを1つにしておくことで、
+player・encoder・analysis rendererからmode分岐も無くせます。H32を再実装する場合に
+必要なものは [`REMOVED.md`](REMOVED.md) を参照してください。
 
 schemaとlimitの全体は [`CONFIG.md`](CONFIG.md) を参照してください。
 
@@ -517,10 +533,10 @@ build intermediate、tmpfs leaseはrunごとに分離します。
 |---|---|
 | `movieplay` / `disc` | Codec player disc。 |
 | `cdcbench` | continuous/restarted CD read計測。 |
-| `dmabench` | screen mode別のVBlank当たり最大VRAM DMA。 |
+| `dmabench` | VBlank当たり最大VRAM DMA。 |
 | `cpuvrambench` | VBlank中のCPU→VRAM data port書き込みthroughput実測。 |
 | `fontbench` | gate-array Font bit vs CPU LUTの1bpp→4bpp展開benchmark。 |
-| `still256` | static H32 display bring-up。 |
+| `still256` | static display bring-up。 |
 | `streamtest` | minimal continuous stream test。 |
 | `pcmtest` | RF5C164 register/wave-RAM test。 |
 | `adpcmtest` | ADPCM decodeとPCM playback test。 |
