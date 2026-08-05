@@ -33,3 +33,7 @@ algorithm = "mosaic-gm"
 
 [analysis]
 source_canvas = [320, 224]
+
+[youtube]
+analysis_title = "Sega CD FMV at 30 FPS – Sonic Jam Opening Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo – Sonic Jam Opening at 30 FPS"

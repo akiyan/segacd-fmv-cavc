@@ -29,7 +29,8 @@ LANGUAGE_SEPARATOR = "----"
 PROJECT_URL = "https://github.com/akiyan/segacd-fmv-cavc"
 CODEC_NAME = "Sega CD Constraint-Aware Video Codec"
 
-TITLE_VERSION = re.compile(r"\b\d{8}\.e\d+\.p\d+$")
+BUILD_VERSION = re.compile(r"\b\d{8}\.e\d+\.p\d+\b")
+BUILD_LINE = re.compile(r"^Build:\s*(\d{8}\.e\d+\.p\d+)\s*$", re.MULTILINE)
 URL = re.compile(r"https?://\S+")
 
 # Wording that turns a standalone description into a changelog. Matched
@@ -84,23 +85,29 @@ def split_languages(text: str) -> tuple[str, str]:
     return text, ""
 
 
-def check_title(title: str, failures: list[str], notes: list[str]) -> None:
+def check_title(title: str, expected: str | None, failures: list[str],
+                notes: list[str]) -> None:
     length = len(title)
     notes.append(f"title characters: {length}/{TITLE_MAX}")
     if length > TITLE_MAX:
         failures.append(
-            f"title is {length} characters; YouTube cuts it at {TITLE_MAX} "
-            "and the version suffix is what gets lost")
-    if not TITLE_VERSION.search(title.strip()):
-        failures.append(
-            "title does not end with a YYYYMMDD.eN.pM build version; that "
-            "suffix is the only record of which build the video shows")
+            f"title is {length} characters; YouTube cuts it at {TITLE_MAX}")
     if re.search(r"\bv\d{2,}\b", title):
         failures.append("title carries a sequence version (vNNN)")
+    if BUILD_VERSION.search(title):
+        failures.append(
+            "title carries a build version; it belongs on the description's "
+            "closing Build line, not in the title")
+    if expected is not None and title.strip() != expected.strip():
+        failures.append(
+            "title does not match the profile [youtube] title:\n"
+            f"        profile: {expected}\n"
+            f"        given  : {title}")
 
 
-def check_description(text: str, kind: str, failures: list[str],
-                      warnings: list[str], notes: list[str]) -> None:
+def check_description(text: str, kind: str, expected_build: str | None,
+                      failures: list[str], warnings: list[str],
+                      notes: list[str]) -> None:
     length = len(text)
     notes.append(f"description characters: {length}/{DESCRIPTION_MAX}")
     if length > DESCRIPTION_MAX:
@@ -141,6 +148,21 @@ def check_description(text: str, kind: str, failures: list[str],
         failures.append(
             "description does not state the CRAM palette switch count")
 
+    build = BUILD_LINE.search(english)
+    if not build:
+        failures.append(
+            "description has no closing 'Build: YYYYMMDD.eN.pM' line in the "
+            "English section; the title carries no version, so this line is "
+            "the only record of which build the video shows")
+    else:
+        notes.append(f"build line: {build.group(1)}")
+        if english.rstrip().splitlines()[-1].strip() != build.group(0).strip():
+            failures.append("the Build line is not the last line of the English section")
+        if expected_build is not None and build.group(1) != expected_build:
+            failures.append(
+                f"Build line says {build.group(1)} but the current build is "
+                f"{expected_build}")
+
     for pattern in CHANGELOG_TERMS:
         for match in re.finditer(pattern, text, re.IGNORECASE):
             failures.append(
@@ -164,6 +186,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--kind", required=True, choices=("analysis", "playback"),
                         help="which kind of codec video this text belongs to")
     parser.add_argument("--title", help="title string to check as well")
+    parser.add_argument("--profile-title",
+                        help="expected title from the profile [youtube] section")
+    parser.add_argument("--build",
+                        help="current build version, e.g. 20260805.e190.p152")
     parser.add_argument("--cross-link",
                         help="URL of the other kind for the same encode; "
                              "required unless --allow-missing-cross-link")
@@ -181,8 +207,8 @@ def main(argv: list[str] | None = None) -> int:
     notes: list[str] = []
 
     if args.title is not None:
-        check_title(args.title, failures, notes)
-    check_description(text, args.kind, failures, warnings, notes)
+        check_title(args.title, args.profile_title, failures, notes)
+    check_description(text, args.kind, args.build, failures, warnings, notes)
 
     if args.cross_link:
         if args.cross_link not in text:

@@ -49,7 +49,7 @@ Keep these distinctions explicit:
 - **WordBuf0 / WordBuf1** (`Wr0` / `Wr1`): distinct boot-preloaded pattern
   sequences in the two physical 1M Word-RAM banks, selected by frame parity;
   they are not duplicate caches.
-- **DicBuf** (`Dic`): a 256-entry boot-preloaded pattern dictionary copied once
+- **DicBuf** (`Dic`): a 512-entry boot-preloaded pattern dictionary copied once
   to Main RAM. Entries are addressed by index and may be reused without being
   consumed.
 - **APPLY ring**: the PRG-RAM circular queue holding continuous control blocks.

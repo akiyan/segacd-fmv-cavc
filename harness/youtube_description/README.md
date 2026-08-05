@@ -32,9 +32,10 @@ counterpart exists. Add the link and re-check once the other video is up.
 Title:
 
 - at most 100 characters, the point where YouTube truncates;
-- ends with a `YYYYMMDD.eN.pM` build version, the only record of which build
-  the video shows;
-- carries no `vNNN` sequence version.
+- matches the profile's `[youtube] analysis_title` / `playback_title` exactly
+  when `--profile-title` is given;
+- carries no build version and no `vNNN` sequence version. The version lives on
+  the description's closing Build line.
 
 Description, both kinds:
 
@@ -44,6 +45,9 @@ Description, both kinds:
 - no URL anywhere in the Japanese half;
 - the public codec name and the project link present;
 - a CRAM palette switch count present;
+- a closing `Build: YYYYMMDD.eN.pM` line, last in the English section, matching
+  `--build` when given. Since the title carries no version, this line is the
+  only record of which build the video shows;
 - no changelog wording. The list covers "no longer", "previously", "instead of
   before", "improved", "regressed", "this version adds/fixes/changes",
   "compared to the previous", and the Japanese equivalents. A description
@@ -56,7 +60,8 @@ Description, playback only:
 
 ## What it deliberately does not check
 
-Content correctness. The checker cannot tell whether the stated grid, buffer
-capacities, or CRAM count match the encode; read those from the sim output and
-`tools/cram_switches.py`. It also cannot judge whether the description explains
-what a viewer cannot infer from the picture. Those remain reading tasks.
+Content correctness. The checker cannot tell whether the stated grid, pattern
+counts, or CRAM count match the encode; read those from the sim output and
+`tools/cram_switches.py`. Two wrong numbers reached a live description this
+way, so verify them by hand until this harness learns to read `decisions.pkl`.
+It also cannot judge whether an explanation is actually understandable.

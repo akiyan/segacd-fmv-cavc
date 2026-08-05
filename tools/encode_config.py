@@ -105,6 +105,9 @@ ALLOWED = {
     "encoder": {key for section, key in ENV_MAP if section == "encoder"},
     "palette": {key for section, key in ENV_MAP if section == "palette"},
     "analysis": {"source_canvas"},
+    # Publication metadata only. Deliberately outside ENV_MAP so a title edit
+    # cannot change the encode identity or invalidate a cached sim artifact.
+    "youtube": {"analysis_title", "playback_title"},
 }
 REQUIRED = {
     "source": {"path", "fps", "duration"},
@@ -210,6 +213,16 @@ class EncodeProfile:
     def release_disc_cue(self) -> Path:
         return ARTIFACT_ROOT / f"{self.artifact_stem}_release.cue"
 
+    @property
+    def analysis_title(self) -> str | None:
+        """Profile-authored YouTube title for the analysis render."""
+        return self.data.get("youtube", {}).get("analysis_title")
+
+    @property
+    def playback_title(self) -> str | None:
+        """Profile-authored YouTube title for the playback recording."""
+        return self.data.get("youtube", {}).get("playback_title")
+
 
 def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     profile_path = Path(path).expanduser().resolve()
@@ -292,6 +305,23 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         raise ValueError(
             f"{profile_path}: video.output_dither must be bayer, "
             "edge-attenuated-bayer, or none")
+    youtube = data.get("youtube", {})
+    if not isinstance(youtube, dict):
+        raise ValueError(f"{profile_path}: [youtube] must be a table")
+    for key in ("analysis_title", "playback_title"):
+        if key not in youtube:
+            continue
+        title = youtube[key]
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError(
+                f"{profile_path}: youtube.{key} must be a non-empty string")
+        if "\n" in title:
+            raise ValueError(
+                f"{profile_path}: youtube.{key} must be a single line")
+        if len(title) > 100:
+            raise ValueError(
+                f"{profile_path}: youtube.{key} is {len(title)} characters; "
+                "YouTube truncates a title at 100")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")
@@ -473,6 +503,8 @@ def main() -> None:
             "cue": str(profile.disc_cue),
             "release_iso": str(profile.release_disc_iso),
             "release_cue": str(profile.release_disc_cue),
+            "analysis_title": profile.analysis_title,
+            "playback_title": profile.playback_title,
         }, indent=2, sort_keys=True))
     else:
         print(json.dumps({"path": str(profile.path), "sha256": profile.sha256,

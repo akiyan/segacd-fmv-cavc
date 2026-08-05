@@ -20,30 +20,24 @@ unlisted.
 
 ## Title
 
-English, fixed format `SEGA-CD FMV of <work> - <specs> <ver>`.
+Titles are authored per source in the profile, not generated from a template:
 
-- `<work>`: the work name. For a native or kanji title, give the
-  transliteration followed by the native title in parentheses, e.g.
-  `Romaji (native)`. A romaji-only work needs no parentheses.
-- `<specs>`: the descriptive spec suffix (mode, resolution/grid, "max
-  resolution", and so on). No sequence version numbers.
-- `<ver>`: the encoder/player build version `YYYYMMDD.eN.pM`, read from
-  `tools/av_version.txt`. `e` is the shared encoder implementation and defaults
-  (`sim.py` / `pack_stream.py`); `p` is the shared player implementation
-  (`boot/movieplay_*.s`). Bump `e` or `p` only when that shared side changes in
-  a way that can alter its output, and never decrease either. Do not bump `e`
-  for a source-specific profile edit such as its input, trim, geometry, frame
-  rate, cold cap, or another encoder setting; the profile/settings identity
-  tracks those. Likewise do not bump `p` merely because a different profile or
-  stream is played. When bumping, set the date to today if it differs. This is
-  the title build version only; the on-disc `HEADER.DAT` layout has no
-  independent version field. Update `tools/av_version.txt` whenever you bump.
-- Example: `SEGA-CD FMV of Some Work - max resolution 320x224/40x28
-  20260710.e1.p1`.
+```toml
+[youtube]
+analysis_title = "Sega CD FMV at 30 FPS – Work Name Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo – Work Name at 30 FPS"
+```
 
-YouTube truncates a title at 100 characters. Measure the title before
-uploading and shorten the spec suffix, not the version, when it does not fit:
-losing `eN.pM` removes the only record of which build the video shows.
+Use those strings verbatim. They are written to be found and understood by
+someone who has never heard of this project, so do not append specs, a build
+version, or a sequence number to them. `tools/encode_config.py` rejects a title
+over 100 characters, the point where YouTube truncates.
+
+A diagnostic DEBUG capture of the same encode appends ` (DEBUG HUD)` to
+`playback_title`, so the HUD-free recording keeps the plain public title.
+
+Because no version appears in the title, the description's closing line is the
+only record of which build a video shows. It is mandatory; see below.
 
 ## Description language and links
 
@@ -71,22 +65,22 @@ section, the project link, or the current timeline links.
 Each description stands alone as a statement of what this build is and does, as
 though it were the only description ever written. Do not compare the video to
 an earlier upload, do not say what changed, improved, regressed, or was fixed,
-and do not put a build revision in the prose. "Now", "no longer", "previously",
+and do not narrate a build revision. "Now", "no longer", "previously",
 "instead of before", "this version adds", and measured before/after pairs
-belong to development notes; the title's `<ver>` is the only place a build
-revision appears. When a technique exists because of a hardware constraint,
+belong to development notes. Naming the build the video was made from is not a
+changelog: the closing line states it once as a fact. When a technique exists because of a hardware constraint,
 state the constraint and the resulting behavior, not the history of arriving at
 it. A reader who has seen no other video in the series must still understand
 the whole picture.
 
-## Explain what a viewer cannot infer from the picture
+## Name the constraint, not the optimization
 
-A viewer sees dithering, a limited palette, a picture that may not fill the
-screen, areas that update at different times, and colours that shift at scene
-boundaries. Say why each is there: the hardware's 9-bit colour and 4-bit tile
-indices, the fixed aperture and per-source raster, the per-frame update budget
-under a single-speed CD, and the per-segment CRAM palettes. Prefer naming the
-concrete limit over calling something an optimization.
+When a technique needs explaining, give the hardware limit that forces it
+rather than calling it an optimization. Keep this inside the technique it
+belongs to; a standalone tour of the hardware reads as a lecture and is the
+first thing to cut when the description runs long. Internal buffer names mean
+nothing to a viewer: say what the RAM is used for, not `PrgBuf` or `DicBuf`
+with a capacity.
 
 ## Video kinds
 
@@ -122,27 +116,30 @@ Shared by both kinds:
 2. **Output and source specs** — the SEGA-CD output (mode, grid WxH, tile
    count, fps, audio, Prg/Wr0/Wr1/Dic capacities, CRAM palette switch count)
    and the Source (resolution, fps, audio). Do not show source bitrate.
-3. **Why the picture looks like this** — the constraints a viewer can see but
-   not explain by looking. See "Explain what a viewer cannot infer".
-4. **What the encoder does** — a short list of the techniques applied, then the
-   detail for each.
+3. **What the encoder does** — the techniques applied, each stated with the
+   hardware constraint that makes it necessary rather than as a separate
+   lecture on the hardware.
 
 Analysis only:
 
-5. **How to read the layout** — what each panel, meter, and timeline shows and
+4. **How to read the layout** — what each panel, meter, and timeline shows and
    how to interpret it. See "Analysis layout terms" below.
 
 Playback only:
 
-5. **What the recording contains** — that it starts at the emulator launch and
+4. **What the recording contains** — that it starts at the emulator launch and
    keeps the Mega-CD startup and CD-player transition before playback begins,
    whether a DEBUG HUD row is drawn, and how the native raster was enlarged for
    delivery.
 
 Both kinds end with:
 
-6. **Links** — the project link, the cross-link to the other kind for the same
+5. **Links** — the project link, the cross-link to the other kind for the same
    encode, and any timeline link. English section only.
+6. **Build line** — the last line of the description, in the English section
+   only: `Build: YYYYMMDD.eN.pM` read from `tools/av_version.txt`. Since the
+   title carries no version, this line is the only way to tell which encoder
+   and player produced the video.
 
 ## CRAM switch count
 
@@ -206,26 +203,24 @@ fileをuploadしてはいけません。同じ成果物の再uploadは`--force`�
 
 ## Title
 
-英語、固定形式 `SEGA-CD FMV of <work> - <specs> <ver>`。
+titleはtemplateから生成せず、sourceごとにprofileへ書きます:
 
-- `<work>`: 作品名。native/漢字titleの場合は転写を書き、続けて括弧内へnative
-  titleを置きます (例 `Romaji (native)`)。romajiのみの作品に括弧は不要です。
-- `<specs>`: 内容を述べるspec接尾辞 (mode、resolution/grid、"max resolution"
-  など)。連番versionは使いません。
-- `<ver>`: encoder/player build version `YYYYMMDD.eN.pM`。`tools/av_version.txt`
-  から読みます。`e`は共有encoder実装と既定値 (`sim.py` / `pack_stream.py`)、
-  `p`は共有player実装 (`boot/movieplay_*.s`)。その共有側が出力を変えうる形で
-  変化したときだけ`e`か`p`を上げ、どちらも下げません。input、trim、geometry、
-  frame rate、cold capなどsource固有のprofile編集で`e`を上げてはいけません。
-  それらはprofile/settings identityが追跡します。同様に、別のprofileやstreamを
-  再生しただけで`p`を上げません。上げるときは日付が違えば今日にします。これは
-  titleのbuild versionのみで、on-discの`HEADER.DAT` layoutは独立したversion
-  fieldを持ちません。上げたら`tools/av_version.txt`も更新します。
-- 例: `SEGA-CD FMV of Some Work - max resolution 320x224/40x28 20260710.e1.p1`。
+```toml
+[youtube]
+analysis_title = "Sega CD FMV at 30 FPS – Work Name Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo – Work Name at 30 FPS"
+```
 
-YouTubeはtitleを100文字で切ります。upload前にtitle長を測り、収まらないときは
-versionではなくspec接尾辞を短くします。`eN.pM`を失うと、その動画がどのbuildの
-ものかという唯一の記録が消えます。
+その文字列をそのまま使います。このprojectを知らない人に見つけられ、理解される
+ことを意図して書かれているので、specやbuild version、連番を後ろへ足しません。
+`tools/encode_config.py` は100文字を超えるtitleを拒否します。100文字はYouTubeが
+titleを切る位置です。
+
+同じencodeの診断用DEBUG captureは`playback_title`へ ` (DEBUG HUD)` を足します。
+HUDの無い録画が素の公開titleを保つためです。
+
+titleにversionが入らないため、説明文末尾の行がその動画のbuildを示す唯一の記録に
+なります。必須です。下記を参照してください。
 
 ## 説明文の言語とlink
 
@@ -253,18 +248,18 @@ spec、layoutの読み方、encoder技術の節、project link、現行のtimeli
 他に説明文が存在しないかのように書きます。前のuploadとの比較、変更点、改善・
 後退・修正の記述、そして散文中のbuild revisionを書いてはいけません。「now」
 「no longer」「previously」「instead of before」「this version adds」、および
-測定値のbefore/after対は開発notesのものです。build revisionはtitleの`<ver>`
-だけが持ちます。ある技術がhardware制約ゆえに存在するときは、そこへ至った経緯
+測定値のbefore/after対は開発notesのものです。build revisionを語ってはいけません。動画がどのbuildから作られたかを
+書くことはchangelogではなく、最終行がそれを事実として一度だけ述べます。ある技術がhardware制約ゆえに存在するときは、そこへ至った経緯
 ではなく制約と結果の挙動を書きます。このシリーズの他の動画を1本も見ていない
 読者が、それだけで全体を理解できなければなりません。
 
-## 一目では分からないことを説明する
+## 最適化ではなく制約を名指しする
 
-視聴者にはdither、限られた色数、画面を埋めないことのある絵、場所によって更新
-時期が異なること、場面境界での色の変化が見えます。そのそれぞれについて理由を
-書きます: hardwareの9-bit色と4-bit tile index、固定apertureとsourceごとの
-raster、単速CD下でのframeあたり更新予算、segmentごとのCRAM palette。何かを
-最適化と呼ぶより、具体的な限界を名指しすることを優先します。
+技術の説明が要るときは、それを最適化と呼ぶのではなく、そうせざるを得ない
+hardwareの限界を書きます。説明はその技術の中に収めます。hardwareの解説を
+単体で並べると講義になり、説明文が長すぎるときに最初に削る対象になります。
+内部のbuffer名は視聴者に何も伝えません。`PrgBuf`や`DicBuf`と容量を並べるので
+はなく、そのRAMが何に使われるかを書きます。
 
 ## 動画の種類
 
@@ -299,25 +294,27 @@ codec自体が何であるか、このhardwareで何を成しているか、ど�
 2. **出力とsourceのspec** — SEGA-CD出力 (mode、grid WxH、tile数、fps、音声、
    Prg/Wr0/Wr1/Dicの容量、CRAM palette切り替え回数) とSource (解像度、fps、
    音声)。sourceのbitrateは書きません。
-3. **絵がこう見える理由** — 視聴者に見えていても、見ただけでは説明できない
-   制約。「一目では分からないことを説明する」を参照します。
-4. **encoderの動作** — 適用した技術の短い列挙と、それぞれの詳細。
+3. **encoderの動作** — 適用した技術。hardwareの解説を別立てにするのではなく、
+   各技術をそれが必要になる制約と一緒に述べます。
 
 Analysisのみ:
 
-5. **layoutの読み方** — 各panel、meter、timelineが何を示し、どう解釈するか。
+4. **layoutの読み方** — 各panel、meter、timelineが何を示し、どう解釈するか。
    下の「解析layoutの用語」を参照します。
 
 Playbackのみ:
 
-5. **録画に何が入っているか** — emulator起動から始まり、再生前のMega-CD起動
+4. **録画に何が入っているか** — emulator起動から始まり、再生前のMega-CD起動
    画面とCD playerの遷移を保っていること、DEBUG HUD行が描かれるかどうか、
    そしてnative rasterを配信用にどう拡大したか。
 
 両方の末尾:
 
-6. **link** — project link、同じencodeのもう一方の種類へのcross-link、そして
+5. **link** — project link、同じencodeのもう一方の種類へのcross-link、そして
    timeline link。英語節のみ。
+6. **build行** — 説明文の最終行、英語節のみ: `tools/av_version.txt` から読んだ
+   `Build: YYYYMMDD.eN.pM`。titleがversionを持たないため、この行がどのencoderと
+   playerで作られた動画かを知る唯一の手段です。
 
 ## CRAM切り替え回数
 
