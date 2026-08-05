@@ -73,7 +73,7 @@ REQUIRED_COLUMNS = {
     "body_physical_bytes", "body_useful_bytes",
     "quality_budget_remaining_bytes",
 }
-OPTIONAL_COLUMNS = {"status_dma"}
+OPTIONAL_COLUMNS = {"status_dma", "legend_scrl"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -684,7 +684,7 @@ def compute_legend_totals(
     data: dict[str, np.ndarray], selection: np.ndarray,
 ) -> dict[str, int]:
     """Whole-movie displayed-cell totals per analysis legend category."""
-    take = lambda key: int(data[key][selection].sum())
+    take = lambda key: int(data[key][selection].sum()) if key in data else 0
     totals = {}
     for name in LEGEND_TOTAL_ORDER:
         if name == "Wrd":
@@ -758,7 +758,10 @@ def draw_timeline(
         x1 = x0 + ppf - 1
         y = req_top + req_h
         for name in REQ_ORDER:
-            value = data[f"legend_{name.lower()}"][frame_index]
+            column = data.get(f"legend_{name.lower()}")
+            if column is None:
+                continue
+            value = column[frame_index]
             height = int(req_h * value / cells)
             if height:
                 draw.rectangle((x0, y - height, x1, y - 1), fill=REQ_COLORS[name])
