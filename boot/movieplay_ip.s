@@ -60,14 +60,14 @@
 .equ HUD_SPRITE_TABLE_BYTES, 80*8
 .equ HUD_SPRITE_REG, 0x8500 | (HUD_SPRITE_TABLE >> 9)
 
-/* H40 ignores the low sprite-table base bit, so the physical table must be
-   0x400-aligned; 0xDC00 is the highest such base whose complete 80-record
+/* The VDP ignores the low sprite-table base bit at H40, so the physical table
+   must be 0x400-aligned; 0xDC00 is the highest such base whose complete 80-record
    hardware footprint still ends below the movie name table. It sits directly
    above the HUD font so the resident pool below stays one contiguous run. In
    particular, it must not alias the full-screen Window map at 0xF000 as the
    old 0xF800 placement did. */
 .if (HUD_SPRITE_TABLE & 0x03FF)
-.error "H40 HUD sprite table is not 0x400-aligned"
+.error "HUD sprite table is not 0x400-aligned"
 .endif
 .if (HUD_SPRITE_TABLE < HUD_FONT_ADDR+0x200) || ((HUD_SPRITE_TABLE + HUD_SPRITE_TABLE_BYTES) > MOVIE_NT)
 .error "HUD sprite table is outside the free VRAM gap"
@@ -131,11 +131,11 @@
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
 .equ FADE_CRAM_RAM, 0x00FF8800		/* 128B copy kept after early Word-RAM return */
 .equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
-/* 1VBLANKで安全に使えるDMA相当word budgetはモード別(md_vbudget)。
-   Word-RAM DMAの先頭word補修など、CPUによるVDP word writeはDMAの4倍で
-   chargeし、runは残budget境界で次VBLANKへ分ける。 */
-.equ VB_WORDS_H32, 2800		/* H32 V28 NTSC */
-.equ VB_WORDS_H40, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
+/* 1VBLANKで安全に使えるDMA相当word budget。Word-RAM DMAの先頭word補修など、
+   CPUによるVDP word writeはDMAの4倍でchargeし、runは残budget境界で次VBLANKへ
+   分ける。 */
+.equ SCREEN_COLS, 40		/* H40 V28 NTSC: 40x28 cell aperture */
+.equ VB_WORDS, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
 .equ FEATURE_VBLANK_CADENCE_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
@@ -196,7 +196,7 @@
    the complete 1792-word aperture. Generic builds derive the same values from
    HEADER.DAT at startup. */
 .equ NT_STAGE_PITCH, 64
-.equ NT_STAGE_MAX_WORDS, (28-1)*NT_STAGE_PITCH+40
+.equ NT_STAGE_MAX_WORDS, (28-1)*NT_STAGE_PITCH+SCREEN_COLS
 .equ NT_FLIP_GUARD_WORDS, 128
 .ifdef PLAYER_SPECIALIZED
 .equ NT_STAGE_WORDS, (PC_TROWS-1)*NT_STAGE_PITCH+PC_TCOLS
@@ -351,8 +351,8 @@ ip_entry:
 	jsr	BIOS_CLEAR_VRAM
 	jsr	BIOS_CLEAR_COMM
 
-	/* VDP: H32, autoinc=2, plane 64x32, one movie NT and fixed DEBUG tables. */
-	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 H32 */
+	/* VDP: H40, autoinc=2, plane 64x32, one movie NT and fixed DEBUG tables. */
+	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40 */
 	move.w	#0x9001, (VDP_CTRL).l		/* reg16 plane 64x32 */
 	move.w	#0x8F02, (VDP_CTRL).l		/* reg15 autoinc 2 */
 	move.w	#0x8B00, (VDP_CTRL).l		/* reg11 scroll full-screen */
@@ -378,9 +378,6 @@ ip_entry:
 	.endif
 
 .ifdef PLAYER_SPECIALIZED
-.if PC_MODE == 1
-	move.w	#0x8C81, (VDP_CTRL).l		/* show the preload counter in H40 too */
-.endif
 	bsr	draw_startup
 .else
 	bsr	load_movie_palette
@@ -400,8 +397,8 @@ ip_entry:
 	bsr	cmd_wait_ready
 .endif
 
-	/* frame0準備完了=バンクにヘッダ写し(O_HDR)がある。mode/tcols/trows/pool/base を読み
-	   モード依存のVDP設定と実行時変数を確定する(汎用化: H32/H40, mode4は将来) */
+	/* frame0準備完了=バンクにヘッダ写し(O_HDR)がある。tcols/trows/pool/base を読み
+	   実行時変数を確定する。表示modeはH40固定。 */
 	lea	(PROBE_BANK+STATUS_OFF+0x80), a0
 	.ifndef PLAYER_SPECIALIZED
 	move.w	4(a0), d0
@@ -414,9 +411,6 @@ ip_entry:
 	move.w	d0, md_bmbytes
 	/* HUD font is fixed at 0xDA00 (HUD_FONT_ADDR/HUD_FONT_VTILE); no runtime
 	   base+pool computation needed. */
-	moveq	#0, d0
-	move.b	36(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
-	move.w	d0, md_mode
 	/* The first cadence interval is stored at offset 50. CAVC derives any
 	   later interval from nominal fps, so 24fps becomes the periodic 2/3 path. */
 	move.w	50(a0), d0
@@ -440,34 +434,17 @@ ip_entry:
 	bne.s	1f
 	move.w	#3*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS, md_pace_alt_arm_ticks
 1:
-	/* Select the VDP width from the stream's mode byte, not from N.
-	   N is the frame pacing interval (2 at 30fps, 4 at 15fps), so testing
-	   it here made every v4 stream fall through to H40. */
-	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 H32 */
-	move.w	#32, d2				/* screen_cols */
-	move.w	#VB_WORDS_H32, d3
-	cmpi.w	#1, md_mode
-	bne	1f					/* mode 0=H32; mode 2 is reserved */
-	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40 */
-	move.w	#40, d2
-	move.w	#VB_WORDS_H40, d3
-1:
+	move.w	#SCREEN_COLS, d2		/* screen_cols */
+	move.w	#VB_WORDS, d3
 	move.w	d2, md_screen_cols
-	.else
-.if PC_MODE == 0
-	move.w	#0x8C00, (VDP_CTRL).l		/* generated H32 profile */
-.elseif PC_MODE == 1
-	move.w	#0x8C81, (VDP_CTRL).l		/* generated H40 profile */
-.else
-	.error "unsupported generated player mode"
-.endif
-.endif
+	.endif
+	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40 */
 .ifndef PLAYER_SPECIALIZED
 	move.w	d3, md_vbudget
 	sub.w	md_tcols, d2			/* col0 = (screen_cols-tcols)/2 */
 	lsr.w	#1, d2
 	move.w	d2, md_col0
-	move.w	#28, d2				/* screen_rows(H32/H40) */
+	move.w	#28, d2				/* screen_rows */
 	sub.w	md_trows, d2			/* row0 = (screen_rows-trows)/2 */
 	lsr.w	#1, d2
 	move.w	d2, md_row0
@@ -1766,8 +1743,8 @@ nt_dma_flip:
 
 	.ifdef DEBUG
 	/* Publish the first screen-width HUD cells through the fixed top Window row
-	   and the remaining cells as one-tile high-priority sprites on row 1. H32
-	   uses 32 Window words plus eleven SAT records; H40 uses 40 plus three. */
+	   and the remaining cells as one-tile high-priority sprites on row 1: 40
+	   Window words plus three SAT records. */
 hud_dma_flip:
 	movem.l	d0-d7/a0-a3, -(sp)
 	PC_MOVE_W md_screen_cols, PC_SCREEN_COLS, d5
@@ -2143,7 +2120,7 @@ wait_vblank:
    then flip/share/delay, packed pump-gap/back-pressure, one-digit MSF gap,
    packed reader lead/slot, transfer-VBlank count, transfer-end V-counter,
    pattern-DMA start V-counter and name-table-DMA start V-counter.
-   H32 wraps after 32 words; H40 wraps after 40 words. */
+   The row wraps after 40 words, the H40 screen width. */
 prepare_dbg:
 .ifdef HUD_HEX_TABLE
 	movem.l	d0-d4/a0-a1, -(sp)
@@ -2447,9 +2424,9 @@ shadow:
 	.space 0x1000				/* logical H40=2240B; padded for bounded list offsets */
 dbg_row:
 .ifdef HUD_SUB_POLL_GAP
-	.space HUD_COMBINED_WORDS*2		/* H32 wraps; H40 fits one row */
+	.space HUD_COMBINED_WORDS*2		/* 43 logical digits before wrapping */
 .else
-	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
+	.space SCREEN_COLS*2			/* prebuilt values-only row; DEBUG fills all 40 cells */
 .endif
 nt_stage:
 .ifdef INCLUDE_SCROLL
@@ -2458,16 +2435,14 @@ nt_stage:
 .ifdef PLAYER_SPECIALIZED
 	.space NT_STAGE_WORDS*2			/* exact static grid band */
 .else
-	.space NT_STAGE_MAX_WORDS*2		/* runtime H32/H40 maximum */
+	.space NT_STAGE_MAX_WORDS*2		/* runtime full-aperture maximum */
 .endif
 .endif
 .ifdef DEBUG
 hud_sprites:
-	.space (HUD_COMBINED_WORDS-32)*4*2	/* H32 maximum: eleven 4-word SAT records */
+	.space (HUD_COMBINED_WORDS-SCREEN_COLS)*4*2	/* three 4-word SAT records */
 .endif
 .ifndef PLAYER_SPECIALIZED
-md_mode:
-	.space 2
 md_final_frame:
 	.space 2
 md_vsync_n:

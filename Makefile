@@ -192,7 +192,7 @@ $(OUT_DIR)/FONTBENCH.cue: $(OUT_DIR)/FONTBENCH.iso
 	@rm -f $@
 	@printf 'FILE "FONTBENCH.iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
-# --- Phase A: H32 256x144 静止画レンダラ(描画土台検証, CD読み無し/CPU書き込みのみ) ---
+# --- Phase A: 256x144 静止画レンダラ(描画土台検証, CD読み無し/CPU書き込みのみ) ---
 STILL256_DISC := $(OUT_DIR)/disc_still256
 STILL256_DATA ?= $(shell $(PYTHON) -c 'import sys; sys.path.insert(0, "tools"); from cbr_paths import sim_work_dir; print(sim_work_dir() / "still256.bin")')
 
@@ -218,25 +218,24 @@ $(OUT_DIR)/STILL256.cue: $(OUT_DIR)/STILL256.iso
 	@rm -f $@
 	@printf 'FILE "STILL256.iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
-# --- dmabench: 表示モード別 VRAM DMA スループット実測(再利用可能) ---
-# 使い方: make dmabench DMABENCH_MODE=0|1|2  (0=H32, 1=H40, 2=mode4)
+# --- dmabench: H40 VRAM DMA スループット実測(再利用可能) ---
+# 使い方: make dmabench
 #         DMABENCH_DELAY=N でVBlank立ち上がりからNライン遅らせてDMAを開始(既定0)。
 #         DMABENCH_RUNS=N (N>0) でplayerと同じWord-RAM DMA +先頭word補修を
 #         N本の均等runに分けて実測。DMABENCH_REPAIR=0で補修なしの対照。
 # RUNS=0はW=語/VBlankとF=タイル/frame(3 VBlank換算)を表示。
 # RUNS>0はさらにR=run数とE=1024語転送のstopwatch tickを表示。結果はBUDGETS.md参照。
-DMABENCH_MODE ?= 0
 DMABENCH_DELAY ?= 0
 DMABENCH_RUNS ?= 0
 DMABENCH_REPAIR ?= 1
 DMABENCH_RUN_TAG := $(if $(filter-out 0,$(DMABENCH_RUNS)),_wr$(DMABENCH_RUNS)$(if $(filter 1,$(DMABENCH_REPAIR)),fix,nofix),)
-DMABENCH_TAG := mode$(DMABENCH_MODE)$(if $(filter-out 0,$(DMABENCH_DELAY)),d$(DMABENCH_DELAY),)$(DMABENCH_RUN_TAG)
+DMABENCH_TAG := h40$(if $(filter-out 0,$(DMABENCH_DELAY)),d$(DMABENCH_DELAY),)$(DMABENCH_RUN_TAG)
 dmabench: check-tools $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue
 	@cp $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso $(OUT_DIR)/DMABENCH.iso
 	@cp $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue $(OUT_DIR)/DMABENCH.cue
 
 $(OUT_DIR)/dmabench_ip_$(DMABENCH_TAG).o: $(BOOT_DIR)/dmabench_ip.s $(BOOT_DIR)/security.bin $(BOOT_DIR)/dbgfont.bin | setup
-	$(AS) $(ASFLAGS) --defsym MODE=$(DMABENCH_MODE) --defsym DELAY_LINES=$(DMABENCH_DELAY) --defsym RUNS=$(DMABENCH_RUNS) --defsym REPAIR=$(DMABENCH_REPAIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) --defsym DELAY_LINES=$(DMABENCH_DELAY) --defsym RUNS=$(DMABENCH_RUNS) --defsym REPAIR=$(DMABENCH_REPAIR) -I$(BOOT_DIR) $< -o $@
 
 $(OUT_DIR)/dmabench_ip_$(DMABENCH_TAG).bin: $(OUT_DIR)/dmabench_ip_$(DMABENCH_TAG).o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
@@ -257,16 +256,15 @@ $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).cue: $(OUT_DIR)/DMABENCH_$(DMABENCH_TAG).iso
 	@printf 'FILE "DMABENCH_$(DMABENCH_TAG).iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
 # --- cpuvrambench: VBLANK中 CPU→VRAM data port 書き込みスループット実測(再利用可能) ---
-# 使い方: make cpuvrambench CPUVRAMBENCH_MODE=0|1  (0=H32, 1=H40)
+# 使い方: make cpuvrambench
 # 左上に W=語/vblank F=タイル/コマ(3vblank換算) を表示。結果は BUDGETS.md 参照。
-CPUVRAMBENCH_MODE ?= 0
-CPUVRAMBENCH_TAG := mode$(CPUVRAMBENCH_MODE)
+CPUVRAMBENCH_TAG := h40
 cpuvrambench: check-tools $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue
 	@cp $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).iso $(OUT_DIR)/CPUVRAMBENCH.iso
 	@cp $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue $(OUT_DIR)/CPUVRAMBENCH.cue
 
 $(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).o: $(BOOT_DIR)/cpuvrambench_ip.s $(BOOT_DIR)/security.bin $(BOOT_DIR)/dbgfont.bin | setup
-	$(AS) $(ASFLAGS) --defsym MODE=$(CPUVRAMBENCH_MODE) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $< -o $@
 
 $(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).bin: $(OUT_DIR)/cpuvrambench_ip_$(CPUVRAMBENCH_TAG).o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/ip.ld -o $@ $<
@@ -310,7 +308,7 @@ ISO_HOLD_N ?= 0
 # rejects streams that could need the normal third destination, leaving the
 # complete 0x7400..0x7FFF interval marker-owned.
 ISO_VERIFY_SP_TAIL ?= 0
-# Main-CPU straight-line bitmap handlers. H32/H40 full-playback validation is
+# Main-CPU straight-line bitmap handlers. Full-playback validation is
 # complete; MAIN_CODEGEN=0 keeps
 # the byte-identical reference player available for fallback/A-B diagnostics.
 MAIN_CODEGEN ?= 1

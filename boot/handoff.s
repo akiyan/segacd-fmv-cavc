@@ -1,14 +1,14 @@
 /*
  * OP movie player - Main CPU (M_INIT.PRG).
  *
- * Plays an uncompressed 160x96 / 15fps movie (H32 256-wide mode, 20x12 tiles)
+ * Plays an uncompressed 160x96 / 15fps movie (H40 320-wide mode, 20x12 tiles)
  * quantised to 4 fixed global palettes with per-tile palette selection, fed by
  * the continuous-stream Sub (one ROM_READN, 1M/1M Word RAM double buffer).
  *
  * The source is letterboxed; the quantiser crops the widescreen content
- * (320x152 ~= 2:1) and scales it to 160x96. On a 4:3 TV an H32 dot is ~1.167x
- * wider than tall, so 20x12 cells display at ~1.95 (~2:1) = the content's true
- * aspect (160x112 squashed the 2:1 content to 10:7 and looked vertically tall).
+ * (320x152 ~= 2:1) and scales it to 160x96. On a 4:3 TV an H40 dot is ~0.914x
+ * as wide as tall, so 20x12 cells display at ~1.52 (160x112 would squash the
+ * 2:1 content further and look vertically tall).
  * tile+pmap+audio = 7680+240+800 = 8720 B <= 10240 (5 sectors/frame @15fps).
  *
  * Per frame: the streamed frame is in the Main 1M bank at PROBE_BANK as
@@ -66,7 +66,7 @@
 .equ DMA_SLICE_BYTES, DMA_SLICE_WORDS*2
 
 .equ PLANE_W, 64
-.equ PLANE_X, 6				/* centre 20x12 in H32 32x28 */
+.equ PLANE_X, 10				/* centre 20x12 in H40 40x28 */
 .equ PLANE_Y, 8
 .equ MAP_A, 0xC000
 .equ MAP_B, 0x8000
@@ -102,8 +102,8 @@
 .equ OPFONT_VRAM, 0x0020		/* font tiles at VRAM tile index 1 */
 .equ OPFONT_TILES, 11
 .equ OPFONT_BYTES, OPFONT_TILES*32
-.equ CDDA_ROW, 13			/* message position in the H32 plane */
-.equ CDDA_COL, 9
+.equ CDDA_ROW, 13			/* message position in the H40 plane */
+.equ CDDA_COL, 13
 
 .text
 
@@ -119,7 +119,7 @@ handoff_entry:
 	move.l	#BIOS_VBLANK_HANDLER, (EXVEC_LEVEL6).l
 	jsr	BIOS_VDP_DISP_ENABLE
 	bsr	enable_vdp_dma
-	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 = H32 (256px, no shadow/ilace) */
+	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 = H40 (320px, no shadow/ilace) */
 
 .ifdef SKIP_OP
 	/* dev build: skip the OP movie, go straight to the CD-DA screen */

@@ -12,7 +12,7 @@
  * destination先頭wordをCPUで補修する。REPAIR=0は同じrun分割の補修なし対照。
  * このモードは「追加1runが1VBlankの最大payloadを何word減らすか」を測る。
  *
- * モード: --defsym MODE=0(H32,既定) / 1(H40) / 2(mode4=SMS表示+VBlank中Mode5 DMA)。
+ * 表示はH40固定(codecの唯一の出力モード)。
  */
 .equ VDP_DATA, 0x00C00000
 .equ VDP_CTRL, 0x00C00004
@@ -31,16 +31,13 @@
 .equ DBGFONT_VADDR, 1*32
 .equ DBGFONT_N, 16
 .equ NT, 0xC000				/* nametable */
-.equ HI0, 9000				/* 二分探索上限(mode4理論値も超える値) */
+.equ HI0, 9000				/* 二分探索上限(理論値を超える値) */
 .equ RUN_TICK_PROBE_WORDS, 1024		/* RUNS>0: fixed payload for direct stopwatch slope */
 .equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72us/tick, Main read-only */
 .equ FIT_MAX_TICKS, 150			/* DMA開始→完了の上限(4.6ms)。1 vblank(約2.4ms)は
 					   余裕で通り、次frameのvblankで完了する巨大DMA
 					   (16.7ms級)を弾く。遅延開始計測のwrap誤判定防止 */
 
-.ifndef MODE
-.equ MODE, 0
-.endif
 .ifndef DELAY_LINES
 .equ DELAY_LINES, 0			/* VBlank立ち上がりからDMA開始までの遅延ライン数 */
 .endif
@@ -55,9 +52,6 @@
 .endif
 .if (REPAIR != 0) && (REPAIR != 1)
 	.error "dmabench REPAIR must be 0 or 1"
-.endif
-.if (RUNS > 0) && (MODE == 2)
-	.error "Word-RAM run dmabench supports H32/H40 Mode 5 only"
 .endif
 .if (RUNS*22) > (WORD_SOURCE-WORD_RECORDS)
 	.error "dmabench Word-RAM record table overlaps its payload"
@@ -86,19 +80,7 @@ ip_entry:
 	jsr	BIOS_LOAD_DEFAULT_VDP_REGS
 	jsr	BIOS_CLEAR_VRAM
 	/* 表示モード。BIOS_VDP_DISP_ENABLE は reg1 を戻し得るので使わない。 */
-.if MODE == 1
 	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40 */
-.elseif MODE == 2
-	move.w	#0x8006, (VDP_CTRL).l		/* SMS reg0: M4+M3, 192-line mode4 */
-	move.w	#0x81E0, (VDP_CTRL).l		/* SMS reg1: display+vint, M1/M2=0 */
-	move.w	#0x82FF, (VDP_CTRL).l		/* SMS NT base = 0x3800 */
-	move.w	#0x83FF, (VDP_CTRL).l		/* SMS color mask normal */
-	move.w	#0x84FF, (VDP_CTRL).l		/* SMS pattern mask normal */
-	move.w	#0x85FF, (VDP_CTRL).l		/* SMS sprite attr mask normal */
-	move.w	#0x86FF, (VDP_CTRL).l		/* SMS sprite pattern mask normal */
-.else
-	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 H32 */
-.endif
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc 2 */
 	move.w	#0x9001, (VDP_CTRL).l		/* plane 64x32 */
 	move.w	#0x8230, (VDP_CTRL).l		/* reg2 plane A = 0xC000 */
@@ -117,9 +99,7 @@ ip_entry:
 	move.w	(a0)+, (VDP_DATA).l
 	dbra	d1, 1b
 	/* 表示ON + DMA許可 */
-.if MODE != 2
 	move.w	#0x8174, (VDP_CTRL).l		/* reg1: disp on+vint+DMA+M5 */
-.endif
 
 	/* 二分探索: lo=収まる最大, hi=収まらない最小 */
 	moveq	#0, d4				/* lo */
@@ -153,10 +133,10 @@ bs_done:
 .else
 	move.w	d4, d7			/* W */
 .endif
-	/* true mode4 ではMDフォント/NTが読めないので、結果表示だけH32 mode5へ戻す。 */
+	/* 結果表示はH40 mode5で統一。 */
 	move.w	#0x8004, (VDP_CTRL).l
 	move.w	#0x8174, (VDP_CTRL).l
-	move.w	#0x8C00, (VDP_CTRL).l
+	move.w	#0x8C81, (VDP_CTRL).l
 	move.w	#0x9001, (VDP_CTRL).l
 	move.w	#0x8230, (VDP_CTRL).l
 	move.w	#0x8F02, (VDP_CTRL).l
@@ -243,23 +223,12 @@ fits:
 9:
 	dbra	d0, 9b
 .endif
-.if MODE == 2
-	/* SMS Mode4中はMode5 DMA enableが使えないので、VBlank内だけMode5へ戻す。
-	   これは「mode4表示 + blank中Mode5 DMA」という実用候補経路の予算。 */
-	move.w	#0x8004, (VDP_CTRL).l
-	move.w	#0x8174, (VDP_CTRL).l
-	move.w	#0x8C00, (VDP_CTRL).l
-.endif
 	move.w	(GA_STOPWATCH).l, d3		/* DMA開始tick */
 .if RUNS > 0
 	bsr	dma_word_runs			/* pre-swizzled Word-RAM runs */
 .else
 	move.w	d6, d0
 	bsr	dma_words			/* X語DMA(完了待ち) */
-.endif
-.if MODE == 2
-	move.w	#0x8006, (VDP_CTRL).l
-	move.w	#0x81E0, (VDP_CTRL).l
 .endif
 	/* vblankフラグだけでは不十分: 巨大DMAはactiveを跨いで次frameのvblank中に
 	   完了し得る(特に遅延開始時)。経過tickで同一vblank内完了を証明する。 */

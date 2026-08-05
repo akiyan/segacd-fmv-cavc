@@ -27,7 +27,7 @@ ip_entry:
 	jsr	BIOS_LOAD_DEFAULT_VDP_REGS
 	jsr	BIOS_CLEAR_VRAM
 	jsr	BIOS_CLEAR_COMM
-	move.w	#0x8C00, (VDP_CTRL).l		/* H32 */
+	move.w	#0x8C81, (VDP_CTRL).l		/* H40 */
 	move.w	#0x9001, (VDP_CTRL).l		/* plane 64x32 */
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc 2 */
 	move.w	#0x8B00, (VDP_CTRL).l

@@ -85,7 +85,7 @@ ip_entry:
 
 	move.w	#0x8230, (VDP_CTRL).l		/* plane A name table = 0xC000 */
 	move.w	#0x9001, (VDP_CTRL).l		/* plane size 64x32          */
-	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 H32: native 256x224 for exact OCR */
+	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40: native 320x224 for exact OCR */
 	bsr	load_font
 	move.w	#COL_FONT, d0
 	bsr	set_palette

@@ -13,6 +13,13 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   p152: Make the player H40-only. The resident code drops the runtime
+#         display-mode branch, its md_mode state, and the per-mode VBlank word
+#         budget, and it sizes the DEBUG HUD spill sprite table for the three
+#         records a 40-cell row leaves rather than the eleven a 32-cell row
+#         did. HEADER.DAT offset 36 stays the display-mode field and must
+#         name H40; a stream naming anything else is refused at pack and at
+#         player-constant generation.
 #   e186: Graded per-tile cost in the scroll adoption model (issue #29). A
 #         motion-compensated residual just above the change threshold is a
 #         subpixel approximation the codec carries as Near-band reuse, not a
@@ -1298,6 +1305,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260804
+date=20260805
 e=186
-p=151
+p=152

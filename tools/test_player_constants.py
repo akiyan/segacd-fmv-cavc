@@ -9,7 +9,8 @@ import pattern_supply
 import av_config
 
 
-def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x345,
+def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
+                audio_bytes=None, audio_fd=0x345,
                 supply_counts=(0, 0, 0), pool=1400, base=1,
                 tcols=None, trows=28, cold_cap=190):
     if features is None:
@@ -17,7 +18,7 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
         if av_config.uses_vblank_cadence(fps):
             features |= cavc_routing.FEATURE_VBLANK_CADENCE
     if tcols is None:
-        tcols = 32 if mode == 0 else 40
+        tcols = av_config.SCREEN_COLS
     cells = tcols * trows
     frames = 2714
     if audio_bytes is None:
@@ -59,12 +60,12 @@ class PlayerConstantsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "overlaps"):
             player_constants.parse_header_sector(make_header(pool=1744))
 
-    def test_sonic_h32_current_values(self):
+    def test_full_aperture_30fps_current_values(self):
         values = player_constants.parse_header_sector(make_header())
-        self.assertEqual(values.bmbytes, 112)
+        self.assertEqual(values.bmbytes, 140)
         self.assertEqual(values.col0, 0)
         self.assertEqual(values.row0, 0)
-        self.assertEqual(values.vbudget, 2800)
+        self.assertEqual(values.vbudget, 3200)
         self.assertEqual(values.audio_bytes, 736)
         self.assertEqual(values.audio_fd, 0x345)
         self.assertEqual(values.body_arm_sec, 46)
@@ -79,7 +80,7 @@ class PlayerConstantsTest(unittest.TestCase):
     def test_h40_15fps_uses_fixed_n4_sector_accumulator(self):
         values = player_constants.parse_header_sector(
             make_header(
-                mode=1, fps=15,
+                fps=15,
                 features=(cavc_routing.FEATURE_COLD_RUNS
                           | cavc_routing.FEATURE_VBLANK_CADENCE)))
         self.assertEqual(values.screen_cols, 40)
@@ -94,7 +95,7 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual(values.prg_delivery_cap_patterns, 374 * 1024 // 32)
         self.assertEqual(values.jitter_headroom_kb, 40)
 
-    def test_h32_24fps_uses_two_three_vblank_sector_steps(self):
+    def test_24fps_uses_two_three_vblank_sector_steps(self):
         values = player_constants.parse_header_sector(make_header(fps=24))
         self.assertEqual(values.vsync_n, 2)
         self.assertEqual(values.vsync_alt, 3)
@@ -107,7 +108,7 @@ class PlayerConstantsTest(unittest.TestCase):
 
     def test_h40_centers_a_36x25_stream_without_expanding_its_grid(self):
         values = player_constants.parse_header_sector(
-            make_header(mode=1, tcols=36, trows=25))
+            make_header(tcols=36, trows=25))
         self.assertEqual((values.tcols, values.trows, values.cells), (36, 25, 900))
         self.assertEqual((values.screen_cols, values.screen_rows), (40, 28))
         self.assertEqual((values.col0, values.row0), (2, 1))
@@ -123,22 +124,21 @@ class PlayerConstantsTest(unittest.TestCase):
             | cavc_routing.FEATURE_SCROLL
         )
         values = player_constants.parse_header_sector(make_header(
-            mode=1, fps=24, features=base,
+            fps=24, features=base,
             supply_counts=(880, 880, 256),
         ))
         self.assertTrue(values.features & cavc_routing.FEATURE_SCROLL)
         letterboxed = player_constants.parse_header_sector(make_header(
-            mode=1, fps=24, trows=18, features=base,
+            fps=24, trows=18, features=base,
             supply_counts=(880, 880, 256),
         ))
         self.assertTrue(letterboxed.features & cavc_routing.FEATURE_SCROLL)
         self.assertEqual((letterboxed.col0, letterboxed.row0), (0, 5))
         for kwargs, message in (
-            ({"mode": 0, "features": base}, "full-width H40"),
-            ({"mode": 1, "tcols": 36, "features": base}, "full-width H40"),
-            ({"mode": 1, "features": base & ~cavc_routing.FEATURE_SHADOW_UPDATE_LISTS},
+            ({"tcols": 36, "features": base}, "full-width 40-column"),
+            ({"features": base & ~cavc_routing.FEATURE_SHADOW_UPDATE_LISTS},
              "update lists"),
-            ({"mode": 1, "features": base & ~cavc_routing.FEATURE_PATTERN_SUPPLY},
+            ({"features": base & ~cavc_routing.FEATURE_PATTERN_SUPPLY},
              "pattern supply"),
         ):
             with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
@@ -222,7 +222,7 @@ class PlayerConstantsTest(unittest.TestCase):
 
     def test_pattern_supply_extension(self):
         layout = pattern_supply.word_ram_layout(
-            frames=2714, cells=32 * 28, cold_cap=190)
+            frames=2714, cells=40 * 28, cold_cap=190)
         values = player_constants.parse_header_sector(make_header(
             features=(cavc_routing.FEATURE_COLD_RUNS
                       | cavc_routing.FEATURE_VBLANK_CADENCE
@@ -249,7 +249,6 @@ class PlayerConstantsTest(unittest.TestCase):
 
     def test_pattern_supply_uses_fixed_n4_and_low_rate_polls_at_15fps(self):
         values = player_constants.parse_header_sector(make_header(
-            mode=1,
             fps=15,
             features=(cavc_routing.FEATURE_COLD_RUNS
                       | cavc_routing.FEATURE_VBLANK_CADENCE
