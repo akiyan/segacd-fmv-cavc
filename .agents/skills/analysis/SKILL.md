@@ -22,6 +22,10 @@ reference; there is no separate analysis Markdown specification.
    renderer needs that the encoder must supply (a new per-frame value, etc.)
    goes into `tools/sim.py` and its saved `stats.npz` /
    `buffer_remaining.npz`, and is read back in `render_analysis.py`.
+   `.agents/skills/timeline/scripts/render_timeline.py` imports
+   `analysis_style.LEGEND_ORDER` and `REQ_TIMELINE_CATS` directly, so any
+   category change must be propagated there (TSV columns, required/optional
+   column sets) in the same change.
 
 2. **Regenerate and eyeball the dummy preview**:
    ```sh
@@ -42,8 +46,9 @@ reference; there is no separate analysis Markdown specification.
    Update the owning source comments in the same change.  Keep panel-reading
    rules and scales in `layout_preview.py`, category meanings and colours in
    `analysis_style.py`, and real-data/TSV/mux timing in `render_analysis.py`.
-   Be especially precise about the tile categories (Raw/Same/Near/Flbk/Miss
-   and the physical sources): their meaning, byte cost, thresholds, and
+   Be especially precise about the tile categories (Raw/Same/Near/Flbk/Miss,
+   Scrl on a scroll movie, and the physical sources) plus the hardware-scroll
+   indicator: their meaning, byte cost, thresholds, and
    selection order.
 
 Show the preview image in the chat response so the layout change can be

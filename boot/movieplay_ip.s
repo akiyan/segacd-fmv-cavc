@@ -52,18 +52,24 @@
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
-.equ HUD_SPRITE_TABLE, 0xD400
+/* DEBUG HUD hexadecimal font: 16 tiles packed directly under the sprite
+   table so the resident movie-pattern pool below stays one contiguous run.
+   Detailed usage notes live at the DBGFONT definitions further down. */
+.equ HUD_FONT_ADDR, 0xDA00
+.equ HUD_SPRITE_TABLE, 0xDC00
 .equ HUD_SPRITE_TABLE_BYTES, 80*8
 .equ HUD_SPRITE_REG, 0x8500 | (HUD_SPRITE_TABLE >> 9)
 
 /* H40 ignores the low sprite-table base bit, so the physical table must be
-   0x400-aligned. Keep its complete 80-record hardware footprint inside the
-   free VRAM gap below the movie name table. In particular, it must not alias
-   the full-screen Window map at 0xF000 as the old 0xF800 placement did. */
+   0x400-aligned; 0xDC00 is the highest such base whose complete 80-record
+   hardware footprint still ends below the movie name table. It sits directly
+   above the HUD font so the resident pool below stays one contiguous run. In
+   particular, it must not alias the full-screen Window map at 0xF000 as the
+   old 0xF800 placement did. */
 .if (HUD_SPRITE_TABLE & 0x03FF)
 .error "H40 HUD sprite table is not 0x400-aligned"
 .endif
-.if (HUD_SPRITE_TABLE < 0xD200) || ((HUD_SPRITE_TABLE + HUD_SPRITE_TABLE_BYTES) > MOVIE_NT)
+.if (HUD_SPRITE_TABLE < HUD_FONT_ADDR+0x200) || ((HUD_SPRITE_TABLE + HUD_SPRITE_TABLE_BYTES) > MOVIE_NT)
 .error "HUD sprite table is outside the free VRAM gap"
 .endif
 
@@ -102,13 +108,13 @@
 .equ CG_OP_ADVANCE_SHADOW,     0x43E9	/* lea 16(a1),a1 */
 .equ CG_SHADOW_BYTE_ADVANCE,   16
 .equ CG_OP_BRA_W,              0x6000
-/* DEBUG HUD: only hexadecimal glyphs. Fixed at VRAM 0xD000 (tiles 1664..1679),
+/* DEBUG HUD: only hexadecimal glyphs. Fixed at VRAM 0xDA00 (tiles 1744..1759),
    immediately above the contiguous movie-pattern pool. The single movie name
    table starts at 0xE000. DEBUG and release, generic and specialized builds all
-   share this physical layout. */
+   share this physical layout. HUD_FONT_ADDR itself is defined next to the
+   sprite table so the layout asserts can reference both. */
 .equ DBGFONT_N, 16
-.equ HUD_FONT_ADDR, 0xD000
-.equ HUD_FONT_VTILE, HUD_FONT_ADDR/32	/* = 1664; name-table tile index (11-bit, fits) */
+.equ HUD_FONT_VTILE, HUD_FONT_ADDR/32	/* = 1744; name-table tile index (11-bit, fits) */
 /* リリースビルドが既定。make movieplay DEBUG=1 でオーバーレイ一式を有効化
    (画面表示専用。ストリームにDEBUG専用データは持たない) */
 /* CRAM pre-load: 全区間パレット表(paltab.bin)と切替表(palidx.bin)はpackが書く
@@ -140,6 +146,7 @@
 .equ FRAME_TYPE_NORMAL, 0x0000
 .equ FRAME_TYPE_FADE_IN, 0x2000
 .equ FRAME_TYPE_FADE_OUT, 0x4000
+.equ FRAME_TYPE_SCROLL, 0x6000
 .equ SHADOW_UPDATE_COUNT_MASK, 0x1FFF
 .equ SHADOW_OFFSET_MASK, 0x0FFE	/* 4KB physical shadow, even word offsets */
 .equ PACE_VBLANK_TICKS, 543	/* one NTSC VBlank in 30.72us stopwatch ticks */
@@ -200,7 +207,25 @@
 .else
 .equ NT_FLIP_HUD_WORDS, 0
 .endif
-.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_GUARD_WORDS
+.if (PC_FEATURES & 0x0200)
+/* Rolling-plane horizontal scroll: nt_stage grows into the persistent 64x32
+   plane band, scroll controls stage the full 64-column band, and the flip
+   VBlank rewrites the Plane A/B HScroll pair at VRAM 0xFC00. HScroll shifts
+   every scanline, so the grid must span the full 40-column H40 width; a
+   letterboxed grid keeps its uniform border rows and DMAs the same
+   PC_ROW0-offset band. The packer only emits vertical windows on the
+   full-screen 28-row grid, because they roll all 32 plane rows. */
+.equ INCLUDE_SCROLL, 1
+.if (PC_TCOLS != 40) || (PC_COL0 != 0)
+.error "rolling-plane scroll requires the full-width 40-column H40 grid"
+.endif
+.equ NT_SCROLL_BAND_WORDS, PC_TROWS*NT_STAGE_PITCH
+.equ NT_SCROLL_VBAND_WORDS, 32*NT_STAGE_PITCH
+.equ NT_FLIP_SCROLL_WORDS, (NT_SCROLL_BAND_WORDS-NT_STAGE_WORDS)+4*CPU_VDP_WORD_COST
+.else
+.equ NT_FLIP_SCROLL_WORDS, 0
+.endif
+.equ NT_FLIP_RESERVE_WORDS, NT_STAGE_WORDS+NT_FLIP_HUD_WORDS+NT_FLIP_SCROLL_WORDS+NT_FLIP_GUARD_WORDS
 .endif
 
 .macro PC_MOVE_W runtime, constant, dest
@@ -333,14 +358,19 @@ ip_entry:
 	move.w	#0x8B00, (VDP_CTRL).l		/* reg11 scroll full-screen */
 	move.w	#0x8407, (VDP_CTRL).l		/* reg4  Plane B NT = movie NT 0xE000 */
 	move.w	#0x833C, (VDP_CTRL).l		/* reg3  Window NT = 0xF000 */
-	move.w	#HUD_SPRITE_REG, (VDP_CTRL).l	/* reg5  sprite table = 0xD400 */
+	move.w	#HUD_SPRITE_REG, (VDP_CTRL).l	/* reg5  sprite table = 0xDC00 */
 	move.w	#0x8D3F, (VDP_CTRL).l		/* reg13 hscroll 0xFC00 */
 	move.w	#0x8238, (VDP_CTRL).l		/* reg2  Plane A = single movie NT 0xE000 */
 	move.l	#0x40000010, (VDP_CTRL).l	/* VSRAM=0 */
 	move.w	#0, (VDP_DATA).l
 	move.w	#0, (VDP_DATA).l
 	.ifdef DEBUG
-	move.w	#0x9180, (VDP_CTRL).l		/* Window from x=0 through the right edge */
+	/* reg18 alone makes lines 0..7 full-width Window. reg17 must stay 0: a
+	   right-side strip from x=0 would put the Window plane over every later
+	   line too, and Window row 24 col 0..1 (0xF000+24*128 = 0xFC00) is the
+	   HScroll table, so nonzero scroll values would render as NT entries at
+	   screen (24,0)-(24,1). */
+	move.w	#0x9100, (VDP_CTRL).l		/* no Window side strip */
 	move.w	#0x9201, (VDP_CTRL).l		/* Window above row 1: fixed top 8 pixels */
 	.else
 	move.w	#0x9100, (VDP_CTRL).l		/* no Window side strip */
@@ -382,7 +412,7 @@ ip_entry:
 	move.w	10(a0), d0			/* cells; supported grids are multiples of 8 */
 	lsr.w	#3, d0
 	move.w	d0, md_bmbytes
-	/* HUD font is fixed at 0xD000 (HUD_FONT_ADDR/HUD_FONT_VTILE); no runtime
+	/* HUD font is fixed at 0xDA00 (HUD_FONT_ADDR/HUD_FONT_VTILE); no runtime
 	   base+pool computation needed. */
 	moveq	#0, d0
 	move.b	36(a0), d0			/* mode: 0=H32 1=H40 (2=mode4将来) */
@@ -544,6 +574,11 @@ ip_entry:
 	clr.w	nt_dma_ready_v
 .endif
 .endif
+.ifdef INCLUDE_SCROLL
+	clr.w	scroll_next_h
+	clr.w	scroll_next_v
+	clr.w	scroll_h_dirty
+.endif
 play_loop:
 	/* Feature bit 1 pairs the Main VBlank cadence with the Sub's exact
 	   per-interval CD deadline schedule. */
@@ -689,6 +724,19 @@ bf_upd:
 	andi.w	#FRAME_TYPE_MASK, d6
 	move.w	d6, frame_type
 	move.w	d7, d6			/* preserve list tag */
+.ifdef INCLUDE_SCROLL
+	/* Leaving a scroll window: copy the final tile-aligned viewport back to
+	   the logical shadow before this frame's ordinary updates apply. */
+	move.w	scroll_next_h, d0
+	or.w	scroll_next_v, d0
+	beq.s	3f
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq.s	3f
+	bsr	bf_scroll_rebase
+3:
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq	bf_scroll_control
+.endif
 	tst.w	frame_type
 	beq.s	1f
 	/* The single-NT path returns this bank before the final CRAM write. Preserve
@@ -856,6 +904,15 @@ bf_dma:
 	clr.w	pattern_transfer_vblanks
 	clr.w	vbudget_held_reserve
 	PC_MOVE_W md_nt_flip_reserve_words, NT_FLIP_RESERVE_WORDS, d0
+.ifdef INCLUDE_SCROLL
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	bne.s	6f				/* scroll carries no CRAM image */
+	tst.w	scroll_next_v
+	beq.s	8f
+	addi.w	#NT_SCROLL_VBAND_WORDS-NT_SCROLL_BAND_WORDS, d0
+	bra.s	8f
+6:
+.endif
 	tst.w	frame_type
 	bne.s	7f
 	movea.l	palidx_ptr, a0
@@ -1031,8 +1088,13 @@ bf_flip:
 	   で必ず終端されるためadvanceは有界。CRAM本体はboot時に積んだMain-RAMの
 	   PALTAB表から引く(ストリーム到着タイミング非依存)。 */
 	clr.l	cram_source
+.ifdef INCLUDE_SCROLL
+	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
+	beq.s	7f				/* scroll follows the ordinary PALIDX walk */
+.endif
 	tst.w	frame_type
 	bne	bf_inline_cram
+7:
 	movea.l	palidx_ptr, a0
 	move.w	frame_no, d1
 	cmp.w	(a0), d1
@@ -1061,6 +1123,12 @@ bf_publish_frame:
 	beq.s	1f
 	addi.w	#64*CPU_VDP_WORD_COST, d6
 1:
+.ifdef INCLUDE_SCROLL
+	tst.w	scroll_next_v
+	beq.s	2f
+	addi.w	#NT_SCROLL_VBAND_WORDS-NT_SCROLL_BAND_WORDS, d6
+2:
+.endif
 	.ifdef DEBUG
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
@@ -1085,6 +1153,24 @@ bf_publish_frame:
 	bsr	bf_patch_dbg_row			/* final counters feed this frame's HUD DMAs */
 	.endif
 	bsr	nt_dma_flip			/* static grid band into the displayed NT */
+.ifdef INCLUDE_SCROLL
+	/* Publish the Plane A/B HScroll pair in the same blank as the band DMA
+	   so fine position and tile content stay atomic. dma_chunk has already
+	   polled DMA completion and left autoincrement at 2. */
+	tst.w	scroll_h_dirty
+	beq.s	9f
+	clr.w	scroll_h_dirty
+	move.l	#0x7C000003, (VDP_CTRL).l	/* VRAM write 0xFC00 */
+	move.w	scroll_next_h, d0
+	move.w	d0, (VDP_DATA).l		/* Plane A */
+	move.w	d0, (VDP_DATA).l		/* Plane B */
+	move.l	#0x40000010, (VDP_CTRL).l	/* VSRAM write 0 */
+	move.w	scroll_next_v, d0
+	neg.w	d0				/* stream: screen=plane[y-v]; VSRAM adds */
+	move.w	d0, (VDP_DATA).l		/* Plane A */
+	move.w	d0, (VDP_DATA).l		/* Plane B */
+9:
+.endif
 	.ifdef DEBUG
 	bsr	hud_dma_flip			/* Window row plus spill-digit SAT */
 	.endif
@@ -1123,6 +1209,104 @@ bf_update_list:
 	move.w	(a0)+, (a1,d0.w)
 	dbra	d7, 1b
 	bra	bf_stage_nt
+
+.ifdef INCLUDE_SCROLL
+bf_scroll_control:
+	/* Item 0 carries the absolute Plane A/B HScroll and VScroll pair; the
+	   adopted window moves on exactly one axis.  The remaining completed
+	   items address the physical 64x32 plane directly; the 4KB nt_stage
+	   allocation bounds every masked offset.  The logical shadow stays
+	   untouched, so the stage expansion is skipped and the persistent plane
+	   band goes to VRAM as-is. */
+	move.w	(a0)+, scroll_next_h
+	move.w	(a0)+, scroll_next_v
+	move.w	#1, scroll_h_dirty
+	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
+	subq.w	#1, d7				/* the position item is counted */
+	beq	bf_dma
+	lea	nt_stage, a1
+	subq.w	#1, d7
+1:
+	move.w	(a0)+, d0
+	andi.w	#SHADOW_OFFSET_MASK, d0
+	move.w	(a0)+, (a1,d0.w)
+	dbra	d7, 1b
+	bra	bf_dma
+
+bf_scroll_rebase:
+	/* The adopted window ends on a tile boundary.  Compact the 40x28
+	   viewport out of the 64-pitch plane band into the logical shadow and
+	   rearm both scrolls at zero for this frame's flip.  Preserves a0/d6/d7
+	   for the caller's control-parse state. */
+	tst.w	scroll_next_v
+	bne	bf_scroll_rebase_vertical
+	movem.l	d1-d5/a1-a3, -(sp)
+	move.w	scroll_next_h, d0
+	neg.w	d0
+	asr.w	#3, d0
+	andi.w	#NT_STAGE_PITCH-1, d0		/* first plane column of the viewport */
+	moveq	#NT_STAGE_PITCH, d1
+	sub.w	d0, d1				/* columns before the plane wraps */
+	cmpi.w	#PC_TCOLS, d1
+	bls.s	1f
+	move.w	#PC_TCOLS, d1
+1:
+	move.w	#PC_TCOLS, d2
+	sub.w	d1, d2				/* wrapped columns */
+	add.w	d0, d0				/* byte offset of the first column */
+	lea	shadow, a1
+	lea	nt_stage, a2
+	move.w	#PC_TROWS-1, d5
+2:
+	lea	(a2,d0.w), a3
+	move.w	d1, d3
+	subq.w	#1, d3
+3:
+	move.w	(a3)+, (a1)+
+	dbra	d3, 3b
+	move.w	d2, d3
+	beq.s	5f
+	movea.l	a2, a3
+	subq.w	#1, d3
+4:
+	move.w	(a3)+, (a1)+
+	dbra	d3, 4b
+5:
+	lea	NT_STAGE_PITCH*2(a2), a2
+	dbra	d5, 2b
+	clr.w	scroll_next_h
+	clr.w	scroll_next_v
+	move.w	#1, scroll_h_dirty		/* publish both scroll zeros at this flip */
+	movem.l	(sp)+, d1-d5/a1-a3
+	rts
+
+bf_scroll_rebase_vertical:
+	/* Vertical windows roll through all 32 plane rows.  Copy the 28-row
+	   viewport out of the ring, wrapping the plane-row offset at 4KB. */
+	movem.l	d3/d5/a1-a3, -(sp)
+	move.w	scroll_next_v, d0
+	neg.w	d0
+	asr.w	#3, d0
+	andi.w	#31, d0				/* first plane row of the viewport */
+	lsl.w	#7, d0				/* *128 bytes per plane row */
+	lea	shadow, a1
+	lea	nt_stage, a2
+	move.w	#PC_TROWS-1, d5
+1:
+	lea	(a2,d0.w), a3
+	move.w	#PC_TCOLS/2-1, d3
+2:
+	move.l	(a3)+, (a1)+
+	dbra	d3, 2b
+	addi.w	#NT_STAGE_PITCH*2, d0
+	andi.w	#NT_SCROLL_VBAND_WORDS*2-1, d0	/* wrap at plane row 32 */
+	dbra	d5, 1b
+	clr.w	scroll_next_h
+	clr.w	scroll_next_v
+	move.w	#1, scroll_h_dirty		/* publish both scroll zeros at this flip */
+	movem.l	(sp)+, d3/d5/a1-a3
+	rts
+.endif
 
 /* Start Pass2 with one honest VBlank word budget.  An already-active display
    waits for the next blank.  An already-entered blank may keep the full budget
@@ -1568,6 +1752,16 @@ nt_dma_flip:
 	lea	nt_stage, a3
 	PC_MOVE_L md_nt_stage_dst, NT_STAGE_DST, d3
 	PC_MOVE_W md_nt_stage_words, NT_STAGE_WORDS, d6
+.ifdef INCLUDE_SCROLL
+	move.w	scroll_next_h, d0
+	or.w	scroll_next_v, d0
+	beq.s	1f
+	move.w	#NT_SCROLL_BAND_WORDS, d6	/* full 64-column band while scrolled */
+	tst.w	scroll_next_v
+	beq.s	1f
+	move.w	#NT_SCROLL_VBAND_WORDS, d6	/* vertical rolls the wrapped rows too */
+1:
+.endif
 	bra	dma_chunk
 
 	.ifdef DEBUG
@@ -1806,7 +2000,11 @@ start_playback:
 load_boot_vram_sidecar:
 	movem.l	d0-d7/a0-a2, -(sp)
 	lea	(PROBE_BANK+STATUS_OFF+0x80).l, a0
-	btst	#FEATURE_BOOT_VRAM_SIDECAR_BIT, 63(a0)
+	/* CAVC keeps the features word at header offset 60; its low byte (61)
+	   carries bit 7. The former TTRC offsets (features 62/63, pool 14,
+	   base 16) sat two bytes later and silently skipped this loader after
+	   the version word was removed (issue #112). */
+	btst	#FEATURE_BOOT_VRAM_SIDECAR_BIT, 61(a0)
 	beq	9f
 	lea	(PROBE_BANK+BOOT_VRAM_DIR_OFF).l, a2
 	cmpi.l	#BOOT_VRAM_MAGIC, (a2)
@@ -1845,9 +2043,9 @@ load_boot_vram_records:
 4:
 	moveq	#0, d0
 	move.w	(a1)+, d0			/* zero-based physical slot */
-	cmp.w	14(a0), d0
+	cmp.w	12(a0), d0			/* CAVC pool size at header offset 12 */
 	bhs.s	6f
-	add.w	16(a0), d0			/* + resident pool base */
+	add.w	14(a0), d0			/* + resident pool base (offset 14) */
 	lsl.l	#5, d0
 	bsr	set_vram_write
 	moveq	#8-1, d1
@@ -2238,9 +2436,9 @@ dbg_hex_pairs:
 	.set dbg_hex_byte, dbg_hex_byte + 1
 	.endr
 .endif
-	/* The pool ends at 0xCFFF; keep the font below the single 0xE000 movie NT. */
-	.if HUD_FONT_ADDR != 0xD000 || (HUD_FONT_VTILE + DBGFONT_N > MOVIE_NT/32)
-	.error "hexadecimal font must start at 0xD000 and fit below the movie NT"
+	/* The pool ends at 0xD9FF; keep the font below the single 0xE000 movie NT. */
+	.if HUD_FONT_ADDR != 0xDA00 || (HUD_FONT_VTILE + DBGFONT_N > MOVIE_NT/32)
+	.error "hexadecimal font must start at 0xDA00 and fit below the movie NT"
 .endif
 
 	.bss
@@ -2254,10 +2452,14 @@ dbg_row:
 	.space 40*2				/* prebuilt values-only row; H40 DEBUG fills all 40 cells */
 .endif
 nt_stage:
+.ifdef INCLUDE_SCROLL
+	.space NT_STAGE_PITCH*32*2		/* persistent 64x32 plane band; 4KB bounds masked offsets */
+.else
 .ifdef PLAYER_SPECIALIZED
 	.space NT_STAGE_WORDS*2			/* exact static grid band */
 .else
 	.space NT_STAGE_MAX_WORDS*2		/* runtime H32/H40 maximum */
+.endif
 .endif
 .ifdef DEBUG
 hud_sprites:
@@ -2317,6 +2519,14 @@ n_runs:
 	.space 2
 frame_type:
 	.space 2				/* masked bits14..13 from the current control */
+.ifdef INCLUDE_SCROLL
+scroll_next_h:
+	.space 2				/* absolute Plane A/B HScroll for the next flip */
+scroll_next_v:
+	.space 2				/* absolute Plane A/B VScroll for the next flip */
+scroll_h_dirty:
+	.space 2				/* rewrite both scroll pairs at the next flip */
+.endif
 dbg_seg:
 	.space 2
 cram_source:

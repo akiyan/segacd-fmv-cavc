@@ -93,25 +93,41 @@ def control_block_lengths(
         if types.shape != n_upd.shape:
             raise ValueError("frame types must match update counts")
     if np.any((types < shadow_updates.FRAME_NORMAL)
-              | (types > shadow_updates.FRAME_FADE_OUT)):
+              | (types > shadow_updates.FRAME_SCROLL)):
         raise ValueError("frame types contain an unsupported value")
-    special = types != shadow_updates.FRAME_NORMAL
-    if np.any(special & (n_upd != 0)):
-        frame = int(np.flatnonzero(special & (n_upd != 0))[0])
+    fade = np.isin(types, (
+        shadow_updates.FRAME_FADE_IN,
+        shadow_updates.FRAME_FADE_OUT,
+    ))
+    scroll = types == shadow_updates.FRAME_SCROLL
+    if np.any(fade & (n_upd != 0)):
+        frame = int(np.flatnonzero(fade & (n_upd != 0))[0])
         raise ValueError(f"fade frame {frame} carries shadow updates")
+    if np.any(fade & use_lists):
+        frame = int(np.flatnonzero(fade & use_lists)[0])
+        raise ValueError(f"fade frame {frame} uses a shadow update list")
+    if update_lists is None:
+        use_lists = use_lists | scroll
+    elif np.any(scroll & ~use_lists):
+        frame = int(np.flatnonzero(scroll & ~use_lists)[0])
+        raise ValueError(f"scroll frame {frame} requires a shadow update list")
     update_bytes = np.where(
         use_lists,
         n_upd * shadow_updates.LIST_ITEM_BYTES,
         shadow_updates.aligned_bitmap_bytes(cells)
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES,
     )
-    update_bytes = np.where(special, 0, update_bytes)
-    inline_cram = special.astype(np.int64) * shadow_updates.INLINE_CRAM_BYTES
+    update_bytes = np.where(fade, 0, update_bytes)
+    inline_cram = fade.astype(np.int64) * shadow_updates.INLINE_CRAM_BYTES
+    scroll_position = (
+        scroll.astype(np.int64) * shadow_updates.SCROLL_POSITION_BYTES)
     # Body prefix: frame_seq and type|n_upd = 4 bytes. Ordinary palette
     # switches are player-embedded PALIDX data; typed fade controls carry the
     # exact inline CRAM counted above. Entry words and the run suffix are
     # even-sized; only the pre-suffix body may need a byte.
-    pre_suffix = 4 + update_bytes + inline_cram + int(audio_frame_bytes)
+    pre_suffix = (
+        4 + update_bytes + inline_cram + scroll_position
+        + int(audio_frame_bytes))
     pre_suffix += pre_suffix & 1
     # total_len word + aligned body + n_runs word + four bytes per run.
     return (2 + pre_suffix + 2 + n_runs * RUN_DESCRIPTOR_BYTES).astype(np.int64)
@@ -292,16 +308,33 @@ def select_shadow_update_lists(
         if types.shape != n_upd.shape:
             raise ValueError("frame types must match shadow cells")
 
-    costs = tuple(shadow_updates.frame_cost(frame, cells) for frame in frames)
+    scroll = types == shadow_updates.FRAME_SCROLL
+    costs = tuple(
+        shadow_updates.frame_cost(
+            frame,
+            shadow_updates.SCROLL_PLANE_CELLS
+            if bool(scroll[index]) else cells,
+        )
+        for index, frame in enumerate(frames)
+    )
+    forced_lists = scroll.copy()
+    fade = np.isin(types, (
+        shadow_updates.FRAME_FADE_IN,
+        shadow_updates.FRAME_FADE_OUT,
+    ))
     legacy_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
-        frame_types=types)
+        update_lists=forced_lists, frame_types=types)
+    # Fade controls are update-free and may never carry a list, so they are
+    # excluded from both the exploratory all-list estimate and eligibility.
     all_list_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
-        update_lists=np.ones(n_upd.shape, np.bool_), frame_types=types)
+        update_lists=~fade, frame_types=types)
     eligible = np.asarray([
-        index > 0 and cost.saved_cycles > 0
+        bool(forced_lists[index]) or (
+        index > 0 and not bool(fade[index]) and cost.saved_cycles > 0
         and int(all_list_lengths[index]) <= int(max_control_bytes)
+        )
         for index, cost in enumerate(costs)
     ], np.bool_)
 
@@ -317,7 +350,7 @@ def select_shadow_update_lists(
             control_sector_envelope=control_sector_envelope)
         return lengths, scheduled
 
-    baseline_lengths, baseline = run_schedule(np.zeros(n_upd.shape, np.bool_))
+    baseline_lengths, baseline = run_schedule(forced_lists)
     if not baseline["feasible"]:
         raise ScheduleError("baseline schedule is infeasible before shadow-list selection")
     target_ring = int(baseline["ring_min"])
@@ -335,7 +368,8 @@ def select_shadow_update_lists(
         return candidate_lengths, candidate_schedule
 
     selected = np.asarray([
-        bool(eligible[index] and cost.added_bytes <= 0)
+        bool(forced_lists[index] or (
+             eligible[index] and cost.added_bytes <= 0))
         for index, cost in enumerate(costs)
     ], np.bool_)
     safety_rejected = []
@@ -347,7 +381,7 @@ def select_shadow_update_lists(
         # physical-safety proof.  Restore the least valuable list candidates
         # until the exact baseline-or-better schedule is recovered.
         rollback_order = sorted(
-            np.flatnonzero(selected),
+            np.flatnonzero(selected & ~forced_lists),
             key=lambda index: (costs[int(index)].saved_cycles, int(index)),
         )
         for index in rollback_order:
@@ -364,7 +398,7 @@ def select_shadow_update_lists(
     from fractions import Fraction
     groups = {}
     for index, cost in enumerate(costs):
-        if eligible[index] and cost.added_bytes > 0:
+        if eligible[index] and not forced_lists[index] and cost.added_bytes > 0:
             ratio = Fraction(cost.saved_cycles, cost.added_bytes)
             groups.setdefault(ratio, []).append(index)
 

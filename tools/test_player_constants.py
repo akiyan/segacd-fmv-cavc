@@ -50,14 +50,14 @@ def make_header(*, mode=0, fps=30, features=None, audio_bytes=None, audio_fd=0x3
 class PlayerConstantsTest(unittest.TestCase):
     def test_pool_may_fill_up_to_the_hud_font(self):
         # The single NT starts at 0xE000, so the pool may fill every tile below
-        # the fixed font at tile 1664 (base 1 + 1663).
-        values = player_constants.parse_header_sector(make_header(pool=1663))
-        self.assertEqual(values.pool, 1663)
-        self.assertEqual(values.font_vtile, 0xD000 // 32)
-        self.assertEqual(values.font_addr, 0xD000)
+        # the fixed font at tile 1744 (base 1 + 1743).
+        values = player_constants.parse_header_sector(make_header(pool=1743))
+        self.assertEqual(values.pool, 1743)
+        self.assertEqual(values.font_vtile, 0xDA00 // 32)
+        self.assertEqual(values.font_addr, 0xDA00)
 
         with self.assertRaisesRegex(ValueError, "overlaps"):
-            player_constants.parse_header_sector(make_header(pool=1664))
+            player_constants.parse_header_sector(make_header(pool=1744))
 
     def test_sonic_h32_current_values(self):
         values = player_constants.parse_header_sector(make_header())
@@ -112,6 +112,45 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual((values.screen_cols, values.screen_rows), (40, 28))
         self.assertEqual((values.col0, values.row0), (2, 1))
         self.assertEqual(values.bmbytes, 113)
+
+    def test_scroll_requires_full_h40_lists_and_pattern_supply(self):
+        base = (
+            cavc_routing.FEATURE_COLD_RUNS
+            | cavc_routing.FEATURE_VBLANK_CADENCE
+            | cavc_routing.FEATURE_PATTERN_SUPPLY
+            | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS
+            | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS
+            | cavc_routing.FEATURE_SCROLL
+        )
+        values = player_constants.parse_header_sector(make_header(
+            mode=1, fps=24, features=base,
+            supply_counts=(880, 880, 256),
+        ))
+        self.assertTrue(values.features & cavc_routing.FEATURE_SCROLL)
+        letterboxed = player_constants.parse_header_sector(make_header(
+            mode=1, fps=24, trows=18, features=base,
+            supply_counts=(880, 880, 256),
+        ))
+        self.assertTrue(letterboxed.features & cavc_routing.FEATURE_SCROLL)
+        self.assertEqual((letterboxed.col0, letterboxed.row0), (0, 5))
+        for kwargs, message in (
+            ({"mode": 0, "features": base}, "full-width H40"),
+            ({"mode": 1, "tcols": 36, "features": base}, "full-width H40"),
+            ({"mode": 1, "features": base & ~cavc_routing.FEATURE_SHADOW_UPDATE_LISTS},
+             "update lists"),
+            ({"mode": 1, "features": base & ~cavc_routing.FEATURE_PATTERN_SUPPLY},
+             "pattern supply"),
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaisesRegex(
+                    ValueError, message):
+                player_constants.parse_header_sector(make_header(
+                    fps=24, supply_counts=(880, 880, 256), **kwargs))
+
+    def test_removed_vertical_scroll_bit_is_reserved(self):
+        with self.assertRaisesRegex(ValueError, "reserved feature bits"):
+            player_constants.parse_header_sector(make_header(
+                features=(cavc_routing.FEATURE_COLD_RUNS
+                          | 0x0400)))
 
     def test_prg_jitter_constants_follow_content_fps(self):
         expected = {

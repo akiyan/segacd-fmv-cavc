@@ -15,14 +15,18 @@ RGB = tuple[int, int, int]
 
 # Display categories.  Raw is a same-frame CD load used immediately.  Same is
 # an already resident exact pattern.  Near and Flbk are comparison-based
-# resident reuse; Miss has no selected pattern and is filled red.  Prg, Wr0,
-# Wr1, and Dic identify the exact physical source of a cold pattern.  Prefetch
-# is not visible yet and becomes Same if used later.
+# resident reuse; Miss has no selected pattern and is filled red.  Scrl is a
+# cell whose content the active hardware scroll carried to its correct world
+# position without an update this frame; it is scroll reuse, not a Miss, and
+# draws no category-map border.  Prg, Wr0, Wr1, and Dic identify the exact
+# physical source of a cold pattern.  Prefetch is not visible yet and becomes
+# Same if used later.
 CAT_RAW: RGB = (205, 205, 205)
 CAT_SAME: RGB = (150, 150, 158)
 CAT_NEAR: RGB = (128, 134, 144)
 CAT_FLBK: RGB = (225, 185, 25)
 CAT_MISS: RGB = (220, 70, 70)
+CAT_SCRL: RGB = (95, 210, 120)
 CAT_DEDUP: RGB = (0, 190, 175)
 CAT_PREFETCH: RGB = (85, 175, 225)
 
@@ -44,6 +48,14 @@ COL_OVER_REMAINDER: RGB = (150, 60, 60)
 COL_PRG_CAP: RGB = COL_LIMIT
 COL_PRG_CAP_BLOCKED: RGB = COL_OVER_REMAINDER
 
+# Hardware-scroll indicator.  Green marks active hardware scrolling (the
+# Scrl category, the legend indicator, the category-map entering-edge outline,
+# and its marching chevrons all share it); the idle legend indicator dims to
+# gray.  The indicator and the Scrl legend item appear only in a movie with at
+# least one adopted scroll window.
+COL_SCROLL: RGB = CAT_SCRL
+COL_SCROLL_IDLE: RGB = (110, 112, 118)
+
 # Category-border alternating colours.
 COL_BORDER_BLACK: RGB = (15, 15, 15)
 COL_BORDER_WHITE: RGB = (235, 235, 235)
@@ -56,9 +68,11 @@ METER_SUPPLY_GROUPS = {
 }
 METER_SUPPLY_ORDER = tuple(METER_SUPPLY_GROUPS)
 REQ_TIMELINE_CATS = (
-    "Raw", "Prg", "Wr0", "Wr1", "Dic", "Near", "Flbk", "Miss")
+    "Raw", "Prg", "Wr0", "Wr1", "Dic", "Near", "Flbk", "Miss", "Scrl")
+# Scrl is listed after Dic; renderers hide it (and the scroll indicator)
+# entirely for a movie without any adopted scroll window.
 LEGEND_ORDER = (
-    "Raw", "Same", "Near", "Flbk", "Miss", "Prg", "Wrd", "Dic")
+    "Raw", "Same", "Near", "Flbk", "Miss", "Prg", "Wrd", "Dic", "Scrl")
 
 CATEGORY_COLORS: dict[str, RGB] = {
     "Raw": CAT_RAW,
@@ -66,6 +80,7 @@ CATEGORY_COLORS: dict[str, RGB] = {
     "Near": CAT_NEAR,
     "Flbk": CAT_FLBK,
     "Miss": CAT_MISS,
+    "Scrl": CAT_SCRL,
     "Prg": COL_PRG,
     "Wr0": COL_WR0,
     "Wr1": COL_WR1,
@@ -78,7 +93,7 @@ SUPPLY_COLORS = {
 }
 QUALITY_CATS = tuple(
     (name, CATEGORY_COLORS[name])
-    for name in ("Raw", "Same", "Near", "Flbk", "Miss")
+    for name in ("Raw", "Same", "Near", "Flbk", "Miss", "Scrl")
 )
 SOURCE_CATS = tuple(
     (name, CATEGORY_COLORS[name]) for name in DISPLAY_SOURCE_ORDER
@@ -146,6 +161,7 @@ CATEGORY_STYLES: dict[str, BorderStyle] = {
     "Near": BorderStyle("solid", CAT_NEAR, width=1),
     "Flbk": BorderStyle("solid", CAT_FLBK, width=1),
     "Miss": BorderStyle("fill", CAT_MISS),
+    "Scrl": BorderStyle("none"),
     "Prg": BorderStyle(
         "dashed", COL_PRG, COL_BORDER_BLACK, dash=2, width=1),
     "Wr0": BorderStyle(
@@ -202,9 +218,25 @@ def draw_category_border(draw, box, name: str) -> None:
 
 
 def draw_category_swatch(draw, box, name: str) -> None:
-    """Draw a legend swatch using the same style as the category map."""
+    """Draw a legend swatch using the same style as the category map.
+
+    Same and Scrl have no category-map border, so each gets its own legend
+    glyph: Same keeps the light/dark checker; Scrl draws a green outline with
+    a double chevron, matching the scroll indicator.
+    """
 
     x0, y0, x1, y1 = map(int, box)
+    if name == "Scrl":
+        draw.rectangle(box, outline=CAT_SCRL)
+        size = max(2, (y1 - y0) // 4)
+        cy = (y0 + y1) // 2
+        for offset in (-2, 3):
+            cx = (x0 + x1) // 2 + offset
+            draw.line(
+                [(cx - size // 2, cy - size), (cx + size // 2, cy),
+                 (cx - size // 2, cy + size)],
+                fill=CAT_SCRL, width=1)
+        return
     if name == "Same":
         hi, lo = (210, 210, 210), (45, 45, 45)
         cell = max(2, (x1 - x0 + 1) // 4)

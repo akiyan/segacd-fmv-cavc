@@ -63,7 +63,9 @@ Always add these notes:
 - Flbk is insurance for starvation. It is considered only when that exact load
   cannot fit, and the default mode requires an actual improvement over the
   currently displayed tile.
-- If no rank passes, the cell becomes Miss.
+- If no rank passes, the cell becomes Miss (displayed as Scrl instead while
+  an adopted hardware-scroll window is active — same tier, different display
+  category).
 - Making thresholds stricter means fewer reused tiles, more Raw transfers,
   better image accuracy, more CD pressure, and often more starvation.
 - Making thresholds looser means the reverse.

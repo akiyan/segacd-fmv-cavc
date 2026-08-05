@@ -105,7 +105,7 @@ earlier.
 
 On every generic and specialized H32/H40 path, Main asserts `CMD_SWAP` without
 blocking after the final pattern DMA and repair and after every read from the current
-Word RAM bank. Main then continues the name-table, HUD, CRAM, and publication path while
+Word RAM bank. Main then continues the name-table, scroll, HUD, CRAM, and publication path while
 Sub exchanges the banks, flushes pending WordBuf data, and pumps the CD. At the
 next playback-loop head, `sub_wait_scanlines` measures only the time from
 entering completion polling until Sub reports ready or end. Zero means the
@@ -145,7 +145,9 @@ VBlank 2/3 at 24 fps, and VBlank 2 at 30 fps. `transfer_vblanks` identifies
 how many fresh pattern budgets have already opened. Readiness earlier than the
 active raster immediately before that target clamps to pressure zero. In that final active raster, raw
 scanlines `00..DF` map directly to pressure; scanline 0 is pressure zero and
-`E0` is zero margin.
+`E0` is zero margin. On a scroll-control frame the same single-table DMA
+carries the wider rolling-plane band instead of the visible-grid words, so an
+identical raw V-counter value implies less real margin there.
 
 That target head applies directly when PT fits before it. If PT splits into the
 target budget, NT can start only after PT2; a ready sample in that same VBlank
@@ -365,7 +367,7 @@ Transport-retry remainder は
 すべてのgeneric / specialized H32/H40 pathで、Mainは最後のpattern DMAと
 先頭word補修、および現在のWord RAM bankに対する全readを終えた後、
 blockingせず`CMD_SWAP`をassert
-します。その後Mainがname-table、HUD、CRAM、publication pathを進む間に、Subはbank交換、
+します。その後Mainがname-table、scroll、HUD、CRAM、publication pathを進む間に、Subはbank交換、
 pending WordBuf dataのflush、CD pumpを行います。次のplayback-loop先頭で、
 `sub_wait_scanlines`は完了pollingに入ってからSubがreadyまたはendを返すまでの
 時間だけを測ります。ゼロはhandoffが重なり実行中に完了したという意味であり、
@@ -402,7 +404,9 @@ blank-phase readyはまだその直前blankに属します。`pass2_delay_q4`で
 30 fpsは2回目です。`transfer_vblanks`で、すでに開いたfresh pattern
 budget 数を判定します。Target 直前の active raster より早く ready なら逼迫度 0
 へ clamp します。その最後の active raster では raw scanline `00..DF` をそのまま
-逼迫度にし、scanline 0 が逼迫度 0、`E0` が余裕 0 です。
+逼迫度にし、scanline 0 が逼迫度 0、`E0` が余裕 0 です。scroll-control frameでは
+同じsingle-table DMAがvisible gridのwordではなくより広いrolling plane bandを
+運ぶため、同じraw V-counter値でも実際の余裕はそれより小さくなります。
 
 このtarget headをそのまま使うのは、PTがその前に収まる場合です。PTがtarget
 budgetへ分割された場合、NT開始可能点はPT2の後です。同じVBlank内のready sampleは

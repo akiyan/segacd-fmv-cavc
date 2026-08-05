@@ -46,7 +46,7 @@ Argument: source MP4 path, optionally plus display name or upload instruction.
 
 Other fixed defaults:
 
-- All features on: GPU, the full 1,663-tile VRAM pool, `DITHER`, `SEGPAL`,
+- All features on: GPU, the full 1,743-tile VRAM pool, `DITHER`, `SEGPAL`,
   `NEAR`, boot VRAM prefetch, whole-movie quality planning, and the unified
   Prg/Wr0/Wr1/Dic pattern supply at every supported cadence. Remove a source's
   existing dither with an edge-preserving `video.master_filter` before the
@@ -288,6 +288,11 @@ Important rendering notes:
   - Miss in Category is a filled red hole
   - legend: `Raw / Same / Near / Flbk / Miss` on row 1 and
     `Prg / Wrd / Dic` on row 2; the displayed Wrd count is Wr0 + Wr1
+  - a movie with adopted hardware scroll adds `Scrl` after Dic (green
+    chevron swatch, no category-map border: cells carried by the active
+    scroll) plus the right-aligned scroll indicator (green chevrons +
+    axis:position speed/f while active, dim `SCROLL ---` between windows);
+    a movie without scroll shows neither
   - each legend item shows one displayed-cell count (Wr shows the combined
     count while the underlying Wr0/Wr1 data remains separate)
   - Same uses the original light/dark checker legend swatch but no

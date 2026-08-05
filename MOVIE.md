@@ -172,6 +172,7 @@ mismatch stops with a diagnostic.
 | 6 | `FEATURE_DICBUF_INDEXED_RUNS` | DicBuf runs carry reusable dictionary indices |
 | 7 | `FEATURE_BOOT_VRAM_SIDECAR` | BOOT_STAGE contains direct-to-VRAM records |
 | 8 | `FEATURE_WORDBUF_RING` | routing entries may stage leading payload sectors to the parity WordBuf ring |
+| 9 | `FEATURE_SCROLL` | frame type 3 scroll controls may occur; requires the full-width H40 40-column grid (any letterboxed row count for horizontal windows; vertical windows additionally need the full-screen 28 rows), completed lists, and pattern supply |
 
 Unknown feature bits are rejected.
 
@@ -450,8 +451,9 @@ payload.
 |---:|---|---|
 | 2 | total_len | complete even block length, including this word |
 | 2 | frame_seq | expected frame sequence, low 16 bits |
-| 2 | n_upd/format | bit 15 selects a completed list; bits 14-13 are frame type; bits 12-0 are the update count |
+| 2 | n_upd/format | bit 15 selects a completed list; bits 14-13 are frame type; bits 12-0 are the update count (for type 3 the complete item count including the position item, never above 2,048) |
 | variable | normal shadow updates | type 0: bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
+| variable | scroll updates | type 3: one 4-byte position item (`>h` absolute HScroll, `>h` absolute VScroll; exactly one axis nonzero), then 4-byte completed items addressing the 64x32 plane |
 | 128 | inline CRAM | type 1/2: four complete 16-word CRAM lines; replaces the shadow-update field |
 | `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
 | 0/1 | audio pad | zero byte when needed for word alignment |
@@ -462,13 +464,42 @@ payload.
 at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
 
-Frame type 0 is normal, 1 is fade-in, 2 is fade-out, and 3 is reserved. Types
-1 and 2 require an update count of zero and a clear list bit. They leave the
-name table unchanged while replacing all 64 CRAM words from the inline image.
-Audio decoding and the cold-run suffix still run, so future patterns can be
-prefetched during a static fade. The two fade directions have the same player
-operation; the tag preserves the encoder's detected direction for validation
-and analysis.
+Frame type 0 is normal, 1 is fade-in, 2 is fade-out, and 3 is a scroll
+control. Types 1 and 2 require an update count of zero and a clear list
+bit. They leave the name table unchanged while replacing all 64 CRAM words
+from the inline image. Audio decoding and the cold-run suffix still run, so
+future patterns can be prefetched during a static fade. The two fade
+directions have the same player operation; the tag preserves the encoder's
+detected direction for validation and analysis.
+
+Type 3 requires the completed-list bit and `FEATURE_SCROLL`. Its item count
+includes the leading position item. The position item carries the signed
+absolute Plane A/B HScroll and VScroll values; an adopted window moves on
+exactly one axis, so exactly one component is nonzero. Both scroll values
+follow one convention: the screen pixel at `y, x` shows the plane pixel at
+`y - vscroll, x - hscroll`. The VDP adds VSRAM to the line counter, so the
+player writes the negated VScroll value to VSRAM. The remaining items are
+ordinary completed-list items whose `shadow_byte_offset` is
+`(row * 64 + column) * 2`, addressing the physical 64x32 rolling plane over
+the full 64-column pitch. A horizontal window needs only the full-width 40-column
+grid: HScroll shifts every scanline, a letterboxed grid's uniform border
+rows stay invisible while rolling, and the player DMAs the same row-offset
+TROWS-row 64-column band it stages for normal frames. It never addresses
+plane rows at or beyond TROWS. A vertical window rolls through all 32 plane
+rows and the player stages the complete 64x32 band, so it additionally
+requires the full-screen 28-row grid. On the first following non-scroll frame
+(normal or fade) the player copies the final
+tile-aligned viewport back to the logical grid and resets both scrolls to
+zero. The final position of every adopted window is tile aligned. A type-3
+control carries no raw-prefetch loads: `FEATURE_VRAM_RAW_PREFETCH` requests
+are screen-space and the packer rejects them on a scroll frame. A frame is at
+most one special type, and no PALIDX segment switch may land on a type-1,
+type-2, or type-3 frame. Entering a window needs no seeding control: the
+normal frames' grid already occupies plane rows `0..trows-1`, columns
+`0..tcols-1`, while the remaining plane cells are undefined until a type-3
+control supplies them. The player publishes the HScroll pair and the negated
+VScroll pair in the same VBlank as the band transfer, so fine position and
+tile content change atomically.
 
 The run descriptors immediately follow `n_runs`. Sub resolves them into
 `O_LOADS v2` while preserving its CDC polling cadence. Main schedules those
@@ -488,9 +519,12 @@ size is odd. One 16-bit entry follows for each set bit in ascending cell order:
 The displayed name-table word is `entry & 0x67FF`.
 
 A completed-list item contains `u16 shadow_byte_offset` and
-`u16 final_name_entry`. The offset is even and below `cells * 2`; the final
-entry contains no cold/source metadata. Frame 0 always uses bitmap controls.
-The encoder selects a list only when it is faster and no larger than the
+`u16 final_name_entry`. The offset is even; in a type-0 control it is below
+`cells * 2`, and in a type-3 control it is below `4096` because the item
+addresses the 64x32 plane. The final
+entry contains no cold/source metadata. Frame 0 always uses bitmap controls
+and type 3 always uses a list. For type 0
+the encoder selects a list only when it is faster and no larger than the
 bitmap form, and the packer verifies that frozen choice.
 
 The allocator's slot is the physical VRAM slot. Cold loads are consumed in
@@ -696,6 +730,7 @@ player signatureは同じheader sectorから生成する `player_constants.inc` 
 | 6 | `FEATURE_DICBUF_INDEXED_RUNS` | DicBuf runが再利用可能なdictionary indexを持つ |
 | 7 | `FEATURE_BOOT_VRAM_SIDECAR` | BOOT_STAGEがdirect-to-VRAM recordを持つ |
 | 8 | `FEATURE_WORDBUF_RING` | routing entryが先頭payload sectorをparity WordBuf ringへstageし得る |
+| 9 | `FEATURE_SCROLL` | frame type 3のscroll controlが出現し得る。全幅H40 40列grid（horizontal windowはletterboxの行数任意、vertical windowは全画面28行が追加で必須）、completed list、pattern supplyが必須 |
 
 未知のfeature bitは拒否します。
 
@@ -950,8 +985,9 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 |---:|---|---|
 | 2 | total_len | このwordを含むblock全体の偶数長 |
 | 2 | frame_seq | 期待frame sequenceの下位16 bit |
-| 2 | n_upd/format | bit 15はcompleted list、bits 14-13はframe type、bits 12-0はupdate数 |
+| 2 | n_upd/format | bit 15はcompleted list、bits 14-13はframe type、bits 12-0はupdate数（type 3ではposition itemを含む全item数。2,048以下） |
 | variable | 通常shadow updates | type 0: bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
+| variable | scroll updates | type 3: 先頭に4-byte position item（`>h` 絶対HScroll、`>h` 絶対VScroll。非ゼロは常に片軸だけ）、続けて64x32 planeを指す4-byte completed item |
 | 128 | inline CRAM | type 1/2: 完全な16-word CRAM line×4。shadow-update fieldの代わりに置く |
 | `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
 | 0/1 | audio pad | word alignmentに必要なzero byte |
@@ -962,11 +998,35 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 gapがあればre-seekして正確に読み直します。それでもsequenceが一致しない場合は
 前frameを保持し、desync counterを増やします。
 
-frame type 0はnormal、1はfade-in、2はfade-out、3はreservedです。Type 1と2は
-update数0かつlist bit clearが必須です。Name tableは変えず、inline imageからCRAMの
-64 word全てを入れ替えます。Audio decodeとcold-run suffixは続くため、static fade中に
-将来patternをprefetchできます。2つのfade方向のplayer操作は同じで、tagはencoderが
-検出した方向をvalidationとanalysisのために保存します。
+frame type 0はnormal、1はfade-in、2はfade-out、3はscroll controlです。
+Type 1と2はupdate数0かつlist bit clearが必須です。Name tableは変えず、inline image
+からCRAMの64 word全てを入れ替えます。Audio decodeとcold-run suffixは続くため、
+static fade中に将来patternをprefetchできます。2つのfade方向のplayer操作は同じで、
+tagはencoderが検出した方向をvalidationとanalysisのために保存します。
+
+Type 3はcompleted-list bitと`FEATURE_SCROLL`が必須です。Item数は先頭のposition
+itemを含みます。Position itemは符号付き絶対Plane A/B HScroll値とVScroll値を
+運びます。採用windowは単一軸でのみ動くため、非ゼロは常に片方だけです。両
+scroll値は同一の規約に従い、screenの`y, x`はplaneの`y - vscroll, x - hscroll`
+を表示します。VDPはVSRAMをline counterへ加算するため、playerはVScroll値を
+符号反転してVSRAMへ書きます。残りのitemは通常のcompleted-list itemで、その
+`shadow_byte_offset`は`(row * 64 + column) * 2`。物理64x32 rolling planeを
+64列pitchで指します。Horizontal windowに必要なのは全幅
+40列gridだけです: HScrollは全scanlineを動かすため、letterbox gridの一様な
+上下境界行はroll中も見えず、playerはnormal frameと同じrow-offset付き
+TROWS行×64列bandをDMAします。TROWS以降のplane行は決して指しません。
+Vertical windowは32行全体を環状に使い、playerは完全な64x32 bandをstage
+するため、全画面28行gridが追加で必須です。直後の
+最初の非scroll frame（normalまたはfade）で、playerはtile整列済みの最終viewportを
+logical gridへ複写し、両scrollを0へ戻します。採用windowの最終positionは常に
+tile整列です。Type 3 controlはraw prefetch loadを運びません。
+`FEATURE_VRAM_RAW_PREFETCH`のrequestはscreen空間のため、packerはscroll frame
+でこれを拒否します。1 frameが持てる特別typeは1つだけで、PALIDX segment switch
+はtype 1/2/3のframeへ重ねられません。Window進入にseeding controlは不要です。
+normal frameのgridがすでにplaneの行`0..trows-1`、列`0..tcols-1`を占めており、
+残りのplane cellは最初のtype 3 controlが供給するまで未定義です。playerは
+HScroll対と符号反転済みVScroll対をband transferと同じVBlank内でpublishするため、
+細位置とtile内容は原子的に切り替わります。
 
 Run descriptorは`n_runs`の直後に続きます。SubがCDC polling cadenceを保ちながら
 `O_LOADS v2`へ解決し、Mainはguard付き残余VBlank budgetでその展開済みrecordを
@@ -985,8 +1045,10 @@ set bitごとにcell昇順で16-bit entryを1個置きます。
 表示name-table wordは `entry & 0x67FF` です。
 
 completed-list itemは `u16 shadow_byte_offset` と `u16 final_name_entry` です。
-offsetは偶数かつ `cells * 2` 未満で、final entryはcold/source metadataを持ちません。
-frame 0は必ずbitmap controlを使います。encoderはbitmap形式以下のサイズで、かつ
+offsetは偶数で、type 0では `cells * 2` 未満、type 3では64x32 planeを指すため
+`4096` 未満です。final entryはcold/source metadataを持ちません。
+frame 0は必ずbitmap controlを使い、type 3は必ずlistを使います。type 0では
+encoderがbitmap形式以下のサイズで、かつ
 高速な場合だけlistを選び、packerが固定済み選択を検証します。
 
 allocatorのslotがそのまま物理VRAM slotです。cold loadはphysical slot昇順で消費

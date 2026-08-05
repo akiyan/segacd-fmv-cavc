@@ -122,10 +122,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             {path.name for path in (root / "profiles").glob("*.toml")},
             {
                 "bad-apple.toml",
-                "lunar-sss-op-h32.toml",
-                "lunar-sss-op-h32-nodither.toml",
-                "lunar-sss-op-h40.toml",
-                "lunar-sss-op-h40-nodither.toml",
+                "lunar.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
                 "ps2-sakura-op-h32.toml",
@@ -305,7 +302,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
     def test_profile_cold_cap_must_be_positive_and_fit_the_grid(self) -> None:
         for value, message in (
                 ("0", "cold cap must be positive"),
-                ("1664", "exceeds the 1663-tile resident pool")):
+                ("1744", "exceeds the 1743-tile resident pool")):
             with self.subTest(value=value), tempfile.TemporaryDirectory() as tmp:
                 path = Path(tmp) / "invalid-cold-cap.toml"
                 path.write_text(PROFILE.replace(
@@ -325,9 +322,9 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             path = Path(tmp) / "multi-cold-cap-pool.toml"
             path.write_text(PROFILE.replace(
                 'fps = "30"', 'fps = "24"').replace(
-                "cold_cap = 200", 'cold_cap = "2:170,3:1664"'))
+                "cold_cap = 200", 'cold_cap = "2:170,3:1744"'))
             with self.assertRaisesRegex(
-                    ValueError, "exceeds the 1663-tile resident pool"):
+                    ValueError, "exceeds the 1743-tile resident pool"):
                 load_profile(path)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "multi-cold-cap-30.toml"
@@ -442,7 +439,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 load_profile(path)
 
     def test_vram_pool_is_fixed_and_profile_key_is_rejected(self) -> None:
-        self.assertEqual(MAX_RESIDENT_VRAM_TILES, 1663)
+        self.assertEqual(MAX_RESIDENT_VRAM_TILES, 1743)
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile-vram.toml"
             path.write_text(PROFILE.replace(

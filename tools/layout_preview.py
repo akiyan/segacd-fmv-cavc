@@ -210,10 +210,11 @@ def dummy_data():
     random.seed(7)
     C = 396                                   # 総セル(例: SonicJam 22x18)
     # Mutually exclusive per-frame displayed-cell counts. The four physical
-    # sources replace the old Buf funding class.
+    # sources replace the old Buf funding class. The dummy frame is inside a
+    # scroll window, so Scrl (scroll-carried cells) is populated.
     counts = {
-        "Raw": 90, "Same": 130, "Near": 40, "Flbk": 65,
-        "Miss": 5, "Prg": 30, "Wr0": 15, "Wr1": 12, "Dic": 9,
+        "Raw": 60, "Same": 80, "Near": 40, "Flbk": 40,
+        "Miss": 5, "Scrl": 105, "Prg": 30, "Wr0": 15, "Wr1": 12, "Dic": 9,
     }
     # 線グラフ用: 前後4秒×fps の各指標時系列(中央=現在)
     fps = 30; win = 4
@@ -317,6 +318,8 @@ def dummy_data():
                 dma_tiles=dma_tiles, dma_runs=23,
                 r2v_words=r2v_words, r2v_max=r2v_max,
                 tl=tl, supply_series=supply_series, tln=tln,
+                scroll=dict(active=True, axis="H", position=-248, speed=2,
+                            direction="left"),
                 time_s=42.0, frame=1260, total_frames=2712)
 
 
@@ -387,13 +390,14 @@ def draw_catmap(w, h, data):
             x0, y0 = int(c * tw), int(r * th)
             x1, y1 = int((c + 1) * tw) - 1, int((r + 1) * th) - 1
             k = random.choices(
-                cats, weights=[24, 34, 8, 15, 2, 7, 4, 3, 3])[0]
+                cats, weights=[24, 34, 8, 15, 2, 20, 7, 4, 3, 3])[0]
             if k == "Miss":
                 style.draw_category_border(d, (x0, y0, x1, y1), k)
                 continue
             # 内容(色ブロック)を塗る
             d.rectangle([x0, y0, x1, y1], fill=((c * 11 + r * 7) % 256, (r * 13) % 256, (c * 17) % 256))
             style.draw_category_border(d, (x0, y0, x1, y1), k)
+    draw_scroll_edge(im, data.get("scroll"), cols, rows)
     return im
 
 
@@ -403,14 +407,115 @@ def swatch(d, x, y, sw, name, col):
     style.draw_category_swatch(d, (x, y, x + sw, y + sw), name)
 
 
+def draw_scroll_chevron(d, x, y, size, direction, color, width=2):
+    """One chevron centred at (x, y) pointing in the on-screen flow
+    direction (the way carried content visibly moves)."""
+    s = int(size)
+    if direction == "right":
+        pts = [(x - s // 2, y - s), (x + s // 2, y), (x - s // 2, y + s)]
+    elif direction == "left":
+        pts = [(x + s // 2, y - s), (x - s // 2, y), (x + s // 2, y + s)]
+    elif direction == "down":
+        pts = [(x - s, y - s // 2), (x, y + s // 2), (x + s, y - s // 2)]
+    elif direction == "up":
+        pts = [(x - s, y + s // 2), (x, y - s // 2), (x + s, y + s // 2)]
+    else:
+        raise ValueError(f"unknown scroll direction: {direction}")
+    d.line(pts, fill=color, width=width, joint="curve")
+
+
+def draw_scroll_status(d, w, h, scroll):
+    """Right-aligned hardware-scroll indicator in the legend's free slot.
+
+    Drawn only for a movie with at least one adopted scroll window.  While
+    hardware scroll is active the field shows two green chevrons pointing in
+    the on-screen content-flow direction plus ``<axis>:<position> <speed>/f``
+    (axis H or V, the absolute VDP scroll position, and the scroll speed in
+    pixels per content frame).  Frames outside a scroll window dim the field
+    to ``SCROLL ---``.
+    """
+    sw = 14
+    y = (h // 2) + (h // 2 - sw) // 2 - 1
+    if not scroll.get("active"):
+        text = "SCROLL ---"
+        d.text((w - _w(f_leg, text) - 8, y), text,
+               fill=style.COL_SCROLL_IDLE, font=f_leg)
+        return
+    text = "%s:%d %d/f" % (
+        scroll["axis"], scroll["position"], scroll["speed"])
+    x0 = w - _w(f_leg, text) - 8
+    d.text((x0, y), text, fill=style.COL_SCROLL, font=f_leg)
+    for i in (0, 1):
+        draw_scroll_chevron(
+            d, x0 - 18 + i * 7, y + 8, 5, scroll["direction"],
+            style.COL_SCROLL)
+
+
+def draw_scroll_edge(im, scroll, cols, rows):
+    """Overlay the scroll entering-edge band on a category-map panel image.
+
+    ``direction`` is the on-screen content-flow direction, so fresh tile
+    columns/rows enter from the opposite edge.  That one-tile strip is a
+    translucent green band (a thin outline alone collapses into stray lines
+    at panel scale) with an outline and chevrons pointing in the flow
+    direction.  The chevron offset follows the scroll position itself
+    (position % 16), so the chevrons march exactly with the visible content.
+    Cells inside the band keep their normal category borders; the band only
+    localizes where scroll-entry loads land.
+    """
+    if not scroll or not scroll.get("active"):
+        return
+    direction = scroll["direction"]
+    phase = int(scroll["position"]) % 16
+    w, h = im.size
+    band = (*style.COL_SCROLL, 52)
+    line = (*style.COL_SCROLL, 255)
+    overlay = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    if direction in ("right", "left"):
+        tw = w / max(1, int(cols))
+        if direction == "left":       # content flows left -> enters at right
+            x0, x1 = int(w - tw), w - 1
+            cx = x1 - 20 + phase
+        else:                         # content flows right -> enters at left
+            x0, x1 = 0, int(tw) - 1
+            cx = x0 + 5 + phase
+        d.rectangle([x0, 0, x1, h - 1], fill=band, outline=line, width=1)
+        step = max(24, h // 8)
+        for cy in range(step // 2, h, step):
+            draw_scroll_chevron(d, cx, cy, 5, direction, line)
+    else:
+        th = h / max(1, int(rows))
+        if direction == "up":         # content flows up -> enters at bottom
+            y0, y1 = int(h - th), h - 1
+            cy = y1 - 20 + phase
+        else:                         # content flows down -> enters at top
+            y0, y1 = 0, int(th) - 1
+            cy = y0 + 5 + phase
+        d.rectangle([0, y0, w - 1, y1], fill=band, outline=line, width=1)
+        step = max(24, w // 8)
+        for cx in range(step // 2, w, step):
+            draw_scroll_chevron(d, cx, cy, 5, direction, line)
+    im.paste(overlay, (0, 0), overlay)
+
+
 def draw_legend(w, h, data):
-    """Five-column, two-row legend with one displayed-cell count per item."""
+    """Five-column, two-row legend with one displayed-cell count per item.
+
+    ``data['scroll']`` (present only for a movie with adopted hardware
+    scroll) adds the Scrl item after Dic and the right-aligned scroll
+    indicator in the remaining second-row space; a movie without any adopted
+    scroll window shows neither.  See ``draw_scroll_status``.
+    """
     im = Image.new("RGB", (w, h), (14, 14, 14))
     d = ImageDraw.Draw(im)
     per_row = 5
     cw = w // per_row
     sw = 14
+    scroll = data.get("scroll")
     for i, (name, col) in enumerate(LEGEND_CATS):
+        if name == "Scrl" and scroll is None:
+            continue
         row = i // per_row; c = i % per_row
         x = c * cw + 6; y = row * (h // 2) + (h // 2 - sw) // 2
         swatch(d, x, y, sw, name, col)
@@ -419,6 +524,8 @@ def draw_legend(w, h, data):
         count = (data["counts"]["Wr0"] + data["counts"]["Wr1"]
                  if name == "Wrd" else data["counts"][name])
         draw_field(d, tx, y - 1, label, count, 3, f_leg, COL_TXT)
+    if scroll is not None:
+        draw_scroll_status(d, w, h, scroll)
     return im
 
 
@@ -689,8 +796,10 @@ def draw_cattotals(w, h, data):
     x = 6
     ty = ly + 11 - f_sm.getmetrics()[0]      # 四角(ly..ly+11)の下線にベースラインを合わせる
     for name, col in LEGEND_CATS:
-        swatch(d, x, ly, 11, name, col); x += 11 + 5
         value = tot["Wr0"] + tot["Wr1"] if name == "Wrd" else tot[name]
+        if name == "Scrl" and not value:
+            continue                         # scroll採用のない動画ではScrl自体を出さない
+        swatch(d, x, ly, 11, name, col); x += 11 + 5
         s = str(value)                       # 合計値のみ(ユニーク数併記は廃止)
         d.text((x, ty), s, fill=COL_TXT, font=f_sm); x += _w(f_sm, s)
         x += 14                              # 項目間ギャップ

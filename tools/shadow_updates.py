@@ -12,8 +12,12 @@ COUNT_MASK = 0x1FFF
 FRAME_NORMAL = 0
 FRAME_FADE_IN = 1
 FRAME_FADE_OUT = 2
-FRAME_RESERVED = 3
+FRAME_SCROLL = 3
 INLINE_CRAM_BYTES = 128
+SCROLL_POSITION_BYTES = 4
+SCROLL_PLANE_COLUMNS = 64
+SCROLL_PLANE_ROWS = 32
+SCROLL_PLANE_CELLS = SCROLL_PLANE_COLUMNS * SCROLL_PLANE_ROWS
 SHADOW_ENTRY_BYTES = 2
 LIST_ITEM_BYTES = 4
 
@@ -60,15 +64,28 @@ def encode_count(
         frame_type: int = FRAME_NORMAL,
 ) -> int:
     value = int(count)
-    if not 0 <= value <= COUNT_MASK:
-        raise ValueError(f"shadow update count outside 0..{COUNT_MASK}: {count}")
+    if value < 0:
+        raise ValueError(f"shadow update count must be non-negative: {count}")
     kind = int(frame_type)
-    if kind not in (FRAME_NORMAL, FRAME_FADE_IN, FRAME_FADE_OUT):
+    if kind not in (
+            FRAME_NORMAL, FRAME_FADE_IN, FRAME_FADE_OUT, FRAME_SCROLL):
         raise ValueError(f"unsupported frame type: {frame_type}")
-    if kind != FRAME_NORMAL and value:
+    if has_inline_cram(kind) and value:
         raise ValueError("fade frames cannot carry shadow updates")
+    if has_inline_cram(kind) and use_list:
+        raise ValueError("fade frames cannot use a shadow update list")
+    if kind == FRAME_SCROLL and not use_list:
+        raise ValueError("scroll frames require a shadow update list")
+    # A scroll control stores the absolute HScroll/VScroll pair as its first
+    # four-byte list item. Counting it lets the Sub CPU locate
+    # audio through the ordinary list path without another resident parser.
+    encoded_count = value + int(kind == FRAME_SCROLL)
+    if encoded_count > COUNT_MASK:
+        raise ValueError(
+            f"shadow list item count outside 0..{COUNT_MASK}: "
+            f"updates={count} frame_type={kind}")
     return (
-        value
+        encoded_count
         | kind << FRAME_TYPE_SHIFT
         | (LIST_TAG if use_list else 0)
     )
@@ -78,7 +95,13 @@ def decode_count(raw: int) -> tuple[int, bool]:
     value = int(raw)
     if not 0 <= value <= 0xFFFF:
         raise ValueError(f"raw shadow update count outside u16: {raw}")
-    return value & COUNT_MASK, bool(value & LIST_TAG)
+    count = value & COUNT_MASK
+    use_list = bool(value & LIST_TAG)
+    if decode_frame_type(value) == FRAME_SCROLL:
+        if not use_list or count == 0:
+            raise ValueError("scroll control lacks its position list item")
+        count -= 1
+    return count, use_list
 
 
 def decode_frame_type(raw: int) -> int:
@@ -90,6 +113,10 @@ def decode_frame_type(raw: int) -> int:
 
 def has_inline_cram(frame_type: int) -> bool:
     return int(frame_type) in (FRAME_FADE_IN, FRAME_FADE_OUT)
+
+
+def has_scroll_position(frame_type: int) -> bool:
+    return int(frame_type) == FRAME_SCROLL
 
 
 def bitmap_bytes(total_cells: int) -> int:

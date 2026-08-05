@@ -176,10 +176,12 @@ CRAM_QUALITY_PRIORITY_SEARCH_FRAMES = 4
 
 # --- Fixed encoder/player resources ---
 # The resident movie-pattern pool starts at tile 1 and ends immediately before
-# the fixed HUD font at VRAM 0xD000. The single movie name table starts at
-# 0xE000, so DEBUG and release builds share the same contiguous pool.
+# the fixed HUD font at VRAM 0xDA00. The font and the 640-byte sprite table
+# (0xDC00, the highest 0x400-aligned base below the name table) are packed
+# directly under the single movie name table at 0xE000, so DEBUG and release
+# builds share one contiguous 1,743-tile pool with only a 384-byte tail gap.
 VRAM_PATTERN_BASE_TILE = 1
-VRAM_HUD_FONT_TILE = 0xD000 // 32
+VRAM_HUD_FONT_TILE = 0xDA00 // 32
 VRAM_MOVIE_NT_TILE = 0xE000 // 32
 VRAM_FIRST_MOVIE_NT_TILE = VRAM_MOVIE_NT_TILE
 VRAM_PATTERN_POOL_TILES = (
@@ -446,6 +448,20 @@ def audio_frame_layout(fps):
 # nothing is re-loaded. There is therefore no separate realized ceiling and no
 # per-source `CBRSIM_COLD_CAP_REALIZED` env override. The pack still asserts
 # realized <= cap as a guard. frame0 (the full-load header) is exempt.
+
+# --- Scroll-frame singleton-run transfer ceiling ---
+# A rolling-plane scroll window keeps long-lived world tiles resident, so the
+# shared slot pool fragments and nearly every scroll-frame cold becomes its
+# own transfer run. Per-run setup time then dominates the blank-time budget
+# (measured ~30..45us per run, i.e. roughly 40..60 DMA-word equivalents; the
+# stopwatch model in harness/cold_cap_model is U ~= 0.71/load + 9.9/run - 65
+# ticks). The profile cold caps are qualified on ordinary frames whose runs
+# average about four tiles. Equating the qualified transfer time
+# (a*cap + b*cap/4) with the singleton-run cost (a + b per cold) gives
+# cap * (a + b/4) / (a + b) ~= 0.30 * cap. Scroll frames therefore clamp the
+# per-frame cold/Prg ceiling to this fraction of the qualified cap until the
+# measured run-aware VBlank budget replaces the approximation.
+SCROLL_SINGLETON_COLD_FRACTION = 0.30
 
 # --- Per-frame cold cap supplied by the encode profile ---
 # A profile supplies either one scalar cap ("225") or, for a multi-interval

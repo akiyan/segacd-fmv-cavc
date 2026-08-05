@@ -149,7 +149,7 @@ multi-interval display cadence (24 fps alternates 2- and 3-VBlank slots; frame
 1 uses cadence element zero, so it is a 2-VBlank frame). A spec must name
 exactly the intervals its cadence uses. Each frame receives the cap of its own
 display slot, while layout and reservation envelopes use the largest cap. No
-cap may exceed the 1,663-tile resident pool.
+cap may exceed the 1,743-tile resident pool.
 
 The checked-in profile records the source's qualified playback ceiling.
 Temporary comparison profiles use the same key, so artifact identity, tmpfs
@@ -158,10 +158,49 @@ profile is conservative; raising it requires a new full-length playback
 qualification with the complete encoder, stream, Sub-CPU, Main-CPU, audio, and
 CD-pump path.
 
+An adopted scroll frame (horizontal or vertical) additionally clamps its
+cold/Prg ceiling to
+`SCROLL_SINGLETON_COLD_FRACTION` (0.30, `tools/av_config.py`) of the frame's
+qualified cap, never below the mandatory incoming guard column or row. The rolling
+plane keeps long-lived world tiles resident, so the shared slot pool
+fragments and nearly every scroll-frame cold transfers as its own run; the
+per-run setup time (measured about 30 to 45 microseconds) would otherwise
+exceed the blank-time budget the ordinary caps were qualified against.
+
 The sim and packer share `tools/tile_alloc.py`. The packer replays the frozen
 allocation and requires realized cold to remain within each frame's own cap.
 Frame 0 is exempt because the untimed BODY arm installs it before timed
 playback.
+
+## Scroll adoption
+
+Hardware-scroll adoption is fully automatic: there is no profile key and no
+source time range. The encoder detects sustained axis-only camera scrolls,
+adopts only the windows that are measurably cheaper than the fixed grid, and
+emits frame type 3 scroll controls (see [`MOVIE.md`](MOVIE.md)). Eligibility
+requires the full-width H40 40-column grid and pattern supply; vertical
+windows additionally require the full-screen 28-row grid. Window anchors
+avoid palette-segment boundaries, fade frames, and fade-preparation frames.
+`CBRSIM_SCROLL=0` disables adoption for diagnostic A/B isolation only.
+
+| Stage | Name | Default | Meaning |
+|---|---|---:|---|
+| detection (`tools/scroll_frames.py`) | `max_shift` / `block_size` / `sample_stride` | 24 / 16 / 4 | Per-frame-pair block-vote motion search range and sampling. |
+| detection | `minimum_texture` / `minimum_blocks` | 10.0 / 20 | Block eligibility: enough texture, enough voting blocks. |
+| detection | `minimum_support` / `minimum_gain` | 0.32 / 1.35 | Winning shift must carry this vote share and beat the zero shift by this factor. |
+| detection | `maximum_residual` / `cut_zero_residual` / `cut_best_residual` | 34.0 / 58.0 / 42.0 | Residual ceilings; the cut pair marks a scene cut instead of motion. |
+| grouping | `minimum_transitions` / `maximum_gap` / `delta_tolerance` / `minimum_displacement` | 8 / 2 / 1 / 16 | Segment assembly from consistent per-frame deltas. |
+| validation | `maximum_error` / `minimum_support` / `max_shift` | 1 / 0.60 / 48 | Two-frame estimates must agree with adjacent displacement sums. |
+| adoption measurement | `tile_rmse_threshold` | 8.0 | 8x8 tiles above this RMSE still need updates under scroll. |
+| window gate (`tools/scroll_plan.py`) | `minimum_movements` / `minimum_gain` / `minimum_beneficial_fraction` | 16 / 2.0 / 0.80 | A window must move enough, save enough updates, and benefit most frames. |
+| window gate | `minimum_support` / `maximum_overlap_rmse_p95` | 0.85 / 28.0 | Quality gate: high detector support and bounded overlap error. |
+| rolling plane | `PLANE_COLUMNS` x `PLANE_ROWS` | 64 x 32 | Physical plane; 2,048 cells (`SCROLL_PLANE_CELLS`). |
+
+Each window's world-mosaic guard edge is quantized from the first window
+frame where that edge is fully inside the source viewport, so the guard
+pattern key is independent of runtime plane state and reveal phase. Decide
+reserves each scroll frame's guard-edge cold, WordBuf, and Prg supply, and
+applies the single-run cold/Prg clamp described under Cold cap.
 
 ## Audio
 
@@ -255,8 +294,9 @@ slot order while name updates remain in cell order.
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU bitmap handlers. |
 | movie name-table DMA | `(rows - 1) * 64 + cols` words/frame | ip / analysis | One statically trimmed 64-pitch band into the single table at `0xE000`. |
+| scroll-frame name-table DMA | `rows * 64` words (horizontal) or `32 * 64` = 2,048 words (vertical), plus the HScroll/VScroll pair at CPU word cost | ip / analysis | A scroll build publishes the full 64-column rolling-plane band instead of the trimmed grid band. |
 | DEBUG HUD DMA | H32 76 / H40 52 words/frame | ip / analysis | One Window-row word per screen column plus one four-word sprite record per spill digit. |
-| `O_LOADS v2` records | at most the grid cell count; exact parity peaks in PSUP | sp / ip / sim / pack | Sub-built source-aware physical transfer plan consumed by Main in place. |
+| `O_LOADS v2` records | at most the grid cell count; a scroll frame is bounded by the 2,048-cell 64x32 plane instead; exact parity peaks in PSUP | sp / ip / sim / pack | Sub-built source-aware physical transfer plan consumed by Main in place. |
 | run record size | 22 bytes | sp / ip | Pre-swizzled VDP length/source registers, command, raw destination, and raw source. |
 
 Every pattern run uses DMA. A Word-RAM DMA performs the required CPU
@@ -303,7 +343,7 @@ finite-PrgBuf route must keep `rate_lead_peak` at zero; later pad cannot repay
 elapsed display delay. Sim applies the constraint before image decisions,
 freezes the resulting proof, and packer requires exact schedule equality.
 
-`buffer_remaining.npz` schema 7 stores:
+`buffer_remaining.npz` schema 8 stores:
 
 - Prg/Wr0/Wr1/Dic remaining capacities and per-frame loads;
 - whole-movie quality-budget traces;
@@ -317,13 +357,14 @@ read time. See [`BUEFFERING.md`](BUEFFERING.md) for the planning flow.
 
 ## Encoder quality controls
 
-The sim classifies each cell as Raw, Same, Near, Flbk, Buf, or Miss. Raw and Buf
-describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
+The sim classifies each cell as Raw, Same, Near, Flbk, Buf, Scrl, or Miss.
+Raw and Buf describe funding; Scrl marks an unfunded want carried by an
+active scroll window; Prg/Wr0/Wr1/Dic describe the physical source.
 
 | Name | Default | Meaning |
 |---|---:|---|
-| resident VRAM pool | 1,663 tiles | Tiles 1–1,663, ending before the fixed HUD font at `0xD000`; the single movie name table starts at `0xE000`. |
-| HUD font | 16 tiles at tile 1,664 | Shared by DEBUG and release startup. |
+| resident VRAM pool | 1,743 tiles | Tiles 1–1,743, ending before the fixed HUD font at `0xDA00`; the single movie name table starts at `0xE000`. |
+| HUD font | 16 tiles at tile 1,744 (`0xDA00`) | Shared by DEBUG and release startup. |
 | `CBRSIM_RESIDENT_K` / `RESIDENT_BW` | 24 / 24 | Candidate search depth and rendered mean-colour bucket width. |
 | `CBRSIM_NEAR_YM` / `_YP` / `_C` | 10 / 28 / 24 | Near mean/max luma and mean chroma bounds. |
 | `CBRSIM_FLBK_IMPROVE_ONLY` / `_MIN_IMPROVE` | 1 / 0 | Flbk is accepted only when it improves the displayed tile. |
@@ -335,13 +376,33 @@ describe funding; Prg/Wr0/Wr1/Dic describe the physical source.
 | `video.output_dither` | `bayer` | Profile option. `bayer` uses the standard position-fixed 8x8 pattern. `edge-attenuated-bayer` preserves that pattern through gentle gradients, expands strong-edge influence one pixel into the resampled fringe, then fades its strength to nearest-colour rounding across a 3x3 luma range of 32 to 96. `none` disables dithering entirely and rounds every pixel to its nearest RGB333 level. |
 | segmented palettes | on | Fixed encoder behavior. |
 | Near reuse | on | Fixed encoder behavior. |
-| boot VRAM prefetch | on | Fixed encoder behavior. |
+| boot VRAM prefetch | on | Fixed encoder behavior; `CBRSIM_BOOT_VRAM_PREFETCH=0` disables it for diagnosis only. |
 | timed `raw_prefetch` | on | Optional `[encoder]` setting; set `raw_prefetch = false` to disable it. |
 | `encoder.cram_quality_priority_search_frames` | 4 | Frames inspected from each CRAM switch. At most one positive-risk frame is selected, and its reserve is reduced only by the predicted protected-demand shortage. Zero disables this priority. |
 
 The allocator commits free/Same/Near results, selects cold exact loads while
 reserving two name-entry bytes for every deferred cell, then fills the
 remainder with improving Flbk residents.
+
+### Diagnostic environment overrides
+
+These are workstation isolation and comparison knobs, not profile inputs.
+Leave them unset for a qualified encode.
+
+| Env | Default | Meaning |
+|---|---:|---|
+| `CBRSIM_SCROLL` | 1 | `0` disables hardware-scroll adoption for A/B isolation. |
+| `CBRSIM_BOOT_VRAM_PREFETCH` | 1 | `0` disables boot VRAM prefetch for diagnosis. |
+| `CBRSIM_RAW_PREFETCH` | 1 | Env mirror of the `[encoder].raw_prefetch` profile key. |
+| `CBRSIM_GPU` | 1 | `0`/`off`/`false`/`no` forces the CPU quantization path. |
+| `CBRSIM_ALLOC_TRACE` / `_DUMP` | unset | Append per-frame allocator digests to a trace file; `_DUMP=N` dumps the full state. |
+| `CBRSIM_CENTERTIE` | 1 | Tie-break preferring cells nearer the screen centre. |
+| `CBRSIM_MIDFAR` | 1 | Merge the Near/Flbk searches into one best-match VRAM lookup. |
+| `CBRSIM_NEAR_ACCURATE_ONLY` | 1 | Keep only accurate Near candidates. |
+| `CBRSIM_UPGRADE` | 1 | `0` disables the Raw/Buf upgrade pass for comparison. |
+| `CBRSIM_L3` / `CBRSIM_PRG_PRELOAD` | 0 / unset | Legacy experiments: PRG-RAM victim-cache tile count and a static PRG preload set. |
+| `CBRSIM_SEG_GAP` / `_MIN` / `_DARK` / `_UNIFORM` / `_UNIFORM_TOL` / `_UNIFORM_NEAR` | 24 / 2 / 0.90 / 0.88 / 24 / 8 | Palette-segment detection thresholds. |
+| `CBRSIM_EDGE_WEIGHT` / `CBRSIM_PAL_SAT` | 3.0 / 0 | Palette-training edge weight and perceptual saturation weight. |
 
 ### Palette controls
 
@@ -427,7 +488,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[source.preprocess]` | optional `auto_range` | Whole-movie automatic black/white dynamic-range expansion after extraction. |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
-| `[output]` | `directory`, optional `reuse`, `emit_decisions` | Human-readable requested sim identity, decoded-input reuse, and decision-log output. Sim bytes use a deterministic direct tmpfs path. |
+| `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct tmpfs path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
@@ -460,8 +521,9 @@ names, non-tile-aligned dimensions, unsafe profile names, a
 missing/non-positive/malformed cold cap, a cold cap above the resident-pool
 size, an interval cold-cap spec that does not match the profile fps cadence,
 and a negative or non-integer CRAM-risk search length. GPU, the
-1,663-tile resident pool, segmented palettes, Near, boot prefetch, and the four
-physical supplies are fixed behavior.
+1,743-tile resident pool, segmented palettes, Near, boot prefetch, and the four
+physical supplies are fixed behavior; only the diagnostic-only environment
+overrides listed above can switch them off for isolation.
 
 ## Build switches
 
@@ -501,7 +563,7 @@ relevant limits are:
 | L | audio lead remains within `SYNC_MIN..SYNC_MAX` |
 | C | zero blocking pumps is ideal |
 | M | below 2 avoids an extra VBlank spill |
-| N | at most the grid cell count; cadence spill is reported by the transfer-window fields |
+| N | at most the grid cell count (the 2,048-cell 64x32 plane on a scroll frame); cadence spill is reported by the transfer-window fields |
 | J | at most 45 / 30 / 25 KiB above normal PrgBuf at 15 / 24 / 30 fps |
 
 Frame 0 is excluded from HUD values and scale maxima because it is boot work,
@@ -641,7 +703,7 @@ fps由来fallbackや診断overrideは使いません。値は全フレーム共�
 24 fpsは2/3 VBlank slotが交互で、frame 1がcadence要素0=2 VBlank frame）です。
 スペックはそのcadenceが使う間隔をちょうど全部指定します。各フレームは自分の
 display slotのcapを受け取り、layoutと予約envelopeは最大capを使います。どのcapも
-1,663-tile resident pool以下にします。
+1,743-tile resident pool以下にします。
 
 checked-in profileは、そのsourceでqualificationした再生上限を記録します。一時的な比較
 profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、pack、analysisへ
@@ -649,9 +711,43 @@ profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、p
 です。引き上げる場合はencoder、stream、Sub CPU、Main CPU、audio、CD pumpを含む
 完全な経路で新しい全編再生qualificationが必要です。
 
+採用scroll frame（横・縦とも）はさらに、cold/Prg上限をそのframeの認定済みcapの
+`SCROLL_SINGLETON_COLD_FRACTION`（0.30、`tools/av_config.py`）にclampします。
+必須の進入guard列/行を下回ることはありません。rolling planeは長寿命のworld tileを
+residentに保つため共有slot poolが断片化し、scroll frameのcoldはほぼすべて単独run
+として転送されます。run毎のsetup時間（実測で約30〜45マイクロ秒）は、通常capの
+qualificationが前提としたblank時間予算をそのままでは超過します。
+
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
 realized coldが各フレーム自身のcap内にあることを要求します。frame 0はtimed playback前に
 untimed BODY armが構築するため対象外です。
+
+## Scroll採用
+
+Hardware-scroll採用は完全自動です。profile keyもsourceのtime range指定もありません。
+Encoderは持続する単一軸のcamera scrollを検出し、固定gridより実測で安くなるwindow
+だけを採用してframe type 3のscroll controlを出力します（[`MOVIE.md`](MOVIE.md)参照）。
+採用条件は全幅H40 40列gridとpattern supplyで、vertical windowは全画面28行gridが
+追加で必要です。Window anchorはpalette segment境界、fade frame、fade準備frameを
+避けます。`CBRSIM_SCROLL=0` は診断用A/B分離としてのみ採用を無効化します。
+
+| Stage | Name | Default | 意味 |
+|---|---|---:|---|
+| detection（`tools/scroll_frames.py`） | `max_shift` / `block_size` / `sample_stride` | 24 / 16 / 4 | frame pairごとのblock投票motion探索範囲とsampling。 |
+| detection | `minimum_texture` / `minimum_blocks` | 10.0 / 20 | block適格性: 十分なtextureと投票block数。 |
+| detection | `minimum_support` / `minimum_gain` | 0.32 / 1.35 | 勝者shiftはこの得票率を持ち、zero shiftをこの倍率で上回ること。 |
+| detection | `maximum_residual` / `cut_zero_residual` / `cut_best_residual` | 34.0 / 58.0 / 42.0 | residual上限。cut対はmotionではなくscene cutと判定。 |
+| grouping | `minimum_transitions` / `maximum_gap` / `delta_tolerance` / `minimum_displacement` | 8 / 2 / 1 / 16 | 一貫したframe deltaからのsegment組み立て。 |
+| validation | `maximum_error` / `minimum_support` / `max_shift` | 1 / 0.60 / 48 | 2-frame推定が隣接displacement和と一致すること。 |
+| adoption measurement | `tile_rmse_threshold` | 8.0 | このRMSEを超える8x8 tileはscroll下でも更新が必要。 |
+| window gate（`tools/scroll_plan.py`） | `minimum_movements` / `minimum_gain` / `minimum_beneficial_fraction` | 16 / 2.0 / 0.80 | windowは十分動き、十分更新を節約し、大半のframeが得をすること。 |
+| window gate | `minimum_support` / `maximum_overlap_rmse_p95` | 0.85 / 28.0 | 品質gate: 高いdetector supportと有界のoverlap誤差。 |
+| rolling plane | `PLANE_COLUMNS` x `PLANE_ROWS` | 64 x 32 | 物理plane。2,048 cell（`SCROLL_PLANE_CELLS`）。 |
+
+各windowのworld-mosaic guard辺は、その辺がsource viewportへ完全に入る最初の
+window frameから量子化します。これによりguardのpattern keyはruntimeのplane状態や
+reveal位相に依存しません。Decideは各scroll frameのguard辺cold・WordBuf・Prg供給を
+予約し、Cold capの節で述べた単独run前提のcold/Prg clampを適用します。
 
 ## Audio
 
@@ -740,8 +836,9 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。 |
 | movie name-table DMA | `(rows - 1) * 64 + cols` word/frame | ip / analysis | `0xE000`の単一tableへ送る、静的にtrimした1本の64-pitch band。 |
+| scroll-frame name-table DMA | horizontalは`rows * 64` word、verticalは`32 * 64` = 2,048 word。加えてHScroll/VScroll対をCPU word costで送る | ip / analysis | scroll buildはtrim済みgrid bandの代わりに64列rolling plane band全体を送る。 |
 | DEBUG HUD DMA | H32 76 / H40 52 word/frame | ip / analysis | screen columnごとのWindow-row wordと、spill digitごとの4-word sprite record。 |
-| `O_LOADS v2` records | grid cell数以下。正確なparityピークはPSUP | sp / ip / sim / pack | Subが構築しMainがin-placeで消費するsource-aware physical transfer計画。 |
+| `O_LOADS v2` records | grid cell数以下。scroll frameは代わりに2,048 cellの64x32 planeが上限。正確なparityピークはPSUP | sp / ip / sim / pack | Subが構築しMainがin-placeで消費するsource-aware physical transfer計画。 |
 | run record size | 22 bytes | sp / ip | 事前変換済みVDP length/source register、command、raw destination、raw source。 |
 
 全pattern runがDMAを使います。Word-RAM DMAは必須のCPU first-word repairを
@@ -783,7 +880,7 @@ sector到着headroomで、encoder Supplyではありません。各BODY prefix�
 経過済み表示遅延を返済することは認めません。simは画像決定前に制約を適用してproofを
 固定し、packerがscheduleの完全一致を要求します。
 
-`buffer_remaining.npz` schema 7は次を保存します。
+`buffer_remaining.npz` schema 8は次を保存します。
 
 - Prg/Wr0/Wr1/Dicの残量、容量、frame別load
 - movie全体quality-budget trace
@@ -797,13 +894,14 @@ sector到着headroomで、encoder Supplyではありません。各BODY prefix�
 
 ## Encoder quality control
 
-simは各cellをRaw、Same、Near、Flbk、Buf、Missに分類します。RawとBufはfundingを示し、
+simは各cellをRaw、Same、Near、Flbk、Buf、Scrl、Missに分類します。RawとBufはfundingを示し、
+Scrlはactiveなscroll windowが運ぶ未供給wantを示し、
 Prg/Wr0/Wr1/Dicは物理sourceを示します。
 
 | Name | Default | 意味 |
 |---|---:|---|
-| resident VRAM pool | 1,663 tiles | tile 1〜1,663。固定HUD font `0xD000`の直前までで、単一movie name tableは`0xE000`から。 |
-| HUD font | tile 1,664から16 tiles | DEBUGとrelease startupで共有。 |
+| resident VRAM pool | 1,743 tiles | tile 1〜1,743。固定HUD font `0xDA00`の直前までで、単一movie name tableは`0xE000`から。 |
+| HUD font | tile 1,744（`0xDA00`）から16 tiles | DEBUGとrelease startupで共有。 |
 | `CBRSIM_RESIDENT_K` / `RESIDENT_BW` | 24 / 24 | candidate search深さとrendered mean-colour bucket幅。 |
 | `CBRSIM_NEAR_YM` / `_YP` / `_C` | 10 / 28 / 24 | Nearのmean/max luma、mean chroma境界。 |
 | `CBRSIM_FLBK_IMPROVE_ONLY` / `_MIN_IMPROVE` | 1 / 0 | 表示tileを改善するときだけFlbkを採用。 |
@@ -815,12 +913,32 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 | `video.output_dither` | `bayer` | profile option。`bayer` は画面位置固定の標準8x8 patternを使います。`edge-attenuated-bayer` は強い境界の影響をresize後のfringeへ1px広げ、なだらかな階調ではpatternを保ちながら、3x3近傍の輝度差が32から96へ強くなる間にディザ量を最も近い色への丸めまで連続的に絞ります。`none` はディザを完全に無効化し、全画素を最も近いRGB333レベルへ丸めます。 |
 | segmented palettes | on | 固定encoder behavior。 |
 | Near reuse | on | 固定encoder behavior。 |
-| boot VRAM prefetch | on | 固定encoder behavior。 |
+| boot VRAM prefetch | on | 固定encoder behavior。診断時のみ`CBRSIM_BOOT_VRAM_PREFETCH=0`で無効化。 |
 | timed `raw_prefetch` | on | optional `[encoder]` setting。`raw_prefetch = false`で無効化。 |
 | `encoder.cram_quality_priority_search_frames` | 4 | 各CRAM switchから調べるframe数。positive riskが最大の1 frameだけを選び、予測protected-demand不足分だけreserveを減らします。0で無効です。 |
 
 allocatorはfree/Same/Near結果を確定し、全deferred cellの2-byte name entryを予約しながら
 cold exact loadを選び、残りを改善するFlbk residentで埋めます。
+
+### 診断用environment override
+
+これらはworkstationでの分離・比較用knobで、profile inputではありません。
+qualified encodeでは未設定にしてください。
+
+| Env | Default | 意味 |
+|---|---:|---|
+| `CBRSIM_SCROLL` | 1 | `0`でhardware-scroll採用をA/B分離用に無効化。 |
+| `CBRSIM_BOOT_VRAM_PREFETCH` | 1 | `0`でboot VRAM prefetchを診断用に無効化。 |
+| `CBRSIM_RAW_PREFETCH` | 1 | profile key `[encoder].raw_prefetch` のenv mirror。 |
+| `CBRSIM_GPU` | 1 | `0`/`off`/`false`/`no`でCPU quantization pathを強制。 |
+| `CBRSIM_ALLOC_TRACE` / `_DUMP` | unset | frameごとのallocator digestをtrace fileへ追記。`_DUMP=N`で全状態をdump。 |
+| `CBRSIM_CENTERTIE` | 1 | 同点時に画面中央に近いcellを優先。 |
+| `CBRSIM_MIDFAR` | 1 | Near/Flbk探索を1つのbest-match VRAM探索へ統合。 |
+| `CBRSIM_NEAR_ACCURATE_ONLY` | 1 | 正確なNear候補だけを残す。 |
+| `CBRSIM_UPGRADE` | 1 | `0`で比較用にRaw/Buf格上げパスを無効化。 |
+| `CBRSIM_L3` / `CBRSIM_PRG_PRELOAD` | 0 / unset | legacy実験: PRG-RAM victim-cache tile数と静的PRG preload set。 |
+| `CBRSIM_SEG_GAP` / `_MIN` / `_DARK` / `_UNIFORM` / `_UNIFORM_TOL` / `_UNIFORM_NEAR` | 24 / 2 / 0.90 / 0.88 / 24 / 8 | palette segment検出しきい値。 |
+| `CBRSIM_EDGE_WEIGHT` / `CBRSIM_PAL_SAT` | 3.0 / 0 | palette学習のedge重みと知覚saturation重み。 |
 
 ### Palette control
 
@@ -899,7 +1017,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[source.preprocess]` | optional `auto_range` | 展開後に動画全編で判定する黒/白dynamic-range自動拡張。 |
 | `[video]` | `mode`, `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
-| `[output]` | `directory`, optional `reuse`, `emit_decisions` | human-readableなsim要求identity、decoded-input reuse、decision-log output。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
+| `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
@@ -927,8 +1045,9 @@ sourceを示します。検出時はmasterとrawの両sequenceを全channel共�
 loaderは未知key、未対応mode、未知のoutput-dither名、tile境界に揃わないdimension、
 安全でないprofile名、未指定・非positive・不正形式のcold cap、resident-pool sizeを
 超えるcold cap、profileのfps cadenceと一致しない間隔別cold capスペック、
-負または非integerのCRAM-risk search長を拒否します。GPU、1,663-tile
+負または非integerのCRAM-risk search長を拒否します。GPU、1,743-tile
 resident pool、segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
+上に挙げた診断専用environment overrideだけが分離用にこれらを無効化できます。
 
 ## Build switch
 
@@ -967,7 +1086,7 @@ fieldとOCRの完全な説明は [`HUD.md`](HUD.md) にあります。設定に�
 | L | audio leadが `SYNC_MIN..SYNC_MAX` 内 |
 | C | blocking pumpはzeroが理想 |
 | M | 2未満ならextra VBlank spillなし |
-| N | grid cell数以下。cadence spillはtransfer-window fieldで報告 |
+| N | grid cell数以下（scroll frameは2,048 cellの64x32 plane）。cadence spillはtransfer-window fieldで報告 |
 | J | 通常PrgBuf超過が15 / 24 / 30 fpsで45 / 30 / 25 KiB以下 |
 
 frame 0はboot workでtimed playbackではないため、HUD valueとscale maximumから除外します。

@@ -58,6 +58,9 @@ import physical_budget  # noqa: E402
 import raw_prefetch  # noqa: E402
 import r2v_model  # noqa: E402
 import resource_tokens  # noqa: E402
+import scroll_frames  # noqa: E402
+import scroll_plan  # noqa: E402
+import scroll_runtime  # noqa: E402
 import stream_schedule  # noqa: E402
 import shadow_updates  # noqa: E402
 import cavc_routing  # noqa: E402
@@ -135,13 +138,13 @@ AUDIO_RATE, AUDIO_PCM_BYTES, AUDIO_CONTROL_BYTES = av_config.audio_frame_layout(
     FPS)
 AUDIO_PLAYBACK_RATE = int(round(AUDIO_PCM_BYTES * PLAYBACK_FPS))
 DISPLAY_CATEGORY_MASK_ORDER = (
-    "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss",
+    "Raw", "Near", "Flbk", "Prg", "Wr0", "Wr1", "Dic", "Miss", "Scrl",
 )
 STAT_COLUMNS = (
     "frame", "ffix", "want", "updated", "miss", "delta", "dedup", "tx",
     "carry", "age", "want_frac", "near", "flbk", "buf", "prg", "wr0",
     "wr1", "dic", "same", "same_u", "near_u", "flbk_u", "dma_tiles",
-    "dma_runs", "prefetch",
+    "dma_runs", "prefetch", "scrl",
 )
 STAT_COLUMN_INDEX = {
     name: index for index, name in enumerate(STAT_COLUMNS)
@@ -305,7 +308,9 @@ MAX_RUN_CONTROL_BYTES = stream_schedule.max_run_control_reservation(
 # free resident slots.  It is default-on because it adds no timed BODY work.
 # Runtime prefetch is default-on and profile-overridable: only spare cold/BODY
 # capacity may move next-frame work earlier, and visible work always wins.
-BOOT_VRAM_PREFETCH_ON = True
+# The boot-VRAM override is a diagnostic isolation knob only.
+BOOT_VRAM_PREFETCH_ON = os.environ.get(
+    "CBRSIM_BOOT_VRAM_PREFETCH", "1") != "0"
 RAW_PREFETCH_ON = os.environ.get("CBRSIM_RAW_PREFETCH", "1") != "0"
 RAW_PREFETCH_LOOKAHEAD = 1
 RAW_PREFETCH_MAX_REQUESTS_PER_FRAME = 32
@@ -1480,6 +1485,162 @@ def main():
     )
     _t = _mark("Palette", _t)
 
+    # Scroll: source-wide automatic detection only.  No profile time range or
+    # hand-authored frame interval participates in adoption.  Adoption needs
+    # the full-width H40 40-column grid: HScroll shifts every scanline, so a
+    # narrower centered grid would roll its side borders, while a letterboxed
+    # 40xN grid keeps its top/bottom border rows uniform and the player DMAs
+    # the same PC_ROW0-offset 64-column band it stages for normal frames.
+    # Vertical windows roll the 64x32 plane through all 32 rows behind the
+    # full-screen viewport, so they additionally need the 28-row grid; a
+    # letterboxed grid would scroll its letterbox rows on screen.
+    # CBRSIM_SCROLL=0 is a diagnostic isolation knob: it disables adoption so
+    # the ordinary no-scroll allocation path can be A/B tested on the same
+    # source (e.g. reproducing issue #113 without a rolling plane).
+    scroll_supported = bool(
+        MODE.upper() == "H40"
+        and TCOLS == 40
+        and PATTERN_SUPPLY_ON
+        and os.environ.get("CBRSIM_SCROLL", "1") != "0"
+    )
+    scroll_axes = (
+        (scroll_frames.AXIS_HORIZONTAL, scroll_frames.AXIS_VERTICAL)
+        if TROWS == scroll_plan.VERTICAL_VIEWPORT_ROWS
+        else (scroll_frames.AXIS_HORIZONTAL,))
+    scroll_estimates = ()
+    scroll_segments = ()
+    scroll_measurements = {}
+    scroll_windows = ()
+    scroll_states = {}
+    scroll_active = np.zeros(n, np.bool_)
+    scroll_vertical = np.zeros(n, np.bool_)
+    scroll_positions = np.zeros((n, 2), np.int16)
+    scroll_anchor_guard_counts = {}
+    if scroll_supported and n > 1:
+        raw_frames = sorted(raw_dir.glob("*.png"))
+        if len(raw_frames) != n:
+            raise SystemExit(
+                "automatic scroll detection requires one raw frame per master")
+        print(
+            "automatic scroll detection: source-wide axis-only block voting; "
+            "no source time ranges ...",
+            flush=True,
+        )
+        with _parallel_phase("Scroll", worker_limit=1, use_gpu=True):
+            scroll_estimates, scroll_segments = scroll_frames.detect_segments(
+                raw_frames, backend="auto")
+            axis_segments = tuple(
+                segment for segment in scroll_segments
+                if segment.axis in scroll_axes)
+            for segment in axis_segments:
+                for row in scroll_frames.measure_segment_adoption(
+                        segment, frames):
+                    scroll_measurements[int(row.frame)] = row
+        forbidden_scroll_frames = set(int(value) for value in seg_bounds)
+        forbidden_scroll_frames.update(
+            int(value) for value in fade_layout.preparation_frames)
+        forbidden_scroll_frames.update(
+            int(value) for value in np.flatnonzero(
+                np.asarray(fade_layout.reference_frames) >= 0))
+        scroll_windows = scroll_plan.select_windows(
+            axis_segments,
+            scroll_measurements,
+            fps=FPS,
+            forbidden_frames=forbidden_scroll_frames,
+        )
+        scroll_states = scroll_plan.build_frame_states(
+            scroll_windows, columns=TCOLS, rows=TROWS)
+        # World-mosaic guard sampling: every guard edge is quantized from the
+        # first window frame where that edge is completely inside the source
+        # viewport. The pan premise makes world content static, so the fully
+        # revealed pixels are the exact future display; the guard key then
+        # depends on neither runtime plane state nor the reveal phase, stays
+        # identical while the same edge repeats, and survives the cell's later
+        # promotion into the primary viewport.
+        scroll_guard_full_view = {}
+        for window in scroll_windows:
+            for frame in range(window.anchor + 1, window.end + 1):
+                state = scroll_states[frame]
+                if not state.guard_cells:
+                    continue
+                if window.axis == scroll_frames.AXIS_HORIZONTAL:
+                    low = min(column for _row, column in state.world_guard)
+                    high = max(column for _row, column in state.world_guard)
+                    span = TCOLS * TILE
+
+                    def _fully(position, low=low, high=high, span=span):
+                        return (low * TILE >= -position
+                                and (high + 1) * TILE <= -position + span)
+                    axis_position = (
+                        lambda probe: scroll_states[probe].hscroll)
+                else:
+                    low = min(row for row, _column in state.world_guard)
+                    high = max(row for row, _column in state.world_guard)
+                    span = TROWS * TILE
+
+                    def _fully(position, low=low, high=high, span=span):
+                        return (low * TILE >= -position
+                                and (high + 1) * TILE <= -position + span)
+                    axis_position = (
+                        lambda probe: scroll_states[probe].vscroll)
+                sample = window.end
+                for probe in range(frame, window.end + 1):
+                    if _fully(int(axis_position(probe))):
+                        sample = probe
+                        break
+                scroll_guard_full_view[frame] = int(sample)
+        for window in scroll_windows:
+            # The anchor remains an ordinary frame.  The first moving frame
+            # seeds the rolling shadow and carries the first absolute control.
+            for frame in range(window.anchor + 1, window.end + 1):
+                state = scroll_states[frame]
+                scroll_active[frame] = True
+                scroll_vertical[frame] = (
+                    window.axis == scroll_frames.AXIS_VERTICAL)
+                scroll_positions[frame, 0] = state.hscroll
+                scroll_positions[frame, 1] = state.vscroll
+            first_state = scroll_states[window.anchor + 1]
+            scroll_anchor_guard_counts[int(window.anchor)] = len(
+                first_state.guard_cells)
+        detection_path = OUT / "scroll_detection.tsv"
+        selected_by_frame = {
+            frame: window
+            for window in scroll_windows
+            for frame in range(window.anchor + 1, window.end + 1)
+        }
+        with detection_path.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(
+                "frame\taxis\tdelta\tsupport\tresidual\tgain\taccepted\t"
+                "fixed_changed\tscroll_changed\tfixed_cost\tscroll_cost\t"
+                "overlap_rmse\tselected\n")
+            for row in scroll_estimates:
+                adoption = scroll_measurements.get(int(row.frame))
+                stream.write(
+                    f"{int(row.frame)}\t{row.axis}\t{int(row.delta)}\t"
+                    f"{float(row.support):.6f}\t{float(row.residual):.6f}\t"
+                    f"{float(row.gain):.6f}\t{int(bool(row.accepted))}\t"
+                    f"{int(adoption.fixed_changed) if adoption else 0}\t"
+                    f"{int(adoption.scroll_changed) if adoption else 0}\t"
+                    f"{float(adoption.fixed_cost) if adoption else 0.0:.2f}\t"
+                    f"{float(adoption.scroll_cost) if adoption else 0.0:.2f}\t"
+                    f"{float(adoption.overlap_rmse) if adoption else 0.0:.6f}\t"
+                    f"{int(int(row.frame) in selected_by_frame)}\n")
+        print(
+            "  automatic scroll: "
+            f"axis_segments={len(axis_segments)} "
+            f"adopted={len(scroll_windows)} "
+            f"controls={int(scroll_active.sum())}; "
+            f"windows={[ (w.anchor, w.end, w.axis, w.final_position) for w in scroll_windows ]}; "
+            f"trace={detection_path}",
+            flush=True,
+        )
+    else:
+        print(
+            "automatic scroll: disabled; requires full-width H40 (40 columns) "
+            "with pattern supply",
+            flush=True,
+        )
+
     border_mask = border_weight_mask()
     border_bool = border_mask < 1.0        # 外周2タイル(True)。ここのMissは飢餓に数えない
     # 中央距離(同点tie-break用): 画面中心からの二乗距離。小さい=中央=優先。
@@ -1491,6 +1652,7 @@ def main():
     cur_key = [None] * C_CELLS          # 表示中パターン(idx bytes)
     cur_pal = np.full(C_CELLS, -1, np.int16)
     committed_plain = [None] * C_CELLS  # 内容変化検出用: 直近commitのplainキー(Flbkは表示した近似キー)
+    import tile_alloc
     from tile_alloc import (
         FrameTransitionGuard,
         TileAllocator,
@@ -1499,7 +1661,15 @@ def main():
     # 共有割り当て(連続, pack と同一コード)。これが residency の真の源=pack の realized と一致=cap=realized。
     # 判定は前フレーム末の状態を参照し、割り当て(スロット付与+追い出し)は各フレーム末に cell順で実行
     # (=pack の resolve と同一順)。VRAM_TILES=pack POOL。
+    scroll_plane_enabled = bool(np.any(scroll_active))
+    plane_state_cells = (
+        shadow_updates.SCROLL_PLANE_CELLS
+        if scroll_plane_enabled else C_CELLS)
+    normal_plane_cells = (
+        scroll_plan.normal_plane_cells(TCOLS, TROWS)
+        if scroll_plane_enabled else tuple(range(C_CELLS)))
     alloc = TileAllocator(C_CELLS, VRAM_TILES, 1)
+    allocator_expanded = False
     ref_count = {}                       # pattern key -> 参照セル数(repoint用に保持, residencyはallocが真)
     l3 = {}                             # L3(PRG-RAM) victim cache: pattern key -> last_used frame
     pat_rgb = {}                        # 近似dedup: pattern key -> 代表rgb(8,8,3) uint8
@@ -1562,6 +1732,56 @@ def main():
     age_press = np.zeros(C_CELLS, np.float64)  # Miss/Flbkの距離加重優先度圧力
     cell_tier = np.zeros(C_CELLS, np.int8)     # 現在の表示劣化度(0=Miss,1=Flbk,2=Near,9=正確)
     approx_carry = np.zeros(C_CELLS, np.int32)  # 近似(tier<9)のまま持ち越した連続コマ数(格上げ/正確化で0)
+    plane_key = [None] * plane_state_cells
+    plane_pal = np.full(plane_state_cells, -1, np.int16)
+    plane_committed = [None] * plane_state_cells
+    plane_disp_idx = np.zeros((plane_state_cells, TILE * TILE), np.uint8)
+    plane_disp_pal = np.zeros(plane_state_cells, np.int32)
+    plane_wait = np.zeros(plane_state_cells, np.int32)
+    plane_age_press = np.zeros(plane_state_cells, np.float64)
+    plane_cell_tier = np.zeros(plane_state_cells, np.int8)
+    plane_approx_carry = np.zeros(plane_state_cells, np.int32)
+    previous_scroll_state = None
+
+    def store_logical_plane(cells):
+        """Persist the current logical viewport into physical Plane A cells."""
+
+        physical = tuple(int(cell) for cell in cells)
+        if len(physical) != C_CELLS:
+            raise AssertionError("scroll primary cell count differs from geometry")
+        for logical, cell in enumerate(physical):
+            plane_key[cell] = cur_key[logical]
+            plane_pal[cell] = cur_pal[logical]
+            plane_committed[cell] = committed_plain[logical]
+        plane_disp_idx[np.asarray(physical)] = disp_idx
+        plane_disp_pal[np.asarray(physical)] = disp_pal
+        plane_wait[np.asarray(physical)] = wait
+        plane_age_press[np.asarray(physical)] = age_press
+        plane_cell_tier[np.asarray(physical)] = cell_tier
+        plane_approx_carry[np.asarray(physical)] = approx_carry
+
+    def load_logical_plane(cells):
+        """Load one rolling-plane viewport into the sequential decision state."""
+
+        nonlocal age_press, approx_carry, wait, ref_count
+        physical = tuple(int(cell) for cell in cells)
+        if len(physical) != C_CELLS:
+            raise AssertionError("scroll primary cell count differs from geometry")
+        index = np.asarray(physical)
+        for logical, cell in enumerate(physical):
+            cur_key[logical] = plane_key[cell]
+            cur_pal[logical] = plane_pal[cell]
+            committed_plain[logical] = plane_committed[cell]
+        disp_idx[:] = plane_disp_idx[index]
+        disp_pal[:] = plane_disp_pal[index]
+        wait = plane_wait[index].copy()
+        age_press = plane_age_press[index].copy()
+        cell_tier[:] = plane_cell_tier[index]
+        approx_carry = plane_approx_carry[index].copy()
+        ref_count = {}
+        for key in cur_key:
+            if key is not None:
+                ref_count[key] = ref_count.get(key, 0) + 1
     upgrade_log = []                            # 毎コマ: 格上げ枚数 / まだ近似のセル数(指標)
     guniq = {k: set() for k in ("same", "near", "flbk")}  # 全編で使った別タイル(ユニーク数)
 
@@ -1589,7 +1809,7 @@ def main():
     starved_frames = 0
     dec_frames = []            # 実機決定ログ: 各要素 = そのフレームの [(cell, pal, key), ...]
     dec_miss = []              # per-frame Miss数(デバッグオーバーレイ用。デコード側では算出不能)
-    dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss](デバッグ欄用)
+    dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss,scrl](デバッグ欄用)
     dec_category_rows = []     # analysis: 2-byte/cell overlapping category masks
     transfer_tiles_log = []    # pack/player照合用: cold pattern tile数
     transfer_runs_log = []     # pack/player照合用: packed cold-run record数
@@ -1599,6 +1819,7 @@ def main():
     ring_transfer_orders_log = []
     ring_dic_indices_log = []  # update-aligned Dic indices (-1 for non-Dic)
     ring_raw_flags_log = []    # update-aligned same-frame Raw funding markers
+    ring_category_cells_log = []  # update-aligned logical analysis cells (-1=guard)
     prg_loads_log = []         # physical PrgBuf pattern consumption
     prg_cold_cells_log = []    # physical Prg loads mapped to cells (-1=prefetch)
     wr0_loads_log = []         # physical boot-preload consumption by source
@@ -1629,6 +1850,130 @@ def main():
     # lossless index-15 canonicalizer preserves rendered pixels.
     seg_pals, pal15_stats = canonicalize_p0_index15(
         seg_pals, frame_seg, Q_assign, Q_pidx)
+
+    def quantize_scroll_plane(frame, state, palette):
+        """Quantize primary plus guard tiles on the rolling-plane pixel phase."""
+
+        cells = (*state.primary_cells, *state.guard_cells)
+        cell_index = np.asarray(cells, np.int64)
+        base_rgb = render_cells(
+            plane_disp_idx[cell_index],
+            plane_disp_pal[cell_index],
+            palette,
+        )
+        source = np.asarray(
+            Image.open(frames[int(frame)]).convert("RGB"), np.uint8)
+        aligned = scroll_runtime.aligned_rgb_tiles(source, state, base_rgb)
+        # Quantize on a world-aligned canvas.  Every world cell is 8-aligned,
+        # so the position-fixed Bayer field keeps one stable phase across the
+        # rolling plane and edge attenuation sees the real neighbour pixels.
+        world = (*state.world_primary, *state.world_guard)
+        world_rows = tuple(int(row) for row, _column in world)
+        world_columns = tuple(int(column) for _row, column in world)
+        top = min(world_rows)
+        left = min(world_columns)
+        canvas = np.zeros(
+            ((max(world_rows) - top + 1) * TILE,
+             (max(world_columns) - left + 1) * TILE, 3), np.uint8)
+        for index, (row, column) in enumerate(world):
+            y = (int(row) - top) * TILE
+            x = (int(column) - left) * TILE
+            canvas[y:y + TILE, x:x + TILE] = aligned[index]
+        quantized = to_rgb333(canvas)
+        rgb333 = np.stack([
+            quantized[
+                (int(row) - top) * TILE:(int(row) - top + 1) * TILE,
+                (int(column) - left) * TILE:(int(column) - left + 1) * TILE,
+            ]
+            for row, column in world
+        ])
+        flattened, detail = flatten_low_detail(
+            rgb333.reshape(len(cells), TILE * TILE, 3))
+        assignments = assign_palette(flattened, palette)
+        indices = idx_for(flattened, assignments, palette)
+        primary = C_CELLS
+        if state.guard_cells:
+            (
+                guard_detail,
+                guard_assign,
+                guard_idx,
+            ) = quantize_guard_edge(frame, state, palette)
+            return (
+                detail[:primary].astype(np.float32),
+                assignments[:primary],
+                indices[:primary],
+                guard_detail,
+                guard_assign,
+                guard_idx,
+                aligned[primary:],
+            )
+        return (
+            detail[:primary].astype(np.float32),
+            assignments[:primary],
+            indices[:primary],
+            detail[primary:].astype(np.float32),
+            assignments[primary:],
+            indices[primary:],
+            aligned[primary:],
+        )
+
+    scroll_guard_cache = {}
+
+    def quantize_guard_edge(frame, state, palette):
+        """Quantize the guard edge once from its fully revealed source frame.
+
+        The world-mosaic sample makes the guard key independent of runtime
+        plane state and of the per-frame reveal phase: the same edge yields
+        the same key every frame, the guard pass skips already-committed
+        cells, and the later primary quantization of the identical static
+        world content reproduces the key.
+        """
+
+        sample = int(scroll_guard_full_view.get(int(frame), int(frame)))
+        key = (sample, state.world_guard)
+        hit = scroll_guard_cache.get(key)
+        if hit is not None:
+            return hit
+        sample_state = scroll_states[sample]
+        source = np.asarray(
+            Image.open(frames[sample]).convert("RGB"), np.uint8)
+        height, width = source.shape[:2]
+        rows = tuple(int(row) for row, _column in state.world_guard)
+        columns = tuple(int(column) for _row, column in state.world_guard)
+        top = min(rows)
+        left = min(columns)
+        canvas = np.zeros(
+            ((max(rows) - top + 1) * TILE,
+             (max(columns) - left + 1) * TILE, 3), np.uint8)
+        for row, column in state.world_guard:
+            source_y = int(row) * TILE + int(sample_state.vscroll)
+            source_x = int(column) * TILE + int(sample_state.hscroll)
+            if not (0 <= source_y and source_y + TILE <= height
+                    and 0 <= source_x and source_x + TILE <= width):
+                continue                    # never-revealed tail edge stays 0
+            y = (int(row) - top) * TILE
+            x = (int(column) - left) * TILE
+            canvas[y:y + TILE, x:x + TILE] = source[
+                source_y:source_y + TILE, source_x:source_x + TILE]
+        quantized = to_rgb333(canvas)
+        rgb333 = np.stack([
+            quantized[
+                (int(row) - top) * TILE:(int(row) - top + 1) * TILE,
+                (int(column) - left) * TILE:(int(column) - left + 1) * TILE,
+            ]
+            for row, column in state.world_guard
+        ])
+        flattened, guard_detail = flatten_low_detail(
+            rgb333.reshape(len(state.world_guard), TILE * TILE, 3))
+        guard_assign = assign_palette(flattened, palette)
+        guard_idx = idx_for(flattened, guard_assign, palette)
+        hit = (
+            guard_detail.astype(np.float32),
+            guard_assign,
+            guard_idx,
+        )
+        scroll_guard_cache[key] = hit
+        return hit
 
     # A black anchor is an ordinary full-refresh frame whose hidden indexed
     # image is the following shot's bright reference.  Every fade frame then
@@ -1705,6 +2050,15 @@ def main():
             frame_cram[frame] = target
             active_cram = target.copy()
         active_frame_cram[frame] = active_cram
+
+    scroll_fade_overlap = scroll_active & (
+        frame_types != shadow_updates.FRAME_NORMAL)
+    if np.any(scroll_fade_overlap):
+        frame = int(np.flatnonzero(scroll_fade_overlap)[0])
+        raise AssertionError(
+            f"automatic scroll frame {frame} overlaps an inline fade control")
+    control_frame_types = np.asarray(frame_types, np.uint8).copy()
+    control_frame_types[scroll_active] = shadow_updates.FRAME_SCROLL
 
     # A one-frame black gap or the bright entrance of a fade-out cannot
     # necessarily install its reference within the cold cap.  Preload those
@@ -1816,7 +2170,7 @@ def main():
         FPS,
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
-        frame_types=frame_types,
+        frame_types=control_frame_types,
     )
     body_gross_bytes = np.asarray(body_fresh["gross"], np.int64)
     body_fixed_control_bytes = np.asarray(
@@ -1998,6 +2352,57 @@ def main():
         supply_budget,
         prefetch_forecast,
     ) = build_forecast()
+    if scroll_plane_enabled:
+        original_wr = np.asarray(supply_budget.wr, np.int64)
+        reserved_wr = np.zeros(n, np.int64)
+        capacities = (
+            int(wordram_layout.wr0_patterns),
+            int(wordram_layout.wr1_patterns),
+        )
+        # World-mosaic guard keys are stable while the same edge repeats, so
+        # a guard column/row only loads on the frame where the edge becomes a
+        # NEW set of cells. Fund exactly those crossing frames' complete
+        # edges from the boot preload in chronological order; the heaviest
+        # scroll frames can then never depend on same-frame Prg payload for
+        # their mandatory guards.
+        def _guard_need(frame):
+            state = scroll_states[frame]
+            previous = scroll_states.get(frame - 1)
+            if previous is not None and (
+                    previous.guard_cells == state.guard_cells):
+                return 0
+            return len(state.guard_cells)
+
+        for parity, capacity in enumerate(capacities):
+            frames_for_scroll = [
+                int(frame) for frame in np.flatnonzero(scroll_active)
+                if int(frame) % 2 == parity
+            ]
+            remaining = int(capacity)
+            for frame in frames_for_scroll:
+                count = min(_guard_need(frame), remaining)
+                reserved_wr[frame] = count
+                remaining -= count
+                if remaining <= 0:
+                    break
+            for frame in np.argsort(-original_wr, kind="stable"):
+                frame = int(frame)
+                if remaining <= 0:
+                    break
+                if frame % 2 != parity or scroll_active[frame]:
+                    continue
+                count = min(int(original_wr[frame]), remaining)
+                reserved_wr[frame] = count
+                remaining -= count
+        supply_budget = dataclasses.replace(
+            supply_budget, wr=reserved_wr)
+        print(
+            "scroll WordBuf reserve: incoming guards first; "
+            f"Wr0={int(reserved_wr[::2].sum())}/{capacities[0]} "
+            f"Wr1={int(reserved_wr[1::2].sum())}/{capacities[1]} "
+            f"guard_min={int(reserved_wr[scroll_active].min()) if np.any(scroll_active) else 0}",
+            flush=True,
+        )
     if np.any(cram_switch_frames):
         full_name_refresh_bytes = C_CELLS * NAME_BYTES
         protected_all = np.all(
@@ -2034,16 +2439,25 @@ def main():
         - np.asarray(supply_budget.total, np.int64),
         0,
     )
+    for frame in np.flatnonzero(scroll_active):
+        state = scroll_states[int(frame)]
+        predicted_prg_demand[int(frame)] = max(
+            int(predicted_prg_demand[int(frame)]),
+            len(state.guard_cells),
+        )
     maximum_control_blocks = stream_schedule.control_block_lengths(
         np.where(
-            frame_types == shadow_updates.FRAME_NORMAL,
-            C_CELLS,
+            np.isin(control_frame_types, (
+                shadow_updates.FRAME_FADE_IN,
+                shadow_updates.FRAME_FADE_OUT,
+            )),
             0,
+            C_CELLS,
         ).astype(np.int64),
         frame_cold_caps,
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
-        frame_types=frame_types,
+        frame_types=control_frame_types,
     )
     maximum_control_blocks[0] = 0
     physical_budget_state = physical_budget.SharedSectorPlanner(
@@ -2272,6 +2686,48 @@ def main():
             _lp_frame = {name: 0.0 for name in _lp_sections}
             _lp_nested_frame = {name: 0.0 for name in _lp_nested_totals}
             _lp_t = time.perf_counter()
+        scroll_state = scroll_states.get(i) if bool(scroll_active[i]) else None
+        update_entry_bytes = (
+            shadow_updates.LIST_ITEM_BYTES
+            if scroll_state is not None else NAME_BYTES)
+        if scroll_state is not None:
+            if previous_scroll_state is None:
+                if not allocator_expanded:
+                    alloc.expand_cell_domain(
+                        shadow_updates.SCROLL_PLANE_CELLS,
+                        zip(
+                            normal_plane_cells,
+                            range(C_CELLS),
+                            strict=True,
+                        ),
+                    )
+                    allocator_expanded = True
+                store_logical_plane(normal_plane_cells)
+            load_logical_plane(scroll_state.primary_cells)
+            active_plane_cells = (
+                *scroll_state.primary_cells,
+                *scroll_state.guard_cells,
+            )
+            alloc.replace_display_cells(
+                ((cell, cell) for cell in active_plane_cells),
+                clear_others=True,
+            )
+            allocation_cells = tuple(scroll_state.primary_cells)
+        else:
+            if previous_scroll_state is not None:
+                alloc.replace_display_cells(
+                    zip(
+                        normal_plane_cells,
+                        previous_scroll_state.primary_cells,
+                        strict=True,
+                    ),
+                    clear_others=True,
+                )
+                previous_scroll_state = None
+            allocation_cells = (
+                normal_plane_cells
+                if allocator_expanded else tuple(range(C_CELLS)))
+
         pal_swap = SEGPAL_ON and i > 0 and int(frame_seg[i]) != int(frame_seg[i - 1])
         if pal_swap:
             cur_pal[:] = -1                                     # CRAM総入替→全セルを再評価(暗転中で安価)
@@ -2287,7 +2743,23 @@ def main():
         # =区間跨ぎの旧タイルはここでゴミ色になる)。near/near_keep判定はこの実表示色に対して行う。
         if i > 0:
             cur_rgb[:] = render_cells(disp_idx, disp_pal, cur_pals)
-        detail = Q_detail[i]; assign = Q_assign[i]; plain_idx = Q_pidx[i]  # 前計算済み(並列)
+        if scroll_state is not None:
+            (
+                detail,
+                assign,
+                plain_idx,
+                guard_detail,
+                guard_assign,
+                guard_idx,
+                _guard_source_rgb,
+            ) = quantize_scroll_plane(i, scroll_state, cur_pals)
+        else:
+            detail = Q_detail[i]
+            assign = Q_assign[i]
+            plain_idx = Q_pidx[i]  # 前計算済み(並列)
+            guard_detail = np.zeros(0, np.float32)
+            guard_assign = np.zeros(0, np.int8)
+            guard_idx = np.zeros((0, TILE * TILE), np.uint8)
         plain_rgb = render_cells(plain_idx, assign, cur_pals)  # 軽いので逐次(IPC回避)
         plain_keys = [plain_idx[c].tobytes() for c in range(C_CELLS)]
         # resident探索用の平均色バケツ座標(常時計算・軽い)
@@ -2359,6 +2831,22 @@ def main():
         frame_fade_prefetch_bytes = int(fade_prefetch_demand[i])
         decision_budget = max(
             0, frame_total_budget - frame_fade_prefetch_bytes)
+        frame_visible_decision_budget = int(decision_budget)
+        scroll_guard_budget_reserve = 0
+        if scroll_state is not None:
+            scroll_guard_budget_reserve = (
+                len(scroll_state.guard_cells)
+                * (
+                    update_entry_bytes
+                    + PATTERN_BYTES
+                    + stream_schedule.RUN_DESCRIPTOR_BYTES
+                )
+            )
+            decision_budget = max(
+                0,
+                frame_visible_decision_budget
+                - scroll_guard_budget_reserve,
+            )
         frame_patch = (frozenset() if QUALITY_BUDGET_ON
                        else prg_patch.get(i, frozenset()))
 
@@ -2377,7 +2865,8 @@ def main():
         spent_tiles = 0
         cold_spent = 0             # このコマのcold数(Raw+Buf=実機のパターンDMA数)
         prg_spent = 0              # このコマの物理PrgBuf消費数
-        frame_wr_budget = int(supply_budget.wr[i])
+        frame_wr_budget_total = int(supply_budget.wr[i])
+        frame_wr_budget = frame_wr_budget_total
         wr_used = 0
         dic_used = 0
         preload_sources = {}
@@ -2385,12 +2874,39 @@ def main():
         cold_limit_active = i > 0
         frame_max_cold = int(physical_frame_limit.cold_patterns)
         frame_max_prg = int(physical_frame_limit.prg_patterns)
+        if scroll_state is not None:
+            # Fragmented scroll-frame colds are singleton runs; per-run setup
+            # time dominates. Keep the frame's transfer time at the qualified
+            # ordinary-frame level (see av_config.SCROLL_SINGLETON_COLD_FRACTION)
+            # while always affording the mandatory incoming guard column.
+            scroll_cold_ceiling = max(
+                len(scroll_state.guard_cells),
+                int(frame_max_cold
+                    * av_config.SCROLL_SINGLETON_COLD_FRACTION),
+            )
+            frame_max_cold = min(frame_max_cold, scroll_cold_ceiling)
+            frame_max_prg = min(frame_max_prg, scroll_cold_ceiling)
         frame_control_block_limit = int(
             physical_frame_limit.control_block_bytes)
         visible_frame_max_cold = max(
             0, frame_max_cold - frame_fade_prefetch_patterns)
         visible_frame_max_prg = max(
             0, frame_max_prg - frame_fade_prefetch_patterns)
+        scroll_guard_source_reserve = (
+            len(scroll_state.guard_cells)
+            if scroll_state is not None else 0)
+        scroll_guard_wr_reserve = min(
+            frame_wr_budget_total, scroll_guard_source_reserve)
+        scroll_prg_capacity_reserve = max(
+            scroll_guard_source_reserve,
+            int(scroll_anchor_guard_counts.get(i, 0)),
+        )
+        visible_frame_max_cold = max(
+            0, visible_frame_max_cold - scroll_guard_source_reserve)
+        frame_wr_budget = max(
+            0, frame_wr_budget_total - scroll_guard_wr_reserve)
+        visible_frame_max_prg = max(
+            0, visible_frame_max_prg - scroll_prg_capacity_reserve)
         visible_control_block_limit = max(
             int(body_fixed_control_bytes[i]),
             frame_control_block_limit
@@ -2429,7 +2945,7 @@ def main():
             ) <= limit
             control = (
                 int(body_fixed_control_bytes[i])
-                + (name_recs + int(extra_updates)) * NAME_BYTES
+                + (name_recs + int(extra_updates)) * update_entry_bytes
                 + (cold_spent + int(extra_cold))
                 * stream_schedule.RUN_DESCRIPTOR_BYTES
             )
@@ -2548,13 +3064,13 @@ def main():
                 dedup_saved += 1
                 dedup_mask[c] = True
                 activate_exact_pattern(key, c)
-                cost = NAME_BYTES
+                cost = update_entry_bytes
             else:
                 loaded_keys.add(key)
                 cold_spent += 1
                 tile_recs += 1
                 raw_mask[c] = True
-                cost = NAME_BYTES + PATTERN_BYTES
+                cost = update_entry_bytes + PATTERN_BYTES
                 cache_pattern(key, plain_rgb[c], assign[c], cur_seg)
                 append_resident_bucket(
                     key,
@@ -2580,7 +3096,7 @@ def main():
                       else pattern_supply.SOURCE_PRG)
             preload = source != pattern_supply.SOURCE_PRG
             cost = 0 if in_prg else (
-                NAME_BYTES + (0 if free or preload else PATTERN_BYTES))
+                update_entry_bytes + (0 if free or preload else PATTERN_BYTES))
             if not decision_fits(
                     cost, extra_cold=int(not free), cell=c, key=key):
                 return False
@@ -2788,14 +3304,14 @@ def main():
                 selected_key = key if exact else bk
                 if ((exact or (bk is not None and tier == 0))
                         and decision_fits(
-                            NAME_BYTES, cell=c, key=selected_key)):
+                            update_entry_bytes, cell=c, key=selected_key)):
                     if exact:
                         dedup_saved += 1; dedup_mask[c] = True                # Same(完全一致流用=Sameへ畳む)
                         rk, rp, rr = key, int(assign[c]), plain_rgb[c]
                         activate_exact_pattern(key, c)                        # fresh/prefetched keyを有効化
                     else:
                         near_mask[c] = True; rk, rp, rr = bk, pat_pal[bk], pat_rgb[bk]
-                    loaded_keys.add(rk); name_recs += 1; spent_tiles += NAME_BYTES
+                    loaded_keys.add(rk); name_recs += 1; spent_tiles += update_entry_bytes
                     commit_repoint(c, rk, rp, rr); committed_plain[c] = key; updated[c] = True
                     return
                 # Cold exact and fallback share the remaining frame budget.
@@ -2812,14 +3328,14 @@ def main():
                 exact = alloc.is_resident(key) or key in loaded_keys
                 if exact:
                     if not decision_fits(
-                            NAME_BYTES, limit=limit, cell=c, key=key):
+                            update_entry_bytes, limit=limit, cell=c, key=key):
                         return False
                     dedup_saved += 1
                     dedup_mask[c] = True
                     activate_exact_pattern(key, c)
                     loaded_keys.add(key)
                     name_recs += 1
-                    spent_tiles += NAME_BYTES
+                    spent_tiles += update_entry_bytes
                     commit_repoint(c, key, int(assign[c]), plain_rgb[c])
                     committed_plain[c] = key
                     updated[c] = True
@@ -2827,7 +3343,7 @@ def main():
 
                 source = preload_source(key)
                 preload = source != pattern_supply.SOURCE_PRG
-                cost = NAME_BYTES + (0 if preload else PATTERN_BYTES)
+                cost = update_entry_bytes + (0 if preload else PATTERN_BYTES)
                 if (decision_fits(
                             cost, extra_cold=1, cell=c, key=key)
                         and decision_fits(
@@ -2864,7 +3380,7 @@ def main():
                 exact = alloc.is_resident(key) or key in loaded_keys
                 if exact:
                     if not decision_fits(
-                            NAME_BYTES, cell=c, key=key):
+                            update_entry_bytes, cell=c, key=key):
                         if _loop_profile:
                             _lp_counts["flbk_budget_blocked"] += 1
                         return
@@ -2873,7 +3389,7 @@ def main():
                     activate_exact_pattern(key, c)
                     loaded_keys.add(key)
                     name_recs += 1
-                    spent_tiles += NAME_BYTES
+                    spent_tiles += update_entry_bytes
                     commit_repoint(c, key, int(assign[c]), plain_rgb[c])
                     committed_plain[c] = key
                     updated[c] = True
@@ -2910,7 +3426,7 @@ def main():
                         _lp_counts["flbk_no_candidate"] += 1
                     return
                 if not decision_fits(
-                        NAME_BYTES, cell=c, key=bk):
+                        update_entry_bytes, cell=c, key=bk):
                     if _loop_profile:
                         _lp_counts["flbk_budget_blocked"] += 1
                     return
@@ -2925,7 +3441,7 @@ def main():
                     if _loop_profile:
                         _lp_counts["flbk_accepted"] += 1
                     flbk_mask[c] = True
-                    loaded_keys.add(bk); name_recs += 1; spent_tiles += NAME_BYTES
+                    loaded_keys.add(bk); name_recs += 1; spent_tiles += update_entry_bytes
                     # 変化検出には理想keyではなく実際に表示した近似bkを記録する。
                     # 理想keyを記録すると静止セルが次コマから「変化なし」になり、
                     # cold枠が余っていてもショット終了まで補正されない(issue #104)。
@@ -2968,7 +3484,7 @@ def main():
                     f"cold={cold_spent}/{frame_max_cold}, "
                     f"Prg={prg_spent}/{frame_max_prg}, "
                     f"work={current_reserved_spend()}/{decision_budget}B, "
-                    f"control={int(body_fixed_control_bytes[i]) + name_recs * NAME_BYTES + cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES}/"
+                    f"control={int(body_fixed_control_bytes[i]) + name_recs * update_entry_bytes + cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES}/"
                     f"{frame_control_block_limit}B)")
         elif MIDFAR_ON:
             # Phase 1: establish every free/cheap result without allowing a
@@ -2986,7 +3502,7 @@ def main():
                 remaining = pending_count - position - 1
                 fallback_reserve = len(exact_deferred) + remaining
                 exact_limit = (
-                    decision_budget - fallback_reserve * NAME_BYTES)
+                    decision_budget - fallback_reserve * update_entry_bytes)
                 if not commit_unified_exact(c, exact_limit):
                     exact_deferred.append(c)
 
@@ -3023,7 +3539,7 @@ def main():
                     # packed update entry.  Upgrading it replaces that entry's
                     # final key; it does not append a second two-byte entry.
                     # A carried approximation or Near keep has no entry yet.
-                    entry_cost = 0 if updated[c] else NAME_BYTES
+                    entry_cost = 0 if updated[c] else update_entry_bytes
                     source = (preload_source(key) if not in_vram
                               else pattern_supply.SOURCE_PRG)
                     preload = source != pattern_supply.SOURCE_PRG
@@ -3079,11 +3595,148 @@ def main():
         if _loop_profile:
             _lp_t = _lp_mark("upgrade", _lp_t, _lp_frame)
 
+        # The fine-scroll viewport can expose one extra incoming tile column
+        # or row.  Encode that guard edge exactly before allocation.  It is
+        # outside the 40x28 analysis category map, but it shares the same cold,
+        # Prg, control, and physical-deadline limits as visible work.
+        guard_updates = []
+        if scroll_state is not None:
+            # Primary decisions left a conservative exact edge allowance.
+            # Release it only to the guard path; unused bytes become ordinary
+            # post-decision/prefetch room later in this frame.
+            decision_budget = frame_visible_decision_budget
+            frame_wr_budget = frame_wr_budget_total
+            visible_frame_max_cold = max(
+                0, frame_max_cold - frame_fade_prefetch_patterns)
+            visible_frame_max_prg = max(
+                0, frame_max_prg - frame_fade_prefetch_patterns)
+            guard_rgb = render_cells(guard_idx, guard_assign, cur_pals)
+            guard_keys = [
+                guard_idx[index].tobytes()
+                for index in range(len(scroll_state.guard_cells))
+            ]
+            for guard_index, physical_cell in enumerate(
+                    scroll_state.guard_cells):
+                key = guard_keys[guard_index]
+                palette_line = int(guard_assign[guard_index])
+                if (key == plane_committed[physical_cell]
+                        and palette_line == int(plane_pal[physical_cell])):
+                    continue
+                resident = alloc.is_resident(key) or key in loaded_keys
+                source = (
+                    pattern_supply.SOURCE_PRG
+                    if resident else preload_source(key))
+                preload = source != pattern_supply.SOURCE_PRG
+                cost = update_entry_bytes + (
+                    0 if resident or preload else PATTERN_BYTES)
+                extra_cold = int(not resident)
+                if (not decision_fits(
+                        cost, extra_cold=extra_cold, extra_updates=1)
+                        or (
+                            not resident
+                            and (
+                                (cold_limit_active
+                                 and cold_spent >= visible_frame_max_cold)
+                                or not prg_source_fits(
+                                    source, int(physical_cell))
+                            )
+                        )):
+                    raise SystemExit(
+                        f"automatic scroll frame {i} cannot prepare guard "
+                        f"cell {int(physical_cell)} within the frozen "
+                        f"quality/cold limits (guard={guard_index + 1}/"
+                        f"{len(scroll_state.guard_cells)}, "
+                        f"cold={cold_spent}/{visible_frame_max_cold}, "
+                        f"Prg={prg_spent}/{visible_frame_max_prg}, "
+                        f"work={current_reserved_spend()}/{decision_budget}B)")
+                if resident:
+                    dedup_saved += 1
+                    if key not in pat_colors:
+                        cache_pattern(
+                            key, guard_rgb[guard_index], palette_line, cur_seg)
+                        mean = (
+                            guard_rgb[guard_index].reshape(64, 3).mean(0)
+                            // RESIDENT_BW
+                        ).astype(np.int32)
+                        append_resident_bucket(
+                            key, tuple(int(value) for value in mean))
+                    else:
+                        revalidate_pattern_segment(key)
+                else:
+                    cold_spent += 1
+                    commit_prg_source(source, int(physical_cell))
+                    loaded_keys.add(key)
+                    if preload:
+                        commit_preload(key, source)
+                    else:
+                        tile_recs += 1
+                    cache_pattern(
+                        key, guard_rgb[guard_index], palette_line, cur_seg)
+                    mean = (
+                        guard_rgb[guard_index].reshape(64, 3).mean(0)
+                        // RESIDENT_BW
+                    ).astype(np.int32)
+                    append_resident_bucket(
+                        key, tuple(int(value) for value in mean))
+                name_recs += 1
+                spent_tiles += cost
+                plane_key[physical_cell] = key
+                plane_pal[physical_cell] = palette_line
+                plane_committed[physical_cell] = key
+                plane_disp_idx[physical_cell] = guard_idx[guard_index]
+                plane_disp_pal[physical_cell] = palette_line
+                plane_wait[physical_cell] = 0
+                plane_age_press[physical_cell] = 0.0
+                plane_cell_tier[physical_cell] = 9
+                plane_approx_carry[physical_cell] = 0
+                guard_updates.append(
+                    (int(physical_cell), palette_line, key))
+
         # 共有割り当て: このフレームの更新セルを cell順で place(=pack の resolve と同一順・同一コード)。
         # ここで residency/追い出しが確定し、次フレームの cold 判定に反映される。維持(near_keep)セルは
         # 更新でないので place しない=cur_slot/slot_refs が前回のまま(参照継続で保護)。realized=cap の要。
-        upd_ck = [(int(c), cur_key[int(c)]) for c in np.where(updated)[0]
-                  if cur_key[int(c)] is not None]
+        primary_updates = [
+            (
+                int(allocation_cells[int(c)]),
+                (
+                    int(allocation_cells[int(c)])
+                    if scroll_state is not None else int(c)
+                ),
+                cur_key[int(c)],
+                int(c),
+            )
+            for c in np.where(updated)[0]
+            if cur_key[int(c)] is not None
+        ]
+        combined_updates = primary_updates + [
+            (cell, cell, key, None) for cell, _pal, key in guard_updates
+        ]
+        combined_updates.sort(key=lambda item: item[1])
+        upd_ck = [
+            (allocation_cell, key)
+            for allocation_cell, _packed_cell, key, _logical
+            in combined_updates
+        ]
+        packed_update_cells = [
+            packed_cell
+            for _allocation_cell, packed_cell, _key, _logical
+            in combined_updates
+        ]
+        update_logical_cells = [
+            logical
+            for _allocation_cell, _packed_cell, _key, logical
+            in combined_updates
+        ]
+        update_palettes = [
+            (
+                int(cur_pal[logical])
+                if logical is not None else int(plane_pal[allocation_cell])
+            )
+            for allocation_cell, _packed_cell, _key, logical
+            in combined_updates
+        ]
+        pre_place_resident = [
+            alloc.is_resident(key) for _cell, key in upd_ck]
         placements = alloc.place_frame(upd_ck, i)
         transfer_order = cold_transfer_order(placements)
         frame_sources = [pattern_supply.SOURCE_PRG] * len(upd_ck)
@@ -3119,22 +3772,36 @@ def main():
         if raw_keys & buf_keys:
             raise AssertionError(
                 f"frame {i}: exact key has both Raw and Buf funding")
-        for (cell, key), (_slot, cold), source in zip(
-                upd_ck, placements, frame_sources):
+        for update_index, (
+                (cell, key), logical_cell, (_slot, cold), source,
+        ) in enumerate(zip(
+                upd_ck, update_logical_cells, placements, frame_sources,
+                strict=True)):
             if not cold:
                 continue
+            if logical_cell is None:
+                continue
+            display_cell = int(logical_cell)
             if key in raw_keys:
-                raw_display_mask[cell] = True
+                raw_display_mask[display_cell] = True
                 continue
             if key not in buf_keys:
                 raise AssertionError(
-                    f"frame {i}: cold cell {cell} has no Raw/Buf funding")
+                    f"frame {i}: cold cell {cell} logical={logical_cell} "
+                    f"has no Raw/Buf funding (resident_before="
+                    f"{int(pre_place_resident[update_index])}, "
+                    f"raw={int(raw_mask[display_cell])}, "
+                    f"prg={int(prg_mask[display_cell])}, "
+                    f"dedup={int(dedup_mask[display_cell])}, "
+                    f"near={int(near_mask[display_cell])}, "
+                    f"flbk={int(flbk_mask[display_cell])})")
             if source == pattern_supply.SOURCE_PRG:
-                prg_source_mask[cell] = True
+                prg_source_mask[display_cell] = True
             elif source == pattern_supply.SOURCE_WR:
-                (wr0_source_mask if i % 2 == 0 else wr1_source_mask)[cell] = True
+                (wr0_source_mask if i % 2 == 0 else wr1_source_mask)[
+                    display_cell] = True
             elif source == pattern_supply.SOURCE_DIC:
-                dic_source_mask[cell] = True
+                dic_source_mask[display_cell] = True
             else:
                 raise AssertionError(
                     f"frame {i}: unknown pattern source {source}")
@@ -3152,12 +3819,14 @@ def main():
         # 意味が正反対: 前者は1フレーム遅らせれば中間ロードが浮き、後者は減点すると飢餓が出る。
         frame_cold = []
         if i > 0:
-            for (cl_cell, cl_key), (_cl_slot, cl_cold) in zip(
-                    upd_ck, placements):
+            for (cl_cell, cl_key), logical_cell, (_cl_slot, cl_cold) in zip(
+                    upd_ck, update_logical_cells, placements, strict=True):
                 if not cl_cold:
                     continue
+                if logical_cell is None:
+                    continue
                 kind = "raw" if cl_key in raw_keys else "buf"
-                c = int(cl_cell)
+                c = int(logical_cell)
                 frame_cold.append((c, cl_key, kind))
                 coldlife["total"][kind] += 1
                 if i + 1 >= n:
@@ -3207,7 +3876,15 @@ def main():
             if len(frame0_keys) + boot_inline_requests > frame0_inline_pattern_limit:
                 raise AssertionError(
                     "frame 0 inline patterns exceed the boot staging path")
-        elif i > 0 and (RAW_PREFETCH_ON or i in fade_prefetch_plan):
+        # The ordinary Raw forecast is built from screen-space target tiles.
+        # A rolling plane also carries hidden pixel columns/rows whose exact
+        # key depends on the previous physical-plane contents.  Do not spend
+        # speculative loads from that mismatched coordinate model while a
+        # scroll control is active; visible primary and guard work remains
+        # fully budgeted, and ordinary prefetch resumes after the rebase.
+        elif (i > 0
+              and scroll_state is None
+              and (RAW_PREFETCH_ON or i in fade_prefetch_plan)):
             fade_request = fade_prefetch_plan.get(i)
             mandatory = fade_request is not None
             if fade_request is not None:
@@ -3280,7 +3957,7 @@ def main():
                 (
                     frame_control_block_limit
                     - int(body_fixed_control_bytes[i])
-                    - name_recs * NAME_BYTES
+                    - name_recs * update_entry_bytes
                     - cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES
                 ) // stream_schedule.RUN_DESCRIPTOR_BYTES,
             )
@@ -3439,11 +4116,11 @@ def main():
         transfer_runs_log.append(dma_runs)
         supply_sources_log.append(np.asarray(frame_sources, np.uint8))
         ring_per_log.append((
-            tuple(int(cell) for cell, _key in upd_ck),
+            tuple(int(cell) for cell in packed_update_cells),
             tuple(
-                (int(cur_pal[cell]) << 13) | (1 + int(slot))
-                for (cell, _key), (slot, _cold)
-                in zip(upd_ck, placements)
+                (int(palette_line) << 13) | (1 + int(slot))
+                for palette_line, (slot, _cold)
+                in zip(update_palettes, placements, strict=True)
             ),
             tuple(bool(cold) for _slot, cold in placements),
         ))
@@ -3453,9 +4130,17 @@ def main():
             tuple(int(index) for index in transfer_order))
         ring_dic_indices_log.append(tuple(frame_dic_indices))
         ring_raw_flags_log.append(tuple(
-            bool(raw_display_mask[int(cell)])
-            for cell, _key in upd_ck
+            (
+                True if logical is None
+                else bool(raw_display_mask[int(logical)])
+            )
+            for logical in update_logical_cells
         ))
+        ring_category_cells_log.append(tuple(
+            -1 if logical is None else int(logical)
+            for logical in update_logical_cells
+        ))
+        tile_alloc.trace_state(alloc, i)
         prefetch_requests_log.append(frame_prefetch_requests)
         prefetch_cold_log.append(len(prefetch_cold_slots))
         prg_used = sum(
@@ -3466,7 +4151,7 @@ def main():
                 f"physical Prg loads={prg_used}")
         prg_loads_log.append(prg_used)
         frame_prg_cells = [
-            int(upd_ck[index][0])
+            int(packed_update_cells[index])
             for index in transfer_order
             if frame_sources[index] == pattern_supply.SOURCE_PRG
         ]
@@ -3490,7 +4175,7 @@ def main():
         # and only Prg-sourced cold patterns consume BODY payload.  Charge this
         # after allocation so source splits and slot fragmentation are exact.
         variable_body_spent = (
-            name_recs * NAME_BYTES
+            name_recs * update_entry_bytes
             + dma_runs * stream_schedule.RUN_DESCRIPTOR_BYTES
             + prg_used * PATTERN_BYTES)
         reserved_body_spent = current_reserved_spend()
@@ -3501,7 +4186,7 @@ def main():
         exact_control_block_bytes = (
             0 if i == 0 else
             int(body_fixed_control_bytes[i])
-            + name_recs * NAME_BYTES
+            + name_recs * update_entry_bytes
             + dma_runs * stream_schedule.RUN_DESCRIPTOR_BYTES
         )
         physical_budget_state.commit_frame(
@@ -3511,7 +4196,7 @@ def main():
             control_block_bytes=exact_control_block_bytes,
         )
         if QUALITY_BUDGET_ON and i > 0:
-            decision_spent = name_recs * NAME_BYTES + prg_used * PATTERN_BYTES
+            decision_spent = name_recs * update_entry_bytes + prg_used * PATTERN_BYTES
             if spent_tiles != decision_spent:
                 raise AssertionError(
                     f"frame {i}: encoder decision spend {spent_tiles}B != "
@@ -3539,7 +4224,16 @@ def main():
         # Flbkはcur_key=近似先(常駐), Buf/Rawはcur_key=新規ロードkey。dedup/Near/Missの区別は
         # 「更新したか否か」に畳まれる(更新セルのみ列挙)ので、実機はmp4を完全再現できる。
         if EMIT_DEC:
-            dec_frames.append([(int(c), int(cur_pal[c]), cur_key[c]) for c in np.where(updated)[0]])
+            dec_frames.append([
+                (int(cell), int(palette_line), key)
+                for cell, palette_line, (_allocation_cell, key)
+                in zip(
+                    packed_update_cells,
+                    update_palettes,
+                    upd_ck,
+                    strict=True,
+                )
+            ])
 
         bytes_spent = (
             0 if i == 0 else
@@ -3565,14 +4259,25 @@ def main():
 
         # --- per-frame 実測(status line用) ---
         near_eff = near_mask if MIDFAR_ON else near   # MIDFARは統合探索が埋めたnear_mask
-        stale = changed & ~updated & ~near_eff    # Nearは取りこぼしではない(意図的スキップ)
+        stale_full = changed & ~updated & ~near_eff   # Nearは取りこぼしではない(意図的スキップ)
+        # Hardware scroll carries every non-updated cell to its correct world
+        # position, so an unfunded want during a scroll frame is scroll reuse
+        # (display category Scrl), not a Miss. Decision-side pressure
+        # (cell_tier, aging, wait) still sees the full set below, so encoder
+        # behavior and the packed stream are unchanged by this split.
+        if scroll_state is not None:
+            scrl_mask = stale_full
+            stale = np.zeros_like(stale_full)
+        else:
+            scrl_mask = np.zeros_like(stale_full)
+            stale = stale_full
         near_disp = near_eff & ~updated           # 実際に省略したNear(余裕があればRaw済み=除く)
         # 優先度レイヤー/格上げ用に各セルの現在の劣化度を更新(触れたセルのみ。未変化セルは前値を保持)
         if MIDFAR_ON:
             cell_tier[dedup_mask | raw_mask | prg_mask] = 9              # 正確(Same/Raw/Buf)
             cell_tier[near_eff] = 2                                      # Near(近い近似=格上げ候補)
             cell_tier[flbk_mask] = 1
-            cell_tier[stale] = 0                                          # Miss(取りこぼし)
+            cell_tier[stale_full] = 0                                     # Miss/Scrl(未供給want)
             approx_carry = np.where(cell_tier < 9, approx_carry + 1, 0)  # 近似のまま持ち越した連続コマ数
             upgrade_log.append((upgraded, int((cell_tier < 9).sum())))   # 指標: 格上げ枚数 / まだ近似のセル数
         # カテゴリ別ユニークタイル数(何枚の別タイルを使い回したか)。同一キーは1枚と数える。
@@ -3591,6 +4296,7 @@ def main():
         want = int(changed.sum())
         upd = int(updated.sum())
         miss = int(stale.sum())
+        scrl_count = int(scrl_mask.sum())
         raw_count = int(raw_display_mask.sum())
         source_count = sum(int(mask.sum()) for mask in (
             prg_source_mask, wr0_source_mask, wr1_source_mask,
@@ -3599,14 +4305,15 @@ def main():
         flbk_count = int(flbk_mask.sum())
         same_count = (
             C_CELLS - raw_count - source_count - near_count
-            - flbk_count - miss)
+            - flbk_count - miss - scrl_count)
         if same_count < 0:
             raise AssertionError(
                 f"frame {i}: display categories exceed {C_CELLS} cells")
         if i == 0:
             if not bool(updated.all()):
                 raise AssertionError("frame 0 did not update every display cell")
-            if (source_count or near_count or flbk_count or miss):
+            if (source_count or near_count or flbk_count or miss
+                    or scrl_count):
                 raise AssertionError(
                     "frame 0 contains a non-Raw/Same display category")
             if raw_count != len(frame0_keys):
@@ -3620,11 +4327,11 @@ def main():
                 raise AssertionError("frame 0 display is not the exact target")
         if EMIT_DEC:
             dec_miss.append(miss)
-            # デバッグ欄用カテゴリ数: catmap と同一定義(Raw/Buf/Flbk/Near/Miss は互いに素、
-            # 残り=Same(不変+Dedup畳み込み))。6種は必ず C_CELLS に合計する。
+            # デバッグ欄用カテゴリ数: catmap と同一定義(Raw/Buf/Flbk/Near/Miss/Scrl は
+            # 互いに素、残り=Same(不変+Dedup畳み込み))。7種は必ず C_CELLS に合計する。
             dec_cats.append((
                 raw_count, same_count, near_count, flbk_count,
-                source_count, miss))
+                source_count, miss, scrl_count))
             # Category styling is intentionally a bit set, not one category
             # ID per cell. A physical cold-load attribution can share a cell
             # with its Near/Flbk quality result after allocator ordering moves
@@ -3638,7 +4345,8 @@ def main():
                     ("Wr0", wr0_source_mask),
                     ("Wr1", wr1_source_mask),
                     ("Dic", dic_source_mask),
-                    ("Miss", stale)):
+                    ("Miss", stale),
+                    ("Scrl", scrl_mask)):
                 bit = np.uint16(
                     1 << DISPLAY_CATEGORY_MASK_ORDER.index(name))
                 category_row[mask] |= bit
@@ -3651,19 +4359,25 @@ def main():
         # F = every cold tile forming its own runでもfresh supplyで払える
         # 最低保証Raw更新数。実runが連結すれば差分はquality budgetへ戻る。
         f_fixed = budget // (
-            PATTERN_BYTES + NAME_BYTES
+            PATTERN_BYTES + update_entry_bytes
             + stream_schedule.RUN_DESCRIPTOR_BYTES)
+        # The tx column is the mutually-exclusive DISPLAY Raw category. A
+        # scroll guard's Raw-funded load is real payment accounting
+        # (tile_records_log) but shows no display cell this frame.
         stat_rows.append((
-            i, f_fixed, want, upd, miss, C_CELLS - want, dedup_saved, tile_recs, carry, age_max,
+            i, f_fixed, want, upd, miss, C_CELLS - want, dedup_saved, raw_count, carry, age_max,
             want / C_CELLS, int(near_eff.sum()), flbk_count, prg_hits,
             int(prg_source_mask.sum()), int(wr0_source_mask.sum()),
             int(wr1_source_mask.sum()), int(dic_source_mask.sum()),
             same_count,
             len(u_same), len(u_near), len(u_flbk), dma_tiles, dma_runs,
-            len(prefetch_cold_slots)))
+            len(prefetch_cold_slots), scrl_count))
 
         # TSV観測用のMiss待ちカウンタを更新。NearはMissではない。
         wait = np.where(changed & ~updated & ~near_eff, wait + 1, 0)   # Nearは滞留させない
+        if scroll_state is not None:
+            store_logical_plane(scroll_state.primary_cells)
+            previous_scroll_state = scroll_state
         if _loop_profile:
             _lp_t = _lp_mark("accounting", _lp_t, _lp_frame)
 
@@ -3737,7 +4451,12 @@ def main():
     # Finalize: prove the complete physical schedule and write artifacts.
     final_control_trace = (
         np.asarray(body_fixed_control_bytes, np.int64)
-        + np.asarray(name_records_log, np.int64) * NAME_BYTES
+        + np.asarray(name_records_log, np.int64)
+        * np.where(
+            control_frame_types == shadow_updates.FRAME_SCROLL,
+            shadow_updates.LIST_ITEM_BYTES,
+            NAME_BYTES,
+        )
         + np.asarray(transfer_runs_log, np.int64)
         * stream_schedule.RUN_DESCRIPTOR_BYTES
     )
@@ -3805,6 +4524,7 @@ def main():
     wr0_loads = np.asarray(wr0_loads_log, np.int64)
     wr1_loads = np.asarray(wr1_loads_log, np.int64)
     dic_loads = np.asarray(dic_loads_log, np.int64)
+    control_update_counts = np.asarray(name_records_log, np.int64)
 
     # The encoder's whole-movie budget above is a quality-allocation model, not the
     # physical PRG-RAM PrgBuf. Re-run the packer's exact sector schedule
@@ -3812,13 +4532,20 @@ def main():
     # occupancy, including prebuffering and final-sector padding.
     shadow_cells = [[int(item[0]) for item in frame] for frame in dec_frames]
     shadow_costs = tuple(
-        shadow_updates.frame_cost(cells, C_CELLS) for cells in shadow_cells)
+        shadow_updates.frame_cost(
+            cells,
+            shadow_updates.SCROLL_PLANE_CELLS
+            if int(control_frame_types[frame]) == shadow_updates.FRAME_SCROLL
+            else C_CELLS,
+        )
+        for frame, cells in enumerate(shadow_cells)
+    )
     legacy_lengths = stream_schedule.control_block_lengths(
-        stats[:, 3].astype(np.int64),
+        control_update_counts,
         np.asarray(transfer_runs_log, np.int64),
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
-        frame_types=frame_types,
+        frame_types=control_frame_types,
     )
     prg_limit_over = np.flatnonzero(
         np.arange(len(prg_loads)) > 0,
@@ -3870,7 +4597,7 @@ def main():
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             fill=av_config.PACK_FORWARD_FILL,
             control_sector_envelope=None,
-            frame_types=frame_types,
+            frame_types=control_frame_types,
         ) if PATTERN_SUPPLY_ON else None
         shadow_list_flags = (
             np.asarray(shadow_plan["selected"], np.bool_)
@@ -3882,12 +4609,12 @@ def main():
         )
         exact_body_work = stream_schedule.body_funded_work_bytes(
             prg_loads,
-            stats[:, 3].astype(np.int64),
+            control_update_counts,
             np.asarray(transfer_runs_log, np.int64),
             cells=C_CELLS,
             audio_frame_bytes=AUDIO_CONTROL_BYTES,
             update_lists=shadow_list_flags,
-            frame_types=frame_types,
+            frame_types=control_frame_types,
         )
         fb = fb_baseline + control_lengths - legacy_lengths
         if not np.array_equal(fb.astype(np.int64), exact_body_work):
@@ -3972,9 +4699,9 @@ def main():
                 prefetch_per=ring_prefetch_log,
                 transfer_orders=ring_transfer_orders_log,
                 current_plan=current_supply,
-                n_updates=stats[:, 3].astype(np.int64),
+                n_updates=control_update_counts,
                 update_lists=shadow_list_flags,
-                frame_types=frame_types,
+                frame_types=control_frame_types,
                 fps=FPS,
                 cells=C_CELLS,
                 audio_frame_bytes=AUDIO_CONTROL_BYTES,
@@ -4036,12 +4763,12 @@ def main():
                 int(value) for value in ring_plan.runs
             ]
             control_lengths = stream_schedule.control_block_lengths(
-                stats[:, 3].astype(np.int64),
+                control_update_counts,
                 np.asarray(transfer_runs_log, np.int64),
                 cells=C_CELLS,
                 audio_frame_bytes=AUDIO_CONTROL_BYTES,
                 update_lists=shadow_list_flags,
-                frame_types=frame_types,
+                frame_types=control_frame_types,
             )
             physical_schedule = wordbuf_ring.schedule_dict(
                 ring_plan, control_lengths)
@@ -4084,20 +4811,27 @@ def main():
             (cells, _entries, colds),
             frame_sources,
             raw_flags,
+            category_cells,
             raw_row,
         ) in enumerate(zip(
             ring_per_log,
             ring_plan.sources,
             ring_raw_flags_log,
+            ring_category_cells_log,
             dec_category_rows,
             strict=True,
         )):
             row = np.frombuffer(raw_row, "<u2").copy()
-            for cell, cold, source, is_raw in zip(
-                    cells, colds, frame_sources, raw_flags, strict=True):
-                if not cold or is_raw or not (row[int(cell)] & source_mask):
+            for cell, cold, source, is_raw, category_cell in zip(
+                    cells, colds, frame_sources, raw_flags, category_cells,
+                    strict=True):
+                if int(category_cell) < 0:
                     continue
-                row[int(cell)] &= np.uint16(~source_mask)
+                logical_cell = int(category_cell)
+                if (not cold or is_raw
+                        or not (row[logical_cell] & source_mask)):
+                    continue
+                row[logical_cell] &= np.uint16(~source_mask)
                 if source == pattern_supply.SOURCE_PRG:
                     name = "Prg"
                 elif source == pattern_supply.SOURCE_WR:
@@ -4107,7 +4841,7 @@ def main():
                 else:
                     raise AssertionError(
                         f"frame {frame}: invalid ring source {source}")
-                row[int(cell)] |= source_bits[name]
+                row[logical_cell] |= source_bits[name]
             counts = [
                 int(np.count_nonzero(row & source_bits[name]))
                 for name in source_names
@@ -4198,11 +4932,23 @@ def main():
         )
     r2v_nt_words = r2v_model.name_table_words(
         MODE, TCOLS, TROWS, FPS)
+    r2v_nt_word_counts = np.full(n, r2v_nt_words, np.int64)
+    if scroll_plane_enabled:
+        # A horizontal scroll frame extends the staged band across the full
+        # 64-column last row; a vertical one carries the complete 64x32 plane
+        # so the wrapped incoming rows are delivered. Every scroll frame also
+        # rewrites the Plane A/B HScroll pair and the VSRAM pair.
+        base_band = (TROWS - 1) * scroll_plan.PLANE_COLUMNS + TCOLS
+        r2v_nt_word_counts[scroll_active & ~scroll_vertical] += (
+            TROWS * scroll_plan.PLANE_COLUMNS - base_band + 4)
+        r2v_nt_word_counts[scroll_vertical] += (
+            scroll_plan.PLANE_ROWS * scroll_plan.PLANE_COLUMNS
+            - base_band + 4)
     r2v_components = r2v_model.calculate_words(
         np.asarray(transfer_tiles_log, np.int64),
         np.asarray(transfer_runs_log, np.int64),
         r2v_palette_switch,
-        r2v_nt_words,
+        r2v_nt_word_counts,
     )
     for component in r2v_components.values():
         component[0] = 0
@@ -4461,7 +5207,7 @@ def main():
              r2v_cram_words=r2v_components["cram_words"],
              r2v_short_runs=r2v_short_runs,
              r2v_palette_switch=r2v_palette_switch,
-             frame_types=frame_types,
+             frame_types=control_frame_types,
              cd1x=CD_RATE,
              body_gross_bytes=body_gross_bytes,
              body_fixed_control_bytes=body_fixed_control_bytes,
@@ -4696,6 +5442,30 @@ def main():
                     for shot in fade_layout.shots
                 ],
             },
+            "scroll": {
+                "schema_version": 1,
+                "automatic": True,
+                "active": np.asarray(scroll_active, np.bool_),
+                "positions": np.asarray(scroll_positions, np.int16),
+                "windows": [
+                    {
+                        "anchor": int(window.anchor),
+                        "end": int(window.end),
+                        "axis": window.axis,
+                        "detector_start": int(window.detector_start),
+                        "final_position": int(window.final_position),
+                        "support": float(window.support),
+                        "multiframe_support": float(
+                            window.multiframe_support),
+                        "adoption_gain": float(window.adoption_gain),
+                        "beneficial_fraction": float(
+                            window.beneficial_fraction),
+                        "overlap_rmse_p95": float(
+                            window.overlap_rmse_p95),
+                    }
+                    for window in scroll_windows
+                ],
+            },
             "frames": dec_frames,                                     # [[(cell,pal,key),...], ...]
             "display_category_masks": {
                 "schema_version": 1,
@@ -4925,7 +5695,7 @@ def main():
                     if shadow_plan is not None else False),
             },
             "miss": dec_miss,                                         # per-frame Miss数(overlay用)
-            "cats": dec_cats,                                         # per-frame [raw,same,near,flbk,buf,miss]
+            "cats": dec_cats,                                         # per-frame [raw,same,near,flbk,buf,miss,scrl]
             "body_gross_bytes": body_gross_bytes,
             "body_fixed_control_bytes": body_fixed_control_bytes,
             "body_variable_supply_bytes": body_variable_supply_bytes,

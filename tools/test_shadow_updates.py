@@ -55,9 +55,24 @@ class ShadowUpdateTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cannot carry"):
             shadow_updates.encode_count(
                 1, False, shadow_updates.FRAME_FADE_IN)
-        with self.assertRaisesRegex(ValueError, "unsupported"):
+        scroll = shadow_updates.encode_count(
+            17, True, shadow_updates.FRAME_SCROLL)
+        self.assertEqual(scroll & shadow_updates.COUNT_MASK, 18)
+        self.assertEqual(shadow_updates.decode_count(scroll), (17, True))
+        self.assertEqual(
+            shadow_updates.decode_frame_type(scroll),
+            shadow_updates.FRAME_SCROLL,
+        )
+        with self.assertRaisesRegex(ValueError, "require"):
             shadow_updates.encode_count(
-                0, False, shadow_updates.FRAME_RESERVED)
+                0, False, shadow_updates.FRAME_SCROLL)
+        with self.assertRaisesRegex(ValueError, "position list item"):
+            shadow_updates.decode_count(
+                shadow_updates.FRAME_SCROLL
+                << shadow_updates.FRAME_TYPE_SHIFT)
+        with self.assertRaisesRegex(ValueError, "cannot use"):
+            shadow_updates.encode_count(
+                0, True, shadow_updates.FRAME_FADE_OUT)
 
 
 if __name__ == "__main__":

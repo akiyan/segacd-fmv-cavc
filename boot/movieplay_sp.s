@@ -31,6 +31,9 @@
 .if (PC_FEATURES & 0x0100)
 .equ INCLUDE_WORDBUF_RING, 1
 .endif
+.if (PC_FEATURES & 0x0200)
+.equ INCLUDE_SCROLL, 1
+.endif
 .endif
 	.include "sp_extension.inc"
 
@@ -150,11 +153,13 @@
 .equ FEATURE_DICBUF_INDEXED_RUNS_BIT, 6
 .equ FEATURE_BOOT_VRAM_SIDECAR_BIT, 7
 .equ FEATURE_WORDBUF_RING_BIT, 8
+.equ FEATURE_SCROLL_BIT, 9
 .equ SHADOW_UPDATE_LIST_BIT, 15
 .equ FRAME_TYPE_MASK, 0x6000
 .equ FRAME_TYPE_FADE_IN, 0x2000
 .equ SHADOW_UPDATE_COUNT_MASK, 0x1FFF
 .equ INLINE_CRAM_BYTES, 128
+.equ SCROLL_PLANE_CELLS, 2048
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_COPY_LONGS,    PC_ROUTING_COPY_LONGS
 .else
@@ -555,6 +560,10 @@ pm_set:
 	move.w	60(a0), h_features		/* optional stream features */
 	btst	#2, h_features+1
 	bne	bad_header			/* removed audio-codec flag is reserved */
+.ifndef PLAYER_SPECIALIZED
+	btst	#FEATURE_SCROLL_BIT-8, h_features
+	bne	bad_header			/* generic player rejects rolling-plane scroll streams */
+.endif
 	move.w	h_features, d1
 	andi.w	#0x0010, d1
 	beq.s	1f
@@ -2050,9 +2059,15 @@ expand_frame:
 	andi.w	#SHADOW_UPDATE_COUNT_MASK, d5
 
 .ifdef PLAYER_SPECIALIZED
+.ifdef INCLUDE_SCROLL
+	cmpi.w	#SCROLL_PLANE_CELLS, d5		/* scroll lists count the position item too */
+	bls.s	1f
+	move.w	#SCROLL_PLANE_CELLS, d5
+.else
 	cmpi.w	#PC_CELLS, d5			/* corrupt-count guard: never walk past cells */
 	bls.s	1f
 	move.w	#PC_CELLS, d5
+.endif
 .else
 	PC_MOVE_W h_bmbytes, PC_BMBYTES, d1	/* corrupt-count guard: never walk past this mode's cells */
 	lsl.w	#3, d1

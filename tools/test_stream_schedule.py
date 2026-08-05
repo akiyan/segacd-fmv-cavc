@@ -110,6 +110,54 @@ class ControlLengthTests(unittest.TestCase):
                 frame_types=[shadow_updates.FRAME_FADE_IN],
             )
 
+    def test_scroll_control_adds_absolute_position_and_requires_list(self) -> None:
+        lengths = schedule.control_block_lengths(
+            [3], [2], cells=1120, audio_frame_bytes=372,
+            update_lists=[True],
+            frame_types=[shadow_updates.FRAME_SCROLL],
+        )
+        # total_len + frame_seq/type + H/V position + three 4-byte pairs +
+        # audio + n_runs/two descriptors.
+        self.assertEqual(lengths.tolist(), [404])
+        with self.assertRaisesRegex(ValueError, "requires"):
+            schedule.control_block_lengths(
+                [3], [2], cells=1120, audio_frame_bytes=372,
+                update_lists=[False],
+                frame_types=[shadow_updates.FRAME_SCROLL],
+            )
+
+    def test_shadow_selection_forces_scroll_lists_and_uses_plane_cells(self) -> None:
+        plan = schedule.select_shadow_update_lists(
+            [[], [1200], []],
+            np.zeros(3, np.int64),
+            np.zeros(3, np.int64),
+            cells=1120,
+            fps=15,
+            ring_capacity_patterns=128,
+            prebuffer_capacity_patterns=64,
+            frame_sectors=5,
+            audio_frame_bytes=16,
+            frame_types=[
+                shadow_updates.FRAME_NORMAL,
+                shadow_updates.FRAME_SCROLL,
+                shadow_updates.FRAME_NORMAL,
+            ],
+        )
+        self.assertTrue(bool(plan["selected"][1]))
+        self.assertEqual(
+            plan["block_lengths"].tolist(),
+            schedule.control_block_lengths(
+                [0, 1, 0], [0, 0, 0], cells=1120,
+                audio_frame_bytes=16,
+                update_lists=[False, True, False],
+                frame_types=[
+                    shadow_updates.FRAME_NORMAL,
+                    shadow_updates.FRAME_SCROLL,
+                    shadow_updates.FRAME_NORMAL,
+                ],
+            ).tolist(),
+        )
+
     def test_body_supply_reserves_fixed_control_before_variable_work(self) -> None:
         supply = schedule.body_fresh_byte_supply(
             5, 30,

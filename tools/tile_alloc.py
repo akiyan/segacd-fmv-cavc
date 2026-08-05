@@ -22,6 +22,28 @@ neighbouring VRAM slots so the Main CPU can DMA them in long runs. Displayed til
 import numpy as np
 
 
+def trace_state(alloc, frame):
+    """Append this frame's allocator digest to CBRSIM_ALLOC_TRACE.
+
+    Diagnostic only (issue #113). With CBRSIM_ALLOC_TRACE_DUMP=N the full
+    snapshot of frame N is pickled next to the trace for a field diff.
+    """
+
+    import os
+
+    path = os.environ.get("CBRSIM_ALLOC_TRACE")
+    if not path:
+        return
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(f"{int(frame)}\t{alloc.state_digest()}\n")
+    dump = os.environ.get("CBRSIM_ALLOC_TRACE_DUMP")
+    if dump and int(dump) == int(frame):
+        import pickle
+
+        with open(f"{path}.f{int(frame)}.snap", "wb") as handle:
+            pickle.dump(alloc.state_snapshot(), handle)
+
+
 def cold_transfer_order(placements):
     """Return cold update indices sorted by ascending physical VRAM slot.
 
@@ -160,6 +182,49 @@ class TileAllocator:
         self.prefetch_evictions = 0
         self.mandatory_prefetch_evictions = 0
         self.prefetch_cache_evictions = 0
+
+    def state_digest(self):
+        """Return a short deterministic hash of the complete allocator state.
+
+        Diagnostic only (issue #113): the sim and the pack replay the same
+        frozen decisions through this allocator, so their digests must match
+        at every frame boundary. The first differing frame localizes a replay
+        divergence without guessing.
+        """
+
+        import hashlib
+
+        digest = hashlib.sha256()
+        digest.update(self.cur_slot.tobytes())
+        digest.update(self.prev_slot.tobytes())
+        digest.update(self.slot_refs.tobytes())
+        digest.update(self.slot_lastuse.tobytes())
+        digest.update(self.slot_pin_until.tobytes())
+        digest.update(self.slot_pin_mandatory.tobytes())
+        digest.update(int(self.hand).to_bytes(8, "little", signed=True))
+        digest.update(int(self.pinned_count).to_bytes(8, "little", signed=True))
+        digest.update(repr(self.free).encode())
+        for key in sorted(self.key_slot):
+            digest.update(key)
+            digest.update(int(self.key_slot[key]).to_bytes(
+                4, "little", signed=True))
+        return digest.hexdigest()[:16]
+
+    def state_snapshot(self):
+        """Return the raw state fields for a field-by-field divergence diff."""
+
+        return {
+            "cur_slot": self.cur_slot.copy(),
+            "prev_slot": self.prev_slot.copy(),
+            "slot_refs": self.slot_refs.copy(),
+            "slot_lastuse": self.slot_lastuse.copy(),
+            "slot_pin_until": self.slot_pin_until.copy(),
+            "slot_pin_mandatory": self.slot_pin_mandatory.copy(),
+            "hand": int(self.hand),
+            "pinned_count": int(self.pinned_count),
+            "free": tuple(self.free),
+            "key_slot": dict(self.key_slot),
+        }
 
     # ---- residency query (used by the sim for cold/reuse + resident matching) ----
     def is_resident(self, key):
@@ -480,11 +545,14 @@ class TileAllocator:
                 self.free.remove(slot)
             else:
                 self._evict(slot)
-                # A forced fade destination is part of a separately managed
+                # A relocated fade destination is part of a separately managed
                 # block.  Redirecting the ordinary allocation hand into that
                 # block would make the next visible frame consume its still
-                # empty destinations and split otherwise contiguous runs.
-                if not mandatory:
+                # empty destinations and split otherwise contiguous runs.  An
+                # ordinary (non-relocated) choice, forced only to replay a
+                # frozen decision, must leave the hand exactly where the
+                # organic clock scan would have: one past the chosen slot.
+                if not relocate:
                     self.hand = (slot + 1) % self.POOL
         elif self.free:
             slot = self.free.pop()
@@ -545,6 +613,93 @@ class TileAllocator:
 
     def end_frame(self):
         self.prev_slot[:] = self.cur_slot
+
+    def replace_display_cells(self, destination_sources, *, clear_others=False):
+        """Atomically remap displayed cells without moving pattern data.
+
+        Each ``(destination, source)`` pair makes the destination show the
+        slot that the source showed before this call.  This models a
+        name-table-only rebase, such as copying a tile-aligned viewport from a
+        64-by-32 rolling plane back to the ordinary logical shadow.
+
+        ``prev_slot`` intentionally remains untouched.  A remap immediately
+        before ``place_frame`` therefore keeps the preceding physical display
+        protected until the new frame's transfers finish.
+        """
+
+        pairs = tuple(
+            (int(destination), int(source))
+            for destination, source in destination_sources
+        )
+        destinations = [destination for destination, _source in pairs]
+        if len(destinations) != len(set(destinations)):
+            raise ValueError("display-cell remap destinations must be unique")
+        for destination, source in pairs:
+            if not 0 <= destination < self.C_CELLS:
+                raise ValueError(
+                    f"display-cell remap destination {destination} is outside "
+                    f"0..{self.C_CELLS - 1}")
+            if not 0 <= source < self.C_CELLS:
+                raise ValueError(
+                    f"display-cell remap source {source} is outside "
+                    f"0..{self.C_CELLS - 1}")
+
+        before = self.cur_slot.copy()
+        after = (
+            np.full(self.C_CELLS, -1, np.int64)
+            if clear_others else before.copy()
+        )
+        for destination, source in pairs:
+            after[destination] = before[source]
+
+        self.cur_slot[:] = after
+        self.slot_refs[:] = 0
+        visible = after[after >= 0]
+        if len(visible):
+            self.slot_refs[:] = np.bincount(
+                visible, minlength=self.POOL).astype(np.int32, copy=False)
+        if int(self.slot_refs.sum()) != int(np.count_nonzero(after >= 0)):
+            raise AssertionError("display-cell remap reference count diverged")
+
+    def expand_cell_domain(self, cell_count, destination_sources):
+        """Expand the cell index space and atomically remap current/history.
+
+        This is used exactly once when an ordinary logical shadow enters the
+        larger 64-by-32 rolling-plane domain.  Slot residency, cache history,
+        pins, and the clock hand remain byte-for-byte unchanged.
+        """
+
+        count = int(cell_count)
+        if count < self.C_CELLS:
+            raise ValueError("cell-domain expansion cannot shrink the domain")
+        pairs = tuple(
+            (int(destination), int(source))
+            for destination, source in destination_sources
+        )
+        destinations = [destination for destination, _source in pairs]
+        sources = [source for _destination, source in pairs]
+        if len(destinations) != len(set(destinations)):
+            raise ValueError("cell-domain destinations must be unique")
+        if len(sources) != len(set(sources)):
+            raise ValueError("cell-domain sources must be unique")
+        if any(not 0 <= destination < count for destination in destinations):
+            raise ValueError("cell-domain destination is outside the new domain")
+        if any(not 0 <= source < self.C_CELLS for source in sources):
+            raise ValueError("cell-domain source is outside the old domain")
+
+        old_cur = self.cur_slot
+        old_prev = self.prev_slot
+        self.cur_slot = np.full(count, -1, np.int64)
+        self.prev_slot = np.full(count, -1, np.int64)
+        for destination, source in pairs:
+            self.cur_slot[destination] = old_cur[source]
+            self.prev_slot[destination] = old_prev[source]
+        self.C_CELLS = count
+        self.slot_refs[:] = 0
+        visible = self.cur_slot[self.cur_slot >= 0]
+        if len(visible):
+            self.slot_refs[:] = np.bincount(
+                visible, minlength=self.POOL).astype(np.int32, copy=False)
 
     def place_frame(self, cells_keys, frame_idx):
         """Two-pass frame allocation (the disc's true behaviour). ``cells_keys`` = a

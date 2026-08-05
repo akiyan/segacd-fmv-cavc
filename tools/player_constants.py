@@ -207,6 +207,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS
         | cavc_routing.FEATURE_BOOT_VRAM_SIDECAR
         | cavc_routing.FEATURE_WORDBUF_RING
+        | cavc_routing.FEATURE_SCROLL
     )
     unknown_features = features & ~known_features
     if unknown_features:
@@ -214,6 +215,15 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
             f"HEADER.DAT uses reserved feature bits 0x{unknown_features:04X}")
     pattern_supply_enabled = bool(features & cavc_routing.FEATURE_PATTERN_SUPPLY)
     indexed_dicbuf = bool(features & cavc_routing.FEATURE_DICBUF_INDEXED_RUNS)
+    scroll_enabled = bool(features & cavc_routing.FEATURE_SCROLL)
+    if scroll_enabled and (mode != 1 or tcols != 40):
+        raise ValueError(
+            "rolling-plane scroll requires full-width H40 40-column geometry")
+    if scroll_enabled and not (
+            features & cavc_routing.FEATURE_SHADOW_UPDATE_LISTS):
+        raise ValueError("rolling-plane scroll requires shadow update lists")
+    if scroll_enabled and not pattern_supply_enabled:
+        raise ValueError("rolling-plane scroll requires pattern supply")
     if audio_bytes & 1:
         raise ValueError(f"ADPCM decoded audio_bytes must be even, got {audio_bytes}")
     audio_control_bytes = ima_adpcm.encoded_bytes(audio_bytes)

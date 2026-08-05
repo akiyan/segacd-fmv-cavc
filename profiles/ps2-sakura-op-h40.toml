@@ -7,8 +7,8 @@ duration = "102.524400"
 sar = "1:1"
 # Loudness-match the quiet source master to Bad Apple's level
 # (measured mono I=-22.56 LUFS; gain into tanh soft clip and a
-# -1 dB limiter lands near -10 LUFS integrated).
-audio_filter = "aformat=channel_layouts=mono,volume=15.6dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
+# -1 dB limiter lands near -12 LUFS integrated).
+audio_filter = "aformat=channel_layouts=mono,volume=13.6dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
 mode = "H40"

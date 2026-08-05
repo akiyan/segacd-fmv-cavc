@@ -121,7 +121,9 @@ Keep these parts in every image:
 - The header legend lists every analysis legend category
   (`analysis_style.LEGEND_ORDER`) with its whole-movie EVAL-scope displayed
   tile total, mirroring the analysis overlay's category legend as one
-  swatch-labelled line. The scope prefix states the exact EVAL frame range.
+  swatch-labelled line. Like the overlay, `Scrl` (green chevron swatch)
+  appears only for a movie with an adopted hardware-scroll window and is
+  omitted otherwise. The scope prefix states the exact EVAL frame range.
   The totals, their order, and the scope string are written to the layout
   receipt (`legend_totals`, `legend_totals_order`, `legend_totals_scope`) so
   `/mixline` can repeat the same line without re-reading the TSV.
@@ -150,7 +152,9 @@ receipt instead of inferring alignment from image dimensions.
 - Do not treat raw Miss-frame or tile-frame totals as direct visual loss.
   Isolated one-frame Miss cells at 30 fps may be imperceptible and are often
   rescued immediately. Flag large simultaneous areas, consecutive any-Miss
-  frames, and repeated same-cell streaks separately.
+  frames, and repeated same-cell streaks separately. Inside an adopted scroll
+  window unsupplied wants report as `Scrl`, not `Miss`, so Miss totals are
+  not directly comparable across scroll and non-scroll segments.
 - Frame 0 is boot construction. Exclude it from timed totals.
 
 ## Resource
