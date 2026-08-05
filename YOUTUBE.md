@@ -59,11 +59,12 @@ Always include the source repository URL
 Never put `<` or `>` in a description. YouTube rejects them with
 `invalidDescription` (HTTP 400). Write "0.3s or more" or "within 4s" instead.
 
-Save the exact description to a UTF-8 text file and measure its Python
-character count before uploading. The limit is 5,000 characters; target 4,800
-or fewer and hard-fail above 5,000. When it is too long, shorten explanatory
-prose. Never drop the CRAM switch count, the specs, the layout reading guide,
-the encoder-technique section, the project link, or the current timeline links.
+Save the exact description to a UTF-8 text file and check it before uploading
+with `harness/youtube_description/check_upload_text.py`, which enforces the
+mechanical rules in this document. The limit is 5,000 characters; target 4,800
+or fewer. When it is too long, shorten explanatory prose. Never drop the CRAM
+switch count, the specs, the layout reading guide, the encoder-technique
+section, the project link, or the current timeline links.
 
 ## Write absolutely, never as a changelog
 
@@ -87,9 +88,31 @@ indices, the fixed aperture and per-source raster, the per-frame update budget
 under a single-speed CD, and the per-segment CRAM palettes. Prefer naming the
 concrete limit over calling something an optimization.
 
+## Video kinds
+
+Two kinds of video are published, and each stands alone. A viewer arriving at
+either one gets a complete account of what they are watching; the pair
+cross-reference each other as complements, never as a prerequisite.
+
+- **Analysis** — the 1920x1080 render whose frame carries the simulated Sega CD
+  output plus the source, category map, meters, and timelines.
+- **Playback** — a recording of the codec running, framed exactly as the
+  hardware outputs it. It has no analysis panels, no meters, and no timelines.
+
+Never describe analysis panels, meters, timelines, or the category legend in a
+playback description. Those elements are not on screen there, so naming them
+misleads the viewer. Describe what a playback video actually shows: the
+Mega-CD startup, the transition into the movie, the movie itself, and the DEBUG
+HUD row when the build carries one.
+
+The codec itself — what it is, what it achieves on this hardware, and which
+constraints shape the picture — belongs in both kinds.
+
 ## Description structure
 
-In both languages, in this order:
+In both languages, in this order.
+
+Shared by both kinds:
 
 1. **Introduction** — what the Sega CD Constraint-Aware Video Codec is: full
    motion video that unmodified Sega CD / Mega-CD hardware decodes and displays
@@ -99,12 +122,27 @@ In both languages, in this order:
 2. **Output and source specs** — the SEGA-CD output (mode, grid WxH, tile
    count, fps, audio, Prg/Wr0/Wr1/Dic capacities, CRAM palette switch count)
    and the Source (resolution, fps, audio). Do not show source bitrate.
-3. **How to read the layout** — what each panel, meter, and timeline shows and
-   how to interpret it. See "Analysis layout terms" below.
+3. **Why the picture looks like this** — the constraints a viewer can see but
+   not explain by looking. See "Explain what a viewer cannot infer".
 4. **What the encoder does** — a short list of the techniques applied, then the
    detail for each.
-5. **Project link** — plus any timeline or cross-upload links, English section
-   only.
+
+Analysis only:
+
+5. **How to read the layout** — what each panel, meter, and timeline shows and
+   how to interpret it. See "Analysis layout terms" below.
+
+Playback only:
+
+5. **What the recording contains** — that it starts at the emulator launch and
+   keeps the Mega-CD startup and CD-player transition before playback begins,
+   whether a DEBUG HUD row is drawn, and how the native raster was enlarged for
+   delivery.
+
+Both kinds end with:
+
+6. **Links** — the project link, the cross-link to the other kind for the same
+   encode, and any timeline link. English section only.
 
 ## CRAM switch count
 
@@ -202,10 +240,12 @@ sourceのrepository URL `https://github.com/akiyan/segacd-fmv-cavc` は常に
 説明文へ`<`と`>`を入れてはいけません。YouTubeが`invalidDescription`
 (HTTP 400)で拒否します。「0.3s or more」「within 4s」のように書きます。
 
-送信する説明文はUTF-8 text fileへ保存し、upload前にPythonの文字数で測ります。
-上限は5,000文字、運用目標は4,800文字以下で、5,000超はhard failです。長すぎる
-ときは説明の散文を短くします。CRAM切り替え回数、spec、layoutの読み方、
-encoder技術の節、project link、現行のtimeline linkは削ってはいけません。
+送信する説明文はUTF-8 text fileへ保存し、upload前に
+`harness/youtube_description/check_upload_text.py` で検査します。この文書の
+機械的に判定できる規則はそこで強制されます。上限は5,000文字、運用目標は
+4,800文字以下です。長すぎるときは説明の散文を短くします。CRAM切り替え回数、
+spec、layoutの読み方、encoder技術の節、project link、現行のtimeline linkは
+削ってはいけません。
 
 ## changelogではなく絶対的に書く
 
@@ -226,9 +266,30 @@ encoder技術の節、project link、現行のtimeline linkは削ってはいけ
 raster、単速CD下でのframeあたり更新予算、segmentごとのCRAM palette。何かを
 最適化と呼ぶより、具体的な限界を名指しすることを優先します。
 
+## 動画の種類
+
+公開する動画は2種類あり、それぞれ単体で完結します。どちらから来た視聴者も、
+今見ているものの説明を一通り得られます。2つは互いを補完するものとして参照
+しあいますが、前提条件としては扱いません。
+
+- **Analysis** — 1920x1080のrenderで、frameにSega CD出力のsimulationとsource、
+  category map、meter、timelineを持つもの。
+- **Playback** — codecの動作をhardwareが出力するそのままの画面で録画したもの。
+  解析panelもmeterもtimelineもありません。
+
+playbackの説明文に解析panel、meter、timeline、category legendを書いては
+いけません。そこには映っていないので、名前を出すこと自体が視聴者を誤らせます。
+playbackで実際に映るもの、すなわちMega-CDの起動画面、映画への遷移、映画本体、
+そしてbuildが持つ場合のDEBUG HUD行を書きます。
+
+codec自体が何であるか、このhardwareで何を成しているか、どの制約が絵を
+決めているかは、両方の種類に書きます。
+
 ## 説明文の構成
 
 英日とも、この順で書きます。
+
+両方に共通:
 
 1. **導入** — Sega CD Constraint-Aware Video Codecとは何か。無改造の
    Sega CD / Mega-CD自身が単速CDを読みながらdecodeして表示するfull motion
@@ -238,10 +299,25 @@ raster、単速CD下でのframeあたり更新予算、segmentごとのCRAM pale
 2. **出力とsourceのspec** — SEGA-CD出力 (mode、grid WxH、tile数、fps、音声、
    Prg/Wr0/Wr1/Dicの容量、CRAM palette切り替え回数) とSource (解像度、fps、
    音声)。sourceのbitrateは書きません。
-3. **layoutの読み方** — 各panel、meter、timelineが何を示し、どう解釈するか。
-   下の「解析layoutの用語」を参照します。
+3. **絵がこう見える理由** — 視聴者に見えていても、見ただけでは説明できない
+   制約。「一目では分からないことを説明する」を参照します。
 4. **encoderの動作** — 適用した技術の短い列挙と、それぞれの詳細。
-5. **project link** — timelineやcross-uploadのlinkも含め、英語節のみ。
+
+Analysisのみ:
+
+5. **layoutの読み方** — 各panel、meter、timelineが何を示し、どう解釈するか。
+   下の「解析layoutの用語」を参照します。
+
+Playbackのみ:
+
+5. **録画に何が入っているか** — emulator起動から始まり、再生前のMega-CD起動
+   画面とCD playerの遷移を保っていること、DEBUG HUD行が描かれるかどうか、
+   そしてnative rasterを配信用にどう拡大したか。
+
+両方の末尾:
+
+6. **link** — project link、同じencodeのもう一方の種類へのcross-link、そして
+   timeline link。英語節のみ。
 
 ## CRAM切り替え回数
 
