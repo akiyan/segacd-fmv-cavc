@@ -63,7 +63,6 @@ class SimArtifactCacheTests(unittest.TestCase):
             source = Path(tmp) / "movie.mp4"
             source.write_bytes(b"same source bytes")
             common = {
-                "CBRSIM_MODE": "H40",
                 "CBRSIM_W": "320",
                 "CBRSIM_H": "224",
                 "CBRSIM_FPS": "30",

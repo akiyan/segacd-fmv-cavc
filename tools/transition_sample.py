@@ -35,8 +35,9 @@ TARGET_H = 208
 # Width fills 240; content height = 240*1.25/1.570 = ~191 -> snap to 192
 # (8px black bars top+bottom, tile-aligned).
 CONTENT_H = 192
-# H32 dot ratio: display each pixel 1.25:1 (5:4). Burn in via integer
-# neighbour upscale 5x horizontal / 4x vertical -> PAR 5:4 = 1.25:1.
+# This sample sheet burns in a 1.25:1 (5:4) dot ratio via integer neighbour
+# upscale, 5x horizontal / 4x vertical. It is a standalone contact sheet and
+# does not use the codec's H40 output raster or its 32:35 dot ratio.
 PAR_HSCALE = 5
 PAR_VSCALE = 4
 

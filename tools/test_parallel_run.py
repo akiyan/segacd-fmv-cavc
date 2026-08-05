@@ -9,10 +9,9 @@ import parallel_run
 from encode_config import load_profile
 
 
-def write_profile(path: Path, *, source: str, mode: str = "H32") -> None:
-    width = 256 if mode == "H32" else 320
+def write_profile(path: Path, *, source: str, width: int = 320) -> None:
     path.write_text(f"""\
-schema_version = 4
+schema_version = 5
 
 [source]
 path = "{source}"
@@ -20,13 +19,12 @@ fps = "30"
 duration = "8"
 
 [video]
-mode = "{mode}"
 width = {width}
 height = 224
 fit = "pad"
 
 [output]
-directory = "tmpfs/{Path(source).stem}_{mode}_{width}x224_adpcm22/sim"
+directory = "tmpfs/{Path(source).stem}_H40_{width}x224_adpcm22/sim"
 emit_decisions = true
 
 [encoder]
@@ -52,7 +50,7 @@ class ParallelRunTests(unittest.TestCase):
     def test_stage_commands_stop_at_requested_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             profile_path = Path(tmp) / "movie.toml"
-            write_profile(profile_path, source="assets/movie.mp4", mode="H40")
+            write_profile(profile_path, source="assets/movie.mp4")
             profile = load_profile(profile_path)
             commands = parallel_run.stage_commands(
                 profile,
@@ -89,7 +87,7 @@ class ParallelRunTests(unittest.TestCase):
             path = Path(tmp) / "summary.tsv"
             result = parallel_run.JobResult(
                 Path("profiles/a.toml"),
-                "movie_H32_256x224_adpcm22",
+                "movie_H40_320x224_adpcm22",
                 "PASS",
                 "",
                 1.25,

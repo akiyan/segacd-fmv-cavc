@@ -221,16 +221,17 @@ def configure_from_log(log):
 
 
 def display_mode_name(log):
-    """Return the frozen display mode without consulting the shell."""
+    """Confirm the frozen decision log targets the only supported mode."""
     mode = str(
         log.get("mode")
         or (log.get("config") or {}).get("video", {}).get("mode", "")
     ).strip().upper()
     if not mode:
-        mode = "H40" if TCOLS == 40 else "H32"
-    if mode not in {"H32", "H40", "MODE4"}:
+        mode = av_config.DISPLAY_MODE
+    if mode != av_config.DISPLAY_MODE:
         raise SystemExit(
-            f"pack: unsupported display mode in decision log: {mode!r}")
+            f"pack: decision log targets display mode {mode!r}; this codec "
+            f"packs {av_config.DISPLAY_MODE} only")
     return mode
 
 
@@ -1755,10 +1756,10 @@ def write_stream(
     prebuf_bytes = stream_pay[:Bpat * PAT]           # frame1用プリバッファ(RING_CAP)
     prebuf_sec = -(-len(prebuf_bytes) // SECTOR)
     ring_peak = int(sc["ring_peak"])
-    # The sim decision log is the source of truth. Never let a changed shell
-    # environment silently turn an H32 stream into H40.
+    # The sim decision log is the source of truth for the display mode; a log
+    # frozen against a different mode must not be packed as this one.
     mode_name = display_mode_name(log)
-    _mode = {"H32": 0, "H40": 1, "MODE4": 2}[mode_name]
+    _mode = av_config.DISPLAY_MODE_BYTE
     # The first boot handoff stages one 24 KiB image at the bank front holding
     # only the optional boot-VRAM sidecar records. Main copies this image
     # before Sub reuses the front for frame output and the parity-specific
@@ -1867,7 +1868,7 @@ def write_stream(
     header = struct.pack(">4sHHHHHHHH", MAGIC, nfr, TCOLS, TROWS, C_CELLS,
                          POOL, BASE, FRAME_SECTORS, len(log["seg_pals"]))
     header += struct.pack(">LLLL", Bpat, routing_sec, prebuf_sec, ring_peak)
-    header += bytes([_mode])                          # offset 36: display mode
+    header += bytes([_mode])                          # offset 36: display mode (H40)
     header += b"\0"                                   # offset 37: pad
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 38,42: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 46: boot-stage sectors

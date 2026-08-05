@@ -11,7 +11,6 @@ ffmpeg の pad+scale だけで完結(PILループ不要=速い)。
 env:
   CBRSIM_OUT      profileのsim要求名。cbr_pathsがtmpfs実体pathへ解決する。
                   解析工程が生成したpreview/とstats.npz指定音声を使う
-  CBRSIM_MODE     画面モード H32/H40/mode4 (既定 H32)。画面サイズと PAR に使う
   STRAIGHT_OUT    tmpfs artifactに使う要求mp4名
   STRAIGHT_SCALE  整数拡大率 (既定 4)
 
@@ -31,7 +30,6 @@ import tmpfs_workspace
 from cbr_paths import artifact_path, sim_work_dir
 
 SIM = str(sim_work_dir())
-MODE = os.environ.get("CBRSIM_MODE", "H32")
 SCALE = int(os.environ.get("STRAIGHT_SCALE", "4"))
 OUT = Path(os.environ.get(
     "STRAIGHT_OUT", str(artifact_path("sim", sim_dir=SIM))))
@@ -66,9 +64,8 @@ def _export(actual_out: Path):
     if not pv:
         sys.exit("no preview frames in %s/preview" % SIM)
     W, H = Image.open(pv[0]).size                       # コンテンツ画素(タイルグリッド)
-    m = L.MODES[MODE]
-    SW, SH = max(m["sw"], W), max(m["sh"], H)           # 実機画面サイズ(コンテンツを中央配置)
-    par = m["par"]                                      # 1ドット横長比(表示アスペクト補正)
+    SW, SH = max(L.SCREEN_W, W), max(L.SCREEN_H, H)     # 実機画面サイズ(コンテンツを中央配置)
+    par = L.PAR                                         # 1ドット横長比(表示アスペクト補正)
     padx, pady = (SW - W) // 2, (SH - H) // 2
     outw = 2 * round(SW * SCALE * par / 2)              # 表示アスペクトを焼く(偶数化=yuv420p)
     outh = 2 * round(SH * SCALE / 2)
@@ -92,7 +89,7 @@ def _export(actual_out: Path):
         cmd += ["-c:a", "aac", "-b:a", "160k", "-shortest"]
     cmd += [str(actual_out)]
     print("straight sim -> %s  (%dx%d @ %dfps, mode=%s, content=%dx%d screen=%dx%d)"
-          % (OUT, outw, outh, fps, MODE, W, H, SW, SH), flush=True)
+          % (OUT, outw, outh, fps, L.MODE_NAME, W, H, SW, SH), flush=True)
     subprocess.run(cmd, check=True)
 
 

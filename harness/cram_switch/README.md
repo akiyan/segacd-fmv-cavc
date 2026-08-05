@@ -19,7 +19,7 @@ burst), and the whole picture's colours change in one frame (a visible pop).
   set (existing boundaries), the candidate set (mid-segment scene cuts detected
   from `mad_ed.npy`), and a control set (quiet mid-segment frames). Read-only;
   reuses the sim's cached `master/` frames and palette machinery.
-  Run: `CBRSIM_OUT=… CBRSIM_MODE=H40 CBRSIM_W=320 CBRSIM_H=224 CBRSIM_GPU=1 python -u measure_gain.py`
+  Run: `CBRSIM_OUT=… CBRSIM_GPU=1 python -u measure_gain.py`
   (needs the GPU venv for speed; CPU works but is ~10x slower).
 - `mad_ed.npy` — per-frame consecutive-frame luma MAD (scene-change signal),
   produced inline (see git history); peaks `> mean+3σ` are the hard-cut candidates.

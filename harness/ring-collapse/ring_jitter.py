@@ -1,7 +1,7 @@
 import os, sys, importlib
 import numpy as np
 sys.path.insert(0, "tools")
-os.environ["CBRSIM_W"]="320"; os.environ["CBRSIM_H"]="224"; os.environ["CBRSIM_MODE"]="H40"
+os.environ["CBRSIM_W"]="320"; os.environ["CBRSIM_H"]="224"
 import pack_stream as P
 log = P.load_log("tmp/machi_ed_dec/decisions.pkl")
 POOL = int(log["vram_tiles"]); PPS = P.PAT_PER_SEC

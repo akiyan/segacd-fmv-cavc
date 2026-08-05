@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 
 [source]
 path = "assets/machi_op.mp4"
@@ -17,7 +17,6 @@ audio_filter = "aformat=channel_layouts=mono,volume=6.8dB,asoftclip=type=tanh,al
 auto_range = true
 
 [video]
-mode = "H40"
 width = 320
 height = 144
 fit = "crop"

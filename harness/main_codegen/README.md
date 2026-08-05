@@ -53,8 +53,8 @@ Measure the per-frame instruction cost against a real packed stream with:
 
 ```sh
 tools/python.sh harness/main_codegen/measure_cycles.py \
-  --header out/lunar-sss-op-h32/HEADER.DAT \
-  --body out/lunar-sss-op-h32/BODY.DAT
+  --header out/lunar/HEADER.DAT \
+  --body out/lunar/BODY.DAT
 ```
 
 The cycle model follows the actual word-displacement branches and indexed jump

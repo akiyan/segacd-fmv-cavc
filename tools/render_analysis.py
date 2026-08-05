@@ -17,7 +17,6 @@ the sim's checkpointed playback model, never the clean source WAV.
                    miss_masks.npy/buffer_remaining.npz/palettes.bin/
                    audio WAV/report.txt)。preview/catmap は本工程で生成する。
   CBRSIM_SRCLABEL  右Sourceパネル見出し(既定 "Source")
-  CBRSIM_MODE      画面モード H32/H40 (既定 H32。DMA理論値に使う)
   ANALYSIS_OUT     tmpfs artifactに使う要求mp4名
   ANALYSIS_TSV     明示した場合の永続TSV実体path (既定はlogs/のunique path)
   ANALYSIS_CQ      h264_nvenc cq (既定 23)
@@ -92,7 +91,6 @@ def _source_spec():
 
 
 SRC_SPEC = _source_spec()
-MODE = os.environ.get("CBRSIM_MODE", "H32")
 OUT_MP4 = Path(os.environ.get(
     "ANALYSIS_OUT", str(artifact_path("analysis", sim_dir=SIM))))
 OUT_TSV = (
@@ -169,15 +167,15 @@ SOURCE_SAR_DEN = _SOURCE_SAR.denominator
 _analysis_profile = CONFIG_PROFILE.section("analysis") if CONFIG_PROFILE else {}
 SOURCE_CANVAS = tuple(_analysis_profile.get("source_canvas", (RW, RH)))
 SOURCE_CANVAS_W, SOURCE_CANVAS_H = map(int, SOURCE_CANVAS)
-# 画面モード(H32/H40/mode4)から PAR・実機画面サイズ・表示アスペクトを取得
-_M = L.MODES[MODE]
-PAR = _M["par"]                                # 1ドット横長比
+# H40画面の PAR・実機画面サイズ・表示アスペクト
+MODE = L.MODE_NAME
+PAR = L.PAR                                    # 1ドット横長比
 A_CONTENT = (W / H) * PAR                      # カテゴリ(タイル解析)の表示比
 RES = f"{W}x{H} ({TCOLS}x{TROWS})"
 # 実機画面(この解像度を画面いっぱいに拡大せず中央配置する)。
-SCREEN_W = max(_M["sw"], W)
-SCREEN_H = max(_M["sh"], H)
-SCREEN_A = L.screen_aspect(MODE)               # 画面の表示アスペクト(H32/H40=64:49, mode4≈14:9)
+SCREEN_W = max(L.SCREEN_W, W)
+SCREEN_H = max(L.SCREEN_H, H)
+SCREEN_A = L.screen_aspect()                   # 画面の表示アスペクト(H40=64:49)
 BUF = np.load(f"{SIM}/buffer_remaining.npz")
 BUF_SCHEMA = int(BUF["schema_version"]) if "schema_version" in BUF else 1
 BUF_KIND = str(BUF["remaining_kind"]) if "remaining_kind" in BUF else "legacy"

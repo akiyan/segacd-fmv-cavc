@@ -119,6 +119,116 @@ limit, and physical CD/PrgBuf scheduling remain valid without it.
 5. Complete a full DEBUG playback gate and compare HUD `cold_runs` with the
    packed run trace before treating lower run counts as a usable improvement.
 
+## H32 display mode
+
+### Repository reference
+
+The removal diff is fixed at commits
+[`a7b185d`](https://github.com/akiyan/segacd-fmv-cavc/commit/a7b185d),
+[`6b6f0b1`](https://github.com/akiyan/segacd-fmv-cavc/commit/6b6f0b1), and
+[`78613a6`](https://github.com/akiyan/segacd-fmv-cavc/commit/78613a6).
+
+### Boundary and purpose
+
+H32 is the Mega Drive's 256-pixel-wide display mode: a 32x28 cell aperture with
+a 8:7 dot ratio, which describes the same 64:49 visible NTSC area as H40's
+320x224 at 32:35. Supporting it let a source be encoded into 896 cells instead
+of 1,120, a 20% smaller tile grid for the same visible picture.
+
+That saving does not survive contact with the rest of the codec. A wider dot
+makes an ordered dither read as coarse texture rather than as a tone, which is
+the opposite of what this codec's palette and dither stages are tuned for. H32
+also has a narrower per-VBlank transfer budget — a conservative 2,800
+DMA-word-equivalents against H40's 3,200 — so the cold cap that keeps a
+schedule feasible is lower. Fewer cells to fill is cancelled by fewer patterns
+deliverable per frame.
+
+### Data flow and algorithm
+
+The mode was a per-source encoder setting carried end to end:
+
+1. `[video].mode` in the profile TOML selected `H32`, `H40`, or `MODE4`.
+2. The encoder used the mode to pick the native horizontal raster (256 or 320)
+   and the dot ratio used by the HAR-aware pad/crop conversion.
+3. The mode governed the per-frame Main-CPU publication cost, because the DEBUG
+   HUD's 43 digits split at the screen width: a 32-cell row left 11 spill
+   digits at four sprite-table words each, while a 40-cell row leaves three.
+4. The packer wrote the mode as one byte at `HEADER.DAT` offset 36, encoded
+   `0` = H32, `1` = H40, `2` = mode4.
+5. A generic player read that byte at startup and chose VDP register 12
+   (`0x8C00` for H32, `0x8C81` for H40), the screen column count, and the
+   VBlank word budget. A specialized player resolved the same three values at
+   build time from `PC_MODE` in the generated `player_constants.inc`.
+6. The centring offsets followed: `col0 = (screen_cols - tcols) / 2`, with
+   `screen_rows` fixed at 28 in both modes.
+
+mode4 — the Master System 192-line Mode 4 display — was never a player path. It
+existed only as a name in three validation lists and as a measured DMA budget
+in the `dmabench` diagnostic, which displayed in SMS Mode 4 and switched back
+to Mode 5 inside VBlank to issue each DMA. Reaching it from a profile would
+have failed at player-constant generation, at the analysis renderer, and at the
+recorder's native-size lookup.
+
+### Dependencies
+
+- `[video].mode` in every profile TOML, and the `CBRSIM_MODE` environment
+  variable it mapped to.
+- A dot-ratio and default-raster table in the source-geometry helper, keyed by
+  mode, plus a `mode` parameter on its plan and filter functions and a
+  `--mode` CLI option.
+- A screen-width and VBlank-budget table in the player-constant generator,
+  keyed by the `HEADER.DAT` mode byte.
+- A screen-geometry, dot-ratio, and theoretical-DMA table in the analysis
+  layout module, read by the analysis renderer and the straight-sim exporter.
+- A `mode` parameter on the name-table word model, which split the DEBUG HUD
+  workload at the screen width.
+- Two byte-identical HUD OCR layouts distinguished only by object identity,
+  plus a width-to-layout selector, in the frame reader.
+- A mode-to-native-recording-size dispatch in the parallel-run orchestrator.
+- The `VB_WORDS_H32` / `VB_WORDS_H40` constant pair, the `md_mode` runtime
+  variable, the startup mode branch, and the mode-conditional VDP register-12
+  writes in the Main-CPU player.
+- A `MODE` assembler symbol on the `dmabench` and `cpuvrambench` diagnostics,
+  reached through `DMABENCH_MODE` and `CPUVRAMBENCH_MODE` in the Makefile.
+- The artifact stem's display-mode component, which is now the fixed literal
+  `H40`.
+
+### Required invariants
+
+- The mode must be frozen in the sim decision log and read from there by the
+  packer. Reading it from the shell environment at pack time lets a changed
+  variable relabel a stream that was encoded for the other mode.
+- The `HEADER.DAT` mode byte, the packed geometry, and the player's VDP
+  register-12 write must agree. A player that infers the width from anything
+  else — the frame pacing interval, for instance — silently displays every
+  stream in one mode.
+- A grid must fit its mode's aperture: `tcols <= screen_cols` and
+  `trows <= 28`. The centring offsets are derived, never stored.
+- Rolling-plane scroll requires the full-width 40-column grid. HScroll shifts
+  every scanline, so a narrower centered grid rolls its own side borders.
+- The DEBUG HUD reserve must be computed from the screen width, not assumed:
+  the spill-digit sprite records are the larger cost and they grow as the
+  screen narrows.
+- Every consumer of the mode must be updated together. A single stale lookup
+  table — one keyed `mode4` in lowercase while the profile layer upper-cases —
+  is a runtime `KeyError` rather than a rejected profile.
+
+### Minimum reimplementation validation
+
+1. Encode one source at both modes and confirm each produces a schedule that
+   meets the CD 1x deadline at every prefix, with the cold cap qualified
+   separately per mode rather than inherited.
+2. Build the player-constant matrix for both modes at 15, 24 and 30 fps, in
+   generic and specialized form, and confirm the generated screen width,
+   VBlank budget, and centring offsets.
+3. Prove the DEBUG HUD OCR layout for both screen widths: cell count, the wrap
+   column, and that the unused row-1 width stays movie-visible.
+4. Record a full DEBUG playback per mode and pass the complete HUD gate; a mode
+   that only assembles is not qualified.
+5. Confirm the analysis renderer and the upload transcode bake the correct dot
+   ratio per mode, and verify any new mode's pixel aspect in the geometry
+   harness before adding it.
+
 ---
 
 <a id="jp"></a>
@@ -227,3 +337,100 @@ byte会計、Prg/Wr/Dicのsource分割、playerの488 record上限、物理CD/Pr
    実行します。
 5. full DEBUG playback gateを完了し、HUD `cold_runs`とpacked run traceを比較してから、
    run数低下を利用可能な改善として扱います。
+
+## H32 display mode
+
+### Repository上の参照先
+
+削除diffはcommit
+[`a7b185d`](https://github.com/akiyan/segacd-fmv-cavc/commit/a7b185d)、
+[`6b6f0b1`](https://github.com/akiyan/segacd-fmv-cavc/commit/6b6f0b1)、
+[`78613a6`](https://github.com/akiyan/segacd-fmv-cavc/commit/78613a6)
+で固定されています。
+
+### 境界と目的
+
+H32はMega Driveの横256画素のdisplay modeです。32x28 cellのapertureにドット比8:7で、
+H40の320x224・32:35と同じ64:49の可視領域を表します。これを使うと、同じ見た目の絵を
+1,120 cellではなく896 cellへencodeでき、tile gridが20%小さくなります。
+
+しかしこの節約はcodecの他の部分と噛み合いません。ドットが大きいと、ordered ditherは
+階調ではなく粗いテクスチャとして見えます。これはこのcodecのpaletteとdither段が想定
+している方向と逆です。さらにH32はVBlank当たりのtransfer budgetが狭く、H40の3,200
+DMA-word相当に対して安全側で2,800しかないため、scheduleを成立させるcold capも下がり
+ます。埋めるcellが減っても、1コマで供給できるpatternがそれ以上に減って相殺されます。
+
+### Data flowとalgorithm
+
+modeはsourceごとのencoder設定として端から端まで運ばれていました。
+
+1. profile TOMLの `[video].mode` が `H32` / `H40` / `MODE4` を選ぶ。
+2. encoderはmodeからnativeな横raster(256または320)と、HAR対応のpad/crop変換に使う
+   ドット比を決める。
+3. modeはframeごとのMain-CPU publication costを左右する。DEBUG HUDの43桁が画面幅で
+   分割されるためで、32 cell行では11桁がsprite table 4 wordずつのspillになり、
+   40 cell行では3桁で済む。
+4. packerはmodeを1 byteとして `HEADER.DAT` offset 36へ書く。`0`=H32、`1`=H40、
+   `2`=mode4。
+5. 汎用playerは起動時にこのbyteを読み、VDP register 12(`0x8C00`=H32、`0x8C81`=H40)、
+   画面列数、VBlank word budgetを選ぶ。specialized playerは生成した
+   `player_constants.inc` の `PC_MODE` から同じ3値をbuild時に解決する。
+6. 中央寄せoffsetはそこから導出する。`col0 = (screen_cols - tcols) / 2` で、
+   `screen_rows` はどちらのmodeでも28固定。
+
+mode4(Master Systemの192ライン Mode 4表示)はplayer経路として存在したことがありません。
+3つのvalidation listに名前があるのと、`dmabench` 診断でDMA budgetを実測していただけ
+です。この診断はSMS Mode 4で表示し、VBlank内だけMode 5へ戻してDMAを出していました。
+profileからmode4へ到達しても、player constant生成、analysis renderer、recorderの
+native size解決のいずれかで失敗します。
+
+### 依存関係
+
+- 全profile TOMLの `[video].mode` と、それが対応していた環境変数 `CBRSIM_MODE`。
+- source geometry helper内の、mode keyのドット比・既定raster表と、plan/filter関数の
+  `mode` 引数、および `--mode` CLI option。
+- player constant generator内の、`HEADER.DAT` mode byteをkeyにした画面幅・VBlank
+  budget表。
+- analysis layout module内の、画面geometry・ドット比・理論DMA表。analysis renderer
+  とstraight-sim exporterが参照していた。
+- name-table word modelの `mode` 引数。DEBUG HUDの負荷を画面幅で分割していた。
+- frame reader内の、object identityでしか区別できないbyte同一なHUD OCR layout 2本と、
+  幅からlayoutを選ぶ関数。
+- parallel-run orchestrator内の、modeからnative recording sizeを引く分岐。
+- Main-CPU player内の `VB_WORDS_H32` / `VB_WORDS_H40` 定数対、`md_mode` 実行時変数、
+  起動時のmode分岐、mode条件つきのVDP register 12書き込み。
+- `dmabench` / `cpuvrambench` 診断のassembler symbol `MODE` と、Makefileの
+  `DMABENCH_MODE` / `CPUVRAMBENCH_MODE`。
+- artifact stemのdisplay mode成分。現在は固定literal `H40`。
+
+### 必須invariant
+
+- modeはsim decision logで凍結し、packerはそこから読むこと。pack時にshell環境から
+  読むと、変数の変更だけで別modeでencodeしたstreamにラベルを付け替えられてしまう。
+- `HEADER.DAT` のmode byte、packされたgeometry、playerのVDP register 12書き込みが
+  一致すること。playerが他の値(例えばframe pacing interval)から幅を推測すると、
+  全streamが黙って片方のmodeで表示される。
+- gridは自分のmodeのapertureに収まること。`tcols <= screen_cols` かつ
+  `trows <= 28`。中央寄せoffsetは導出値であり、保存しない。
+- rolling-plane scrollは全幅40列gridを要求すること。HScrollは全scanlineをずらすため、
+  幅の狭い中央寄せgridでは自分の左右borderが流れてしまう。
+- DEBUG HUDのreserveは画面幅から計算すること。spill桁のsprite recordの方が高価で、
+  画面が狭いほど増える。
+- modeの利用者は全て同時に更新すること。lookup表が1つでも古いと(profile層が大文字化
+  する一方で表のkeyが小文字の `mode4` のまま、など)、profileが拒否されるのではなく
+  実行時の `KeyError` になる。
+
+### 再実装時の最小validation
+
+1. 同一sourceを両modeでencodeし、どちらも全prefixでCD 1x deadlineを満たす
+   scheduleになることを確認します。cold capはmodeごとに個別にqualifyし、
+   もう一方から引き継ぎません。
+2. 15/24/30 fpsについて両modeのplayer constant matrixをgenericとspecialized両方で
+   buildし、生成された画面幅、VBlank budget、中央寄せoffsetを確認します。
+3. 両方の画面幅についてDEBUG HUD OCR layoutを証明します。cell数、折り返し列、
+   および行1の未使用幅がmovie表示のまま残ることを確認します。
+4. modeごとにfull DEBUG playbackを録画し、HUD gateを完全に通します。assembleが
+   通るだけのmodeはqualified扱いにしません。
+5. analysis rendererとupload transcodeがmodeごとに正しいドット比を焼き込むことを
+   確認します。新しいmodeを追加する場合は、先にgeometry harnessでpixel aspectを
+   検証します。

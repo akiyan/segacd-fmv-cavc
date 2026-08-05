@@ -11,7 +11,7 @@
  * active 中は測らない: VDP FIFO は 4 ワード深で、active 中の CPU 書きは即
  * FIFO 待ちになるため budget 設計の対象にしない。
  *
- * モード: --defsym MODE=0(H32,既定) / 1(H40)。
+ * 表示はH40固定(codecの唯一の出力モード)。
  */
 .equ VDP_DATA, 0x00C00000
 .equ VDP_CTRL, 0x00C00004
@@ -24,13 +24,6 @@
 .equ DBGFONT_N, 16
 .equ NT, 0xC000				/* nametable */
 .equ HI0, 4096				/* 二分探索上限(理論上限 ~1.2k 語の3倍超) */
-
-.ifndef MODE
-.equ MODE, 0
-.endif
-.if (MODE != 0) && (MODE != 1)
-	.error "cpuvrambench supports MODE=0 (H32) or MODE=1 (H40) only"
-.endif
 
 .text
 	.incbin "security.bin"
@@ -50,11 +43,7 @@ ip_entry:
 	jsr	BIOS_LOAD_DEFAULT_VDP_REGS
 	jsr	BIOS_CLEAR_VRAM
 	/* 表示モード。BIOS_VDP_DISP_ENABLE は reg1 を戻し得るので使わない。 */
-.if MODE == 1
 	move.w	#0x8C81, (VDP_CTRL).l		/* reg12 H40 */
-.else
-	move.w	#0x8C00, (VDP_CTRL).l		/* reg12 H32 */
-.endif
 	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc 2 */
 	move.w	#0x9001, (VDP_CTRL).l		/* plane 64x32 */
 	move.w	#0x8230, (VDP_CTRL).l		/* reg2 plane A = 0xC000 */
@@ -96,10 +85,10 @@ bs_loop:
 	move.w	d6, d5				/* not -> hi=mid */
 	bra	bs_loop
 bs_done:
-	/* 結果表示はH32 mode5で統一(dmabenchと同じ結果画面)。 */
+	/* 結果表示もH40 mode5で統一(dmabenchと同じ結果画面)。 */
 	move.w	#0x8004, (VDP_CTRL).l
 	move.w	#0x8174, (VDP_CTRL).l
-	move.w	#0x8C00, (VDP_CTRL).l
+	move.w	#0x8C81, (VDP_CTRL).l
 	move.w	#0x9001, (VDP_CTRL).l
 	move.w	#0x8230, (VDP_CTRL).l
 	move.w	#0x8F02, (VDP_CTRL).l

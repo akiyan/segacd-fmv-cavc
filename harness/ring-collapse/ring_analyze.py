@@ -1,7 +1,7 @@
 import os, sys, importlib
 import numpy as np
 sys.path.insert(0, "tools")
-os.environ["CBRSIM_W"]="320"; os.environ["CBRSIM_H"]="224"; os.environ["CBRSIM_MODE"]="H40"
+os.environ["CBRSIM_W"]="320"; os.environ["CBRSIM_H"]="224"
 RING_CAP_KB = os.environ.get("RCAP","300")
 os.environ["CBRSIM_RING_CAP_KB"]=RING_CAP_KB
 

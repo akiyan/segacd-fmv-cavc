@@ -104,7 +104,7 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
     title build version only; the on-disc `HEADER.DAT` layout has no independent
     version field. Update `tools/av_version.txt` whenever
     you bump.
-  - Example: `SEGA-CD FMV of <Work> - mode4 max resolution 256x176/32x22 20260710.e1.p1`.
+  - Example: `SEGA-CD FMV of <Work> - max resolution 320x224/40x28 20260710.e1.p1`.
 - **Description structure** (in both languages, in this order):
   1. Overview — one or two lines on what the video is.
      Name the codec **Sega CD Constraint-Aware Video Codec**. Do not use the
@@ -252,8 +252,9 @@ offline tools; the player does not read it.
 Resolution, aspect, and frame rate are **per-source encoder settings**
 within Sega CD limits, not fixed presets:
 
-- Display mode / resolution / aspect (H32 / H40 / mode4), tile grid sized to the
-  per-frame DMA budget.
+- Resolution and aspect inside the fixed H40 320x224 aperture, with the tile
+  grid sized to the per-frame DMA budget. H40 is the only display mode; see
+  [`REMOVED.md`](REMOVED.md) for what an H32 reimplementation would need.
 - Frame rate = the source's native rate.
 - Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
   CPU through full lookup tables installed once in Sub PRG-RAM. It is the only
@@ -300,7 +301,7 @@ Use `CBRSIM_FORCE_REENCODE=1` only for an explicitly requested clean encode.
 
 ```
 stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
-       e.g. OP1_ps2_H32_256x144_adpcm22
+       e.g. OP1_ps2_H40_320x144_adpcm22
 ```
 
 | Artifact | Path |
@@ -316,8 +317,8 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
 | Upload compilation (`compilation`) | printed direct tmpfs path ending in `<stem>_emu.mp4` |
 
 - `<input-basename>`: the source file name without extension.
-- `<display-mode>`: `H32` / `H40` / `mode4`.
-- `<resolution>`: the Sega CD output resolution in pixels, `WxH` (e.g. `256x144`).
+- `<display-mode>`: always `H40`, kept so an artifact path stays self-describing.
+- `<resolution>`: the Sega CD output resolution in pixels, `WxH` (e.g. `320x144`).
 - `<audio-format>`: always `adpcm22` (see [ADPCM.md](ADPCM.md)).
 
 ## Hardware Facts
@@ -468,16 +469,14 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
 The final line printed by `run-file` is the direct tmpfs MP4 path. Use that
 path for verification and upload.
 
-- H32: 256x224 PAR 8:7 becomes 2048x1568 SAR 1:1. This is exact 8x horizontal
-  and 7x vertical pixel replication.
-- H40: 320x224 PAR 32:35 becomes the same 2048x1568 SAR 1:1 aperture. A
-  practical-size exact integer replication is impossible, so nearest-neighbour
-  assigns each source column to 6 or 7 output columns without colour blending.
+- H40 320x224 PAR 32:35 becomes a 2048x1568 SAR 1:1 aperture. A practical-size
+  exact integer replication is impossible, so nearest-neighbour assigns each
+  source column to 6 or 7 output columns without colour blending. Vertical
+  replication is an exact 7x.
 - The nearest-neighbour enlargement preserves source colour samples, but the
   H.264 mezzanine and YouTube delivery are re-encoded and are not end-to-end
   lossless. Use CRF 10 to give YouTube a clean high-resolution input.
 - Do not add `-ss`, `-t`, an fps filter, or `-r` to the standard upload path.
-- Do not guess a mode4 PAR; verify it in the geometry harness before adding it.
 - Upload the full-quality tmpfs artifact before it is evicted. Do not downscale
   the deliverable itself to fit a file-transfer size limit; render a separate
   `896x576` crf20 preview when a small copy is needed.
@@ -549,7 +548,7 @@ path for verification and upload.
 - **Legacy 192-line captures and window screenshots are not pixel-exact**:
   window screenshots are non-integer scaled, so pixel-perfect comparisons
   against decoded ground truth fail on dithered content (a 1px sampling shift
-  flips half the dither pixels). Use the current native 256x224/320x224 FFV1
+  flips half the dither pixels). Use the current native 320x224 FFV1
   recording or emulator-side dumps for pixel-level checks, and treat cell-mean
   correlation as alignment-tolerant but detail-blind.
 - **The sim is a MODEL of the hardware — when the two disagree, suspect the sim,
@@ -658,9 +657,9 @@ scheduler; the project tools coordinate their heavy stages through Linux
 - **GPU**: `SEGACD_GPU_TOKENS`, default 1. GPU palette/quantization and NVENC
   muxing acquire it only while using the device.
 - **EMU**: `SEGACD_EMU_TOKENS`, default 2. Every `run_headless.sh` invocation
-  acquires one. The two-instance default is qualified by same-Replay H32/H40
-  FFV1/FLAC comparisons with exact decoded video, PCM, timestamps, packet
-  durations, and metadata.
+  acquires one. The two-instance default is qualified by same-Replay
+  FFV1/FLAC comparisons across two concurrent profiles, with exact decoded
+  video, PCM, timestamps, packet durations, and metadata.
 - **output stem**: one exclusive lock covers a complete profile pipeline. A
   second process targeting the same `<stem>` fails immediately rather than
   sharing packed files, tmpfs artifacts, or recording paths.
@@ -715,7 +714,7 @@ evidence alone.
   they can access the NVIDIA device nodes.
 - Use `tools/python.sh --gpu`, which selects the isolated `.venv-gpu` containing
   managed CPython 3.13.14 + NumPy 2.3.5 + Pillow 12.1.1 + CuPy 14.1.1. This
-  exact environment completed a full 2,535-frame Lunar H32 sim. The CPU
+  exact environment completed a full 2,535-frame Lunar sim. The CPU
   `.venv` remains on managed CPython 3.14.4. The former
   `cbrsim-gpu-stable` venv inherited system NumPy/Pillow and is rollback-only.
   The still older `cbrsim-gpu` venv's NumPy 2.5.1 corrupted long runs (segfaults

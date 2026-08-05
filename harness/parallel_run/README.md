@@ -5,11 +5,12 @@ sharing output paths, tmpfs leases, X displays, RetroArch system directories,
 or fixed build intermediates.
 
 The two profiles intentionally encode only the first eight seconds of Bad Apple
-in H32 and H40. Eight seconds keeps repeated qualification practical while
-still giving Extract, Palette, Quantize, Decide, pack, and recording stages
-enough work to overlap visibly on this host. The distinct H32/H40 stems also
-exercise independent build and video paths without making content itself
-another qualification variable.
+at two H40 geometries, full-frame 320x224 and letterboxed 320x176. Eight seconds
+keeps repeated qualification practical while still giving Extract, Palette,
+Quantize, Decide, pack, and recording stages enough work to overlap visibly on
+this host. The two distinct grids give distinct artifact stems, so they exercise
+independent build and video paths without making content itself another
+qualification variable.
 
 `tools/parallel_run.py` holds each profile's artifact-stem lock for the whole
 local pipeline. The sim transfers its live tmpfs lease to the parent before
@@ -34,7 +35,7 @@ Run the local pipeline sequentially:
 tools/python.sh tools/parallel_run.py \
   --sequential --through disc --force-reencode \
   harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-letterbox-short.toml
 ```
 
 Run the same work concurrently:
@@ -43,7 +44,7 @@ Run the same work concurrently:
 tools/python.sh tools/parallel_run.py \
   --jobs 2 --through disc --force-reencode \
   harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-letterbox-short.toml
 ```
 
 Snapshot the deterministic outputs after each run and compare the concurrent
@@ -53,13 +54,13 @@ result with the sequential baseline:
 tools/python.sh harness/parallel_run/snapshot.py \
   --output logs/parallel-run/issue73-sequential/artifacts.tsv \
   harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-letterbox-short.toml
 
 tools/python.sh harness/parallel_run/snapshot.py \
   --output logs/parallel-run/issue73-parallel/artifacts.tsv \
   --compare logs/parallel-run/issue73-sequential/artifacts.tsv \
   harness/parallel_run/profiles/issue73-bad-apple-h40-short.toml \
-  harness/parallel_run/profiles/issue73-bad-apple-h32-short.toml
+  harness/parallel_run/profiles/issue73-bad-apple-h40-letterbox-short.toml
 ```
 
 Use `--through hud` for the complete local sim, verified DEBUG disc, lossless
@@ -74,6 +75,13 @@ sequential and concurrent `decisions.pkl`, `HEADER.DAT`, `BODY.DAT`, and
 durations, and stream metadata must match exactly.
 
 ## Qualified result
+
+The numbers below were measured with a 320x224 plus 256x224 profile pair. The
+256x224 half is gone with H32, so the isolation qualification must be re-run on
+the current 320x224 plus 320x176 pair before these figures are cited again. The
+resource-isolation conclusions they established still define what a passing run
+must show: identical artifact hashes between the sequential and concurrent
+runs, separate Xvfb displays, and no cancellation under shared-token pressure.
 
 On the 26-CPU-token workstation, a clean sequential H40+H32 sim/disc run took
 15.8 seconds and the two-job run took 9.9 seconds, a 37% wall-time reduction.

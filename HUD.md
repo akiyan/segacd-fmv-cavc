@@ -14,14 +14,12 @@ Build a DEBUG disc:
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Release builds omit the HUD. H32 and H40 DEBUG builds carry the same 43
-hexadecimal digits. H32 wraps after 32 cells and uses 11 cells on a second
-row. H40 wraps after 40 cells and uses three cells on a second row.
+Release builds omit the HUD. A DEBUG build carries 43 hexadecimal digits. The
+row wraps after 40 cells and uses three cells on a second row.
 
-The first 32 H32 or 40 H40 digits are one-word Window name-table entries. Each
-second-row digit is one four-word sprite-table record, so the cadence-final HUD
-DMAs transfer 76 words in H32 and 52 words in H40. The movie Plane A table is
-not used as a HUD route.
+The first 40 digits are one-word Window name-table entries. Each second-row
+digit is one four-word sprite-table record, so the cadence-final HUD DMAs
+transfer 52 words. The movie Plane A table is not used as a HUD route.
 
 ## Physical layout
 
@@ -29,9 +27,10 @@ Each cell is an 8x8 hexadecimal glyph. The glyph's top scanline also contains
 four two-pixel bars that encode the nibble directly. OCR reads the bars and
 checks the visible glyph as an independent confidence signal.
 
-The table lists logical cell offsets before native-width wrapping. H32 maps
-`row = offset // 32` and `column = offset % 32`. H40 maps
-`row = offset // 40` and `column = offset % 40`.
+The table lists logical cell offsets before native-width wrapping, which maps
+`row = offset // 40` and `column = offset % 40`. `tools/read_frameno.py`
+publishes that single layout as `HUD_LAYOUT`, its digit count as `HUD_CELLS`,
+its 40-cell row width as `HUD_ROW_CELLS`, and returns it from `hud_layout()`.
 
 | Stored value | Logical cells | Digits | Decoded field or packing |
 |---|---:|---:|---|
@@ -103,8 +102,8 @@ The transport-retry remainder is
 was spent; a larger wait can also mean the Sub path reached the next sector
 earlier.
 
-On every generic and specialized H32/H40 path, Main asserts `CMD_SWAP` without
-blocking after the final pattern DMA and repair and after every read from the current
+On every generic and specialized path, Main asserts `CMD_SWAP` without blocking
+after the final pattern DMA and repair and after every read from the current
 Word RAM bank. Main then continues the name-table, scroll, HUD, CRAM, and publication path while
 Sub exchanges the banks, flushes pending WordBuf data, and pumps the CD. At the
 next playback-loop head, `sub_wait_scanlines` measures only the time from
@@ -276,13 +275,12 @@ DEBUG disc を build します。
 make disc CONFIG=profiles/PROFILE.toml DEBUG=1
 ```
 
-Release build は HUD を省きます。H32 と H40 の DEBUG build は同じ 43 桁の
-16 進値を持ちます。H32 は 32 cell の後で折り返し、2 行目の 11 cell を使います。
-H40 は 40 cell の後で折り返し、2 行目の 3 cell を使います。
+Release build は HUD を省きます。DEBUG build は 43 桁の 16 進値を持ちます。
+行は 40 cell の後で折り返し、2 行目の 3 cell を使います。
 
-先頭のH32 32桁 / H40 40桁は1-word Window name-table entryです。2行目の各桁は
-4-word sprite-table recordなので、cadence-final HUD DMAはH32で76 word、H40で
-52 wordを転送します。Movie Plane A tableはHUD routeに使いません。
+先頭40桁は1-word Window name-table entryです。2行目の各桁は4-word
+sprite-table recordなので、cadence-final HUD DMAは52 wordを転送します。
+Movie Plane A tableはHUD routeに使いません。
 
 ## 物理 layout
 
@@ -290,9 +288,11 @@ H40 は 40 cell の後で折り返し、2 行目の 3 cell を使います。
 表す 2 pixel 幅の bar も 4 本あります。OCR は bar を読み、表示 glyph を独立した
 confidence check に使います。
 
-表の cell は native width で折り返す前の logical offset です。H32 は
-`row = offset // 32`、`column = offset % 32`、H40 は
+表の cell は native width で折り返す前の logical offset で、
 `row = offset // 40`、`column = offset % 40` を使います。
+`tools/read_frameno.py` はこの単一 layout を `HUD_LAYOUT`、その桁数を
+`HUD_CELLS`、40 cell の行幅を `HUD_ROW_CELLS` として公開し、`hud_layout()`
+で返します。
 
 | Stored value | Logical cells | Digits | Decoded field または packing |
 |---|---:|---:|---|
@@ -364,7 +364,7 @@ Transport-retry remainder は
 使った理由の diagnostic です。Wait の増加は Sub path が次 sector へ早く到達した
 結果でもあり得ます。
 
-すべてのgeneric / specialized H32/H40 pathで、Mainは最後のpattern DMAと
+すべてのgeneric / specialized pathで、Mainは最後のpattern DMAと
 先頭word補修、および現在のWord RAM bankに対する全readを終えた後、
 blockingせず`CMD_SWAP`をassert
 します。その後Mainがname-table、scroll、HUD、CRAM、publication pathを進む間に、Subはbank交換、

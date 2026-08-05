@@ -1,4 +1,4 @@
-schema_version = 4
+schema_version = 5
 
 [source]
 path = "assets/TOS.mp4"
@@ -11,18 +11,23 @@ sar = "1:1"
 audio_filter = "aformat=channel_layouts=mono,volume=5.8dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
-mode = "H32"
-width = 256
-height = 224
+# Letterbox raster sized to the picture, machi-op style: the 16:9 source is
+# exactly 320x164 after HAR 32:35, so a 40x21 grid holds it with 2-pixel bars
+# and the player centers the grid; the aperture letterbox rows are never
+# encoded.
+width = 320
+height = 168
 fit = "pad"
 
 [output]
-directory = "tmpfs/TOS_H32_256x224_adpcm22/sim"
+directory = "tmpfs/TOS_H40_320x168_adpcm22/sim"
 reuse = false
 emit_decisions = true
 
 [encoder]
-cold_cap = 225
+# 24 fps alternates 2- and 3-VBlank display slots; give each slot its own
+# qualified decode ceiling instead of one shared middle value.
+cold_cap = "2:180,3:230"
 
 [palette]
 algorithm = "mosaic-gm"

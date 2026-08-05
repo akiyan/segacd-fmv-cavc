@@ -1,30 +1,30 @@
-schema_version = 4
+schema_version = 5
 
-# Issue #29 horizontal-scroll iteration clip: lunar_sss_op source frames
-# 1008..1487 (42.0s..62.0s).  The pan interval 0x0477..0x0537 (source
-# 1143..1335, -5 px/frame) sits inside with normal frames on both sides.
-# assets/lunar_sss_scroll.mp4 is cut from assets/lunar_sss_op.mp4 with:
-#   ffmpeg -i assets/lunar_sss_op.mp4 -ss 42.0 -t 20.0 \
+# Issue #29 vertical-scroll iteration clip: lunar_sss_op source frames
+# 1848..2135 (77.0s..89.0s).  The strong upward pan 1920..1963
+# (+238 px, ~5.5 px/frame, support 0.997) sits inside with normal frames on
+# both sides.  assets/lunar_sss_vscroll.mp4 is cut from
+# assets/lunar_sss_op.mp4 with:
+#   ffmpeg -i assets/lunar_sss_op.mp4 -ss 77.0 -t 12.0 \
 #     -c:v libx264 -crf 6 -preset slow -pix_fmt yuv420p \
-#     -c:a aac -b:a 256k assets/lunar_sss_scroll.mp4
+#     -c:a aac -b:a 256k assets/lunar_sss_vscroll.mp4
 
 [source]
-path = "assets/lunar_sss_scroll.mp4"
+path = "assets/lunar_sss_vscroll.mp4"
 fps = "24"
-duration = "20.000000"
+duration = "12.000000"
 sar = "1:1"
 # Loudness-match the quiet source master to Bad Apple's level
 # (same chain as profiles/lunar-sss-op-h40.toml).
 audio_filter = "aformat=channel_layouts=mono,volume=7.9dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
-mode = "H40"
 width = 320
 height = 224
 fit = "pad"
 
 [output]
-directory = "tmpfs/lunar_sss_scroll_H40_320x224_adpcm22/sim"
+directory = "tmpfs/lunar_sss_vscroll_H40_320x224_adpcm22/sim"
 reuse = true
 emit_decisions = true
 

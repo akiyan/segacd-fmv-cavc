@@ -26,6 +26,7 @@ import random
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 import analysis_style as style
+import av_config
 import r2v_model
 import stream_schedule
 
@@ -90,25 +91,25 @@ SPEC_FRAME = (_RCX + 294, 1014, 1877, 1064)  # 右半分: log-band spectrum
 # GRAPH_FRAME(per-metric flow = metricパネル)は廃止
 STATUS_XY = (40, 982); STATUS_W, STATUS_H = 1227, 84   # メイン枠(下端978)に寄せる(margin詰め)
 
-# ---- 画面モード表(汎用) ----
-# sw,sh = 可視画素 / active = アクティブ表示行 / bpl = 1行あたりのblanking DMA(B) /
-# par = 1ドットの横長比。1VBLANK DMA理論値 = bpl × (262 - active) [NTSC 262行]。
-# 表示アスペクト = sw × par / sh。低アクティブ行モードほどVBLANKが増えDMA理論値が上がる。
-MODES = {
-    "H32":   dict(sw=256, sh=224, active=224, bpl=167, par=8 / 7),   # 64:49, 6346 B/VBLANK
-    "H40":   dict(sw=320, sh=224, active=224, bpl=205, par=32 / 35), # 64:49, 7790 B/VBLANK
-    "mode4": dict(sw=256, sh=192, active=192, bpl=167, par=1.167),  # 14:9, 11690 B/VBLANK
-}
+# ---- H40画面(唯一の出力モード) ----
+# SCREEN_W,SCREEN_H = 可視画素 / ACTIVE_LINES = アクティブ表示行 /
+# BYTES_PER_LINE = 1行あたりのblanking DMA(B) / PAR = 1ドットの横長比。
+# 1VBLANK DMA理論値 = BYTES_PER_LINE × (262 - ACTIVE_LINES) [NTSC 262行] = 7790 B。
+# 表示アスペクト = SCREEN_W × PAR / SCREEN_H = 64:49。
+MODE_NAME = av_config.DISPLAY_MODE
+SCREEN_W = av_config.SCREEN_WIDTH
+SCREEN_H = av_config.SCREEN_HEIGHT
+ACTIVE_LINES = av_config.SCREEN_HEIGHT
+BYTES_PER_LINE = 205
+PAR = av_config.PIXEL_ASPECT_NUM / av_config.PIXEL_ASPECT_DEN
 
 
-def dma_vblank(mode):
-    m = MODES[mode]
-    return m["bpl"] * (262 - m["active"])
+def dma_vblank():
+    return BYTES_PER_LINE * (262 - ACTIVE_LINES)
 
 
-def screen_aspect(mode):
-    m = MODES[mode]
-    return m["sw"] * m["par"] / m["sh"]
+def screen_aspect():
+    return SCREEN_W * PAR / SCREEN_H
 
 
 def source_panel_geometry(raw_w, raw_h, canvas_w, canvas_h,
@@ -147,13 +148,13 @@ def source_panel_geometry(raw_w, raw_h, canvas_w, canvas_h,
     }
 
 
-def dma_frame_max(mode, fps):
+def dma_frame_max(fps):
     """1コマで転送できる理論値 = (1コマ内のVBLANK数=60/fps) × 1VBLANK理論値。
     15fps→4×, 30fps→2×, 24fps→2.5×。"""
-    return int(round(60.0 / fps * dma_vblank(mode)))
+    return int(round(60.0 / fps * dma_vblank()))
 
 
-def dma_tile_capacity(mode, fps, cols, rows):
+def dma_tile_capacity(fps, cols, rows):
     """Pattern-tile DMA ceiling after current display publication is paid.
 
     The byte ceiling includes the exact movie-name-table band plus the DEBUG
@@ -163,10 +164,8 @@ def dma_tile_capacity(mode, fps, cols, rows):
     cols = int(cols)
     rows = int(rows)
     cells = cols * rows
-    publication_bytes = r2v_model.name_table_words(
-        mode, cols, rows, fps) * 2
-    pattern_bytes = max(
-        0, dma_frame_max(mode, fps) - publication_bytes)
+    publication_bytes = r2v_model.name_table_words(cols, rows, fps) * 2
+    pattern_bytes = max(0, dma_frame_max(fps) - publication_bytes)
     return min(cells, pattern_bytes // 32)
 
 
@@ -190,7 +189,7 @@ def dma_run_worst_case(dma_tiles):
     return max(0, int(dma_tiles))
 
 
-H40_FULL_TILES = (MODES["H40"]["sw"] // 8) * (MODES["H40"]["sh"] // 8)
+H40_FULL_TILES = (SCREEN_W // 8) * (SCREEN_H // 8)
 DMA_RUN_DIGITS = len(str(dma_run_worst_case(H40_FULL_TILES)))  # 1120 -> 4桁
 
 
@@ -304,7 +303,7 @@ def dummy_data():
                 body_control_tl=body_control_tl, body_physical_tl=body_physical_tl,
                 run_tl=run_tl,
                 pl_info=pl_info, pl_cur=pl_cur, pl_total=pl_total,
-                mode="H32", res="176x144 (22x18)",
+                mode=MODE_NAME, res="176x144 (22x18)",
                 audio="22.05kHz mono IMA ADPCM", avg_kbps=avg_kbps,
                 src_spec="256x224 / 30fps / AAC 48kHz stereo",
                 req=246, miss=counts["Miss"],
@@ -918,10 +917,10 @@ def main():
     d.text((tx + _w(f_tf, lab_t), ty), fhex, fill=COL_TXT, font=f_tf)
 
     # メイン映像: 実機同様、画面いっぱいに拡大せず、HAR込みの実機画面
-    # (H32 256x224 = 64:49表示)へ中央配置する。
+    # (H40 320x224 = 64:49表示)へ中央配置する。
     # ダミーのコンテンツ解像度(例 22x18=176x144)を画面に中央配置する。
     cW, cH = 176, 144
-    SW, SH = max(256, cW), max(224, cH)
+    SW, SH = max(SCREEN_W, cW), max(SCREEN_H, cH)
     bw = MAIN_FRAME[2] - MAIN_FRAME[0] - 2 * PAD; bh = MAIN_FRAME[3] - MAIN_FRAME[1] - 2 * PAD
     scr = Image.new("RGB", (bw, bh), (0, 0, 0))    # 実機画面(4:3, パネルと同じ4:3なので全面)
     cw = round(bw * cW / SW); ch = round(bh * cH / SH)

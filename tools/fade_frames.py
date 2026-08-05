@@ -194,6 +194,58 @@ def scaled_palette(
     return result
 
 
+def overlay_shot_targets(
+        shots,
+        frame_count: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, tuple[int, ...], tuple[int, ...]]:
+    """Return per-frame reference/scale/phase targets for the given shots.
+
+    The result is the decision-time view of the fades: which frames are frozen
+    to a reference image, the CRAM scale each fade frame wants, and the black
+    preparation frames with their exact-completion deadlines.  Palette
+    segmentation is deliberately not part of this overlay, so a caller may
+    rebuild it for a shot subset without changing the palette tables.
+    """
+
+    count = int(frame_count)
+    references = np.full(count, -1, np.int32)
+    desired = np.full(count, np.nan, np.float64)
+    phases = np.zeros(count, np.uint8)
+    preparation_frames = set()
+    preparation_deadlines = set()
+    for shot in shots:
+        references[shot.anchor:shot.display_end + 1] = shot.reference
+        desired[shot.start:shot.end + 1] = shot.scales
+        if shot.has_fade_in and shot.has_fade_out:
+            phases[shot.start:shot.peak + 1] = 1
+            phases[shot.peak + 1:shot.end + 1] = 2
+        elif shot.has_fade_in:
+            phases[shot.start:shot.end + 1] = 1
+        else:
+            phases[shot.start:shot.end + 1] = 2
+        if shot.right_black is not None:
+            desired[
+                shot.right_black.start:shot.right_black.end + 1] = 0.0
+            phases[
+                shot.right_black.start:shot.right_black.end + 1] = 2
+        preparation_deadlines.add(shot.preparation_end)
+    # A shared black frame belongs to the next shot's ordinary preparation
+    # segment, not to the previous shot's CRAM-only fade-out control.
+    for shot in shots:
+        preparation_frames.update(
+            range(shot.anchor, shot.preparation_end + 1))
+        desired[shot.anchor:shot.preparation_end + 1] = np.nan
+        phases[shot.anchor:shot.preparation_end + 1] = 0
+        references[shot.anchor:shot.preparation_end + 1] = shot.reference
+    return (
+        references,
+        desired,
+        phases,
+        tuple(sorted(preparation_frames)),
+        tuple(sorted(preparation_deadlines)),
+    )
+
+
 def build_layout(
         shots,
         original_frame_segments,
@@ -250,35 +302,9 @@ def build_layout(
     if len(palette_sources) > int(max_segments):
         raise AssertionError("selected fade layout exceeds palette capacity")
 
-    references = np.full(count, -1, np.int32)
-    desired = np.full(count, np.nan, np.float64)
-    phases = np.zeros(count, np.uint8)
-    preparation_frames = set()
-    preparation_deadlines = set()
-    for shot in selected:
-        references[shot.anchor:shot.display_end + 1] = shot.reference
-        desired[shot.start:shot.end + 1] = shot.scales
-        if shot.has_fade_in and shot.has_fade_out:
-            phases[shot.start:shot.peak + 1] = 1
-            phases[shot.peak + 1:shot.end + 1] = 2
-        elif shot.has_fade_in:
-            phases[shot.start:shot.end + 1] = 1
-        else:
-            phases[shot.start:shot.end + 1] = 2
-        if shot.right_black is not None:
-            desired[
-                shot.right_black.start:shot.right_black.end + 1] = 0.0
-            phases[
-                shot.right_black.start:shot.right_black.end + 1] = 2
-        preparation_deadlines.add(shot.preparation_end)
-    # A shared black frame belongs to the next shot's ordinary preparation
-    # segment, not to the previous shot's CRAM-only fade-out control.
-    for shot in selected:
-        preparation_frames.update(
-            range(shot.anchor, shot.preparation_end + 1))
-        desired[shot.anchor:shot.preparation_end + 1] = np.nan
-        phases[shot.anchor:shot.preparation_end + 1] = 0
-        references[shot.anchor:shot.preparation_end + 1] = shot.reference
+    (references, desired, phases,
+     preparation_frames, preparation_deadlines) = overlay_shot_targets(
+        selected, count)
 
     return FadeLayout(
         shots=selected,
@@ -289,8 +315,8 @@ def build_layout(
         desired_scales=desired,
         phases=phases,
         anchors=anchors,
-        preparation_frames=tuple(sorted(preparation_frames)),
-        preparation_deadlines=tuple(sorted(preparation_deadlines)),
+        preparation_frames=preparation_frames,
+        preparation_deadlines=preparation_deadlines,
         restorations=tuple(restorations),
     )
 
@@ -467,6 +493,7 @@ def detect_fade_shots(
         spatial_shape: tuple[int, int],
         black_fraction_min: float = 0.98,
         black_mean_max: float = 16.0,
+        black_sample_max: float = 48.0,
         min_frames: int = 3,
         min_scale_change: float = 0.20,
         monotonic_tolerance: float = 0.06,
@@ -483,7 +510,9 @@ def detect_fade_shots(
     tile is enough; using a small spatial grid preserves motion and hard-cut
     evidence while keeping the whole-movie detector cheap.  ``dark_fraction``
     is the per-frame fraction of source pixels below the encoder's black
-    luminance threshold.
+    luminance threshold.  A black frame must additionally have no tile sample
+    brighter than ``black_sample_max``, so a faint title card on black is
+    content beside the black runs rather than part of one.
     """
 
     samples = np.asarray(probes, dtype=np.float64)
@@ -506,9 +535,15 @@ def detect_fade_shots(
             "maximum_one_sided_frames must be at least min_frames")
 
     frame_mean = samples.mean(axis=(1, 2))
+    # A faint title card on black passes both whole-frame conditions because
+    # its text covers almost no pixels. A frame is black only when no tile
+    # sample carries bright evidence either; residual glow at a fade tail
+    # stays comfortably below this bound while title text sits far above it.
+    sample_luma = samples @ np.array([0.299, 0.587, 0.114])
     black_mask = (
         (dark >= float(black_fraction_min))
         & (frame_mean <= float(black_mean_max))
+        & (sample_luma.max(axis=1) <= float(black_sample_max))
     )
     runs = _black_runs(black_mask)
     complete: list[FadeShot] = []

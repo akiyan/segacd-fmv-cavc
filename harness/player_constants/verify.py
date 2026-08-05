@@ -28,7 +28,6 @@ import cavc_routing  # noqa: E402
 @dataclass(frozen=True)
 class Case:
     name: str
-    mode: int
     fps: int
     pattern_supply: bool = False
     tcols: int | None = None
@@ -37,13 +36,10 @@ class Case:
 
 
 CASES = (
-    Case("h32-15", 0, 15, cold_cap=360),
-    Case("h32-24-supply", 0, 24, True, cold_cap=225),
-    Case("h32-30-supply", 0, 30, True),
-    Case("h40-15", 1, 15, cold_cap=360),
-    Case("h40-24-supply", 1, 24, True, cold_cap=225),
-    Case("h40-30-supply", 1, 30, True),
-    Case("h40-30-centered", 1, 30, True, 36, 25),
+    Case("h40-15", 15, cold_cap=360),
+    Case("h40-24-supply", 24, True, cold_cap=225),
+    Case("h40-30-supply", 30, True),
+    Case("h40-30-centered", 30, True, 36, 25),
 )
 TEST_FRAMES = 600
 
@@ -59,7 +55,7 @@ def find_tool(name: str) -> Path:
 
 
 def make_header(case: Case) -> bytes:
-    tcols = case.tcols if case.tcols is not None else (32 if case.mode == 0 else 40)
+    tcols = case.tcols if case.tcols is not None else 40
     trows = case.trows
     cells = tcols * trows
     frames = TEST_FRAMES
@@ -79,7 +75,7 @@ def make_header(case: Case) -> bytes:
         av_config.VRAM_PATTERN_POOL_TILES, 1,
         cavc_routing.FRAME_SECTORS, 1,
         12416, cavc_routing.routing_sector_count(frames), 194, 12416,
-        case.mode, 0, 2, 18 if case.mode else 14,
+        1, 0, 2, 18,
         av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(case.fps), audio, case.fps,
         audio_fd, 30, features,
@@ -243,7 +239,7 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
 
 
 def verify_shared_deadline_vblank(
-    objdump: Path, obj: Path, *, mode: int, tcols: int, trows: int,
+    objdump: Path, obj: Path, *, tcols: int, trows: int,
 ) -> None:
     """Prove fixed-cadence pattern and display DMAs share one safe blank."""
     disassembly = run([str(objdump), "-dr", str(obj)])
@@ -318,10 +314,10 @@ def verify_shared_deadline_vblank(
     refill = block("bf_refill_vbudget", "bf_debug_snapshot_vbudget")
     if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
         raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
-    expected_budget = 2800 if mode == 0 else 3200
+    expected_budget = 3200
     if not re.search(rf"\bmovew\s+#{expected_budget},%d7", refill):
         raise AssertionError(
-            f"{obj}: mode {mode} budget refill is not {expected_budget} words")
+            f"{obj}: budget refill is not {expected_budget} words")
     if not re.search(r"\bsubw\s+[^\n]*,%d7", refill):
         raise AssertionError(
             f"{obj}: cadence-final budget does not withhold display work")
@@ -357,7 +353,7 @@ def verify_shared_deadline_vblank(
             f"{obj}: shared deadline path lacks its two status reads")
 
     publish = block("bf_publish_frame", "bf_after_flip")
-    screen_cols = 32 if mode == 0 else 40
+    screen_cols = 40
     band_words = (trows - 1) * 64 + tcols
     hud_words = screen_cols + (43 - screen_cols) * 4
     normal_reserve = band_words + hud_words + 128
@@ -684,7 +680,7 @@ def verify_adpcm_decode_pump(
 
 
 def verify_centered_nt_dma(
-    objdump: Path, obj: Path, *, mode: int, tcols: int, trows: int,
+    objdump: Path, obj: Path, *, tcols: int, trows: int,
 ) -> None:
     """Prove the logical grid becomes one exact centered 64-pitch DMA band."""
     disassembly = run([str(objdump), "-dr", str(obj)])
@@ -714,7 +710,7 @@ def verify_centered_nt_dma(
     if not dma_match or not dma_end_match:
         raise AssertionError(f"{obj}: missing NT stage/DMA symbols")
     dma = disassembly[dma_match.end():dma_end_match.start()]
-    screen_cols = 32 if mode == 0 else 40
+    screen_cols = 40
     expected_dst = (
         0xE000
         + (((28 - trows) // 2) * 64 + (screen_cols - tcols) // 2) * 2
@@ -781,12 +777,12 @@ def build_case(
         objdump, ip_obj, expected_frames=TEST_FRAMES,
         specialized=specialized)
     if specialized:
-        tcols = case.tcols or (32 if case.mode == 0 else 40)
+        tcols = case.tcols or 40
         verify_centered_nt_dma(
-            objdump, ip_obj, mode=case.mode, tcols=tcols, trows=case.trows)
+            objdump, ip_obj, tcols=tcols, trows=case.trows)
         if av_config.uses_fixed_n_cadence(case.fps):
             verify_shared_deadline_vblank(
-                objdump, ip_obj, mode=case.mode, tcols=tcols, trows=case.trows)
+                objdump, ip_obj, tcols=tcols, trows=case.trows)
             verify_runtime_vblank_cadence(
                 objdump, ip_obj)
             release_ip_obj = case_dir / "ip-specialized-release.o"

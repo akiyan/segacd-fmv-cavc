@@ -10,7 +10,6 @@ import numpy as np
 # geometry at import time even though these tests exercise only helper functions.
 _sim_env = {
     "CBRSIM_FPS": "30",
-    "CBRSIM_MODE": "H32",
     "CBRSIM_W": "256",
     "CBRSIM_H": "224",
     "CBRSIM_ACTIVE_TILES": "896",

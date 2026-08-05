@@ -36,7 +36,7 @@
 #   --input-replay FILE
 #                  reuse an input replay for an exact-frame offline or realtime run
 #   --record-size WxH
-#                  native recording surface (H32: 256x224, H40: 320x224)
+#                  native recording surface (H40: 320x224)
 #   --auto-audio-trim
 #                  explicitly choose a movie-only window from the recorded WAV
 #   --no-build     do not run `make disc` first

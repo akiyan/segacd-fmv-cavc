@@ -31,12 +31,11 @@ Argument: source MP4 path, optionally plus display name or upload instruction.
 
 1. **Keep the source fps**: use the native source fps. Do not lower it.
    Examples: 29.97 -> 30, 23.976 -> 24, 15 -> 15.
-2. **Use the maximum valid display raster**: use H32 256x224 (32x28,
-   896 cells) or H40 320x224 (40x28, 1120 cells) unless a source-specific
-   hardware constraint requires less. The DMA budget limits how many changed
-   tiles can be delivered in one frame; it does not limit the canvas or total
-   cell count. Preserve the source display aspect with the mode's HAR-aware
-   fit/pad conversion.
+2. **Use the maximum valid display raster**: use H40 320x224 (40x28,
+   1120 cells) unless a source-specific hardware constraint requires less. The
+   DMA budget limits how many changed tiles can be delivered in one frame; it
+   does not limit the canvas or total cell count. Preserve the source display
+   aspect with the HAR-aware fit/pad conversion.
 3. **Preserve source pixels**: `tools/video_geometry.py` uses HAR-aware
    full-frame `pad` by default. Use `crop` only when inspection confirms that
    the discarded outer margins are black bars, not picture content.
@@ -118,18 +117,18 @@ Rules:
 - If the samples disagree, include fades, or are otherwise ambiguous, do not
   crop. Preserve the complete source instead.
 - Crop only the confirmed fixed black margins. Never crop active picture just
-  to fill H32/H40; fit/pad the remaining active picture with the mode HAR.
+  to fill the 320x224 raster; fit/pad the remaining active picture with
+  HAR 32:35.
 - Read the exact full duration from `ffprobe` and put it in
   `source.duration` in the TOML profile. Do not rely on `sim.py`'s diagnostic
   default for a full-length encode.
 
 ### 2. Choose Resolution / Tile Grid
 
-- Use the full valid raster for the selected display mode: H32 is 256x224
-  (32x28, 896 cells), and H40 is 320x224 (40x28, 1120 cells).
+- Use the full valid H40 raster: 320x224 (40x28, 1120 cells).
 - Let `A` be the displayed aspect of the source after applying its SAR. If the
   file has no reliable SAR, set `source.sar` explicitly in the TOML profile.
-- Fit the complete source into that raster using H32 HAR 8:7 or H40 HAR 32:35.
+- Fit the complete source into that raster using HAR 32:35.
   This normally leaves no border or only a small border. Do not reduce the
   grid merely because fewer tiles can change in one frame; the encoder's
   priority and starvation behavior handle the update budget.
@@ -140,10 +139,11 @@ Rules:
 
 This can take about 10-13 minutes for 2700-3100 frames.
 
-Create one strict `schema_version = 4` profile under `profiles/` for each
-source/mode combination. Use the schema in `CONFIG.md`; the checked-in Bad
-Apple H32/H40 profiles are complete examples. The profile must name the source,
-native fps, exact duration, full mode raster, HAR-aware `fit`, the selected
+Create one strict `schema_version = 5` profile under `profiles/` for each
+source. Use the schema in `CONFIG.md`; the checked-in
+`profiles/bad-apple.toml` is a complete example. The profile must name the
+source, native fps, exact duration, full output raster, HAR-aware `fit`, the
+selected
 output directory, required qualified `cold_cap`, optional timed `raw_prefetch`,
 and palette algorithm. Do not add fixed GPU, VRAM, dither, segmented-palette,
 Near, boot-prefetch, forward-fill, or startup-audio keys.
@@ -316,7 +316,7 @@ Important rendering notes:
   - heading metadata plus small top-right Time / Frame, baseline-aligned
   - palette used-color blocks have no outline
 - The main Sega CD output is centered exactly like hardware. Do not scale low
-  resolution content to fill the panel. In H32 it is centered inside a 256x224
+  resolution content to fill the panel. It is centered inside a 320x224
   screen and then displayed as a 4:3 panel.
 - Source and Category panels should fit with letterboxing when needed.
 - Extract and inspect a few frames:

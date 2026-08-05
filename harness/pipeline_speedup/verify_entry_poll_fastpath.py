@@ -2,16 +2,16 @@
 """Prove the 30 fps descriptor path preserves the fallback CDC poll point.
 
 The fallback assembly keeps two DBRA counters in the per-entry loop: one for
-all updates and one for the CDC cadence. At 30 fps the cadence is 1024 entries,
-while the current H32 stream has at most 896 cells. The descriptor path can
-therefore perform the same single poll after consuming its runs. H40 can
-contain up to 1120 cells, so the fallback retains its possible short-prefix
-poll followed by the final poll.
+all updates and one for the CDC cadence. At 30 fps the cadence is 1024 entries
+while a full-screen H40 grid holds up to 1120 cells, so a frame can cross the
+cadence once. The fallback therefore retains its possible short-prefix poll
+followed by the final poll, and the descriptor path must reach the same poll
+points after consuming its runs.
 
 This checker reads the real split CAVC stream, compares the fallback DBRA
 countdown with an equivalent grouped model for every frame, and confirms that
 entry order and cold-slot run grouping are unchanged.  It additionally checks
-every synthetic update count up to the format's H40 maximum.
+every synthetic update count up to the format's maximum.
 """
 
 from __future__ import annotations

@@ -20,14 +20,14 @@ import av_config  # noqa: E402
 
 PER_SOURCE_ENV = {
     "CBRSIM_SRC", "CBRSIM_FPS", "CBRSIM_DURATION", "CBRSIM_SOURCE_SAR",
-    "CBRSIM_MODE", "CBRSIM_W", "CBRSIM_H", "CBRSIM_GEOMETRY_FIT",
+    "CBRSIM_W", "CBRSIM_H", "CBRSIM_GEOMETRY_FIT",
     "CBRSIM_ACTIVE_TILES",
     "CBRSIM_MASTER_VF", "CBRSIM_RAW_VF", "CBRSIM_OUT",
     "CBRSIM_VRAM_TILES", "CBRSIM_QUALITY_BUDGET_KB", "CBRSIM_RING_CAP_KB",
     "CBRSIM_MAX_COLD", "CBRSIM_COLD_CAP",
 }
 POLLUTED = {
-    "CBRSIM_SRC": "wrong.mp4", "CBRSIM_FPS": "15", "CBRSIM_MODE": "H40",
+    "CBRSIM_SRC": "wrong.mp4", "CBRSIM_FPS": "15",
     "CBRSIM_W": "320", "CBRSIM_H": "144",
     "CBRSIM_VRAM_TILES": "7", "CBRSIM_QUALITY_BUDGET_KB": "1",
     "CBRSIM_RING_CAP_KB": "1", "CBRSIM_MAX_COLD": "1",
@@ -56,14 +56,13 @@ def run_pack(
 
 
 def check_profiles() -> None:
-    for name, fps, mode, width, cold_cap in (
-            ("bad-apple.toml", "30", "H40", "320", "210"),
-            ("lunar-sss-op-h32.toml", "24", "H32", "256", "225")):
+    for name, fps, width, cold_cap in (
+            ("bad-apple.toml", "30", "320", "210"),
+            ("tears-of-steel.toml", "24", "320", "225")):
         profile = load_profile(ROOT / "profiles" / name)
-        env = {"CBRSIM_FPS": "999", "CBRSIM_MODE": "wrong", "CBRSIM_W": "1"}
+        env = {"CBRSIM_FPS": "999", "CBRSIM_W": "1"}
         apply_profile_env(profile, env)
         assert env["CBRSIM_FPS"] == fps
-        assert env["CBRSIM_MODE"] == mode
         assert env["CBRSIM_W"] == width
         assert env["CBRSIM_PAL_ALGO"] == "mosaic-gm"
         assert env["CBRSIM_COLD_CAP"] == cold_cap

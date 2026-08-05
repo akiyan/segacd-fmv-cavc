@@ -300,5 +300,119 @@ class FadeFrameTests(unittest.TestCase):
         self.assertEqual(layout.phases[5:].tolist(), [2, 2, 2])
 
 
+class BlackSampleEvidenceTests(unittest.TestCase):
+    def test_faint_title_card_is_not_swallowed_by_a_black_run(self) -> None:
+        # A title card: near-zero frame mean, 98%+ dark pixels, but two tile
+        # samples carry bright text. It must become content beside the black
+        # runs, and its own brightness ramp then forms a complete fade shot.
+        base = np.zeros((24, 3))
+        title = base.copy()
+        title[3] = 150.0
+        title[11] = 120.0
+        probes = np.stack([
+            base, base,
+            fade_frame(title, 0.4, black=0.0),
+            fade_frame(title, 0.7, black=0.0),
+            title, title, title,
+            fade_frame(title, 0.7, black=0.0),
+            fade_frame(title, 0.4, black=0.0),
+            base, base,
+        ])
+        dark = np.asarray([1.0, 1.0, *([0.985] * 7), 1.0, 1.0])
+        shots = detect_fade_shots(probes, dark)
+        self.assertEqual([shot.kind for shot in shots], ["in_out"])
+        shot = shots[0]
+        self.assertEqual(shot.left_black.end, 1)
+        self.assertEqual(shot.right_black.start, 9)
+        self.assertEqual(shot.start, 2)
+        self.assertEqual(shot.end, 8)
+        self.assertIn(shot.reference, range(4, 7))
+
+    def test_residual_glow_still_counts_as_black(self) -> None:
+        # A fade tail's dim glow (well under black_sample_max) must keep its
+        # black-run membership so real fades keep their preparation windows.
+        glow = np.zeros((24, 3))
+        glow[5] = 30.0
+        first = spatial_image(21)
+        probes = np.stack([
+            glow, glow, glow,
+            fade_frame(first, 0.35),
+            fade_frame(first, 0.65),
+            first,
+        ])
+        dark = np.asarray([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+        shots = detect_fade_shots(probes, dark)
+        self.assertEqual([shot.kind for shot in shots], ["in"])
+        self.assertEqual(shots[0].left_black.end, 2)
+
+
+class OverlayShotTargetTests(unittest.TestCase):
+    def _detected_layout(self):
+        first = spatial_image(11)
+        second = spatial_image(12)
+        black = fade_frame(first, 0.0)
+        probes = np.stack([
+            black,
+            fade_frame(first, 0.35),
+            fade_frame(first, 0.65),
+            first,
+            black,
+            second,
+            fade_frame(second, 0.65),
+            fade_frame(second, 0.35),
+            black,
+        ])
+        dark = np.asarray([1.0, *([0.0] * 3), 1.0, *([0.0] * 3), 1.0])
+        shots = detect_fade_shots(probes, dark)
+        layout = fade_frames.build_layout(
+            shots, np.zeros(len(probes), np.int32), max_segments=6)
+        return shots, layout, len(probes)
+
+    def test_overlay_matches_the_layout_for_the_same_shots(self) -> None:
+        shots, layout, count = self._detected_layout()
+        (references, desired, phases,
+         preparation_frames,
+         preparation_deadlines) = fade_frames.overlay_shot_targets(
+            layout.shots, count)
+        np.testing.assert_array_equal(references, layout.reference_frames)
+        np.testing.assert_array_equal(phases, layout.phases)
+        np.testing.assert_array_equal(
+            np.isnan(desired), np.isnan(layout.desired_scales))
+        finite = ~np.isnan(desired)
+        np.testing.assert_allclose(
+            desired[finite], layout.desired_scales[finite])
+        self.assertEqual(preparation_frames, layout.preparation_frames)
+        self.assertEqual(preparation_deadlines, layout.preparation_deadlines)
+
+    def test_overlay_of_a_subset_drops_only_that_shot(self) -> None:
+        shots, layout, count = self._detected_layout()
+        self.assertGreaterEqual(len(layout.shots), 2)
+        kept = tuple(
+            shot for shot in layout.shots if shot.kind != "out")
+        (references, _desired, phases,
+         preparation_frames,
+         _deadlines) = fade_frames.overlay_shot_targets(kept, count)
+        dropped = [
+            shot for shot in layout.shots if shot.kind == "out"]
+        self.assertTrue(dropped)
+        for shot in dropped:
+            for frame in range(shot.start, shot.end + 1):
+                self.assertEqual(int(references[frame]), -1)
+                self.assertEqual(int(phases[frame]), 0)
+                self.assertNotIn(frame, preparation_frames)
+        for shot in kept:
+            self.assertEqual(
+                int(references[shot.preparation_end]), shot.reference)
+
+    def test_overlay_of_no_shots_is_empty(self) -> None:
+        references, desired, phases, frames, deadlines = (
+            fade_frames.overlay_shot_targets((), 5))
+        self.assertTrue(np.all(references == -1))
+        self.assertTrue(np.all(np.isnan(desired)))
+        self.assertTrue(np.all(phases == 0))
+        self.assertEqual(frames, ())
+        self.assertEqual(deadlines, ())
+
+
 if __name__ == "__main__":
     unittest.main()

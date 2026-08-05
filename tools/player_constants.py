@@ -32,10 +32,11 @@ PATTERN_SUPPLY_MAGIC = b"PSUP"
 PATTERN_SUPPLY_VERSION = 4
 PATTERN_SUPPLY_STRUCT = struct.Struct(">4s11H")
 
-MODE_SPECS = {
-    0: ("H32", 32, 2800),
-    1: ("H40", 40, 3200),
-}
+# The single supported display mode. HEADER.DAT offset 36 must name it, and a
+# 40x28 aperture with a conservative 3,200-word VBlank budget follows from it.
+SCREEN_COLS = av_config.SCREEN_COLS
+SCREEN_ROWS = av_config.SCREEN_ROWS
+VBUDGET_WORDS = av_config.VBLANK_DMA_WORDS
 
 
 def header_signature(fixed_header: bytes) -> int:
@@ -73,7 +74,6 @@ class PlayerConstants:
     routing_sec: int
     prebuf_sec: int
     ring_peak: int
-    mode: int
     screen_cols: int
     screen_rows: int
     col0: int
@@ -157,10 +157,13 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         raise ValueError(
             f"palette segments {nseg} exceed the fixed "
             f"{av_config.PALTAB_MAX_SEG}-segment PALTAB")
-    if mode not in MODE_SPECS:
-        raise ValueError(f"player constants do not support display mode {mode}")
-    _mode_name, screen_cols, vbudget = MODE_SPECS[mode]
-    screen_rows = 28
+    if mode != av_config.DISPLAY_MODE_BYTE:
+        raise ValueError(
+            f"HEADER.DAT display mode {mode} is not "
+            f"{av_config.DISPLAY_MODE} ({av_config.DISPLAY_MODE_BYTE})")
+    screen_cols = SCREEN_COLS
+    screen_rows = SCREEN_ROWS
+    vbudget = VBUDGET_WORDS
     if tcols > screen_cols or trows > screen_rows:
         raise ValueError(
             f"tile grid {tcols}x{trows} exceeds {screen_cols}x{screen_rows} display")
@@ -216,9 +219,10 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     pattern_supply_enabled = bool(features & cavc_routing.FEATURE_PATTERN_SUPPLY)
     indexed_dicbuf = bool(features & cavc_routing.FEATURE_DICBUF_INDEXED_RUNS)
     scroll_enabled = bool(features & cavc_routing.FEATURE_SCROLL)
-    if scroll_enabled and (mode != 1 or tcols != 40):
+    if scroll_enabled and tcols != screen_cols:
         raise ValueError(
-            "rolling-plane scroll requires full-width H40 40-column geometry")
+            f"rolling-plane scroll requires the full-width "
+            f"{screen_cols}-column geometry")
     if scroll_enabled and not (
             features & cavc_routing.FEATURE_SHADOW_UPDATE_LISTS):
         raise ValueError("rolling-plane scroll requires shadow update lists")
@@ -315,7 +319,6 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         routing_sec=routing_sec,
         prebuf_sec=prebuf_sec,
         ring_peak=ring_peak,
-        mode=mode,
         screen_cols=screen_cols,
         screen_rows=screen_rows,
         col0=(screen_cols - tcols) // 2,
@@ -376,7 +379,7 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
 
 
 INCLUDE_ORDER = (
-    "signature", "frames", "mode", "screen_cols", "screen_rows",
+    "signature", "frames", "screen_cols", "screen_rows",
     "tcols", "trows", "cells", "bmbytes", "col0", "row0", "vbudget",
     "pool", "base", "font_vtile", "font_addr", "frame_sectors", "nseg",
     "prebuf_pat", "routing_sec", "prebuf_sec", "ring_peak", "f0_ctrl_sec",

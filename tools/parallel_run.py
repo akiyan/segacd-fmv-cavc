@@ -100,14 +100,9 @@ def _record_seconds(profile: EncodeProfile, override: int | None) -> int:
             + RECORD_MARGIN_SECONDS)
 
 
-def _native_record_size(profile: EncodeProfile) -> str:
-    mode = str(profile.data["video"]["mode"]).upper()
-    if mode == "H32":
-        return "256x224"
-    if mode == "H40":
-        return "320x224"
-    raise ParallelRunError(
-        f"{profile.path}: recording is unsupported for mode {mode}")
+# The recorder must be pinned to the H40 native raster; RetroArch would
+# otherwise lock onto the Mega-CD BIOS startup geometry.
+NATIVE_RECORD_SIZE = "320x224"
 
 
 def stage_commands(
@@ -144,7 +139,7 @@ def stage_commands(
             "--no-build",
             "--seconds", str(_record_seconds(profile, record_seconds)),
             "--tag", f"{stem}_emu",
-            "--record-size", _native_record_size(profile),
+            "--record-size", NATIVE_RECORD_SIZE,
         ]))
     if through_index >= STAGES.index("hud"):
         commands.append(("hud", []))

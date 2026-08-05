@@ -13,6 +13,32 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e188: Require bright-tile evidence to be absent before classifying a
+#         frame as fade black. A faint title card on a black background
+#         passes the whole-frame conditions (98% dark pixels, mean at most
+#         16) because its text covers almost no pixels, so the detector
+#         swallowed the card into a black run and the hidden fade
+#         preparation displayed it as pure black. A black frame now also
+#         needs every tile sample at luminance 48 or below; measured title
+#         text sits at 69-92 while true black and fade-tail glow stay at
+#         0-31. Such a card becomes content beside the black runs and its
+#         own brightness ramps form an ordinary complete fade shot.
+#   e187: Prove fade feasibility in the decision replay and re-plan without
+#         an infeasible shot instead of aborting. A fade-out whose reference
+#         sits at the end of a detailed moving shot cannot park its reference
+#         in VRAM (visible updates keep reclaiming the advance pins), and no
+#         static planning estimate separates that from a survivable window,
+#         so a failed preparation deadline now demotes its shot to ordinary
+#         frames and the encode restarts without it. Palette segment tables
+#         keep the demoted shot's boundaries with an unscaled entry palette;
+#         every fade whose preparation completes is byte-identical to e186.
+#   p152: Make the player H40-only. The resident code drops the runtime
+#         display-mode branch, its md_mode state, and the per-mode VBlank word
+#         budget, and it sizes the DEBUG HUD spill sprite table for the three
+#         records a 40-cell row leaves rather than the eleven a 32-cell row
+#         did. HEADER.DAT offset 36 stays the display-mode field and must
+#         name H40; a stream naming anything else is refused at pack and at
+#         player-constant generation.
 #   e186: Graded per-tile cost in the scroll adoption model (issue #29). A
 #         motion-compensated residual just above the change threshold is a
 #         subpixel approximation the codec carries as Near-band reuse, not a
@@ -1298,6 +1324,6 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
-date=20260804
-e=186
-p=151
+date=20260805
+e=188
+p=152

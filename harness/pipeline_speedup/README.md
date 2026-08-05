@@ -1,5 +1,10 @@
 # Pipeline speedup — where the Sub actually spends time
 
+The measurement sections below are archived results from the p11--p14 Sub-CPU
+optimization campaign, taken on the H32 discs that existed then; their specs and
+numbers are kept as measured. The proof sections at the end (`verify_*.py`)
+describe checkers that run against a current stream.
+
 Goal: let a dense spec (Sonic H32, 256x208, 832 cells) play clean 29.97fps. The
 first rate-matched build was structurally correct (`control_desync=0`) but ran at ~16fps with
 CD sector slips. The completed p11 path now saturates the 29.97 display cadence
@@ -300,8 +305,8 @@ The checker replays all packed Sonic frames and requires the optimized shadow to
 match the former bit loop after every frame. It also checks each packed bitmap and
 entry palette against `decisions.pkl`, and requires the real stream to exercise all
 three bitmap paths (`0x00`, `0xFF`, and mixed). For the blit, it models the 68000
-longword groups plus the tail and compares every real H32 row and deterministic
-widths 1--40 with the scalar word copy.
+longword groups plus the tail and compares every real shadow row and
+deterministic widths 1--40 with the scalar word copy.
 
 ## Packed cold-run descriptor proof
 
@@ -363,10 +368,10 @@ that legacy column name never represented the physical VDP DMA command count.
 ## 30 fps entry-poll fast-path proof
 
 The legacy/fallback Sub entry loop decrements both an update counter and a CDC
-cadence counter for every entry. At 30 fps the cadence is 1024 entries, while
-this H32 stream has at most 896 entries per frame, so every real non-empty frame
-polls exactly once after its final entry. The descriptor path preserves that end
-poll. Run:
+cadence counter for every entry. At 30 fps the cadence is 1024 entries, while a
+full-screen 40x28 grid holds up to 1120 cells, so a frame can cross that cadence
+once: the fallback keeps its possible short-prefix poll followed by the final
+poll. The descriptor path must reach the same poll points. Run:
 
 ```sh
 tools/python.sh harness/pipeline_speedup/verify_entry_poll_fastpath.py \
