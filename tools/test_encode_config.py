@@ -510,6 +510,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         self.assertEqual(profile.disc_staging_dir, Path("tmp/sakura-op/disc"))
         self.assertEqual(profile.disc_iso, Path("out/sakura-op.iso"))
         self.assertEqual(profile.disc_cue, Path("out/sakura-op.cue"))
+        self.assertEqual(
+            profile.release_disc_iso, Path("out/sakura-op_release.iso"))
+        self.assertEqual(
+            profile.release_disc_cue, Path("out/sakura-op_release.cue"))
 
     def test_removed_pack_output_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

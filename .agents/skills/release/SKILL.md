@@ -56,6 +56,11 @@ sha256sum out/PROFILE/HEADER.DAT out/PROFILE/BODY.DAT \
           out/PROFILE/paltab.bin out/PROFILE/palidx.bin > tmp/PROFILE/stream_hashes.txt
 ```
 
+A release build writes `out/PROFILE_release.iso` and `out/PROFILE_release.cue`,
+so it never overwrites the `out/PROFILE.iso` / `out/PROFILE.cue` pair a DEBUG
+build produced from the same packed stream. Both discs can therefore exist
+side by side and be compared.
+
 Build the release disc, then verify:
 
 ```sh

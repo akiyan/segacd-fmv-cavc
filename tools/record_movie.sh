@@ -109,7 +109,12 @@ fi
 
 if [ -n "$CONFIG" ]; then
   CONFIG_STEM="$("$PYTHON" tools/encode_config.py "$CONFIG" --print-stem)"
-  CONFIG_DISC="out/${CONFIG_STEM}.cue"
+  # A release build writes out/<stem>_release.cue; DEBUG keeps out/<stem>.cue.
+  if [ "$BUILD_DEBUG" -eq 1 ]; then
+    CONFIG_DISC="out/${CONFIG_STEM}.cue"
+  else
+    CONFIG_DISC="out/${CONFIG_STEM}_release.cue"
+  fi
   if [ -z "$DISC" ]; then
     DISC="$CONFIG_DISC"
   elif [ "$BUILD" -eq 1 ] && [ "$DISC" != "$CONFIG_DISC" ]; then

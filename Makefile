@@ -35,8 +35,13 @@ MOVIEPLAY_STREAM_DIR := $(OUT_DIR)/$(CONFIG_STEM)
 MOVIEPLAY_TMP_DIR := tmp/$(CONFIG_STEM)
 MOVIEPLAY_BUILD_DIR := $(MOVIEPLAY_TMP_DIR)/build
 MOVIEPLAY_DISC := $(MOVIEPLAY_TMP_DIR)/disc
-MOVIEPLAY_ISO := $(OUT_DIR)/$(CONFIG_STEM).iso
-MOVIEPLAY_CUE := $(OUT_DIR)/$(CONFIG_STEM).cue
+# 既定はリリースビルド。DEBUG=1 でデバッグオーバーレイを有効化する。
+DEBUG ?= 0
+# リリースディスクは _release を付けて、同じ packed stream から作った
+# DEBUG ディスクと出力先で衝突させない。
+DISC_SUFFIX := $(if $(filter 1,$(DEBUG)),,_release)
+MOVIEPLAY_ISO := $(OUT_DIR)/$(CONFIG_STEM)$(DISC_SUFFIX).iso
+MOVIEPLAY_CUE := $(OUT_DIR)/$(CONFIG_STEM)$(DISC_SUFFIX).cue
 MOVIEPACK_OUTPUTS := \
 	$(MOVIEPLAY_STREAM_DIR)/HEADER.DAT \
 	$(MOVIEPLAY_STREAM_DIR)/BODY.DAT \
@@ -300,8 +305,6 @@ moviepack: check-tools $(SP_EXTENSION_BIN) | movieplay-setup
 $(MOVIEPACK_OUTPUTS): moviepack
 	@test -f $@
 
-# 既定はリリースビルド。DEBUG=1 でデバッグオーバーレイを有効化する。
-DEBUG ?= 0
 ISO_HOLD_N ?= 0
 # Diagnostic-only continuous-read qualification for the reclaimed resident-SP
 # tail. The diagnostic relocates two pending destinations above PrgBuf and
