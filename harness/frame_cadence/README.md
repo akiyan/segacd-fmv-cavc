@@ -4,7 +4,7 @@ This harness proves that every movie frame in a native DEBUG playback recording
 first appears at its exact step in an authoritative repeating VBlank cadence.
 It covers the 15 fps `(4)`, 24 fps `(2, 3)`, and 30 fps `(2)` schedules.
 
-`verify.py` decodes the recording sequentially at its native 256x224 or 320x224
+`verify.py` decodes the recording sequentially at its native 320x224
 geometry.  It sends only the top-left 40x24 pixels to
 `tools/read_frameno.py:read_frameno`, so no other DEBUG field influences the
 result. A plausible exact sequence beginning at `frame=0000` anchors the movie.
@@ -48,8 +48,9 @@ after a bounded diagnostic capture.  The initial anchor still uses four movie
 frames by default so an isolated startup OCR match cannot impersonate
 `frame=0000`.
 
-The default confidence threshold is `0.90`.  `--crop-x 32` supports an old H32
-image centered in a 320-pixel capture.  Do not run this against the enlarged
+The default confidence threshold is `0.90`.  `--crop-x N` shifts the OCR crop
+origin N pixels right for a capture whose playfield does not start at the left
+edge.  Do not run this against the enlarged
 upload compilation: the verifier requires the approximately 60 fps native
 lossless recording so one capture frame corresponds to one emulator VBlank.
 

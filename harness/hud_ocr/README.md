@@ -1,8 +1,8 @@
 # DEBUG HUD OCR proof
 
 The movie player writes 43 hexadecimal digits as one contiguous logical
-values-only stream. H32 wraps after digit 31 and uses 32+11 cells; H40 wraps
-after digit 39 and uses 40+3 cells. Field letters are not drawn. The physical
+values-only stream. It wraps after digit 39 and uses 40+3 cells, two rows of
+the 40-cell screen width. Field letters are not drawn. The physical
 field order is:
 
 ```text
@@ -32,7 +32,8 @@ in-memory synthetic-image proof with:
 tools/python.sh harness/hud_ocr/verify.py
 ```
 
-The proof renders the actual generated font onto native H32 and H40 frames,
-checks every value and packed-field split, verifies 32-cell H32 and 40-cell H40
-wrapping, and confirms that the standalone
-`read_frameno()` API still reads an isolated four-digit `frame` field.
+The proof renders the actual generated font onto native 320-pixel frames,
+checks every value and packed-field split, verifies the 40-cell wrapping and
+that the unused row-1 width stays movie-visible, and confirms that the
+standalone `read_frameno()` API still reads an isolated four-digit `frame`
+field.

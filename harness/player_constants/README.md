@@ -1,8 +1,8 @@
 # Player constants build matrix
 
 This harness verifies the disc-specific Main/Sub assembly path without
-reusing stale packed movies. It creates current CAVC headers for H32 and H40
-at 15, 24 and 30 fps, plus a centered H40 36x25 case, generates
+reusing stale packed movies. It creates current CAVC headers at 15, 24 and
+30 fps on the full 40x28 grid, plus a centered 36x25 case at 30 fps, generates
 `player_constants.inc`, then assembles and links both the generic and
 specialized DEBUG players.
 
@@ -19,11 +19,11 @@ For every case it requires:
 - every player publishes one staged movie table without a Plane A reg2 write,
   with NT DMA, DEBUG HUD DMA, optional CRAM, and cadence commit in order;
 - every specialized geometry stages only the encoded row width and transfers
-  the exact centered 64-pitch band, including 1,192 words for 40x19, 1,768 for
-  full H40, and 1,760 for full H32;
-- H32 and H40 start each weighted transfer budget only at a proven
-  VBlank head, withhold the cadence-final name-table/HUD/CRAM reserve before
-  pattern work, and retain status, terminal-line, and fresh-VBlank fallback
+  the exact centered 64-pitch band, 1,768 words for the full 40x28 grid and
+  1,572 words for the centered 36x25 grid;
+- every case starts each weighted transfer budget only at a proven
+  VBlank head, withholds the cadence-final name-table/HUD/CRAM reserve before
+  pattern work, and retains status, terminal-line, and fresh-VBlank fallback
   guards;
 - CPU-written VDP words cost four DMA-word units, including Word-RAM DMA
   first-word repairs; every pattern run uses DMA and every run crossing the
@@ -34,8 +34,8 @@ For every case it requires:
   at 30 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
-- the DEBUG reserve includes the 76-word H32 or 52-word H40 Window/SAT HUD
-  workload, while release omits it;
+- the DEBUG reserve includes the 52-word Window/SAT HUD workload, while
+  release omits it;
 - generic and specialized builds begin the next bank exchange after their last
   Word-RAM access and before every display-deadline wait;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,

@@ -57,20 +57,13 @@ X display and system directory, and releases them on exit. The qualified
 default permits two emulator instances. CPU-heavy preview transcoding uses CPU
 tokens. Never bypass these locks or kill another session's process.
 
-Resolve the native recording raster from the profile before constructing the
-command. This is mandatory because RetroArch may otherwise lock its recorder
-to the Mega-CD BIOS startup geometry before the H32/H40 movie changes mode:
+Set the native recording raster explicitly before constructing the command.
+This is mandatory because RetroArch may otherwise lock its recorder to the
+Mega-CD BIOS startup geometry before the movie changes mode. The codec is
+H40-only, so the raster is a fixed constant and is not read from the profile:
 
 ```sh
-RECORD_MODE="$(
-  tools/python.sh tools/encode_config.py profiles/PROFILE.toml --print-env |
-  tools/python.sh -c 'import json,sys; print(json.load(sys.stdin)["CBRSIM_MODE"])'
-)"
-case "$RECORD_MODE" in
-  H32) NATIVE_RECORD_SIZE=256x224 ;;
-  H40) NATIVE_RECORD_SIZE=320x224 ;;
-  *) echo "record: unsupported native mode $RECORD_MODE" >&2; exit 1 ;;
-esac
+NATIVE_RECORD_SIZE=320x224
 ```
 
 ## Standard capture
@@ -107,7 +100,7 @@ Defaults and rules:
   requested code/data and build mode. Unless release was explicitly requested, it must be a
   `DEBUG=1` disc; do not trust an unknown pre-existing image.
 - Always pass `--record-size "$NATIVE_RECORD_SIZE"`. Never omit it or rely on
-  RetroArch's first reported geometry. H32 is 256x224 and H40 is 320x224.
+  RetroArch's first reported geometry. H40 is 320x224.
 - Omit `--display` for normal work; Xvfb allocates a free display with
   `-displayfd`. An explicit `--display :N` is diagnostic-only and fails if an
   existing server owns it.
@@ -159,7 +152,7 @@ Routine `$record` work uses faster-than-realtime FFV1/FLAC without an extra mode
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml --seconds 180 \
-  --tag STEM_offline --record-size 256x224
+  --tag STEM_offline --record-size 320x224
 ```
 
 With no `--input-replay`, the high-level harness first records an input Replay under
@@ -177,11 +170,11 @@ REPLAY=/dev/shm/segacd-fmv-cavc/artifacts/RECORD_ENTRY/data/replay/STEM_offline_
 
 tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 --realtime-lossless \
   --preset ffv1-flac --input-replay "$REPLAY" \
-  --tag STEM_realtime --record-size 256x224
+  --tag STEM_realtime --record-size 320x224
 
 tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 180 \
   --input-replay "$REPLAY" --tag STEM_offline_ab \
-  --record-size 256x224
+  --record-size 320x224
 
 tools/python.sh tools/compare_recordings.py \
   "$REALTIME_LOSSLESS" "$OFFLINE_AB_LOSSLESS" \
@@ -261,8 +254,7 @@ Check the raw MKV and reports before trusting a capture:
    matching gate to `_gate.json`. Use the two printed direct paths for every
    downstream tool; no compatibility symlink is created.
 
-   An H32 or H40 profile automatically selects the standard 43-cell layout.
-   H32 wraps after 32 cells into an 11-cell second row; H40 wraps after 40
+   The analyzer uses the single standard 43-cell layout, which wraps after 40
    cells into a three-cell second row. The analyzer unpacks `vblank_spill`
    from the high nibble of the
    transfer word, `apply_backpressure` from bit 15 of the pump-gap word, and
@@ -327,8 +319,8 @@ sound is clean or free of audible clicks only after listening to the final file.
 ## Required upload HUD gate and optional diagnostics
 
 The standard capture already builds DEBUG. The HUD is a 43-cell values-only
-stream. H32 wraps after 32 cells; H40 wraps after 40 cells. The profile
-selects the layout automatically. Parse the complete first loop
+stream in one layout that wraps after 40 cells into a three-cell second row.
+Parse the complete first loop
 whenever the capture can be uploaded; for a local-only recording, full OCR
 remains optional unless diagnostics were requested. Keep
 OCR work separate from ordinary recording and publication head cueing:
@@ -339,7 +331,7 @@ tools/python.sh tools/tmpfs_workspace.py run-directory \
   --kind record-diagnostic --key STEM_debug --required-gb 8 -- \
   env OUTDIR='{output}' tools/run_headless.sh out/PROFILE.cue \
     --tag STEM_debug --record --record-preset ffv1-flac \
-    --record-size 256x224 --shots 68 --interval 2
+    --record-size 320x224 --shots 68 --interval 2
 ```
 
 Confirm the Window-row/SAT HUD is visible before a long OCR scan. Read the complete

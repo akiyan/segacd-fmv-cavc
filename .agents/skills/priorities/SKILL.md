@@ -128,8 +128,8 @@ or the rendered analysis video when the change is meant to improve quality.
   coefficients may vary by content. A high-motion 30 fps clip and a
   lower-motion 15 fps clip can need different priorities even when the CD rate
   is the same.
-- For H40 and mode4 experiments, re-check these priorities. A larger or
-  differently shaped tile grid changes which mistakes are most visible.
+- Re-check these priorities whenever the tile grid's size or shape changes. A
+  larger or differently shaped grid changes which mistakes are most visible.
 - Detailed logic is in `tools/sim.py`, especially score and order
   generation plus `commit_unified`.
 - `[[comps]]` covers the resident-reuse thresholds.

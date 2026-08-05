@@ -1,6 +1,12 @@
 # Flexible fps (15 / 29.97 / …) — vsync-paced streaming
 
-## The problem with the current player
+This document is the archived record of the investigation that replaced the
+fixed 5-sector-per-frame delivery clock with VBlank-paced display. Every
+present-tense statement below describes the player as it stood during that
+work, and the specs, cold caps and measurements are kept exactly as they were
+taken on the H32 discs of that period.
+
+## The problem with the sector-gated player
 
 The player is **CD-delivery-gated**: each frame occupies a fixed `FRAME_SECTORS = 5`
 sector slot on disc, the player drains 5 sectors, processes, displays. So the frame

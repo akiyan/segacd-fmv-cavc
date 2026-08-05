@@ -29,11 +29,11 @@ with the first differing word pair on screen falsifies the convention; the
 ```sh
 make fontbench
 tools/run_headless.sh out/FONTBENCH.cue --tag fontbench --shots 10 --interval 2 \
-  --record --record-preset ffv1-flac --record-size 256x224
+  --record --record-preset ffv1-flac --record-size 320x224
 tools/python.sh harness/fontbench/read_result.py tmp/FONTBENCH/record/fontbench.mkv
 ```
 
-The IP forces H32 so the 256x224 recording is pixel-exact for OCR.
+The IP forces H40 so the 320x224 recording is pixel-exact for OCR.
 `read_result.py` template-matches the on-screen hex rows against the exact
 `boot/hexfont.bin` glyphs and prints a TSV plus derived per-pattern costs; it
 exits nonzero unless the FONT-vs-LUT verification passes.

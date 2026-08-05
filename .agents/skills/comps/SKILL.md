@@ -134,8 +134,8 @@ plain language:
 - `RESIDENT_K` and `RESIDENT_BW` change how many possible resident tiles are considered.
   Bigger search can find better reuse but can slow simulation and may change
   the balance between quality and artifacts.
-- Keep H32 / H40 / mode4 playback goals in mind. The same visual thresholds can
-  feel different when resolution, tile count, or frame rate changes.
+- Keep the playback goal in mind. The same visual thresholds can feel
+  different when resolution, tile count, or frame rate changes.
 - Detailed logic is in `tools/sim.py`, especially `best_resident`,
   `tier_of`, and `commit_unified`.
 - See `[[codec-fps-resolution-policy]]` where relevant.

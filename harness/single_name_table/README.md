@@ -13,21 +13,21 @@ Both models start from BIOS-cleared VRAM. The proof compares all 1,792 words of
 the displayed table after every movie frame, including the centered borders and
 the unused cells between encoded rows.
 
-Run the four representative same-stream cases preserved or packed for issue
-102:
+Run four representative same-stream cases, one per cadence, mixing preserved
+baseline pairs with freshly packed ones:
 
 ```sh
 tools/python.sh harness/single_name_table/verify.py \
   --case h40-15 tmp/issue102-baseline/machi-op/HEADER.DAT tmp/issue102-baseline/machi-op/BODY.DAT \
   --case h40-15-full out/machi-ed/HEADER.DAT out/machi-ed/BODY.DAT \
-  --case h32-24 tmp/issue102-baseline/lunar-sss-op-h32/HEADER.DAT tmp/issue102-baseline/lunar-sss-op-h32/BODY.DAT \
+  --case h40-24 out/lunar/HEADER.DAT out/lunar/BODY.DAT \
   --case h40-30 tmp/issue102-baseline/sonic-jam-op/HEADER.DAT tmp/issue102-baseline/sonic-jam-op/BODY.DAT
 ```
 
 The output reports the exact physical band length for each case. For example,
-a 40x19 grid uses `18 * 64 + 40 = 1,192` words; full-height H40 and H32 grids
-use 1,768 and 1,760 words respectively; Sonic's statically trimmed 36x25 grid
-uses `24 * 64 + 36 = 1,572` words.
+a 40x19 grid uses `18 * 64 + 40 = 1,192` words; the full-height 40x28 grid uses
+`27 * 64 + 40 = 1,768` words; Sonic's statically trimmed 36x25 grid uses
+`24 * 64 + 36 = 1,572` words.
 
 ## Lossless-recording tearing detector
 

@@ -43,9 +43,9 @@ One-command default capture:
 
 ```sh
 tools/record_movie.sh \
-  --config profiles/ps2-sakura-op-h32.toml \
+  --config profiles/ps2-sakura-op.toml \
   --seconds 140 \
-  --tag offline_record --record-size 256x224 --display :299 \
+  --tag offline_record --record-size 320x224 --display :299 \
   --out offline_record_preview.mp4
 ```
 
@@ -57,16 +57,16 @@ offline capture, and use the two printed lossless paths for comparison:
 REPLAY=/dev/shm/segacd-fmv-cavc/.../offline_record_input.replay
 
 tools/record_movie.sh \
-  --disc out/ps2-sakura-op-h32.cue --no-build \
+  --disc out/ps2-sakura-op.cue --no-build \
   --seconds 140 --realtime-lossless --preset ffv1-flac \
   --input-replay "$REPLAY" \
-  --tag realtime_baseline --record-size 256x224 --display :300 \
+  --tag realtime_baseline --record-size 320x224 --display :300 \
   --out realtime_baseline_preview.mp4
 
 tools/record_movie.sh \
-  --disc out/ps2-sakura-op-h32.cue --no-build \
+  --disc out/ps2-sakura-op.cue --no-build \
   --seconds 140 --input-replay "$REPLAY" \
-  --tag offline_ab --record-size 256x224 --display :301 \
+  --tag offline_ab --record-size 320x224 --display :301 \
   --out offline_ab_preview.mp4
 
 tools/python.sh tools/compare_recordings.py \
@@ -97,6 +97,11 @@ source transients or artifacts introduced only by the lossy preview. Exact
 same-Replay qualification still compares every decoded PCM sample.
 
 ## Measured environment
+
+This section and the Results below it are the archived record of one
+qualification run. Their numbers, disc geometry, and hashes belong to that
+run's exact environment and are kept verbatim; they do not describe the
+commands above or any other recording.
 
 - Date: 2026-07-17
 - RetroArch: 1.22.2, Git `b2ceb50`

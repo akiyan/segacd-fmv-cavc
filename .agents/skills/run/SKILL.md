@@ -2,7 +2,7 @@
 name: run
 description: >-
   Orchestrate the complete SEGA-CD FMV delivery pipeline for one or more source
-  videos: inspect geometry, create a strict H32/H40 profile, simulate and verify
+  videos: inspect geometry, create a strict H40 profile, simulate and verify
   the packed stream, make a DEBUG lossless emulator recording, require its
   complete HUD gate to be upload-capable, then render/upload the analysis and create/upload
   the boot-preserving square-pixel compilation. Use when the user invokes
@@ -19,11 +19,11 @@ source-specific and proceeds only after that source passes its gates.
 Expected invocation:
 
 ```text
-$run SOURCE MODE [work title, platform, year, and other label details]
+$run SOURCE [work title, platform, year, and other label details]
 ```
 
-`MODE` must be `H32` or `H40`. Do not infer a pixel aspect for `mode4`; its
-upload path remains unsupported until the geometry harness verifies it.
+The codec is H40-only, so the invocation takes no display-mode argument. Every
+run uses the H40 320x224 raster.
 
 ## Scope
 
@@ -65,7 +65,7 @@ stage-specific rules.
 Resolve and retain one run record containing:
 
 - absolute source path;
-- display mode and full native raster;
+- full native raster;
 - work title and source label;
 - source platform and year when known;
 - source raster, SAR/DAR, frame rate, duration, and audio presence;
@@ -114,12 +114,12 @@ Follow `sim` source inspection exactly:
 - run crop detection in at least three separated content sections;
 - crop only fixed edge-to-edge black bars confirmed by both samples and visual inspection;
 - keep the source frame rate, including first-time 24 fps material;
-- use the full H32 256x224 or H40 320x224 raster;
-- preserve the displayed aspect with the mode's HAR-aware fit/pad conversion;
+- use the full H40 320x224 raster;
+- preserve the displayed aspect with the HAR 32:35-aware fit/pad conversion;
 - allow starvation instead of shrinking the raster.
 
-Create or update one strict `schema_version = 4` profile under `profiles/`. Put
-the exact full duration, source timing and aspect, mode raster, output path,
+Create or update one strict `schema_version = 5` profile under `profiles/`. Put
+the exact full duration, source timing and aspect, output raster, output path,
 required qualified `cold_cap`, optional timed `raw_prefetch`, and palette
 algorithm in the profile. ADPCM22, the 1,743-tile VRAM pool, GPU, Bayer
 dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
@@ -222,7 +222,7 @@ before the visible frame-0 flip plus an ending margin covering the player's
 qualified fixed-Replay offline FFV1/FLAC path by default. Use:
 
 - `ffv1-flac`;
-- `--record-size 256x224` for H32 or `320x224` for H40;
+- `--record-size 320x224`;
 - automatic private X-display allocation;
 - the direct tmpfs lossless MKV path printed by the recorder (a lossy
   preview exists only when `--preview` was explicitly requested).
@@ -254,9 +254,8 @@ Before accepting the recording, verify:
   upload-capable `_gate.json` under `logs/`. Use their direct paths; no
   compatibility symlink is created.
   Fixed-cadence `transfer_vblanks` above the cadence interval also raises
-  alert `WARNING` without failing the gate. Both H32 and H40 profiles select
-  the same 43-cell diagnostic set; OCR wraps H32 after 32 cells and H40 after
-  40 cells.
+  alert `WARNING` without failing the gate. OCR uses the single 43-cell
+  diagnostic layout, wrapping after 40 cells into a three-cell second row.
 
 Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
 timestamps and a `$(dirname "$LOSSLESS")/record_check` base; inspect only the new directory
@@ -349,7 +348,7 @@ another approval merely because the gate ran.
 Pass only the latest verified native lossless MKV with its matching
 upload-capable
 HUD gate JSON to `compilation`. Bake the
-validated H32/H40 pixel aspect into 2048x1568 square pixels using nearest-neighbor
+validated H40 pixel aspect into 2048x1568 square pixels using nearest-neighbor
 scaling, H.264 CRF 10 slow, yuv420p, AAC 192 kbps, and faststart. Do not add
 `-ss`, `-t`, an fps filter, or `-r`.
 

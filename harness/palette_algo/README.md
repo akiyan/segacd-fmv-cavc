@@ -51,7 +51,7 @@ SONIC_OUT="$(tools/python.sh tools/encode_config.py \
 tools/python.sh --gpu \
   harness/palette_algo/compare_sources.py --frames 60 \
   --case "Bad Apple H40" "$BAD_APPLE_OUT/master" \
-  --case "Sonic H32" "$SONIC_OUT/master"
+  --case "Sonic H40" "$SONIC_OUT/master"
 ```
 
 Find the point where adding more learning frames stops improving a fixed

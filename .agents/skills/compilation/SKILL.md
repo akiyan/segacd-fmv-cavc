@@ -1,6 +1,6 @@
 ---
 name: compilation
-description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H32/H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, state the encode's CRAM palette switch count, add project metadata, verify the result, and upload without recording, trimming, or chapters. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
+description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, state the encode's CRAM palette switch count, add project metadata, verify the result, and upload without recording, trimming, or chapters. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
 ---
 
 # compilation — 録画済み再生映像をYouTubeへ
@@ -53,15 +53,12 @@ minimum/mean/median/maximumを提示した後のユーザーの明示承認が
 
 | mode | 入力raster / PAR | 出力raster | nearest倍率 | 出力SAR |
 |---|---:|---:|---:|---:|
-| H32 | 256x224 / 8:7 | 2048x1568 | 横8倍・縦7倍 | 1:1 |
 | H40 | 320x224 / 32:35 | 2048x1568 | 横6.4倍・縦7倍 | 1:1 |
 
-H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTubeへ非正方形
-画素の拡大を任せず、2048x1568へnearestで変換してPARを画素数へ焼き込み、
-`setsar=1`で渡す。H32は各入力画素が正確に8x7の同色ブロックになる。H40は
-実用サイズでは完全な整数比にできないため、色を混ぜないnearestで6列/7列へ
-振り分ける。`mode4` は推測値を足さず、geometry harnessでPARを検証してから
-対応する。
+H40の320x224 PAR 32:35は64:49の表示領域を表す。YouTubeへ非正方形画素の拡大を
+任せず、2048x1568へnearestで変換してPARを画素数へ焼き込み、`setsar=1`で渡す。
+実用サイズでは完全な整数比にできないため、色を混ぜないnearestで各入力列を
+6列または7列へ振り分ける。これは正確な整数倍拡大ではない。
 
 ## 手順
 
@@ -92,7 +89,7 @@ H32とH40は異なるドット幅で同じ64:49の表示領域を表す。YouTub
    `INPUT_lossless.mkv`と`STEM`は実値へ置き換える。`{output}` はtmpfs wrapperが
    実体パスへ置き換え、最後にそのdirect pathを表示する。以降の検証とuploadは
    表示されたpathを使う。repository内にmedia pathは作らない。nearest拡大そのものは
-   新しい色を作らず、H32では8x7の完全な整数拡大になる。ただしYouTubeは必ず
+   新しい色を作らず、入力の色標本をそのまま複製する。ただしYouTubeは必ず
    再エンコードするため、最終配信までロスレスとは呼ばない。CRF 10の高品質な
    入力を渡し、YouTube側の高解像度配信を使う。`-ss`、`-t`、fps filter、`-r`は
    追加しない。録画開始からのMega-CD起動画面、CD player、START遷移、映画、
