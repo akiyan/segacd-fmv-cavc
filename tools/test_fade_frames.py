@@ -300,6 +300,52 @@ class FadeFrameTests(unittest.TestCase):
         self.assertEqual(layout.phases[5:].tolist(), [2, 2, 2])
 
 
+class BlackSampleEvidenceTests(unittest.TestCase):
+    def test_faint_title_card_is_not_swallowed_by_a_black_run(self) -> None:
+        # A title card: near-zero frame mean, 98%+ dark pixels, but two tile
+        # samples carry bright text. It must become content beside the black
+        # runs, and its own brightness ramp then forms a complete fade shot.
+        base = np.zeros((24, 3))
+        title = base.copy()
+        title[3] = 150.0
+        title[11] = 120.0
+        probes = np.stack([
+            base, base,
+            fade_frame(title, 0.4, black=0.0),
+            fade_frame(title, 0.7, black=0.0),
+            title, title, title,
+            fade_frame(title, 0.7, black=0.0),
+            fade_frame(title, 0.4, black=0.0),
+            base, base,
+        ])
+        dark = np.asarray([1.0, 1.0, *([0.985] * 7), 1.0, 1.0])
+        shots = detect_fade_shots(probes, dark)
+        self.assertEqual([shot.kind for shot in shots], ["in_out"])
+        shot = shots[0]
+        self.assertEqual(shot.left_black.end, 1)
+        self.assertEqual(shot.right_black.start, 9)
+        self.assertEqual(shot.start, 2)
+        self.assertEqual(shot.end, 8)
+        self.assertIn(shot.reference, range(4, 7))
+
+    def test_residual_glow_still_counts_as_black(self) -> None:
+        # A fade tail's dim glow (well under black_sample_max) must keep its
+        # black-run membership so real fades keep their preparation windows.
+        glow = np.zeros((24, 3))
+        glow[5] = 30.0
+        first = spatial_image(21)
+        probes = np.stack([
+            glow, glow, glow,
+            fade_frame(first, 0.35),
+            fade_frame(first, 0.65),
+            first,
+        ])
+        dark = np.asarray([1.0, 1.0, 1.0, 0.0, 0.0, 0.0])
+        shots = detect_fade_shots(probes, dark)
+        self.assertEqual([shot.kind for shot in shots], ["in"])
+        self.assertEqual(shots[0].left_black.end, 2)
+
+
 class OverlayShotTargetTests(unittest.TestCase):
     def _detected_layout(self):
         first = spatial_image(11)

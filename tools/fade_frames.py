@@ -493,6 +493,7 @@ def detect_fade_shots(
         spatial_shape: tuple[int, int],
         black_fraction_min: float = 0.98,
         black_mean_max: float = 16.0,
+        black_sample_max: float = 48.0,
         min_frames: int = 3,
         min_scale_change: float = 0.20,
         monotonic_tolerance: float = 0.06,
@@ -509,7 +510,9 @@ def detect_fade_shots(
     tile is enough; using a small spatial grid preserves motion and hard-cut
     evidence while keeping the whole-movie detector cheap.  ``dark_fraction``
     is the per-frame fraction of source pixels below the encoder's black
-    luminance threshold.
+    luminance threshold.  A black frame must additionally have no tile sample
+    brighter than ``black_sample_max``, so a faint title card on black is
+    content beside the black runs rather than part of one.
     """
 
     samples = np.asarray(probes, dtype=np.float64)
@@ -532,9 +535,15 @@ def detect_fade_shots(
             "maximum_one_sided_frames must be at least min_frames")
 
     frame_mean = samples.mean(axis=(1, 2))
+    # A faint title card on black passes both whole-frame conditions because
+    # its text covers almost no pixels. A frame is black only when no tile
+    # sample carries bright evidence either; residual glow at a fade tail
+    # stays comfortably below this bound while title text sits far above it.
+    sample_luma = samples @ np.array([0.299, 0.587, 0.114])
     black_mask = (
         (dark >= float(black_fraction_min))
         & (frame_mean <= float(black_mean_max))
+        & (sample_luma.max(axis=1) <= float(black_sample_max))
     )
     runs = _black_runs(black_mask)
     complete: list[FadeShot] = []

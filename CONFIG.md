@@ -109,8 +109,11 @@ Black-fade detection is fixed encoder behavior and has no profile option or
 source-time input. A black run may bound the static shot on the fade-in side,
 the fade-out side, or both. In addition to fitting the colour and brightness
 progression to one reference image, the detector requires the tile-grid edge
-positions to stay correlated. Camera or object motion, hard cuts, merely dark
-scenes, and transient black frames therefore remain on the ordinary path.
+positions to stay correlated. A frame counts as black only when, besides its
+whole-frame darkness, no tile sample carries bright evidence; a faint title
+card on black is therefore content beside the black runs, not part of one.
+Camera or object motion, hard cuts, merely dark
+scenes, and transient black frames remain on the ordinary path.
 
 The encoder loads the exact indexed reference at the black anchor and then
 changes only CRAM on the selected fade frames. A fade-out that starts in
@@ -680,8 +683,10 @@ palette lineでtransparent index 0をzeroのままにします。
 黒fade検出は固定encoder behaviorで、profile optionやsourceのtime指定を持ちません。
 黒runは静止shotのfade-in側、fade-out側、または両側にあれば対象になります。色と明るさの
 変化が1枚のreference imageに当てはまることに加え、tile grid上のedge位置が高い相関を
-保つことも必須です。このためcameraやobjectの動き、hard cut、単に暗いscene、一時的な
-黒frameは通常経路のままです。
+保つことも必須です。frameが黒と数えられるのは、全体の暗さに加えて、明るい証拠を持つ
+tile sampleが1つも無いときだけです。黒地の薄いtitle cardは黒runの一部ではなく、
+黒runに挟まれたcontentになります。cameraやobjectの動き、hard cut、単に暗いscene、
+一時的な黒frameは通常経路のままです。
 
 encoderは黒anchorで正確なindexed referenceをloadし、選択したfade frameではCRAMだけを
 変えます。通常映像から始まるfade-outは、自動算出した先行windowにquality、control、cold、
