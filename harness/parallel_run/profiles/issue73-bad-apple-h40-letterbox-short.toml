@@ -11,16 +11,15 @@ black_max = 2
 white_min = 253
 
 [video]
-mode = "H32"
-width = 256
-height = 224
-active_tiles = 896
+mode = "H40"
+width = 320
+height = 176
 fit = "crop"
 resize_filter = "area"
 master_denoise = false
 
 [output]
-directory = "tmpfs/BadApple_H32_256x224_adpcm22/sim"
+directory = "tmpfs/BadApple_H40_320x176_adpcm22/sim"
 reuse = false
 emit_decisions = true
 

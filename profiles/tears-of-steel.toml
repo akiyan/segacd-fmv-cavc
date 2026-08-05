@@ -11,13 +11,13 @@ sar = "1:1"
 audio_filter = "aformat=channel_layouts=mono,volume=5.8dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
-mode = "H32"
-width = 256
+mode = "H40"
+width = 320
 height = 224
 fit = "pad"
 
 [output]
-directory = "tmpfs/TOS_H32_256x224_adpcm22/sim"
+directory = "tmpfs/TOS_H40_320x224_adpcm22/sim"
 reuse = false
 emit_decisions = true
 

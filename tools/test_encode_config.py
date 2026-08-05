@@ -125,11 +125,10 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 "lunar.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
-                "ps2-sakura-op-h32.toml",
-                "ps2-sakura-op-h40.toml",
+                "ps2-sakura-op.toml",
                 "sonic-jam-ed-good.toml",
                 "sonic-jam-op.toml",
-                "tears-of-steel-h32.toml",
+                "tears-of-steel.toml",
             },
         )
 
