@@ -351,13 +351,14 @@ OUTPUT_DITHER = output_dither.normalize_mode(os.environ.get(
 # palette line: training/assignment see nearest rounding and the index stage
 # mixes each pixel's two best palette entries with the same Bayer matrix. This
 # keeps a soft dark halo from snapping to the line's forced black entry.
-PAL_DITHER_ON = OUTPUT_DITHER == output_dither.PAL_BAYER
-# Bound the squared RGB333-level distance between a pal-bayer mixing pair.
-# 0 keeps the unbounded reflected partner. Sweeping this is how the mode is
-# tuned: too small collapses toward flat nearest-colour tiles, too large lets
-# a dark halo mix with the line's black entry.
-PAL_DITHER_PAIR_CAP_SQ = int(os.environ.get(
-    "CBRSIM_PAL_DITHER_PAIR_CAP_SQ", "0"))
+PAL_MULTI_ON = OUTPUT_DITHER == output_dither.PAL_MULTI
+PAL_DITHER_ON = OUTPUT_DITHER in (
+    output_dither.PAL_BAYER, output_dither.PAL_MULTI)
+# Mixing-plan length for pal-multi. It must divide 64 so the position-fixed
+# Bayer matrix maps evenly onto plan slots. Longer plans approximate the
+# target more finely at proportionally more search cost.
+PAL_DITHER_PLAN_SIZE = int(os.environ.get(
+    "CBRSIM_PAL_DITHER_PLAN_SIZE", "16"))
 # Optional source preprocessing, applied before both the master and raw paths.
 # Out-of-range defaults disable it for profiles without endpoint_snap.
 PREPROCESS_BLACK_MAX = int(os.environ.get(
@@ -1137,9 +1138,13 @@ def _quant_one(i):
         pidx = idx_for(flat, assign, cur_pals)
     if PAL_DITHER_ON:
         targets = _flatten_dither_targets(image_u8, detail < FLATTEN_STD)
-        pidx = output_dither.palette_aware_indices(
-            targets, assign, np.asarray(cur_pals),
-            pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
+        if PAL_MULTI_ON:
+            pidx = output_dither.palette_multi_candidate_indices(
+                targets, assign, np.asarray(cur_pals),
+                plan_size=PAL_DITHER_PLAN_SIZE)
+        else:
+            pidx = output_dither.palette_aware_indices(
+                targets, assign, np.asarray(cur_pals))
     return detail.astype(np.float32), assign, pidx
 
 
@@ -1263,8 +1268,15 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                 f"precompute quantization: {n} cached frames + GPU assign/idx ...",
                 flush=True,
             )
-        thresholds = (
-            output_dither.tile_bayer_numerators() if PAL_DITHER_ON else None)
+        if PAL_MULTI_ON:
+            thresholds = (
+                output_dither.BAYER8.astype(np.int64).reshape(64)
+                * PAL_DITHER_PLAN_SIZE) // 64
+        elif PAL_DITHER_ON:
+            thresholds = output_dither.tile_bayer_numerators()
+        else:
+            thresholds = None
+        plan_size = PAL_DITHER_PLAN_SIZE if PAL_MULTI_ON else 0
         if frame_cache is not None:
             for i in range(n):
                 details[i] = frame_cache.detail[i].copy()
@@ -1277,7 +1289,7 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
                     dither_targets=targets, dither_thresholds=thresholds,
-                    dither_pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
+                    dither_plan_size=plan_size)
         elif w > 1:
             import multiprocessing as mp
             with mp.get_context(quant_pool_start_method(gpu_on)).Pool(
@@ -1291,7 +1303,7 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                         seam_weight=PAL_SEAM_WEIGHT,
                         seam_iterations=PAL_SEAM_ITERATIONS,
                         dither_targets=targets, dither_thresholds=thresholds,
-                    dither_pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
+                    dither_plan_size=plan_size)
         else:
             _quant_init(frames, seg_pals, frame_seg)
             for i in range(n):
@@ -1303,7 +1315,7 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
                     dither_targets=targets, dither_thresholds=thresholds,
-                    dither_pair_cap_sq=PAL_DITHER_PAIR_CAP_SQ)
+                    dither_plan_size=plan_size)
         return (details, assigns, pidxs)
 
     print(f"precompute quantization: {n} frames on {w} workers ...", flush=True)
@@ -5255,7 +5267,7 @@ def main(demoted_fade_anchors=frozenset()):
     report = "\n".join([
         f"resolution={W}x{H} cells/frame={C_CELLS} active_tiles={ACTIVE_TILES} fps={FPS}",
         f"output_dither={OUTPUT_DITHER}",
-        f"pal_dither_pair_cap_sq={PAL_DITHER_PAIR_CAP_SQ}",
+        f"pal_dither_plan_size={PAL_DITHER_PLAN_SIZE}",
         f"body_gross_bytes_per_frame={body_gross_bytes[1:].mean():.1f} "
         f"(exact sectors {sorted(set(int(x // stream_schedule.SECTOR_BYTES) for x in body_gross_bytes[1:]))})",
         f"body_fixed_control_bytes_per_frame={body_fixed_control_bytes[1:].mean():.1f}",

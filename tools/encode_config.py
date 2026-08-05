@@ -50,7 +50,7 @@ ENV_MAP = {
     ("video", "resize_filter"): "CBRSIM_RESIZE_FILTER",
     ("video", "master_denoise"): "CBRSIM_MASTER_DENOISE",
     ("video", "output_dither"): "CBRSIM_OUTPUT_DITHER",
-    ("video", "output_dither_pair_cap_sq"): "CBRSIM_PAL_DITHER_PAIR_CAP_SQ",
+    ("video", "output_dither_plan_size"): "CBRSIM_PAL_DITHER_PLAN_SIZE",
     ("video", "master_filter"): "CBRSIM_MASTER_VF",
     ("video", "raw_filter"): "CBRSIM_RAW_VF",
     ("output", "directory"): "CBRSIM_OUT",
@@ -73,7 +73,7 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_RESIZE_FILTER": "lanczos",
     "CBRSIM_MASTER_DENOISE": "1",
     "CBRSIM_OUTPUT_DITHER": "bayer",
-    "CBRSIM_PAL_DITHER_PAIR_CAP_SQ": "0",
+    "CBRSIM_PAL_DITHER_PLAN_SIZE": "16",
     "CBRSIM_GPU": "1",
     "CBRSIM_VRAM_TILES": str(av_config.VRAM_PATTERN_POOL_TILES),
     "CBRSIM_SEGPAL": "1",
@@ -280,19 +280,21 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     output_dither = str(
         data["video"].get("output_dither", "bayer")).lower()
     if output_dither not in {
-            "bayer", "edge-attenuated-bayer", "pal-bayer", "none"}:
+            "bayer", "edge-attenuated-bayer", "pal-bayer", "pal-multi",
+            "none"}:
         raise ValueError(
             f"{profile_path}: video.output_dither must be bayer, "
-            "edge-attenuated-bayer, pal-bayer, or none")
-    pair_cap = data["video"].get("output_dither_pair_cap_sq", 0)
-    if not isinstance(pair_cap, int) or isinstance(pair_cap, bool) or pair_cap < 0:
+            "edge-attenuated-bayer, pal-bayer, pal-multi, or none")
+    plan_size = data["video"].get("output_dither_plan_size", 16)
+    if (not isinstance(plan_size, int) or isinstance(plan_size, bool)
+            or plan_size <= 0 or 64 % plan_size):
         raise ValueError(
-            f"{profile_path}: video.output_dither_pair_cap_sq must be a "
-            "non-negative integer")
-    if pair_cap and output_dither != "pal-bayer":
+            f"{profile_path}: video.output_dither_plan_size must be a "
+            "positive divisor of 64")
+    if "output_dither_plan_size" in data["video"] and output_dither != "pal-multi":
         raise ValueError(
-            f"{profile_path}: video.output_dither_pair_cap_sq applies only to "
-            "output_dither = \"pal-bayer\"")
+            f"{profile_path}: video.output_dither_plan_size applies only to "
+            "output_dither = \"pal-multi\"")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")

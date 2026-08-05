@@ -9,8 +9,9 @@ import numpy as np
 BAYER = "bayer"
 EDGE_ATTENUATED_BAYER = "edge-attenuated-bayer"
 PAL_BAYER = "pal-bayer"
+PAL_MULTI = "pal-multi"
 NONE = "none"
-MODES = (BAYER, EDGE_ATTENUATED_BAYER, PAL_BAYER, NONE)
+MODES = (BAYER, EDGE_ATTENUATED_BAYER, PAL_BAYER, PAL_MULTI, NONE)
 
 
 BAYER8 = np.array([
@@ -154,7 +155,6 @@ def palette_aware_indices(
         targets888: np.ndarray,
         assign: np.ndarray,
         pals_arr: np.ndarray,
-        pair_cap_sq: int = 0,
 ) -> np.ndarray:
     """Ordered-dither tiles between their two best palette entries.
 
@@ -163,8 +163,7 @@ def palette_aware_indices(
     RGB333.  For each pixel the first candidate is the nearest palette entry;
     the second reflects the target across the first, so the pair straddles it;
     the position-fixed Bayer threshold picks between them by the projection
-    fraction along the c1-to-c2 axis. ``pair_cap_sq`` bounds the squared
-    RGB333-level distance between the two entries (0 disables the bound).  All arithmetic is integer so CPU and GPU agree bit for bit.
+    fraction along the c1-to-c2 axis.  All arithmetic is integer so CPU and GPU agree bit for bit.
 
     Returns (C, 64) uint8 CRAM indices 1..15.
     """
@@ -188,25 +187,6 @@ def palette_aware_indices(
     diff2 = mirror[:, :, None, :] - rows[:, None, :, :]
     far_cost = (diff2 * diff2).sum(-1)                        # (C,64,15)
     c2 = far_cost.argmin(-1)
-    if pair_cap_sq > 0:
-        # Bound how far apart a mixing pair may sit. Beyond the cap the mix
-        # spans unrelated colours (a dark halo blended with black reads as
-        # isolated black specks). Move the partner only as close as the cap
-        # requires, keeping the best remaining match to the reflected target
-        # rather than collapsing to the nearest entry. With no eligible
-        # partner inside the cap the far one stands.
-        levels = np.asarray(pals_arr, dtype=np.int64)[
-            np.asarray(assign, dtype=np.int64)]               # (C,15,3)
-        e1_levels = np.take_along_axis(
-            levels, c1[..., None], axis=1)                    # (C,64,3)
-        span = levels[:, None, :, :] - e1_levels[:, :, None, :]
-        span_sq = (span * span).sum(-1)                       # (C,64,15)
-        eligible = (span_sq <= int(pair_cap_sq)) & (span_sq > 0)
-        capped_cost = np.where(eligible, far_cost, np.iinfo(np.int64).max)
-        c2_capped = capped_cost.argmin(-1)
-        too_far = np.take_along_axis(
-            span_sq, c2[..., None], axis=-1)[..., 0] > int(pair_cap_sq)
-        c2 = np.where(too_far & eligible.any(-1), c2_capped, c2)
     e2 = np.take_along_axis(rows, c2[..., None], axis=1)
     d = t255 - e1
     e = e2 - e1
@@ -215,6 +195,72 @@ def palette_aware_indices(
     thr = tile_bayer_numerators()[None, :]                    # (1,64) /128
     take_second = (128 * num) > (thr * den)
     chosen = np.where(take_second & (den > 0), c2, c1)
+    return (chosen + 1).astype(np.uint8)
+
+
+def palette_luma_order_key(pals_arr: np.ndarray, assign: np.ndarray) -> np.ndarray:
+    """Return a deterministic luminance sort key per palette entry.
+
+    The mixing plan is displayed in luminance order so the Bayer matrix walks
+    the mix from dark to bright. Entry index breaks luminance ties, which keeps
+    CPU and GPU on the same ordering.
+    """
+    rows = np.asarray(pals_arr, dtype=np.int64)[np.asarray(assign, dtype=np.int64)]
+    luma = 77 * rows[..., 0] + 150 * rows[..., 1] + 29 * rows[..., 2]
+    return luma * 16 + np.arange(rows.shape[1], dtype=np.int64)
+
+
+def palette_multi_candidate_indices(
+        targets888: np.ndarray,
+        assign: np.ndarray,
+        pals_arr: np.ndarray,
+        plan_size: int = 16,
+) -> np.ndarray:
+    """Yliluoma-style positional dithering over the assigned palette line.
+
+    Two-entry mixing can only move a pixel along one axis, which flattens
+    gradients that need a third colour. This builds a per-pixel mixing plan of
+    ``plan_size`` entries instead: at each step it appends the entry whose
+    running average lands closest to the target, so the plan converges on the
+    target from any direction. Comparing ``so_far + entry`` against
+    ``(n + 1) * target`` keeps the whole search in integers, so the CPU and GPU
+    paths agree bit for bit.
+
+    The plan is then sorted by luminance and indexed by the position-fixed
+    Bayer matrix, which keeps a static tile byte-identical across frames.
+
+    Returns (C, 64) uint8 CRAM indices 1..15.
+    """
+    targets = np.asarray(targets888)
+    if targets.ndim != 3 or targets.shape[1:] != (64, 3):
+        raise ValueError(
+            f"targets must have shape (C, 64, 3), got {targets.shape}")
+    plan_size = int(plan_size)
+    if plan_size <= 0 or 64 % plan_size:
+        raise ValueError(
+            f"plan_size must be a positive divisor of 64, got {plan_size}")
+    cells = targets.shape[0]
+    t255 = targets.astype(np.int64) * 7                        # (C,64,3)
+    rows = np.asarray(pals_arr, dtype=np.int64)[
+        np.asarray(assign, dtype=np.int64)] * 255              # (C,15,3)
+    so_far = np.zeros_like(t255)
+    plan = np.empty(t255.shape[:2] + (plan_size,), dtype=np.int64)
+    for step in range(plan_size):
+        want = (step + 1) * t255
+        delta = (so_far[:, :, None, :] + rows[:, None, :, :]
+                 - want[:, :, None, :])
+        plan[:, :, step] = (delta * delta).sum(-1).argmin(-1)
+        so_far = so_far + np.take_along_axis(
+            rows, plan[:, :, step][..., None], axis=1)
+    key = palette_luma_order_key(pals_arr, assign)              # (C,15)
+    plan_key = np.take_along_axis(
+        key, plan.reshape(cells, -1), axis=1).reshape(plan.shape)
+    order = np.argsort(plan_key, axis=-1, kind="stable")
+    ordered = np.take_along_axis(plan, order, axis=-1)
+    slot = (BAYER8.astype(np.int64).reshape(64) * plan_size) // 64
+    picks = np.broadcast_to(
+        slot[None, :, None], (cells, 64, 1))
+    chosen = np.take_along_axis(ordered, picks, axis=-1)[..., 0]
     return (chosen + 1).astype(np.uint8)
 
 
@@ -232,10 +278,10 @@ def quantize_rgb333(image: np.ndarray, mode: str = BAYER) -> np.ndarray:
     selected = normalize_mode(mode)
     if selected == BAYER:
         return bayer_rgb333(image)
-    if selected == PAL_BAYER:
-        # pal-bayer defers its own dithering to the palette-aware index stage.
-        # Training and line assignment keep the Bayer view so palettes stay
-        # identical to the plain-bayer pipeline.
+    if selected in (PAL_BAYER, PAL_MULTI):
+        # Both palette-aware modes defer their own dithering to the index
+        # stage. Training and line assignment keep the Bayer view so palettes
+        # stay identical to the plain-bayer pipeline.
         return bayer_rgb333(image)
     if selected == NONE:
         return nearest_rgb333(image)

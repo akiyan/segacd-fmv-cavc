@@ -117,7 +117,7 @@ def _coherent_assignment(cp, perr, keys, index, pals, rows, cols,
 
 def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
                    seam_weight=0.0, seam_iterations=2, dither_targets=None,
-                   dither_thresholds=None, dither_pair_cap_sq=0):
+                   dither_thresholds=None, dither_plan_size=0):
     """1コマ分。flat (C,64,3) uint8 rgb333 -> (assign int8 (C,), pidx uint8 (C,64) 1..15)。
 
     CPU版 assign_palette/idx_for と同一結果(argmin の最初の最小=同じtie挙動)。
@@ -144,6 +144,32 @@ def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
         return cp.asnumpy(a).astype(np.int8), cp.asnumpy(p).astype(np.uint8)
     # Palette-aware ordered dither, integer-exact vs the NumPy reference.
     t255 = cp.asarray(dither_targets, dtype=cp.int64) * 7      # (C,64,3)
+    if int(dither_plan_size) > 0:
+        plan_size = int(dither_plan_size)
+        cells = t255.shape[0]
+        rows_m = pals.astype(cp.int64)[a] * 255                # (C,15,3)
+        so_far = cp.zeros_like(t255)
+        plan = cp.empty(t255.shape[:2] + (plan_size,), dtype=cp.int64)
+        for step in range(plan_size):
+            want = (step + 1) * t255
+            delta = (so_far[:, :, None, :] + rows_m[:, None, :, :]
+                     - want[:, :, None, :])
+            plan[:, :, step] = (delta * delta).sum(-1).argmin(-1)
+            so_far = so_far + cp.take_along_axis(
+                rows_m, plan[:, :, step][..., None], axis=1)
+        levels = pals.astype(cp.int64)[a]
+        luma = (77 * levels[..., 0] + 150 * levels[..., 1]
+                + 29 * levels[..., 2])
+        key = luma * 16 + cp.arange(levels.shape[1], dtype=cp.int64)
+        plan_key = cp.take_along_axis(
+            key, plan.reshape(cells, -1), axis=1).reshape(plan.shape)
+        order = cp.argsort(plan_key, axis=-1, kind="stable")
+        ordered = cp.take_along_axis(plan, order, axis=-1)
+        slot = cp.asarray(dither_thresholds, dtype=cp.int64)
+        picks = cp.broadcast_to(slot[None, :, None], (cells, 64, 1))
+        chosen = cp.take_along_axis(ordered, picks, axis=-1)[..., 0]
+        return (cp.asnumpy(a).astype(np.int8),
+                cp.asnumpy(chosen + 1).astype(np.uint8))
     rows_c = pals.astype(cp.int64)[a] * 255                    # (C,15,3)
     diff1 = t255[:, :, None, :] - rows_c[:, None, :, :]
     dist1 = (diff1 * diff1).sum(-1)                            # (C,64,15)
@@ -153,18 +179,6 @@ def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
     diff2 = mirror[:, :, None, :] - rows_c[:, None, :, :]
     far_cost = (diff2 * diff2).sum(-1)                         # (C,64,15)
     c2 = far_cost.argmin(-1)
-    if int(dither_pair_cap_sq) > 0:
-        cap = int(dither_pair_cap_sq)
-        levels = pals.astype(cp.int64)[a]                      # (C,15,3)
-        e1_levels = cp.take_along_axis(levels, c1[..., None], axis=1)
-        span = levels[:, None, :, :] - e1_levels[:, :, None, :]
-        span_sq = (span * span).sum(-1)                         # (C,64,15)
-        eligible = (span_sq <= cap) & (span_sq > 0)
-        capped_cost = cp.where(eligible, far_cost, cp.iinfo(cp.int64).max)
-        c2_capped = capped_cost.argmin(-1)
-        too_far = cp.take_along_axis(
-            span_sq, c2[..., None], axis=-1)[..., 0] > cap
-        c2 = cp.where(too_far & eligible.any(-1), c2_capped, c2)
     e2 = cp.take_along_axis(rows_c, c2[..., None], axis=1)
     d = t255 - e1
     e = e2 - e1
