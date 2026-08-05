@@ -353,7 +353,8 @@ def score_palettes(tiles, palettes, evaluator=None, mapping_weight=None, core_co
     )
 
 
-def coherent_assign_idx(tiles, palettes, rows, cols, seam_weight=1.0, iterations=2):
+def coherent_assign_idx(tiles, palettes, rows, cols, seam_weight=1.0, iterations=2,
+                        exclude_deep_black=False):
     """Assign palette lines with an added 8x8-boundary residual penalty.
 
     The source edge itself is not penalized. The pair term compares each
@@ -367,7 +368,10 @@ def coherent_assign_idx(tiles, palettes, rows, cols, seam_weight=1.0, iterations
     if len(tiles) != rows * cols:
         raise ValueError(f"tile count {len(tiles)} differs from {rows}x{cols}")
     keys = rgb333_keys(tiles)
-    tables = [palette_lut(palette, squared=True) for palette in palettes]
+    tables = [
+        palette_lut(
+            palette, squared=True, exclude_deep_black=exclude_deep_black)
+        for palette in palettes]
     cost = np.stack([table[0] for table in tables])
     index = np.stack([table[1] for table in tables])
     tile_error = cost[:, keys].sum(2, dtype=np.int64).T
