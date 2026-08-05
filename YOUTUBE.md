@@ -33,10 +33,9 @@ someone who has never heard of this project, so do not append specs, a build
 version, or a sequence number to them. `tools/encode_config.py` rejects a title
 over 100 characters, the point where YouTube truncates.
 
-A capture that carries the on-screen counter row appends
-` (with on-screen counters)` to `playback_title`, so the plain recording keeps
-the unmarked public title. Do not put `DEBUG`, `release`, or any other build
-term in a title or description: a viewer does not build this project.
+Do not put `DEBUG`, `release`, or any other build term in a public title or
+description: a viewer does not build this project. A verification upload is
+exempt; it keeps the older descriptive title form ending in the build version.
 
 Because no version appears in the title, the description's closing line is the
 only record of which build a video shows. It is mandatory; see below.
@@ -94,6 +93,13 @@ cross-reference each other as complements, never as a prerequisite.
   output plus the source, category map, meters, and timelines.
 - **Playback** — a recording of the codec running, framed exactly as the
   hardware outputs it. It has no analysis panels, no meters, and no timelines.
+- **Verification** — a diagnostic capture kept only so a build can be watched
+  back later, such as a run carrying the on-screen counter row. It is not a
+  published work and none of the rules below for the two public kinds apply to
+  it. Its title uses the older descriptive form ending in the build version,
+  and its description carries just that version and what the encoder change
+  was. Stating what changed is the point there, not a violation. Do not
+  cross-link a verification upload from a public description.
 
 Never describe analysis panels, meters, timelines, or the category legend in a
 playback description. Those elements are not on screen there, so naming them
@@ -218,9 +224,9 @@ playback_title = "Custom Sega CD FMV Codec Demo – Work Name at 30 FPS"
 `tools/encode_config.py` は100文字を超えるtitleを拒否します。100文字はYouTubeが
 titleを切る位置です。
 
-画面上のカウンタ行が入るcaptureは`playback_title`へ ` (with on-screen counters)`
-を足し、素の録画が無印の公開titleを保ちます。titleにも説明文にも`DEBUG`や
-`release`といったbuildの用語を書きません。視聴者はこのprojectをbuildしません。
+公開titleと説明文には`DEBUG`や`release`といったbuildの用語を書きません。視聴者は
+このprojectをbuildしません。verification uploadは例外で、build versionを末尾に
+置く従来の説明的なtitle形式を保ちます。
 
 titleにversionが入らないため、説明文末尾の行がその動画のbuildを示す唯一の記録に
 なります。必須です。下記を参照してください。
@@ -274,6 +280,12 @@ hardwareの限界を書きます。説明はその技術の中に収めます。
   category map、meter、timelineを持つもの。
 - **Playback** — codecの動作をhardwareが出力するそのままの画面で録画したもの。
   解析panelもmeterもtimelineもありません。
+- **Verification** — 後からそのbuildを見返すためだけに残す診断用のcapture。
+  画面上のカウンタ行が入った録画などがこれにあたります。公開作品ではないので、
+  以下の公開2種類の規約は適用しません。titleは従来の説明的な形式でbuild
+  versionを末尾に置き、説明文はそのversionとencoderの変更内容だけを持ちます。
+  そこでは変更内容を書くことが目的であり、違反ではありません。公開動画の
+  説明文からverification uploadへcross-linkしません。
 
 playbackの説明文に解析panel、meter、timeline、category legendを書いては
 いけません。そこには映っていないので、名前を出すこと自体が視聴者を誤らせます。

@@ -96,6 +96,52 @@ def split_languages(text: str) -> tuple[str, str]:
     return text, ""
 
 
+def check_verification(title: str | None, text: str, expected_build: str | None,
+                       failures: list[str], notes: list[str]) -> None:
+    """A verification upload is an internal record, not a published work.
+
+    It exists so a build can be watched back later, so the only things it must
+    carry are which build it is and what that build changed. None of the
+    public-facing rules apply: it needs no Japanese half, no codec
+    introduction, no CRAM count, and stating what changed is the point rather
+    than a violation.
+    """
+    if title is not None:
+        notes.append(f"title characters: {len(title)}/{TITLE_MAX}")
+        if len(title) > TITLE_MAX:
+            failures.append(
+                f"title is {len(title)} characters; YouTube cuts it at "
+                f"{TITLE_MAX}")
+        if not BUILD_VERSION.search(title):
+            failures.append(
+                "verification title carries no build version; that is how the "
+                "recording is identified later")
+        elif expected_build and expected_build not in title:
+            failures.append(
+                f"verification title version does not match {expected_build}")
+    if not text.strip():
+        failures.append("verification description is empty")
+    found = BUILD_VERSION.search(text)
+    if not found:
+        failures.append("verification description states no build version")
+    else:
+        notes.append(f"build version in description: {found.group(0)}")
+        if expected_build and found.group(0) != expected_build:
+            failures.append(
+                f"description says {found.group(0)} but the current build is "
+                f"{expected_build}")
+    notes.append(f"description characters: {len(text)}/{DESCRIPTION_MAX}")
+    if len(text) > DESCRIPTION_MAX:
+        failures.append(
+            f"description is {len(text)} characters; the hard limit is "
+            f"{DESCRIPTION_MAX}")
+    for bracket in ("<", ">"):
+        if bracket in text:
+            failures.append(
+                f"description contains {bracket!r}; YouTube rejects it with "
+                "invalidDescription (HTTP 400)")
+
+
 def check_title(title: str, expected: str | None, failures: list[str],
                 notes: list[str]) -> None:
     length = len(title)
@@ -205,7 +251,8 @@ def main(argv: list[str] | None = None) -> int:
         description="Validate YouTube upload text against YOUTUBE.md.")
     parser.add_argument("description", type=Path,
                         help="UTF-8 description file to check")
-    parser.add_argument("--kind", required=True, choices=("analysis", "playback"),
+    parser.add_argument("--kind", required=True,
+                        choices=("analysis", "playback", "verification"),
                         help="which kind of codec video this text belongs to")
     parser.add_argument("--title", help="title string to check as well")
     parser.add_argument("--profile-title",
@@ -227,6 +274,16 @@ def main(argv: list[str] | None = None) -> int:
     failures: list[str] = []
     warnings: list[str] = []
     notes: list[str] = []
+
+    if args.kind == "verification":
+        check_verification(args.title, text, args.build, failures, notes)
+        for note in notes:
+            print(f"  {note}")
+        for failure in failures:
+            print(f"FAIL  {failure}")
+        verdict = "FAIL" if failures else "PASS"
+        print(f"youtube description check: {verdict}")
+        return 1 if failures else 0
 
     if args.title is not None:
         check_title(args.title, args.profile_title, failures, notes)

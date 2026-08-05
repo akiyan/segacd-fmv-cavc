@@ -14,7 +14,7 @@ corresponds to one of those failures.
 
 ```sh
 tools/python.sh harness/youtube_description/check_upload_text.py \
-  DESCRIPTION.txt --kind analysis|playback \
+  DESCRIPTION.txt --kind analysis|playback|verification \
   --title "SEGA-CD FMV of ... 20260805.e190.p152" \
   --cross-link https://youtu.be/OTHER_KIND
 ```
@@ -61,6 +61,12 @@ Description, playback only:
 
 - no analysis-only vocabulary. A playback recording has no category map, no
   legend, no meters, and no timelines, so naming them misleads the viewer.
+
+Verification uploads (`--kind verification`) are diagnostic records, not
+published works, so none of the public rules apply. The checker requires only
+that the title and description carry the build version, that the description is
+not empty, and that it fits YouTube's limits. Describing what changed is
+expected there.
 
 ## What it deliberately does not check
 
