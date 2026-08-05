@@ -19,9 +19,6 @@ master_denoise = false
 # position-fixed Bayer output dither remains enabled.
 master_filter = "setsar=1,guided=radius=1:eps=0.002:planes=15"
 raw_filter = "setsar=1"
-# Experimental palette-aware dither under evaluation on this branch.
-output_dither = "pal-multi"
-output_dither_plan_size = 8
 
 [output]
 directory = "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold210/sim"

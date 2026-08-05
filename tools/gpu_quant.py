@@ -54,17 +54,28 @@ class PalCache:
     def __init__(self):
         self._d = {}
 
-    def get(self, cp, seg, seg_pals):
-        g = self._d.get(seg)
+    def get(self, cp, seg, seg_pals, exclude_deep_black=False):
+        cache_key = (seg, bool(exclude_deep_black))
+        g = self._d.get(cache_key)
         if g is None:
-            pals = cp.asarray(np.asarray(seg_pals[seg], dtype=np.int16))       # (4,15,3)
+            host = np.asarray(seg_pals[seg], dtype=np.int16)                    # (4,15,3)
+            pals = cp.asarray(host)
             key = cp.arange(512, dtype=cp.int16)
             rgb = cp.stack(((key >> 6) & 7, (key >> 3) & 7, key & 7), axis=1)
             distance = ((rgb[None, :, None, :] - pals[:, None, :, :]) ** 2).sum(3)
+            if exclude_deep_black:
+                # Mirror palette_lut: deep-black entries leave the candidate
+                # set unless a line consists only of them.
+                from quantize_global4_tiles import deep_black_entries
+                mask = np.stack([deep_black_entries(line) for line in host])
+                mask &= ~mask.all(axis=1, keepdims=True)
+                distance = cp.where(
+                    cp.asarray(mask)[:, None, :], cp.int32(32000),
+                    distance.astype(cp.int32))
             index = distance.argmin(2).astype(cp.uint8)                        # (4,512)
             error = cp.take_along_axis(distance, index[:, :, None], axis=2)[:, :, 0]
             g = error.astype(cp.int16), index, pals
-            self._d[seg] = g
+            self._d[cache_key] = g
         return g
 
 
@@ -117,7 +128,8 @@ def _coherent_assignment(cp, perr, keys, index, pals, rows, cols,
 
 def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
                    seam_weight=0.0, seam_iterations=2, dither_targets=None,
-                   dither_thresholds=None, dither_plan_size=0):
+                   dither_thresholds=None, dither_plan_size=0,
+                   exclude_deep_black=False):
     """1コマ分。flat (C,64,3) uint8 rgb333 -> (assign int8 (C,), pidx uint8 (C,64) 1..15)。
 
     CPU版 assign_palette/idx_for と同一結果(argmin の最初の最小=同じtie挙動)。
@@ -126,7 +138,8 @@ def assign_idx_one(flat, seg, seg_pals, cache, coherent_shape=None,
     (``dither_thresholds`` は tile_bayer_numerators() の (64,) 整数分子)。
     """
     cp = _STATE["cp"]
-    error, index, pals = cache.get(cp, seg, seg_pals)         # LUTs (4,512), colours (4,15,3)
+    error, index, pals = cache.get(
+        cp, seg, seg_pals, exclude_deep_black=exclude_deep_black)
     f = cp.asarray(flat, dtype=cp.uint16)
     keys = ((f[..., 0] << 6) | (f[..., 1] << 3) | f[..., 2])  # (C,64)
     perr = error[:, keys].sum(2).T                             # (C,4)

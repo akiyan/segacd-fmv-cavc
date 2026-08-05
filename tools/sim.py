@@ -351,6 +351,11 @@ OUTPUT_DITHER = output_dither.normalize_mode(os.environ.get(
 # palette line: training/assignment see nearest rounding and the index stage
 # mixes each pixel's two best palette entries with the same Bayer matrix. This
 # keeps a soft dark halo from snapping to the line's forced black entry.
+# A palette line only lends its deep-black entries to colour reproduction
+# when the segment's source demonstrably contains such darkness. Demand is the
+# fraction of the segment's Bayer-view pixels that are exactly (0,0,0).
+DEEP_BLACK_DEMAND_MIN = float(os.environ.get(
+    "CBRSIM_DEEP_BLACK_DEMAND_MIN", "0.03"))
 PAL_MULTI_ON = OUTPUT_DITHER == output_dither.PAL_MULTI
 PAL_DITHER_ON = OUTPUT_DITHER in (
     output_dither.PAL_BAYER, output_dither.PAL_MULTI)
@@ -831,18 +836,22 @@ class FrameFeatureCache:
         return tiles
 
 
-def assign_palette(flat_tiles, pals_arr):
+def assign_palette(flat_tiles, pals_arr, exclude_deep_black=False):
     """flat_tiles (C,64,3) rgb333 -> assign (C,) 最良パレット(RGB二乗誤差が最小の面)。"""
     keys = rgb333_keys(flat_tiles)
-    cost = np.stack([palette_lut(pal, squared=True)[0] for pal in pals_arr])
+    cost = np.stack([
+        palette_lut(pal, squared=True, exclude_deep_black=exclude_deep_black)[0]
+        for pal in pals_arr])
     err = cost[:, keys].sum(2, dtype=np.int64).T               # (C,4)
     return err.argmin(1).astype(np.int8)
 
 
-def idx_for(pixels, assign, pals_arr):
+def idx_for(pixels, assign, pals_arr, exclude_deep_black=False):
     """pixels (C,64,3) を、各セルの assign パレットで最近傍量子化 -> idx (C,64) 1..15"""
     keys = rgb333_keys(pixels)
-    index = np.stack([palette_lut(pal, squared=True)[1] for pal in pals_arr])
+    index = np.stack([
+        palette_lut(pal, squared=True, exclude_deep_black=exclude_deep_black)[1]
+        for pal in pals_arr])
     return (index[assign[:, None], keys] + 1).astype(np.uint8)
 
 
@@ -1102,10 +1111,11 @@ _WG = {}
 _PHASE_WORKERS = None
 
 
-def _quant_init(frames, seg_pals, frame_seg):
+def _quant_init(frames, seg_pals, frame_seg, seg_black_wanted=None):
     _WG["frames"] = frames
     _WG["seg_pals"] = seg_pals
     _WG["frame_seg"] = frame_seg
+    _WG["seg_black_wanted"] = dict(seg_black_wanted or {})
 
 
 def _flatten_dither_targets(image_u8, flatten_mask):
@@ -1125,17 +1135,20 @@ def _flatten_dither_targets(image_u8, flatten_mask):
 
 def _quant_one(i):
     # 重い部分(割当/索引)だけ並列で。plain_rgb は逐次側で render_cells(軽い)＝IPCを小さく保つ。
-    cur_pals = _WG["seg_pals"][int(_WG["frame_seg"][i])]
+    seg = int(_WG["frame_seg"][i])
+    cur_pals = _WG["seg_pals"][seg]
+    no_black = not _WG.get("seg_black_wanted", {}).get(seg, True)
     image_u8 = np.asarray(Image.open(_WG["frames"][i]).convert("RGB"))
     m333 = to_rgb333(image_u8)
     flat, detail = flatten_low_detail(tile_blocks(m333))
     if PAL_ALGO == MOSAIC_GM and PAL_SEAM_WEIGHT > 0:
         assign, pidx = coherent_assign_idx(
             flat, cur_pals, TROWS, TCOLS,
-            seam_weight=PAL_SEAM_WEIGHT, iterations=PAL_SEAM_ITERATIONS)
+            seam_weight=PAL_SEAM_WEIGHT, iterations=PAL_SEAM_ITERATIONS,
+            exclude_deep_black=no_black)
     else:
-        assign = assign_palette(flat, cur_pals)
-        pidx = idx_for(flat, assign, cur_pals)
+        assign = assign_palette(flat, cur_pals, exclude_deep_black=no_black)
+        pidx = idx_for(flat, assign, cur_pals, exclude_deep_black=no_black)
     if PAL_DITHER_ON:
         targets = _flatten_dither_targets(image_u8, detail < FLATTEN_STD)
         if PAL_MULTI_ON:
@@ -1243,7 +1256,8 @@ def quant_pool_start_method(gpu_enabled):
     return "spawn" if gpu_enabled else "fork"
 
 
-def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
+def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
+                     seg_black_wanted=None):
     """各フレームの (detail, assign, plain_idx, plain_rgb) を並列に前計算して返す。"""
     n = len(frames)
     import gpu_quant
@@ -1277,6 +1291,7 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
         else:
             thresholds = None
         plan_size = PAL_DITHER_PLAN_SIZE if PAL_MULTI_ON else 0
+        wanted = dict(seg_black_wanted or {})
         if frame_cache is not None:
             for i in range(n):
                 details[i] = frame_cache.detail[i].copy()
@@ -1289,7 +1304,8 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
                     dither_targets=targets, dither_thresholds=thresholds,
-                    dither_plan_size=plan_size)
+                    dither_plan_size=plan_size,
+                    exclude_deep_black=not wanted.get(int(frame_seg[i]), True))
         elif w > 1:
             import multiprocessing as mp
             with mp.get_context(quant_pool_start_method(gpu_on)).Pool(
@@ -1315,17 +1331,19 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None):
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
                     dither_targets=targets, dither_thresholds=thresholds,
-                    dither_plan_size=plan_size)
+                    dither_plan_size=plan_size,
+                    exclude_deep_black=not wanted.get(int(frame_seg[i]), True))
         return (details, assigns, pidxs)
 
     print(f"precompute quantization: {n} frames on {w} workers ...", flush=True)
     if w > 1:
         import multiprocessing as mp
         with mp.get_context("fork").Pool(
-                w, initializer=_quant_init, initargs=(frames, seg_pals, frame_seg)) as pool:
+                w, initializer=_quant_init,
+                initargs=(frames, seg_pals, frame_seg, seg_black_wanted)) as pool:
             Q = pool.map(_quant_one, range(n), chunksize=8)
     else:
-        _quant_init(frames, seg_pals, frame_seg)
+        _quant_init(frames, seg_pals, frame_seg, seg_black_wanted)
         Q = [_quant_one(i) for i in range(n)]
     return ([q[0] for q in Q], [q[1] for q in Q], [q[2] for q in Q])
 
@@ -1926,10 +1944,32 @@ def main(demoted_fade_anchors=frozenset()):
 
     # Quantize: build palette assignments and indexed patterns.
     # フレーム独立の割当/索引を並列で前計算(実行時間の大半)。以降のループは逐次(状態依存)。
+    # Deep-black demand: a segment lends its deep-black palette entries to
+    # colour reproduction only when the source itself contains such darkness.
+    # The Bayer-view tiles are already in memory, so the measure is exact.
+    seg_black_wanted = {}
+    if frame_cache is not None:
+        n_frames = len(frame_cache.frames)
+        frame_black = np.empty(n_frames, np.float64)
+        for start in range(0, n_frames, 256):
+            chunk = frame_cache.tiles[start:start + 256]
+            frame_black[start:start + len(chunk)] = (
+                chunk.astype(np.int16).sum(-1) == 0).mean(axis=(1, 2))
+        for seg in sorted(set(int(v) for v in frame_seg)):
+            members = np.asarray(
+                [i for i in range(n_frames) if int(frame_seg[i]) == seg])
+            demand = float(frame_black[members].mean())
+            seg_black_wanted[seg] = demand >= DEEP_BLACK_DEMAND_MIN
+        kept = sorted(k for k, v in seg_black_wanted.items() if v)
+        print(
+            f"  deep-black demand: threshold {DEEP_BLACK_DEMAND_MIN:.3f}, "
+            f"black usable in segments {kept if kept else 'none'}",
+            flush=True)
     with _parallel_phase(
             "Quantize", use_gpu=True, gpu_worker_limit=4):
         Q_detail, Q_assign, Q_pidx = precompute_quant(
-            frames, seg_pals, frame_seg, frame_cache=frame_cache)
+            frames, seg_pals, frame_seg, frame_cache=frame_cache,
+            seg_black_wanted=seg_black_wanted)
     # Both DEBUG extremes are pinned before quantization. Verify that the
     # lossless index-15 canonicalizer preserves rendered pixels.
     seg_pals, pal15_stats = canonicalize_p0_index15(

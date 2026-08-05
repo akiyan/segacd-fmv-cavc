@@ -505,7 +505,11 @@ tmp/<profile>/
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
 the output raster while preserving displayed aspect and may discard outer
 source pixels. `resize_filter` defaults to `lanczos`; `master_denoise` defaults
-to true. `output_dither` defaults to `bayer`, the RGB333-cube ordered dither.
+to true. Deep-black palette entries (RGB333 level sum 2 or less) are lent to
+colour reproduction only in segments whose own Bayer-view pixels are actually
+black at 3% or more; elsewhere the quantizer treats them as nonexistent while
+they stay in CRAM. `output_dither` defaults to `bayer`, the RGB333-cube
+ordered dither.
 `pal-bayer` is an experimental mode that mixes each pixel's two best entries
 of its assigned palette line with the same matrix; it suppresses dark-halo
 black specks but does not yet preserve mean colour off the two-entry axis.
@@ -1045,7 +1049,10 @@ tmp/<profile>/
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
 保ってoutput rasterを埋めるため、source外周を捨てる場合があります。
 `resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。
-`output_dither` defaultは `bayer` (RGB333立方体上の順序ディザ)です。
+深い黒のpalette entry (RGB333 level和が2以下)は、そのsegment自身のBayer視点の
+画素が3%以上実際に黒であるsegmentでのみ色再現に使われます。それ以外の
+segmentでは、CRAMに残したまま量子化の候補から外れます。`output_dither`
+defaultは `bayer` (RGB333立方体上の順序ディザ)です。
 `pal-bayer` は実験的modeで、各画素を割り当てられたpalette lineの最良2 entryの
 間で同じ行列により混合します。暗部haloの黒点は抑えますが、2 entry軸から
 外れた色の平均色はまだ保存できません。強い境界で局所3x3輝度差による減衰が

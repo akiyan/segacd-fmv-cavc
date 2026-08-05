@@ -1332,6 +1332,17 @@
 #         too-black specks on Sonic Jam OP) but does not yet preserve mean
 #         colour off the two-entry axis, so the default stays bayer and the
 #         mode is a per-profile experiment.
+#   e190: Treat unwanted deep-black palette entries as nonexistent for
+#         colour reproduction. Every mosaic line carries a forced darkest
+#         entry (in practice pure black); under Bayer dithering a soft dark
+#         halo (source luminance 14-62) quantizes onto it and shows as
+#         isolated too-black specks. A segment now lends its deep-black
+#         entries (RGB333 level sum at most 2) to the quantizer only when
+#         the segment's own Bayer-view pixels are actually black at 3% or
+#         more (Sonic OP: only its one dark segment; Bad Apple: 57%, all
+#         kept). The entries stay in CRAM; assignment and indexing simply
+#         never select them elsewhere. pal-bayer/pal-multi remain opt-in
+#         experiments; the default dither stays bayer.
 date=20260805
-e=189
+e=190
 p=152
