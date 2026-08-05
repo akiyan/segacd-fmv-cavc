@@ -342,7 +342,7 @@ PY=~/.config/youtube/venv/bin/python
   --category 20 --privacy unlisted
 ```
 
-Titles follow AGENTS.md "YouTube Upload Style": `SEGA-CD FMV of <work> -
+Titles follow `YOUTUBE.md`: `SEGA-CD FMV of <work> -
 <specs> <ver>`, where `<specs>` is the descriptive spec suffix (mode,
 resolution/grid) and `<ver>` is the build version `YYYYMMDD.eN.pM` read from
 `tools/av_version.txt`. Descriptive, never a sequence version such as

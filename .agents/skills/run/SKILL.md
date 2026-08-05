@@ -320,7 +320,7 @@ analysis upload rather than the pre-recording TSV.
 Read the CRAM palette switch count with `tools/cram_switches.py` and state it in
 the spec section of both language halves. Do not generate YouTube chapters or
 description timestamp links. Build the title and
-English-then-Japanese description from the current `AGENTS.md` convention,
+English-then-Japanese description from [`YOUTUBE.md`](../../../YOUTUBE.md),
 including the repository URL, which like every URL appears only in the English
 section, and never adding source bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
 public codec name; never expose the binary magic as a codec or format name.

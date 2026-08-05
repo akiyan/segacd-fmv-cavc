@@ -79,113 +79,11 @@ Keep these distinctions explicit:
 - This repo is public and its history was rewritten once to strip such trailers.
   Every agent working here must follow this so it does not reappear.
 
-## YouTube Upload Style (codec analysis videos)
+## YouTube Upload Style
 
-Titles and descriptions for the codec analysis videos follow this fixed style.
-
-- **Language**: English. In descriptions, write English first, then the same
-  content in Japanese after it.
-- **Title**: English, fixed format `SEGA-CD FMV of <work> - <specs> <ver>`.
-  - `<work>`: the work name. For a native/kanji title, give the
-    transliteration followed by the native title in parentheses, e.g.
-    `Romaji (native)`. A romaji-only work needs no parentheses.
-  - `<specs>`: the descriptive spec suffix (mode, resolution/grid, "max
-    resolution", etc.). No **sequence** version numbers (no `vNNN`).
-  - `<ver>`: the encoder/player build version `YYYYMMDD.eN.pM` (from
-    `tools/av_version.txt`). `e` = shared encoder implementation and defaults
-    (`sim.py` / `pack_stream.py`), `p` = shared player implementation
-    (`boot/movieplay_*.s`). Bump `e` or `p` only when that shared side changes
-    in a way that can alter its output; never decrease either. Do **not** bump
-    `e` for a source-specific profile edit such as its input, trim, geometry,
-    frame rate, cold cap, or another encoder setting. Those values are tracked
-    by the profile/settings identity and are not encoder build revisions.
-    Likewise, do not bump `p` merely because a different profile or stream is
-    played. When bumping, set the date to today if it differs. This is the
-    title build version only; the on-disc `HEADER.DAT` layout has no independent
-    version field. Update `tools/av_version.txt` whenever
-    you bump.
-  - Example: `SEGA-CD FMV of <Work> - max resolution 320x224/40x28 20260710.e1.p1`.
-- **Write the description absolutely, never as a changelog.** Each description
-  stands alone as a statement of what this build is and does, as though it
-  were the only description ever written. Do not compare the video to an
-  earlier upload, do not say what changed, improved, regressed, or was fixed,
-  and do not put a build revision in the prose. "Now", "no longer",
-  "previously", "instead of before", "this version adds", and measured
-  before/after pairs belong to development notes; the title's `<ver>` is the
-  only place a build revision appears. When a technique exists because of a
-  hardware constraint, state the constraint and the resulting behavior, not
-  the history of arriving at it. A reader who has seen no other video in the
-  series must still understand the whole picture.
-- **Explain what a viewer cannot infer from the picture.** A viewer sees
-  dithering, a limited palette, a picture that may not fill the screen, areas
-  that update at different times, and colours that shift at scene boundaries.
-  Say why each is there: the hardware's 9-bit colour and 4-bit tile indices,
-  the fixed aperture and per-source raster, the per-frame update budget under
-  a single-speed CD, and the per-segment CRAM palettes. Prefer naming the
-  concrete limit over calling something an optimization.
-- **Description structure** (in both languages, in this order):
-  1. Introduction — what the Sega CD Constraint-Aware Video Codec is: full
-     motion video that unmodified Sega CD / Mega-CD hardware decodes and
-     displays itself while reading one single-speed CD, and what this
-     particular video shows. Name the codec **Sega CD Constraint-Aware Video
-     Codec**. Do not use the current binary magic as a public codec or format
-     name.
-  2. Output and source specs — the SEGA-CD output (mode, grid WxH, tile count,
-     fps, audio, Prg/Wr0/Wr1/Dic capacities, CRAM palette switch count) and the
-     Source (resolution, fps, audio).
-  3. How to read the analysis layout — what each panel, meter, and timeline
-     shows and how to interpret it (left = SEGA-CD sim output; right = Source /
-     category map / 60 fps audio waveform and spectrum; bottom status =
-     Req with its Miss count, Cold, Band, R2V, Run, Prg, Wrd, and Pre, then the
-     palette strip and the stacked Req / supply / Run / Band timelines; the
-     category legend is Raw, Same, Near, Flbk, Miss, Prg, Wrd, Dic, plus Scrl
-     on a movie with adopted hardware scroll — Scrl is a cell the active
-     scroll carried to its correct position without an update this frame,
-     scroll reuse rather than a Miss. Such a movie also shows the legend's
-     right-aligned hardware-scroll indicator: green chevrons pointing in the
-     on-screen flow direction plus axis:position and speed per frame while a
-     window is active, dimmed to "SCROLL ---" between windows; a movie with
-     no adopted window shows neither Scrl nor the indicator). Define Band
-     as useful
-     `BODY.DAT` payload + control bytes in the physical delivery slot, excluding
-     all pad and the untimed `HEADER.DAT` / BODY-arm / frame-0 regions, divided
-     by that slot's actual physical CD read time. Its range is 0 to CD 1x
-     (150 KiB/s); pad is unused bandwidth. Define R2V as the words the Main CPU
-     moves into VRAM for that frame: pattern data, the Word-RAM DMA first-word
-     repair, name-table/HUD words, and palette words. Wrd is the two Word-RAM
-     banks shown as one meter; Pre is prefetched cold work that is not displayed
-     yet.
-  4. What the encoder does — first a short list of the techniques applied, then
-     the details for each.
-  5. Project link — always include the source repository URL:
-     `https://github.com/akiyan/segacd-fmv-cavc` . Every description carries
-     it, but URLs appear **only once, in the English section**. A URL is not
-     language-specific, so repeating it in the Japanese half adds nothing.
-     This applies to every link, including timeline links and cross-links to
-     related uploads: put them all at the end of the English section.
-- **Describe only what the current build renders.** Take every panel, meter,
-  and category name from `tools/layout_preview.py` and `tools/analysis_style.py`
-  and spell them the same way. Describe an encoder technique only when
-  `tools/sim.py` still implements it. Do not carry wording forward from an
-  earlier description without checking it against the current code; a term that
-  no longer exists in the build must not appear in a new description.
-- **CRAM switch count (permanent).** Every codec video (analysis and
-  real-playback) MUST state how many times the palette (CRAM) switches, as part
-  of the output spec section in both languages. Read the count with
-  `tools/cram_switches.py <sim_out>`, which prints `cram_segments=<N>
-  cram_switches=<N-1>` from the sim's `frame_seg`. The count belongs to the
-  encode, so the analysis render and its playback recording report the same
-  numbers. Do not add YouTube chapters and do not put timestamp links in the
-  description: these uploads carry no chapter list at all, at CRAM switch points
-  or anywhere else.
-- Do not show bitrate in the Source spec line.
-- Uploads are unlisted, category 20 (Gaming). Descriptive titles, not vNNN.
-- **"Upload" always means the latest version.** Before uploading, rebuild the
-  artifact from the current code and data (re-encode / re-render if anything
-  changed since it was last made); never upload a stale file. Re-uploads use
-  `--force` (the previous video stays unlisted).
-- Never put `<` or `>` in the description — YouTube rejects it with
-  `invalidDescription` (HTTP 400). Write "0.3s or more", "within 4s", etc.
+Titles, descriptions, privacy, and category for every codec video follow
+[`YOUTUBE.md`](YOUTUBE.md). Treat that document as the only source of truth for
+upload metadata; do not restate its rules here or inside a skill.
 
 ## Documentation Policy
 
@@ -233,6 +131,10 @@ Titles and descriptions for the codec analysis videos follow this fixed style.
   - [`ENCODE.md`](ENCODE.md) - the current simulation-encoding flow and a
     versioned full-encode timing example. Keep its short stage names aligned
     with the timers and comments in `tools/sim.py`.
+  - [`YOUTUBE.md`](YOUTUBE.md) - the title, description, privacy, and category
+    rules for every codec video upload. Keep its analysis-layout terms in sync
+    with `tools/layout_preview.py` and `tools/analysis_style.py`, and its
+    version rules in sync with `tools/av_version.txt`.
 - Keep the analysis-overlay specification beside its implementation:
   `tools/layout_preview.py` owns layout and reading rules,
   `tools/analysis_style.py` owns category semantics and colours, and
