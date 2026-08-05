@@ -1324,6 +1324,16 @@
 #   e17: Raise requested startup PCM arming from 32 to 45 frames. The pack
 #        clamps it from AUDIO bytes/frame with a 0x200 safety margin below
 #        SYNC_MAX (45 frames at 30fps, 22 at 15fps).
+#   e190: Treat unwanted deep-black palette entries as nonexistent for
+#         colour reproduction. Every mosaic line carries a forced darkest
+#         entry (in practice pure black); under Bayer dithering a soft dark
+#         halo (source luminance 14-62) quantizes onto it and shows as
+#         isolated too-black specks. A segment now lends its deep-black
+#         entries (RGB333 level sum at most 2) to the quantizer only when
+#         the segment's own Bayer-view pixels are actually black at 3% or
+#         more (Sonic OP: only its one dark segment; Bad Apple: 57%, all
+#         kept). The entries stay in CRAM; assignment and indexing simply
+#         never select them elsewhere. The default dither stays bayer.
 date=20260805
-e=188
+e=190
 p=152

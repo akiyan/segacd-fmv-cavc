@@ -53,16 +53,39 @@ def rgb333_keys(pixels):
     return ((value[..., 0] << 6) | (value[..., 1] << 3) | value[..., 2])
 
 
-def palette_lut(pal, squared=False):
+# Entries at or below this RGB333 level sum are "deep black": the distorted
+# extreme the Mega Drive palette carries in every line (the mosaic trainer
+# forces the darkest used colour into slot 0). A segment whose source does not
+# genuinely contain such darkness must not use them for colour reproduction.
+DEEP_BLACK_SUM_MAX = 2
+
+
+def deep_black_entries(pal):
+    """Return the boolean mask of deep-black entries in one 15-colour line."""
+    palette = np.asarray(pal, dtype=np.int16)
+    return palette.sum(1) <= DEEP_BLACK_SUM_MAX
+
+
+def palette_lut(pal, squared=False, exclude_deep_black=False):
     """Return nearest error/index tables for all 512 RGB333 colours.
 
     ``squared=False`` matches STL4's L1 training metric.  ``squared=True``
     matches the player's per-tile assignment and nearest-index metric.  NumPy's
     first-minimum tie behaviour is retained in the returned zero-based index.
+
+    ``exclude_deep_black`` removes deep-black entries from the candidate set:
+    they stay in CRAM but the quantizer treats them as nonexistent, so a soft
+    dark halo maps to the darkest wanted colour instead of snapping to black.
+    A line consisting only of deep-black entries (a fade-scaled palette) keeps
+    its entries.
     """
     palette = np.asarray(pal, dtype=np.int16)
     delta = _RGB333_GRID[:, None, :] - palette[None, :, :]
     distance = (delta * delta).sum(2) if squared else np.abs(delta).sum(2)
+    if exclude_deep_black:
+        mask = deep_black_entries(palette)
+        if mask.any() and not mask.all():
+            distance = np.where(mask[None, :], np.int16(32000), distance)
     index = distance.argmin(1).astype(np.uint8)
     error = distance[np.arange(512), index].astype(np.int16)
     return error, index

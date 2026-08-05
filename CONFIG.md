@@ -505,7 +505,10 @@ tmp/<profile>/
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
 the output raster while preserving displayed aspect and may discard outer
 source pixels. `resize_filter` defaults to `lanczos`; `master_denoise` defaults
-to true. `output_dither` defaults to `bayer`; set it to
+to true. Deep-black palette entries (RGB333 level sum 2 or less) are lent to
+colour reproduction only in segments whose own Bayer-view pixels are actually
+black at 3% or more; elsewhere the quantizer treats them as nonexistent while
+they stay in CRAM. `output_dither` defaults to `bayer`; set it to
 `edge-attenuated-bayer` only for sources whose strong boundaries need the
 local 3x3 luma-based attenuation, or to `none` for dither-free
 nearest-colour rounding. The H40 pixel aspect is 32:35.
@@ -1041,6 +1044,9 @@ tmp/<profile>/
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
 保ってoutput rasterを埋めるため、source外周を捨てる場合があります。
 `resize_filter` defaultは `lanczos`、`master_denoise` defaultはtrueです。
+深い黒のpalette entry (RGB333 level和が2以下)は、そのsegment自身のBayer視点の
+画素が3%以上実際に黒であるsegmentでのみ色再現に使われます。それ以外の
+segmentでは、CRAMに残したまま量子化の候補から外れます。
 `output_dither` defaultは `bayer` です。強い境界で局所3x3輝度差による減衰が必要な
 sourceだけ `edge-attenuated-bayer` を、ディザ無しの最近色丸めには `none` を
 指定します。H40 pixel aspectは32:35です。
