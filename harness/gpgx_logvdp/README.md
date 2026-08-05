@@ -63,6 +63,20 @@ reject. The build therefore force-includes
 `harness/gpgx_logvdp/logvdp_error_decl.h`; this supplies only the matching
 function declaration and does not change emulator logic.
 
+## System directory path limit
+
+The core composes every optional BIOS/ROM filename into a 256-byte buffer
+rooted at the RetroArch system directory. A system directory long enough to
+push `bios_CD_J.bin` past that limit is truncated silently: the Mega-CD BIOS is
+then not found and the run ends at `[ERROR] [Content] Failed to load content.`
+before any emulation, with no message naming the path. Reading the truncated
+`should be located at:` lines in the RetroArch log is the way to recognize it.
+
+The BIOS never changes, so `tools/run_headless.sh` installs it once into one
+shared read-only directory at `tmp/retroarch-system` that concurrent runs use
+together, and it refuses an over-long `SYSTEM_DIR` override up front rather
+than letting the core fail opaquely. Keep any replacement path short.
+
 ## Runtime logs
 
 `tools/run_headless.sh` uses the managed core by default. After a successful
