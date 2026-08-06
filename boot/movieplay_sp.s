@@ -36,6 +36,9 @@
 .endif
 .endif
 	.include "sp_extension.inc"
+.ifdef MULTI_MENU
+	.include "multi_player.inc"
+.endif
 
 /* The packed cold-run parser is used by every unified pattern-supply stream
    and by the dense 24/30fps cadence.  A legacy lower-rate plain-Prg diagnostic
@@ -404,6 +407,15 @@
 
 .text
 
+.ifdef MULTI_MENU
+/* The Word-RAM menu launcher has already published PLAYER_READY and cleared
+   CMD_MENU_LOAD before it overwrites this resident SP image.  Enter the
+   ordinary command loop without spending bytes on a second initialization. */
+.global multi_player_entry
+multi_player_entry:
+	bra.s	sp_main
+.endif
+
 sp_header:
 	.ascii	"MAIN       "
 	.byte	0
@@ -453,6 +465,13 @@ do_stream:
 	ori.b	#0x04, (SUB_GA_BASE+0x37).l	/* HOCK: enable CDD communication */
 	ori.b	#0x3C, (SUB_GA_BASE+0x33).l	/* IEN: enable INT2-5 (timer/CDD/CDC) */
 	move.w	#0x2000, sr			/* enable ints BEFORE the BIOS calls */
+	.ifdef MULTI_MENU
+	lea	(MULTI_MENU_INFO_ADDR+16).w, a0
+	move.l	(a0)+, header_lba
+	move.l	(a0)+, header_total
+	move.l	(a0)+, body_lba
+	move.l	(a0)+, body_total
+	.else
 	andi.b	#0xFA, (MEMMODE+1).l
 	lea	drv_init_tracklist, a0
 	BIOSCALL BIOS_DRV_INIT
@@ -469,6 +488,7 @@ do_stream:
 	bsr	find_file
 	move.l	d0, body_lba
 	move.l	d1, body_total
+	.endif
 	bset	#2, (MEMMODE+1).l
 stream_start:
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
@@ -1154,10 +1174,42 @@ movie_end:
 	bne	2b
 	move.w	#0, (COMSTAT0).l
 	move.b	#0xFF, (PCM_ONOFF).l		/* 全chオフ(静音) */
+.ifdef MULTI_MENU
+	tst.w	(MULTI_LOOP_FLAG_ADDR).w
+	bne.s	multi_movie_loop
+	multi_movie_menu_wait:
+	tst.w	(COMCMD1).l			/* Main requests the menu return */
+	beq.s	multi_movie_menu_wait
+	move.l	(MULTI_MENU_INFO_ADDR+8).w, d0
+	moveq	#MULTI_MENU_IP_SECTORS, d1
+	lea	(SUB_BANK_1M+MULTI_MENU_IMAGE_OFF).l, a0
+	bsr	read_cd
+	bchg	#0, (MEMMODE+1).l		/* menu image becomes Main-visible */
+	bsr	swap_settle
+	move.w	#MULTI_STAT_MENU_IP_READY, (COMSTAT0).l
+multi_movie_menu_ip_wait:
+	tst.w	(COMCMD0).l			/* Main copied MENUIP.BIN */
+	bne.s	multi_movie_menu_ip_wait
+	bchg	#0, (MEMMODE+1).l		/* Sub owns the bank again */
+	bsr	swap_settle
+	move.l	(MULTI_MENU_INFO_ADDR).w, d0
+	moveq	#MULTI_MENU_SP_SECTORS, d1
+	lea	(SUB_BANK_1M+MULTI_MENU_WORD_OFF).l, a0
+	bsr	read_cd
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+	bsr	read_cd
+	jmp	(MULTI_MENU_WORD_ENTRY).l
+multi_movie_loop:
+	tst.w	(COMCMD0).l
+	bne.s	multi_movie_loop
+	bra	stream_start
+.else
 3:
 	cmp.w	#CMD_STREAM, (COMCMD0).l	/* MDの再開指示を待つ */
 	bne	3b
 	bra	stream_start
+.endif
 
 /* Start one finite ISO file read. d0=absolute LBA, d1=sector count.  The caller
    establishes base_msf/prev_msf first so the very first sector is verifiable.
@@ -2921,10 +2973,12 @@ sp_user:
 
 drv_init_tracklist:
 	.byte	1, 0xFF
+.ifndef MULTI_MENU
 file_header:
 	.asciz	"HEADER.DAT"
 file_body:
 	.asciz	"BODY.DAT"
+.endif
 	.align	2
 
 bios_packet:

@@ -1,0 +1,18 @@
+schema_version = 1
+
+[menu]
+title = "SCFMV VIDEO SELECT"
+subtitle = "SELECT A MOVIE"
+output = "cavc-demo"
+
+[[videos]]
+profile = "../profiles/bad-apple.toml"
+title = "Bad Apple!!"
+
+[[videos]]
+profile = "../profiles/lunar-ss-op.toml"
+title = "Lunar Silver Star Opening"
+
+[[videos]]
+profile = "../profiles/machi-op.toml"
+title = "Machi Opening"

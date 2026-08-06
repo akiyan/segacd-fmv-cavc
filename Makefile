@@ -14,7 +14,7 @@ PYTHON ?= tools/python.sh
 ifeq ($(strip $(MAKECMDGOALS)),)
 MOVIEPLAY_REQUESTED := all
 else
-MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal test1m,$(MAKECMDGOALS))
+MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal movieplay-module test1m,$(MAKECMDGOALS))
 endif
 ifneq ($(strip $(MOVIEPLAY_REQUESTED)),)
 ifeq ($(strip $(CONFIG)),)
@@ -54,6 +54,13 @@ SP_EXTENSION_BIN := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.bin
 SP_EXTENSION_CONSTANTS := $(MOVIEPLAY_BUILD_DIR)/sp_extension.inc
 MOVIEPLAY_SECURITY := $(MOVIEPLAY_BUILD_DIR)/security.bin
 MOVIEPLAY_DEBUG_FONT := $(MOVIEPLAY_BUILD_DIR)/dbgfont.bin
+MULTI_MENU ?= 0
+MULTI_PLAYER_INCLUDE ?= $(MOVIEPLAY_BUILD_DIR)/multi_player.inc
+ifeq ($(filter 1,$(MULTI_MENU)),1)
+MOVIEPLAY_MULTI_INCLUDE_DEPS := $(MULTI_PLAYER_INCLUDE)
+else
+MOVIEPLAY_MULTI_INCLUDE_DEPS :=
+endif
 
 MARSDEV ?= $(HOME)/toolchains/mars
 M68K_PREFIX ?= $(MARSDEV)/m68k-elf/bin/m68k-elf-
@@ -68,7 +75,7 @@ ASFLAGS := -m68000 --register-prefix-optional --bitwise-or
 CFLAGS_M68K := -m68000 -ffreestanding -fno-builtin -fomit-frame-pointer -O2 -Wall -Wextra
 LDFLAGS := -nostdlib --oformat binary
 
-.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench fontbench still256 movieplay movieplay-internal moviepack dmabench cpuvrambench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
+.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench fontbench still256 movieplay movieplay-internal movieplay-module moviepack dmabench cpuvrambench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force multi-disc
 
 all: disc
 
@@ -293,6 +300,20 @@ $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue: $(OUT_DIR)/CPUVRAMBENCH_$(CPUVR
 
 movieplay-internal: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 
+# Build one specialized player pair for the resident SP slot. The multi-video
+# orchestrator invokes this once per manifest entry and copies the resulting
+# binaries under distinct ISO filenames.
+movieplay-module: check-tools moviepack $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin
+
+MENU_CONFIG ?=
+multi-disc: check-tools
+	@test -n "$(MENU_CONFIG)" || (echo "MENU_CONFIG is required; for example: make multi-disc MENU_CONFIG=menus/menu.toml" >&2; exit 1)
+	$(PYTHON) tools/multimovie_build.py build \
+		--manifest "$(MENU_CONFIG)" --debug "$(DEBUG)" \
+		--security-region "$(SECURITY_REGION)" --marsdev "$(MARSDEV)" \
+		--m68k-prefix "$(M68K_PREFIX)" --python "$(PYTHON)" \
+		--mkisofs "$(MKISOFS)"
+
 # A disc build must never trust stream files left by another stream layout,
 # profile, or decision log.  Pack from the authenticated current decisions on
 # every build, removing the complete old set first so a failed pack cannot fall
@@ -341,9 +362,9 @@ $(MOVIEPLAY_SECURITY): $(BOOT_DIR)/sec_$(SECURITY_REGION).bin | movieplay-setup
 $(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
 	$(PYTHON) tools/gen_debugfont.py --output $@
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) $(MOVIEPLAY_MULTI_INCLUDE_DEPS) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) $(if $(filter 1,$(MULTI_MENU)),--defsym MULTI_MENU=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(dir $(MULTI_PLAYER_INCLUDE)) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
 $(BOOT_DIR)/dbgfont.bin: tools/gen_debugfont.py
 	$(PYTHON) tools/gen_debugfont.py
@@ -357,11 +378,11 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 			exit 1; \
 		fi
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py harness/pcm_write_pacing/check_pacing.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_MULTI_INCLUDE_DEPS) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py harness/pcm_write_pacing/check_pacing.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(PYTHON) harness/pcm_write_pacing/check_pacing.py
 	$(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),$(PYTHON) harness/sp_tail_marker/verify_profile.py --header $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT --max-pending-sectors 2)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--defsym ISO_VERIFY_SP_TAIL=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $@
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter-out 0,$(ISO_HOLD_N)),--defsym ISO_HOLD_N=$(ISO_HOLD_N)) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--defsym ISO_VERIFY_SP_TAIL=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) $(if $(filter 1,$(MULTI_MENU)),--defsym MULTI_MENU=1) -I$(MOVIEPLAY_STREAM_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(dir $(MULTI_PLAYER_INCLUDE)) -I$(BOOT_DIR) $< -o $@
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $<
