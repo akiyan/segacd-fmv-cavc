@@ -237,12 +237,14 @@ def check_description(text: str, kind: str, expected_build: str | None,
                 f"{match.start()}; a viewer does not build this project, so "
                 "describe what is on screen instead")
 
-    if kind == "playback":
+    # A comparison screen has no analysis panels either: it shows four
+    # recordings side by side, not the encoder's decisions.
+    if kind in ("playback", "comparison"):
         lowered = text.lower()
         for term in ANALYSIS_ONLY_TERMS:
             if term.lower() in lowered:
                 failures.append(
-                    f"playback description names the analysis-only element "
+                    f"{kind} description names the analysis-only element "
                     f"{term!r}, which is not on its screen")
 
 
@@ -252,7 +254,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("description", type=Path,
                         help="UTF-8 description file to check")
     parser.add_argument("--kind", required=True,
-                        choices=("analysis", "playback", "verification"),
+                        choices=("analysis", "playback", "comparison",
+                                 "verification"),
                         help="which kind of codec video this text belongs to")
     parser.add_argument("--title", help="title string to check as well")
     parser.add_argument("--profile-title",

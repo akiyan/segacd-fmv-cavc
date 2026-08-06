@@ -93,6 +93,49 @@ playback template never mentions analysis panels, because that video has none.
 before upload. It is a safety net for a hand-edited or legacy description, not
 the primary path.
 
+## Comparison uploads
+
+A comparison video plays one encode beside its source master and reference
+recordings in one frame. It is a codec video like any other: unlisted,
+category 20, no chapters, English then Japanese, every URL in the English
+section, and the closing `Build:` line.
+
+Its title and description are per-source, so both live in the profile's
+`[comparison.youtube]` rather than in a shared template:
+
+```toml
+[comparison.youtube]
+title = "Sega CD FMV at 30 FPS - Work Name Side-by-Side Comparison"
+description_en = """... {cram_switches} ... {band} KiB/s ..."""
+description_ja = """..."""
+
+[comparison.youtube.links]
+"Encoder decisions visualized" = "https://youtu.be/..."
+"Playback recording of this encode" = "https://youtu.be/..."
+"Project" = "https://github.com/akiyan/segacd-fmv-cavc"
+```
+
+Only the prose is stored there. Every figure stays a placeholder that
+`tools/youtube_description.py --kind comparison` resolves from the encode that
+produced the video, exactly as a template's would, so a comparison description
+cannot carry a stale number either. The links are a table and are emitted in
+the order written, at the end of the English half, with the build line after
+them.
+
+A comparison screen shows recordings side by side, not the encoder's
+decisions, so its description must not name analysis panels or meters. The
+checker enforces that for `--kind comparison` as it does for playback.
+
+Because the frame already shows the panels and their alignment, do not
+describe them in the description. Say what the codec is, the output spec, the
+source, which panel the audio comes from, and what the encoder does. A
+comparison description that walks through each panel is padding: the earlier
+one ran to 4,762 characters and lost nothing when cut to 2,549.
+
+Re-render and re-upload the video whenever the frame changes, since the layout
+is baked into the pixels. YouTube cannot replace a video file, so `--force`
+uploads a new one and the previous video stays unlisted.
+
 ## CRAM switch count
 
 Every codec video, analysis and playback alike, must state how many times the
@@ -222,6 +265,45 @@ changelogではなく絶対的に述べること、buildの用語を持たない
 
 upload前に`harness/youtube_description/check_upload_text.py`で再確認します。
 これは手編集や過去の説明文に対する安全網であって、主経路ではありません。
+
+## 比較動画のupload
+
+比較動画は、1つのencodeを元素材や参照録画と同じframe内に並べて再生します。
+他のcodec動画と同じ扱いです。unlisted、category 20、chapterなし、英語の次に
+日本語、URLは英語節のみ、末尾に`Build:`行。
+
+titleと説明文はsourceごとに異なるため、共有templateではなくprofileの
+`[comparison.youtube]`に置きます。
+
+```toml
+[comparison.youtube]
+title = "Sega CD FMV at 30 FPS - Work Name Side-by-Side Comparison"
+description_en = """... {cram_switches} ... {band} KiB/s ..."""
+description_ja = """..."""
+
+[comparison.youtube.links]
+"Encoder decisions visualized" = "https://youtu.be/..."
+"Playback recording of this encode" = "https://youtu.be/..."
+"Project" = "https://github.com/akiyan/segacd-fmv-cavc"
+```
+
+そこに置くのはprose だけです。数値はすべてplaceholderのままで、
+`tools/youtube_description.py --kind comparison`がその動画を作ったencodeから
+解決します。templateと同じ仕組みなので、比較動画の説明文も古い数値を持ち得ま
+せん。linkはtableで、書いた順に英語節の末尾へ出力し、その後にbuild行が続きます。
+
+比較画面に映るのは並べた録画であって、encoderの判断ではありません。したがって
+説明文で解析panelやmeterに触れないこと。checkerは`--kind comparison`に対しても
+playbackと同様にこれを検査します。
+
+panelとその整列はframe自体が見せているので、説明文で説明しないこと。書くのは、
+codecが何か、出力仕様、source、音声がどのpanelのものか、encoderの動作です。
+panelを1つずつ辿る説明文は水増しです。最初の版は4,762文字あり、2,549文字へ
+削っても失われたものはありませんでした。
+
+frameを変えたら動画を再renderして再uploadすること。layoutはpixelへ焼き込まれ
+ています。YouTubeは動画fileを差し替えられないため、`--force`は新しい動画を
+uploadし、以前の動画はunlistedのまま残ります。
 
 ## CRAM切り替え回数
 

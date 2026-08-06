@@ -38,6 +38,10 @@ URL_FIELDS = {
     "analysis": ("timeline_url", "playback_url"),
     "playback": ("analysis_url",),
     "verification": (),
+    # The comparison video's wording and its links are per-source, so both come
+    # from the profile's [comparison.youtube] rather than from a shared
+    # template and from the command line.
+    "comparison": (),
 }
 
 
@@ -86,6 +90,33 @@ def encoder_change_note() -> str:
     return "\n".join(collected).replace(f"e{version}: ", "", 1)
 
 
+def comparison_template(profile) -> str:
+    """Assemble the comparison video's template from its profile section.
+
+    The comparison frame's own wording already lives in [comparison]; its
+    upload text does too, so one video's text sits in one place. Only the prose
+    is stored - every figure stays a placeholder resolved from the encode. The
+    links are a table, so they are emitted in the order they were written, at
+    the end of the English half where YOUTUBE.md requires every URL to sit, and
+    the mandatory build line closes that half.
+    """
+    data = profile.section("comparison").get("youtube")
+    if not isinstance(data, dict):
+        raise SystemExit(f"{profile.path}: no [comparison.youtube] section")
+    missing = {"description_en", "description_ja"} - set(data)
+    if missing:
+        raise SystemExit(f"{profile.path}: [comparison.youtube] missing "
+                         f"{', '.join(sorted(missing))}")
+    links = data.get("links")
+    if not isinstance(links, dict) or not links:
+        raise SystemExit(f"{profile.path}: [comparison.youtube.links] must "
+                         f"have at least the project link")
+    link_lines = "\n".join(f"{label}: {url}" for label, url in links.items())
+    english = data["description_en"].strip()
+    japanese = data["description_ja"].strip()
+    return f"{english}\n\n{link_lines}\nBuild: {{build}}\n\n----\n\n{japanese}\n"
+
+
 def cram_counts(sim_out: Path) -> tuple[int, int]:
     decisions = pickle.loads((sim_out / "decisions.pkl").read_bytes())
     segments = len(set(int(v) for v in decisions["frame_seg"]))
@@ -122,9 +153,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     profile = encode_config.load_profile(args.config)
-    template = TEMPLATE_DIR / f"{args.kind}.txt"
-    if not template.is_file():
-        raise SystemExit(f"template not found: {template}")
+    if args.kind == "comparison":
+        template_text = comparison_template(profile)
+        template_name = f"{args.config}: [comparison.youtube]"
+    else:
+        template = TEMPLATE_DIR / f"{args.kind}.txt"
+        if not template.is_file():
+            raise SystemExit(f"template not found: {template}")
+        template_text = template.read_text(encoding="utf-8")
+        template_name = str(template)
 
     values = {"build": build_version(), "emulator": EMULATOR}
 
@@ -160,11 +197,11 @@ def main(argv: list[str] | None = None) -> int:
         values[field] = value
 
     try:
-        text = StrictFormatter().vformat(
-            template.read_text(encoding="utf-8"), (), values)
+        text = StrictFormatter().vformat(template_text, (), values)
     except KeyError as exc:
         raise SystemExit(
-            f"{template}: no value for placeholder {exc.args[0]!r}") from exc
+            f"{template_name}: no value for placeholder "
+            f"{exc.args[0]!r}") from exc
 
     if args.output:
         args.output.write_text(text, encoding="utf-8")
