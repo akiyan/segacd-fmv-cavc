@@ -1334,6 +1334,17 @@
 #         more (Sonic OP: only its one dark segment; Bad Apple: 57%, all
 #         kept). The entries stay in CRAM; assignment and indexing simply
 #         never select them elsewhere. The default dither stays bayer.
-date=20260805
+#   p153: Pace playback wave-RAM writes to the RF5C164 spec. The official
+#         MEGA-CD PCM manual (4-5) requires 16 or more source clock cycles
+#         between external wave memory writes while the IC is sounding; the
+#         issue-15 MOVEP.L batch writer strobed every ~6-10 cycles, and the
+#         real chip answers over-fast writes with dropped or corrupted
+#         bytes: continuous periodic hiss on hardware during playback
+#         (issue #81), invisible on emulators and the EverDrive FPGA which
+#         do not model the minimum access period. While sounding the writer
+#         now spaces strobes 20 CPU cycles apart (same 12.5 MHz clock
+#         domain); the boot prefill runs with sounding suspended, where
+#         writes are unrestricted, and keeps the MOVEP fast path.
+date=20260806
 e=190
-p=152
+p=153

@@ -2813,6 +2813,56 @@ wwc_chunk:
 2:
 	move.w	d4, d5
 
+	/* RF5C164 spec (MEGA-CD HARDWARE MANUAL "PCM SOUND SOURCE" 4-5): while the
+	   IC is sounding, external wave memory writes must be spaced 16 or more
+	   source clock cycles apart.  Sub CPU and PCM chip share the 12.5 MHz
+	   clock, so 16 source clocks are 16 CPU cycles.  The MOVEP.L batch path
+	   below strobes every ~6-10 cycles, which the real chip answers with
+	   dropped or corrupted bytes: continuous periodic hiss on hardware while
+	   streaming (issue #81).  Emulators and the Mega EverDrive Pro FPGA do not
+	   model the minimum access period, so only real hardware exposes it.
+	   While sounding, take the paced path (>=20 cycles between strobes);
+	   the boot prefill runs with sounding suspended, where the manual allows
+	   unrestricted writes, and keeps the fast MOVEP path. */
+	tst.w	pcm_running
+	beq	wwc_burst
+
+wwc_paced:
+	move.w	d4, d1
+	lsr.w	#3, d1
+	beq	wwc_paced_tail
+	subq.w	#1, d1
+wwc_paced_loop8:
+	/* Eight writes, 20 CPU cycles strobe to strobe (move.b 12 + addq 8). */
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	dbra	d1, wwc_paced_loop8
+	andi.w	#0x0007, d4
+wwc_paced_tail:
+	tst.w	d4
+	beq	wwc_chunk_done
+	subq.w	#1, d4
+wwc_paced_tail_loop:
+	move.b	(a0)+, (a1)
+	addq.w	#2, a1
+	dbra	d4, wwc_paced_tail_loop
+	bra	wwc_chunk_done
+
+wwc_burst:
 	/* A 68000 long read must be even-aligned.  An odd bitmap/entry length can
 	   leave audio on an odd address, so scalar-copy one byte before MOVE.L. */
 	move.l	a0, d0

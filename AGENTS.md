@@ -253,6 +253,13 @@ stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
   costs too much bandwidth.
 - 1M/1M Word RAM bank swaps are cheap enough for frame-granular buffering.
 - RF5C164 wave RAM writes use the odd byte window and correct PCM bank select.
+  While the chip is sounding, external wave-memory writes must be 16 or more
+  source clock cycles apart (official PCM manual 4-5; Sub CPU and PCM share
+  12.5 MHz, so 16 CPU cycles). Faster strobes are dropped or corrupted by the
+  real chip — continuous hiss during streaming — while emulators and the
+  EverDrive FPGA accept them, so only hardware exposes the violation. Writes
+  with sounding suspended are unrestricted; internal-register writes while
+  sounding need 384 or more cycles between accesses.
 - Keep three Sub-program domains separate: the SP source inside the disc system
   area, the BIOS-loaded resident destination in Sub PRG-RAM, and boot-only
   scratch in Sub PRG-RAM. The BIOS can load a multi-sector SP. The active
