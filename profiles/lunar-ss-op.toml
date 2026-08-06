@@ -55,11 +55,11 @@ audio_panel = "emu"
 audio_intro_panel = "real"
 audio_note = false
 output = "videos/lunar-ss-op/comparison.mp4"
-# The picture stops on the master's last unfaded frame rather than running to
-# its final one. The master closes with a 1.0 s fade and then 0.7 s of pure
-# black, so playing it out would leave the still tail below holding nothing:
-# the frame the tail clones has to stay readable under an end screen's cards.
-duration = 138.85
+# The picture runs to the end of playback rather than stopping on a chosen
+# frame: the master fades out, the player holds black, and this is where the
+# camera capture itself ends. The loop restart that follows in the emulator
+# recording is never reached, so nothing of it is shown.
+duration = 147.5
 # Still, silent seconds held after the picture ends, so YouTube's end screen
 # has room for its cards. The last frame is not faded; it stays readable.
 tail_seconds = 5.0
@@ -91,7 +91,13 @@ pixel_aspect = [32, 35]
 # re-encoding.
 spec = ["320×224 movie filling the H40 screen  •  24 FPS  •  22.05 kHz mono ADPCM",
         "136 KiB/s off a single-speed CD  •  16.5 MiB disc image"]
-path = "assets/lunar-ss-op/lunar-ss-op_e190_release_emu.mp4"
+# The recording itself, not its upload transcode: FFV1 at the console's own
+# 320x224, so the panel is scaled once instead of through a mezzanine.
+path = "assets/lunar-ss-op/lunar-ss-op_rel_lossless.mkv"
+# The material is at the console's raster, so this panel is an enlargement of
+# real console pixels. Nearest-neighbour keeps them as the hardware drew them
+# instead of blending the output dither into a grey wash.
+resize = "neighbor"
 # Measured against the master's scene cuts. Every cut lands on exactly the
 # emulator frame this offset predicts, which pins it to a sixtieth of a second.
 # It is 0.079 s earlier than the 15.716 s black-end because the master opens on
@@ -103,15 +109,18 @@ fmv_start = 15.637
 lead = 15.637
 
 [comparison.panels.psx]
-label = "PlayStation Original"
+label = "Original Video"
 slot = "right_top"
 # Displayed through the encode's own aperture, so this panel and the encode
 # share one framing rather than one being 4:3 beside the other's 64:49.
 aperture = [320, 224]
 pixel_aspect = [32, 35]
-# Two lines, stating the master exactly as the analysis upload does.
+# What the master is, and the one figure that belongs to the material rather
+# than to the file it arrived in. Its 960x720 and 48 kHz describe this
+# particular re-encode, not what a PlayStation put on screen, so stating them
+# beside the encode's own numbers would invite a comparison that is not real.
 spec = ["Lunar: Silver Star Story Complete (PlayStation, 1996)",
-        "960×720  •  24 FPS  •  48 kHz stereo"]
+        "24 FPS"]
 path = "assets/lunar-ss-op/lunar-ss-op.mp4"
 # The encoder's own centre crop for this profile's crop fit: 960x720 square
 # pixels carry 1.3333, the H40 aperture 1.3061, so 10 columns come off each
@@ -129,14 +138,18 @@ lead = 0.0
 [comparison.panels.real]
 label = "Real hardware"
 slot = "right_bottom"
-# The capture is a 16:9 frame of the desk; a 4:3 window out of it keeps the
-# monitor, the console and the controller and drops the room to the left,
-# and it stacks under a 1.3061 panel without either looking cut down.
-aperture = [4, 3]
-pixel_aspect = [1, 1]
+# The capture is a 16:9 frame of the desk. The window cut out of it keeps the
+# monitor, the console and the controller and drops the room to the left, and
+# it is cut to the console's own displayed shape rather than to 4:3: an H40
+# screen is 64:49, or 1.3061, so a 4:3 window would draw this panel 9px wider
+# than the one above it and the two would not line up on their left edges.
+# 1410x1080 is 1.3056, and declaring the aperture that the panel above uses
+# makes both widths come out identical at any stack height.
+aperture = [320, 224]
+pixel_aspect = [32, 35]
 spec = "Mega Drive 2  •  Mega CD 2"
 path = "assets/lunar-ss-op/GX010171.MP4"
-crop = [400, 0, 1440, 1080]
+crop = [415, 0, 1410, 1080]
 # Measured against the codec playback panel, on picture rather than on sound: a
 # television delays its own audio relative to its picture, so an audio match
 # would hand that delay straight to the video. Frame-to-frame motion inside the

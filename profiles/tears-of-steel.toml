@@ -59,12 +59,11 @@ audio_panel = "emu"
 audio_intro_panel = "real"
 audio_note = false
 output = "videos/tears-of-steel/comparison.mp4"
-# The picture stops on frame 2773, the last full-strength frame of the film's
-# own end card. The master fades from there over 12 frames and then holds 11
-# black ones, so playing it out would leave the still tail below holding
-# nothing: the frame the tail clones has to stay readable under an end
-# screen's cards.
-duration = 146.93
+# The picture runs to the end of playback rather than stopping on a chosen
+# frame: the master fades out and the player holds black. It stops five output
+# frames before the emulator recording restarts the movie, so the loop and the
+# broken frames it starts with stay off screen.
+duration = 152.45
 # Still, silent seconds held after the picture ends, so YouTube's end screen
 # has room for its cards. The last frame is not faded; it stays readable.
 tail_seconds = 5.0
@@ -143,14 +142,18 @@ lead = 0.0
 [comparison.panels.real]
 label = "Real hardware"
 slot = "right_bottom"
-# The capture is a 16:9 frame of the desk; a 4:3 window out of it keeps the
-# monitor, the console and the controller and drops the room to the left,
-# and it stacks under a 1.3061 panel without either looking cut down.
-aperture = [4, 3]
-pixel_aspect = [1, 1]
+# The capture is a 16:9 frame of the desk. The window cut out of it keeps the
+# monitor, the console and the controller and drops the room to the left, and
+# it is cut to the console's own displayed shape rather than to 4:3: an H40
+# screen is 64:49, or 1.3061, so a 4:3 window would draw this panel 9px wider
+# than the one above it and the two would not line up on their left edges.
+# 1410x1080 is 1.3056, and declaring the aperture that the panel above uses
+# makes both widths come out identical at any stack height.
+aperture = [320, 224]
+pixel_aspect = [32, 35]
 spec = "Mega Drive 2  •  Mega CD 2"
 path = "assets/tears-of-steel/GX010176.MP4"
-crop = [400, 0, 1440, 1080]
+crop = [415, 0, 1410, 1080]
 # Measured against the codec playback panel, on picture rather than on sound: a
 # television delays its own audio relative to its picture, so an audio match
 # would hand that delay straight to the video. Frame-to-frame motion inside the
