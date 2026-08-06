@@ -162,6 +162,12 @@ defines the values-only hardware/emulator DEBUG HUD.
   runtime.
 - `boot/movieplay_ip.s`: Main-CPU VRAM, CRAM, name-table, DMA, and DEBUG HUD
   runtime.
+- `tools/multimovie.py`: validates the separate multi-video menu manifest and
+  generates its filename, address, and menu-text tables.
+- `tools/multimovie_build.py`: builds the menu boot pair and stages one
+  specialized player pair plus `HEADER.DAT` / `BODY.DAT` for each menu item.
+- `boot/multimovie_*.s`: H40 menu, Word-RAM launcher, and boot bootstrap for a
+  multi-video disc.
 
 Completed sim artifacts are reusable only when source bytes, effective
 settings, and the output-affecting encoder fingerprint match. Sim work and
@@ -180,6 +186,7 @@ run.
 | Target | Purpose |
 |---|---|
 | `movieplay` / `disc` | Codec player disc. |
+| `multi-disc` | Separate multi-video menu disc from `MENU_CONFIG`. |
 | `cdcbench` | Continuous and restarted CD-read measurement. |
 | `dmabench` | Maximum VRAM DMA per VBlank. |
 | `cpuvrambench` | CPU-to-VRAM data-port write throughput during VBlank. |
@@ -309,6 +316,31 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 Independent invocations use the same cross-process locks, so separate sessions
 need no shared job list. Use `--sequential` for an A/B timing or determinism
 baseline. Public timeline, Gist, and upload stages remain interactive.
+
+## Multi-video menu build
+
+The separate multi-video build combines completed profile streams on one disc
+and adds a small H40 selection menu. Prepare the profiles named by the menu
+manifest, then build the disc with:
+
+```sh
+tools/python.sh tools/multimovie.py menus/multi-menu.toml --print-summary
+make multi-disc MENU_CONFIG=menus/multi-menu.toml DEBUG=1
+```
+
+The manifest uses `schema_version = 1`, a `[menu]` table, and one `[[videos]]`
+table per profile. Menu text is printable ASCII so the fixed bitmap font and
+the 40-column H40 name table have deterministic bounds. The sample manifest
+produces `out/cavc-demo_multi.iso` and `out/cavc-demo_multi.cue`; `DEBUG=0`
+uses the `_release` suffix. Each item is staged as its own four files:
+`V0000HDR.DAT`, `V0000BOD.DAT`, `V0000IP.BIN`, and `V0000SP.BIN`.
+
+The menu itself has no DEBUG HUD. Up/Down selects an item, A plays it and
+returns to the menu, and C plays it continuously until reset. The selected
+player remains the normal profile-specialized player, so the ordinary
+single-video `make disc` path and its PrgBuf capacity are unchanged. During a
+return the player reloads the menu image and launcher from the same CD; no
+high-PRG module or extra permanent PrgBuf reservation is used.
 
 ## Recording
 
@@ -516,6 +548,11 @@ timed-work valueとgraph maximumから除外します。
 - `tools/stream_schedule.py`: 正確なBODY routingと物理slot schedule。
 - `boot/movieplay_sp.s`: Sub-CPUのdisc、PrgBuf、Word-RAM、ADPCM、handoff runtime。
 - `boot/movieplay_ip.s`: Main-CPUのVRAM、CRAM、name table、DMA、DEBUG HUD runtime。
+- `tools/multimovie.py`: separate multi-video menu manifestを検証し、filename、address、
+  menu-text tableを生成します。
+- `tools/multimovie_build.py`: menu boot pairをbuildし、各menu itemのspecialized player pairと
+  `HEADER.DAT` / `BODY.DAT`をstageします。
+- `boot/multimovie_*.s`: multi-video disc用のH40 menu、Word-RAM launcher、boot bootstrap。
 
 completed sim artifactはsource byte、effective setting、outputに影響するencoder fingerprintが
 一致するときだけ再利用します。sim workとnative lossless emulator captureを含む全生成mediaは
@@ -532,6 +569,7 @@ build intermediate、tmpfs leaseはrunごとに分離します。
 | Target | 用途 |
 |---|---|
 | `movieplay` / `disc` | Codec player disc。 |
+| `multi-disc` | `MENU_CONFIG`から別ビルドの複数動画menu discを作る。 |
 | `cdcbench` | continuous/restarted CD read計測。 |
 | `dmabench` | VBlank当たり最大VRAM DMA。 |
 | `cpuvrambench` | VBlank中のCPU→VRAM data port書き込みthroughput実測。 |
@@ -658,6 +696,27 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 独立したinvocationも同じprocess間lockを使うため、別session間でjob listを共有する必要は
 ありません。A/B timingまたはdeterminism baselineには `--sequential` を使います。
 public timeline、Gist、upload stageは対話的に実行します。
+
+## 複数動画menu build
+
+別ビルドのmulti-video buildは、menu manifestに指定したcompleted profile streamを1枚のdiscへ
+まとめ、H40の小さなselection menuを追加します。manifestのprofileを準備してから次を実行します。
+
+```sh
+tools/python.sh tools/multimovie.py menus/multi-menu.toml --print-summary
+make multi-disc MENU_CONFIG=menus/multi-menu.toml DEBUG=1
+```
+
+Manifestは`schema_version = 1`、`[menu]` table、各profileに1つの`[[videos]]` tableを
+使います。menu textはprintable ASCIIに限定し、fixed bitmap fontと40-column H40 name tableの
+境界を決定的にします。sample manifestの出力は`out/cavc-demo_multi.iso`と
+`out/cavc-demo_multi.cue`です。`DEBUG=0`では`_release` suffixを使います。各itemは独立した
+4 file、`V0000HDR.DAT`、`V0000BOD.DAT`、`V0000IP.BIN`、`V0000SP.BIN`としてstageされます。
+
+Menu自身にはDEBUG HUDがありません。Up/Downでitemを選び、Aは再生後menuへ戻り、Cはresetまで
+連続再生します。選択したplayerは通常のprofile-specialized playerのままなので、通常の
+single-video `make disc` pathとPrgBuf容量は変わりません。戻り処理ではplayerが同じCDから
+menu imageとlauncherを再loadするため、high-PRG moduleや追加の恒久的なPrgBuf予約は使いません。
 
 ## Recording
 

@@ -545,6 +545,7 @@ overrides listed above can switch them off for isolation.
 | `MAIN_CODEGEN` | 1 | Generate specialized bitmap handlers. Zero selects the reference bit loop. |
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
+| `MULTI_MENU` | 0 | Internal per-video module flag used by the separate `multi-disc` build; ordinary `disc` builds leave it zero. |
 
 Specialized builds compare the CRC-32 header-contract signature before playback.
 The identifying magic bytes are excluded from that signature. The
@@ -562,6 +563,29 @@ before staging routing. That entry also initializes the ring, APPLY, and
 frame-0 queue state. Standard specialized DEBUG keeps
 its G state and measurement inline in the resident SP. Startup shows four hexadecimal digits containing safe PrgBuf
 preload KiB; a failure shows `BADx`.
+
+## Multi-video menu build
+
+The separate menu build is selected with `MENU_CONFIG`:
+
+```sh
+make multi-disc MENU_CONFIG=menus/multi-menu.toml DEBUG=1
+```
+
+The manifest has `schema_version = 1`, a `[menu]` table, and ordered
+`[[videos]]` entries containing a profile path and printable-ASCII title. The
+build creates one specialized player and one `HEADER.DAT` / `BODY.DAT` stream
+per entry, then writes the menu boot pair and the resulting
+`out/<menu-output>_multi.iso` / `.cue`. Release builds use the `_release` suffix.
+
+The fixed menu IP image is 20 KiB (10 sectors), and the menu launcher file is
+fixed at 5 KiB (3 sectors). In each 1M Word-RAM bank the
+return image uses offset `0x00000`, the selected-player IP staging slot begins
+at `0x05000`, and the Word-RAM launcher occupies `0x1E000..0x1F3FF` with a
+5-KiB limit. The selected player SP is still loaded at resident Sub PRG
+`0x06000..0x073FF`; the multi build does not place player code inside PrgBuf or
+reduce the normal 420-KiB physical ring. The menu has no DEBUG HUD. Up/Down
+selects, A returns after playback, and C loops the selected movie until reset.
 
 ## DEBUG HUD limits
 
@@ -1079,6 +1103,7 @@ resident pool、segmented palette、Near、boot prefetch、4つの物理供給�
 | `MAIN_CODEGEN` | 1 | specialized bitmap handlerを生成する。zeroはreference bit loop。 |
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
+| `MULTI_MENU` | 0 | 別ビルドの`multi-disc`が各動画moduleに内部指定するflag。通常の`disc` buildではzero。 |
 
 specialized buildはplayback前にCRC-32 header contract signatureを比較します。
 識別用magic byteはsignatureの対象外です。Resident Subの
@@ -1095,6 +1120,26 @@ timed playback前にring、APPLY、frame-0 queue stateを初期化します。
 Standard specialized DEBUGのG stateとmeasurementはresident SP内にinlineで保持します。
 startupは安全に受信済みのPrgBuf preload
 KiBを4桁hexで表示し、failureは`BADx`を表示します。
+
+## 複数動画menu build
+
+別menu buildは`MENU_CONFIG`で指定します。
+
+```sh
+make multi-disc MENU_CONFIG=menus/multi-menu.toml DEBUG=1
+```
+
+Manifestは`schema_version = 1`、`[menu]` table、profile pathとprintable-ASCII titleを持つ
+順序付き`[[videos]]` entryで構成します。各entryごとにspecialized playerと
+`HEADER.DAT` / `BODY.DAT` streamを作り、menu boot pairと
+`out/<menu-output>_multi.iso` / `.cue`を書きます。release buildは`_release` suffixを使います。
+
+Fixed menu IP imageは20 KiB（10 sector）、menu launcher fileは5 KiB（3 sector）固定です。各1M Word-RAM bankではreturn imageをoffset
+`0x00000`に置き、selected-player IP staging slotを`0x05000`から使い、Word-RAM launcherを
+`0x1E000..0x1F3FF`へ置いて5 KiBに制限します。selected player SPはresident Sub PRGの
+`0x06000..0x073FF`へloadするため、multi buildはPrgBuf内へplayer codeを置かず、通常の
+420 KiB physical ringも縮めません。Menu自身にはDEBUG HUDがありません。Up/Downで選択し、Aは
+再生後に戻り、Cはresetまで選択動画をloopします。
 
 ## DEBUG HUD limit
 

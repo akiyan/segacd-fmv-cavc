@@ -38,9 +38,9 @@ and are listed in place.
 
 | Domain | Unallocated ranges |
 |---|---|
-| Sub PRG-RAM | `SP-GAP` 224 B, `SCRATCH` 256 B, and `RING-ALIGN` 448 B |
+| Sub PRG-RAM | `SP-GAP` 224 B, `SCRATCH` 256 B, and `RING-ALIGN` 448 B; the multi-video overlay uses the first 34 B of `SP-GAP` |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
-| Main RAM | `M-FREE` 10.38 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
+| Main RAM | `M-FREE` 10.38 KiB in the ordinary player; the multi-video overlay uses its return stub and loop flag. The 192 B cushion below `M-STACK` is a guard, not allocatable |
 | VRAM | `0xDE80..0xDFFF` 384 B; unused Window/HScroll table rows remain reserved to those VDP structures. DEBUG shapes its HUD row with reg 18 only; reg 17 must stay 0 because Window row 24 cols 0-1 alias the HScroll table at `0xFC00`, which now carries nonzero scroll values |
 
 ## Sub PRG-RAM Map
@@ -52,7 +52,7 @@ PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 | `BIOS-LOW` | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area |
 | `SP-RES` | `0x06000..0x073FF` | 5.00 KiB | BIOS-loaded resident specialized SP image; the linker rejects a larger image |
 | `ADP-IDX` | `0x07400..0x07F1F` | 2,848 B | persistent ADPCM next-index table, copied once at boot; the full range is continuous-read marker-qualified |
-| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | unallocated marker-qualified tail |
+| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | unallocated marker-qualified tail; multi-video uses `0x07F20..0x07F41` for its menu-info table and loop flag |
 | `PCM-BUF` | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer |
 | `WORD-PENDING0` | `0x08600..0x08DFF` | 2.00 KiB | first Sub-owned sector waiting for its parity WordBuf bank |
 | `WORD-PENDING1` | `0x08E00..0x095FF` | 2.00 KiB | second pending WordBuf sector |
@@ -116,6 +116,26 @@ fixed `+0x300` entry at staged address `0x7D560`. These boot-only entries copy
 all three ADPCM tables once to their Sub PRG destinations, prepare routing,
 and initialize PCM plus the ring/APPLY/frame state. Frame-0 staging may then
 overwrite both temporary extension locations.
+
+### Multi-video menu overlay
+
+The multi-video menu is a separate boot build. Its boot SP image is only a
+bootstrap at `0x06000`; `MENUSP.BIN` is loaded into the Sub-owned Word-RAM
+launcher slot `0x1E000..0x1F3FF` in both physical banks and executes at
+`0x0DE000`. While the menu is active, `MENUIP.BIN` uses Word-RAM offset
+`0x00000..0x04FFF`, and the selected player's IP image is staged at
+`0x05000..0x1AFFF` before Main copies it to `0xFF0000`.
+
+The selected player's SP image is loaded into the normal resident slot
+`0x06000..0x073FF`, so the video uses the same PrgBuf and APPLY map as an
+ordinary specialized build. The menu launcher records the menu and selected
+stream LBAs in the marker-qualified `SP-GAP` at `0x07F20..0x07F3F` and keeps
+the Sub-side loop flag at `0x07F40`, outside PrgBuf. After an A-play, the player
+reloads the menu image into a free Word-RAM bank, Main restores the menu IP from
+that bank, and the player reloads `MENUSP.BIN` into both banks before returning
+to the menu. Each selected player clears the fixed `M-STATE` range before
+using its own Main-CPU `.bss`. Main's return stub is copied to `0xFF8880`; its
+loop choice is kept at `0xFFB1F0`.
 
 ### Boot-only overlays
 
@@ -206,7 +226,7 @@ build-time checked against the `M-STATE` base.
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated bitmap handlers and guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage (a persistent 4,096 B 64x32 plane band on a scroll build), scroll state (`scroll_next_h`/`scroll_next_v`/`scroll_h_dirty`), state; worst-case fixed reserve |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | current inline fade CRAM image, copied before the consumed Word RAM bank is returned |
-| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | unallocated space released by in-place `O_LOADS v2` consumption |
+| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | unallocated in the ordinary player; the multi-video overlay copies its return stub at `0xFF8880` and keeps its loop flag at `0xFFB1F0` |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table, 15 switches + sentinel (player-embedded palidx.bin) |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
@@ -483,9 +503,9 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 
 | Domain | 未割当range |
 |---|---|
-| Sub PRG-RAM | `SP-GAP` 224 B、`SCRATCH` 256 B、`RING-ALIGN` 448 B |
+| Sub PRG-RAM | `SP-GAP` 224 B、`SCRATCH` 256 B、`RING-ALIGN` 448 B。multi-video overlayは`SP-GAP`先頭34 Bを使う |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
-| Main RAM | `M-FREE` 10.38 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
+| Main RAM | 通常playerでは`M-FREE` 10.38 KiB。multi-video overlayはreturn stubとloop flagを使う。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
 | VRAM | `0xDE80..0xDFFF` 384 B。未使用Window/HScroll table rowは各VDP structure用に予約したまま。DEBUGのHUD行はreg 18だけで形成し、reg 17は0のまま保つ。Window row 24 col 0-1は`0xFC00`のHScroll tableとaliasし、そこはいまや非ゼロのscroll値を運ぶため |
 
 ## Sub PRG-RAM map
@@ -497,7 +517,7 @@ PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 | `BIOS-LOW` | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area |
 | `SP-RES` | `0x06000..0x073FF` | 5.00 KiB | BIOS-loadされるresident specialized SP image。linkerがこれを超えるimageを拒否 |
 | `ADP-IDX` | `0x07400..0x07F1F` | 2,848 B | boot時に1回copyするpersistent ADPCM next-index table。全rangeをcontinuous-read markerで検証済み |
-| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | 未割当のmarker検証済みtail |
+| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | 未割当のmarker検証済みtail。multi-videoはmenu-info tableとloop flagに`0x07F20..0x07F41`を使う |
 | `PCM-BUF` | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer |
 | `WORD-PENDING0` | `0x08600..0x08DFF` | 2.00 KiB | parity WordBuf bank待ちのSub所有1本目sector |
 | `WORD-PENDING1` | `0x08E00..0x095FF` | 2.00 KiB | 2本目のpending WordBuf sector |
@@ -560,6 +580,22 @@ buildはextension全体を先にcopyします。さらに固定`+0x300`入口を
 tableを各Sub PRG destinationへ1回copyし、routing、PCM、初期ring/APPLY/frame
 stateを設定します。その後はframe-0 stagingが両temporary extension locationを
 上書きできます。
+
+### Multi-video menu overlay
+
+Multi-video menuは別boot buildです。Boot SP imageは`0x06000`のbootstrapだけで、
+`MENUSP.BIN`を両physical bankのSub-owned Word-RAM launcher slot
+`0x1E000..0x1F3FF`へloadし、`0x0DE000`で実行します。Menu active中は`MENUIP.BIN`を
+Word-RAM offset `0x00000..0x04FFF`へ置き、selected playerのIP imageを
+`0x05000..0x1AFFF`へstageしてからMainが`0xFF0000`へcopyします。
+
+Selected playerのSP imageは通常のresident slot `0x06000..0x073FF`へloadするため、videoは
+通常のspecialized buildと同じPrgBuf / APPLY mapを使います。Menu launcherはmenuとselected
+streamのLBAをmarker検証済み`SP-GAP`の`0x07F20..0x07F3F`へ記録し、Sub側のloop flagを
+PrgBuf外の`0x07F40`に保持します。A-play後はplayerがfreeになったWord-RAM bankへmenu imageを
+再loadし、Mainがそこからmenu IPをrestoreし、playerが`MENUSP.BIN`を両bankへ再loadしてmenuへ
+戻ります。各selected playerは自身のMain-CPU `.bss`を使う前に固定`M-STATE` rangeをclearします。
+Mainのreturn stubは`0xFF8880`へcopyし、Main側のloop choiceは`0xFFB1F0`に保持します。
 
 ### Boot-only overlay
 
@@ -645,7 +681,7 @@ build-time checkされます。
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated bitmap handler、guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage（scroll buildでは常駐4,096 Bの64x32 plane band）、scroll state（`scroll_next_h`/`scroll_next_v`/`scroll_h_dirty`）、state。最悪ケース固定予約 |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | 消費済みWord RAM bankを返す前にcopyする、現在のinline fade CRAM image |
-| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | `O_LOADS v2` in-place消費により解放された未割当領域 |
+| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | 通常playerでは未割当。multi-video overlayは`0xFF8880`へreturn stubをcopyし、`0xFFB1F0`をloop flagに使う |
 | `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
 | `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表、15切替+番兵（player内蔵palidx.bin） |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
