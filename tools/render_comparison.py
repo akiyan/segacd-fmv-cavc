@@ -141,14 +141,17 @@ def build_command(spec: Comparison, output: Path, *, duration: float,
     tail = spec.tail_seconds
     total = duration + tail
     if tail > 0:
-        # Hold the last frame and fade it out across the tail, so the end
-        # screen's cards sit on a settling picture rather than a hard cut, and
-        # the audio is padded with silence instead of stopping mid-note.
-        graph += (f";[{vlabel}]tpad=stop_duration={tail:.6f}:stop_mode=clone,"
-                  f"fade=t=out:st={duration:.6f}:d={tail:.6f}[vtail]")
+        # Hold the last frame, silent, so an end screen's cards have somewhere
+        # to sit. The picture is left as it is rather than faded: the last frame
+        # stays readable underneath the cards.
+        # trim first: the graph's base is an endless colour source, so the
+        # composed stream has no end for tpad to clone from and the tail would
+        # otherwise keep playing whichever panel still had footage.
+        graph += (f";[{vlabel}]trim=0:{duration:.6f},setpts=PTS-STARTPTS,"
+                  f"tpad=stop_duration={tail:.6f}:stop_mode=clone[vtail]")
         vlabel = "vtail"
-        graph += (f";{audio_source}afade=t=out:st={max(duration - 1.0, 0):.6f}"
-                  f":d=1,apad=whole_dur={total:.6f}[atail]")
+        graph += (f";{audio_source}atrim=0:{duration:.6f},asetpts=PTS-STARTPTS,"
+                  f"apad=whole_dur={total:.6f}[atail]")
         audio_map = "[atail]"
 
     cmd += [

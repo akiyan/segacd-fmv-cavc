@@ -33,6 +33,9 @@ algorithm = "mosaic-gm"
 
 [analysis]
 source_canvas = [320, 224]
+# Still, silent seconds held after the picture ends, so YouTube's end screen
+# has room for its cards. The last frame is not faded; it stays readable.
+tail_seconds = 5.0
 
 [comparison]
 # Text drawn on the comparison frame. The geometry itself lives in
@@ -51,9 +54,9 @@ audio_intro_panel = "real"
 audio_note = false
 output = "videos/sonic-jam-op/comparison.mp4"
 duration = 124.9
-# Still, silent seconds after the picture ends, fading out across them, so
-# YouTube's end screen has room for its cards.
-tail_seconds = 15.0
+# Still, silent seconds held after the picture ends, so YouTube's end screen
+# has room for its cards. The last frame is not faded; it stays readable.
+tail_seconds = 5.0
 
 # Panels are drawn in the order written here. `slot` places one in the frame:
 # main is the left column, top_left and top_right share the right column's
