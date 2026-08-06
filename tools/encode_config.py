@@ -109,6 +109,15 @@ ALLOWED = {
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
                 "source_label_ja"},
+    # Comparison-video composition: which footage fills each panel, how the
+    # panels are synchronised, and the text drawn on the frame. Also outside
+    # ENV_MAP, for the same reason as [youtube] - retiming a panel or editing a
+    # label must not change the encode identity. The nested [comparison.panels]
+    # tables are validated by tools/comparison_layout.py, which owns their
+    # meaning.
+    "comparison": {"badge", "title", "audio_panel", "audio_intro_panel",
+                   "audio_note", "output", "duration", "tail_seconds",
+                   "panels", "youtube"},
 }
 REQUIRED = {
     "source": {"path", "fps", "duration"},
