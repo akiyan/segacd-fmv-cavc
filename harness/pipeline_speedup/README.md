@@ -105,12 +105,14 @@ cycles, which violates the RF5C164's sounding-time minimum access period of
 16 source clock cycles (official PCM manual 4-5). The real chip drops or
 corrupts the over-paced bytes — a continuous periodic hiss on hardware
 (issue #81) that no emulator and no EverDrive FPGA reproduces, so every
-measurement in this file stayed clean. The MOVEP batch path now runs only
-during the boot prefill, where sounding is suspended and writes are
-unrestricted; playback uses a 20-cycle paced writer. The build-time proof
-lives in `harness/pcm_write_pacing/`. The fps measurements below remain valid
-as records of the batch writer's speed; the paced playback writer costs about
-8k more cycles per frame and holds the same HUD gate.
+measurement in this file stayed clean. The MOVEP batch path is gone: the
+writer sets control-register bit 7 on every bank select, so the IC is sounding
+on every call including the boot prefill, and there is no state in which a
+batched wave write is legal. Playback and prefill both use the 20-cycle paced
+writer. The build-time proof lives in `harness/pcm_write_pacing/`. The fps
+measurements below remain valid as records of the batch writer's speed; the
+paced writer costs about 8k more cycles per frame and holds the same HUD
+gate.
 
 Exact A/B used the same e14 Sonic `MOVIE.DAT`, lossless GPGX A/V capture and HUD
 frame counter:

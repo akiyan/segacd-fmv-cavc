@@ -1345,6 +1345,20 @@
 #         now spaces strobes 20 CPU cycles apart (same 12.5 MHz clock
 #         domain); the boot prefill runs with sounding suspended, where
 #         writes are unrestricted, and keeps the MOVEP fast path.
+#   p154: Extend the RF5C164 access-period compliance to every remaining PCM
+#         access. The wave writer sets control-register bit 7 on every bank
+#         select, so by the manual's own definition the IC is sounding on
+#         every call: p153's "sounding suspended" boot-prefill exemption did
+#         not exist, and the untimed BODY-arm prefill (the first audio the
+#         listener hears) still ran the MOVEP burst. The burst path is
+#         removed outright, so there is one always-paced writer and no state
+#         in which a batched wave write is reachable. Separately, an
+#         internal-register write needs 384 cycles before the next access to
+#         the IC, which the wave-RAM bank select in the control register also
+#         is: the first byte of a bank followed it after 16 cycles and could
+#         still land in the previously selected bank. Every internal-register
+#         write in the writer, pcm_on and pcm_boot_init is now followed by an
+#         explicit 390-cycle delay. Cost is under 0.2% of a frame at 30 fps.
 date=20260806
 e=190
-p=153
+p=154
