@@ -35,6 +35,12 @@ algorithm = "mosaic-gm"
 # shows.
 source_canvas = [320, 224]
 source_par = [32, 35]
+# The Source panel states the one figure that belongs to the material rather
+# than to the file it arrived in. Its 960x720 and 48 kHz describe this
+# particular re-encode, not what a PlayStation put on screen, so stating them
+# beside the encode's own numbers would invite a comparison that is not real.
+# The value is still measured here, not typed: only the format is chosen.
+source_spec = "{fps}fps"
 # Still, silent seconds held after the picture ends, so YouTube's end screen
 # has room for its cards. The last frame is not faded; it stays readable.
 tail_seconds = 5.0

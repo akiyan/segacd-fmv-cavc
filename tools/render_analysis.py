@@ -62,8 +62,14 @@ SIM = str(sim_work_dir())
 SRCLABEL = os.environ.get("CBRSIM_SRCLABEL", "Source")
 
 
-def _source_spec():
-    """Source見出し併記用: 元動画の 解像度 / fps / 音声仕様 を ffprobe で組み立てる(ビットレートは省略)。"""
+def _source_spec(template=None):
+    """Source見出し併記用の諸元をffprobeで組み立てる(ビットレートは省略)。
+
+    既定は 解像度 / fps / 音声 を並べる。profileが [analysis] source_spec を
+    与えた場合はそれを書式として使い、{width} {height} {fps} {audio}
+    {audio_codec} {audio_khz} {audio_channels} を差し込む。数値はここで測った
+    ものだけを使うので、書式を選んでも値を打ち直すことにはならない。
+    """
     src = os.environ.get("CBRSIM_SRC", "")
     if not src or not Path(src).exists():
         return ""
@@ -77,6 +83,9 @@ def _source_spec():
         num, den = vj["r_frame_rate"].split("/")
         fps = round(float(num) / float(den))
         parts = ["%dx%d" % (vj["width"], vj["height"]), "%dfps" % fps]
+        fields = {"width": int(vj["width"]), "height": int(vj["height"]),
+                  "fps": fps, "audio": "", "audio_codec": "",
+                  "audio_khz": "", "audio_channels": ""}
         aj = _json.loads(subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "a:0",
              "-show_entries", "stream=codec_name,sample_rate,channels", "-of", "json", src],
@@ -84,13 +93,30 @@ def _source_spec():
         if aj:
             a = aj[0]; ch = int(a.get("channels", 0)); sr = int(a.get("sample_rate", 0))
             chs = {1: "mono", 2: "stereo"}.get(ch, "%dch" % ch)
-            parts.append("%s %gkHz %s" % (a["codec_name"].upper(), sr / 1000.0, chs))
-        return " / ".join(parts)
+            audio = "%s %gkHz %s" % (a["codec_name"].upper(), sr / 1000.0, chs)
+            parts.append(audio)
+            fields.update(audio=audio, audio_codec=a["codec_name"].upper(),
+                          audio_khz="%gkHz" % (sr / 1000.0),
+                          audio_channels=chs)
+        if template is None:
+            return " / ".join(parts)
+        try:
+            return template.format(**fields)
+        except KeyError as exc:
+            raise SystemExit(
+                f"analysis.source_spec: unknown field {exc}; available are "
+                + ", ".join(sorted(fields)))
+    except SystemExit:
+        raise
     except Exception:
         return ""
 
 
-SRC_SPEC = _source_spec()
+# The profile is read here rather than with the rest of [analysis] below,
+# because the Source spec is needed before that block runs.
+SRC_SPEC = _source_spec(
+    (CONFIG_PROFILE.section("analysis") or {}).get("source_spec")
+    if CONFIG_PROFILE else None)
 OUT_MP4 = Path(os.environ.get(
     "ANALYSIS_OUT", str(artifact_path("analysis", sim_dir=SIM))))
 OUT_TSV = (
