@@ -27,3 +27,164 @@ cold_cap = "2:180,3:230"
 
 [palette]
 algorithm = "mosaic-gm"
+
+[analysis]
+# raw/ already holds the 320x224 H40 raster, so the Source panel is displayed
+# with the console's pixels rather than the master's square ones. Without this
+# the panel is drawn at 320/224 = 1.4286 instead of the 1.3061 the hardware
+# shows.
+source_canvas = [320, 224]
+source_par = [32, 35]
+# Still, silent seconds held after the picture ends, so YouTube's end screen
+# has room for its cards. The last frame is not faded; it stays readable.
+tail_seconds = 5.0
+
+[comparison]
+# Text drawn on the comparison frame. The geometry itself lives in
+# tools/comparison_layout.py; only the wording is a per-source choice.
+badge = "CAVC"
+# The three arrangement centres its panels, so the headline has 1550px rather
+# than the four arrangement's 1824px. The frame rate is left to the main
+# panel's spec line directly below rather than crowding the title.
+title = "CUSTOM SEGA CD FMV CODEC — Lunar: Silver Star Story at 320×224"
+# The real-hardware capture carries the run-up - its console, its BIOS screen,
+# its button press - and the codec playback takes over the moment its own panel
+# starts. The frame does not state this: the description does, and the height
+# the note took goes to the panels instead.
+audio_panel = "emu"
+audio_intro_panel = "real"
+audio_note = false
+output = "videos/lunar-ss-op/comparison.mp4"
+# The picture stops on the master's last unfaded frame rather than running to
+# its final one. The master closes with a 1.0 s fade and then 0.7 s of pure
+# black, so playing it out would leave the still tail below holding nothing:
+# the frame the tail clones has to stay readable under an end screen's cards.
+duration = 138.85
+# Still, silent seconds held after the picture ends, so YouTube's end screen
+# has room for its cards. The last frame is not faded; it stays readable.
+tail_seconds = 5.0
+
+# Three panels: the codec playback fills the left column and the material it
+# was made from sits above the console it now runs on, stacked in the right.
+# Lunar: The Silver Star's own 1992 Mega-CD release opens on a different
+# sequence, so there is nothing to put in a fourth panel.
+#
+# `aperture` and `pixel_aspect` size the panel: an H40 screen is 320x224 with
+# pixel aspect 32:35, displayed 1.3061 wide-to-high.
+#
+# `fmv_start` is where the moving picture begins inside that panel's own file
+# and `lead` is how much of the run-up before it stays on the timeline. The
+# largest lead becomes the moment every panel starts moving together.
+
+[comparison.panels.emu]
+# Names the codec and says this is an emulator running it, so the panel is not
+# mistaken for a capture off real hardware - that is the panel below it.
+label = "Custom FMV Codec Playback — SEGA-CD Emulator (Genesis Plus GX)"
+# The audio note reads as a sentence, so it uses this instead.
+short_label = "the codec playback panel"
+slot = "main"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+# First line: the encoded raster inside the screen it is displayed in, then the
+# timing. Second line: what the disc actually has to sustain, and how big the
+# whole image is. Both belong to this encode, so re-check them after
+# re-encoding.
+spec = ["320×224 movie filling the H40 screen  •  24 FPS  •  22.05 kHz mono ADPCM",
+        "136 KiB/s off a single-speed CD  •  16.5 MiB disc image"]
+path = "assets/lunar-ss-op/lunar-ss-op_e190_release_emu.mp4"
+# Measured against the master's scene cuts. Every cut lands on exactly the
+# emulator frame this offset predicts, which pins it to a sixtieth of a second.
+# It is 0.079 s earlier than the 15.716 s black-end because the master opens on
+# two black frames of its own, so the screen is already lit before it has
+# anything to show. Whole-clip luminance correlation reads about four frames
+# later than this and is not used: the codec resolves a new scene over several
+# frames, which drags a correlation late but cannot move a cut's first frame.
+fmv_start = 15.637
+lead = 15.637
+
+[comparison.panels.psx]
+label = "PlayStation Original"
+slot = "right_top"
+# Displayed through the encode's own aperture, so this panel and the encode
+# share one framing rather than one being 4:3 beside the other's 64:49.
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+# Two lines, stating the master exactly as the analysis upload does.
+spec = ["Lunar: Silver Star Story Complete (PlayStation, 1996)",
+        "960×720  •  24 FPS  •  48 kHz stereo"]
+path = "assets/lunar-ss-op/lunar-ss-op.mp4"
+# The encoder's own centre crop for this profile's crop fit: 960x720 square
+# pixels carry 1.3333, the H40 aperture 1.3061, so 10 columns come off each
+# side. Cropping the panel the same way keeps both showing the same picture.
+crop = [10, 0, 940, 720]
+# Stored at exactly 24.000, but the player gives each frame alternately 2 and 3
+# of the console's 59.94 Hz slots, so the picture advances at 24000/1001.
+# Re-timing the master to that rate keeps it locked for the whole clip instead
+# of drifting 0.1 s by the end.
+input_fps = "24000/1001"
+# The master is nothing but the movie.
+fmv_start = 0.0
+lead = 0.0
+
+[comparison.panels.real]
+label = "Real hardware"
+slot = "right_bottom"
+# The capture is a 16:9 frame of the desk; a 4:3 window out of it keeps the
+# monitor, the console and the controller and drops the room to the left,
+# and it stacks under a 1.3061 panel without either looking cut down.
+aperture = [4, 3]
+pixel_aspect = [1, 1]
+spec = "Mega Drive 2  •  Mega CD 2"
+path = "assets/lunar-ss-op/GX010171.MP4"
+crop = [400, 0, 1440, 1080]
+# Measured against the codec playback panel, on picture rather than on sound: a
+# television delays its own audio relative to its picture, so an audio match
+# would hand that delay straight to the video. Frame-to-frame motion inside the
+# screen area correlates against the emulator recording at 19.189 s, and the
+# master's cuts land where that offset predicts them in both.
+fmv_start = 34.826
+# The whole capture is kept, so it opens the video: the console, the BIOS
+# screen and the button press play before any other panel starts.
+lead = 34.826
+
+[comparison.youtube]
+# The upload text for the comparison video. The wording is per-source, so it
+# lives here rather than in a shared template, but every figure stays a
+# placeholder that tools/youtube_description.py fills from the encode that
+# produced the video - nothing numeric is retyped here.
+title = "Sega CD FMV at 24 FPS — Lunar: Silver Star Story (320×224) Side-by-Side Comparison"
+description_en = """
+I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec plays full motion video on unmodified Sega CD / Mega-CD hardware: the console decodes and displays every frame itself while reading one single-speed CD, with no extra chip. This video puts that codec beside the material it was made from and beside the same disc running on real Mega Drive 2 / Mega CD 2 hardware, all playing at once.
+
+Output: display mode H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) filling the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} ({cram_segments} segments). Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
+
+Source: {source_label}.
+
+The run-up is heard from the real-hardware capture, recorded in the room with the console. Once the codec playback panel starts, the audio hands over to that panel's own output, so from there on you hear the Sub CPU's ADPCM decode. The other panels stay silent throughout.
+
+What the encoder does. Tiles already resident in VRAM are reused whenever an exact or close-enough match is on hand, and those cost no CD delivery at all. A cell that cannot afford its exact pattern is pointed at a resident one for two bytes instead of a 32-byte pattern. New patterns come from one of several prefetch buffers in the console's spare RAM, each arriving by an exact per-frame deadline tied to the CD's own sector rate, so the picture never runs ahead of what the drive can physically deliver. Palettes are trained per segment.
+"""
+description_ja = """
+Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Video Codec は、無改造の Sega CD / Mega-CD でfull motion videoを再生します。追加chipを使わず、単速CDを読みながら本体自身が毎frameをdecodeして表示します。この動画では、そのcodecの出力を、元にした素材、そして同じdiscを実機のMega Drive 2 / Mega CD 2で動かした様子と並べて同時に再生します。
+
+出力: display mode H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)で320x224 apertureを埋めます。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは{cram_switches}回 ({cram_segments} segments)。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
+
+Source: {source_label_ja}。
+
+冒頭の助走部分の音は実機撮影の音声で、本体と同じ部屋で録ったものです。codec playback panelが始まると音声はそのpanelの出力へ引き継がれ、そこから聞こえるのはSub CPUのADPCM decodeです。他のpanelは終始無音です。
+
+encoderの動作。VRAMに常駐しているtileは、完全一致か十分近いものがあれば再利用し、CD配送を一切使いません。正確なpatternを賄えないcellは、32 byteのpatternではなく2 byteで常駐patternへ向けます。新しいpatternは、本体の空きRAMに置いた複数の先読みbufferのいずれかから、CDのsector rateに結び付いたframeごとの正確な期限に届きます。そのため絵がdriveの物理的な配送能力を先回りすることはありません。paletteはsegmentごとに学習します。
+"""
+
+# Links, in the order they are written. They are emitted at the end of the
+# English half, where YOUTUBE.md requires every URL to sit.
+[comparison.youtube.links]
+"Encoder decisions visualized" = "https://youtu.be/bkvjRILYR2Q"
+"Playback recording of this encode" = "https://youtu.be/N27SY-0cupI"
+"Project" = "https://github.com/akiyan/segacd-fmv-cavc"
+
+[youtube]
+analysis_title = "Sega CD FMV at 24 FPS — Lunar: Silver Star Story (320×224) Visual Analysis & Encoding Breakdown"
+playback_title = "Sega CD FMV at 24 FPS — Lunar: Silver Star Story (320×224) in Genesis Plus GX"
+source_label = "Lunar: Silver Star Story Complete (PlayStation, 1996), 960x720, 24 fps, 48 kHz stereo"
+source_label_ja = "Lunar: Silver Star Story Complete (PlayStation、1996)、960x720、24 fps、48 kHz stereo"
