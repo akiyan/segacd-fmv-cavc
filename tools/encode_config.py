@@ -104,11 +104,20 @@ ALLOWED = {
     "output": {key for section, key in ENV_MAP if section == "output"},
     "encoder": {key for section, key in ENV_MAP if section == "encoder"},
     "palette": {key for section, key in ENV_MAP if section == "palette"},
-    "analysis": {"source_canvas"},
+    "analysis": {"source_canvas", "tail_seconds"},
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
                 "source_label_ja"},
+    # Comparison-video composition: which footage fills each panel, how the
+    # panels are synchronised, and the text drawn on the frame. Also outside
+    # ENV_MAP, for the same reason as [youtube] - retiming a panel or editing a
+    # label must not change the encode identity. The nested [comparison.panels]
+    # tables are validated by tools/comparison_layout.py, which owns their
+    # meaning.
+    "comparison": {"badge", "title", "audio_panel", "audio_intro_panel",
+                   "audio_note", "output", "duration", "tail_seconds",
+                   "panels", "youtube"},
 }
 REQUIRED = {
     "source": {"path", "fps", "duration"},

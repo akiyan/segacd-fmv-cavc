@@ -361,6 +361,18 @@
 .equ PCM_ONOFF, 0x00FF0011
 .equ PCM_WAVE,  0x00FF2001
 .equ PCM_PLAY_H, 0x00FF0023
+/* RF5C164 spec (MEGA-CD HARDWARE MANUAL "PCM SOUND SOURCE" 4-5): an internal
+   register write while the IC is sounding needs 384 or more source clock
+   cycles before the next access to the IC.  Wave memory is external and only
+   needs 16, but the bank select in the control register is internal, so the
+   first wave byte of a bank must not follow it immediately or it can still
+   land in the previous bank.  A taken dbra is 10 cycles, so 38 iterations
+   give 390.  The writer changes bank once per 4096 wave bytes plus twice per
+   call, well under 0.2% of a frame at 30 fps. */
+.macro PCM_REG_WAIT reg
+	moveq	#38, \reg
+9:	dbra	\reg, 9b
+.endm
 .equ WAVE_RING_END, 0x8000
 .equ RING_MASK, WAVE_RING_END-1
 /* 音声リード: 起動時から先行書き込み位置(SYNC_LEAD)で再生を開始する。
@@ -2642,9 +2654,15 @@ pcm_on:
 	move.w	#1, pcm_running
 	/* GPGX reloads a channel's address on the OFF write. Repeat OFF here so
 	   PCM_ST=SYNC_LEAD is latched even when the channel was left selected during
-	   the boot-prefix writes, then enable it. */
+	   the boot-prefix writes, then enable it.  These are internal-register
+	   accesses and the IC is sounding, so the PCM manual's 384-cycle minimum
+	   access period applies between them (dbra taken is 10 cycles). */
+	movem.l	d0, -(sp)
 	move.b	#0xFF, (PCM_ONOFF).l
+	PCM_REG_WAIT d0
 	move.b	#0xFE, (PCM_ONOFF).l
+	PCM_REG_WAIT d0
+	movem.l	(sp)+, d0
 	rts
 
 /* Decode one checkpointed IMA chunk from a0 to PCM_DEC_BUF. All three hot
@@ -2787,6 +2805,7 @@ wwc_sync_ready:
 	lsr.w	#4, d0
 	ori.b	#0x80, d0
 	move.b	d0, (PCM_CTRL).l		/* initial bank */
+	PCM_REG_WAIT d0
 	move.w	d2, d4
 	andi.w	#0x0FFF, d4
 	add.w	d4, d4
@@ -2816,24 +2835,19 @@ wwc_chunk:
 	/* RF5C164 spec (MEGA-CD HARDWARE MANUAL "PCM SOUND SOURCE" 4-5): while the
 	   IC is sounding, external wave memory writes must be spaced 16 or more
 	   source clock cycles apart.  Sub CPU and PCM chip share the 12.5 MHz
-	   clock, so 16 source clocks are 16 CPU cycles.  The MOVEP.L batch path
-	   below strobes every ~6-10 cycles, which the real chip answers with
-	   dropped or corrupted bytes: continuous periodic hiss on hardware while
-	   streaming (issue #81).  Emulators and the Mega EverDrive Pro FPGA do not
-	   model the minimum access period, so only real hardware exposes it.
-	   While sounding, take the paced path (>=20 cycles between strobes);
-	   the boot prefill runs with sounding suspended, where the manual allows
-	   unrestricted writes, and keeps the fast MOVEP path. */
-	tst.w	pcm_running
-	beq	wwc_burst
-
-wwc_paced:
+	   clock, so 16 source clocks are 16 CPU cycles.  "Sounding" is control
+	   register bit 7, which this writer sets itself on every bank select, so
+	   the restriction applies to every call including the untimed boot
+	   prefill: there is no state in which a MOVEP.L burst is legal here.
+	   The real chip answers over-fast writes with dropped or corrupted bytes
+	   (issue #81).  Emulators and the Mega EverDrive Pro FPGA do not model
+	   the minimum access period, so only real hardware exposes it.
+	   20 CPU cycles per strobe (move.b 12 + addq 8). */
 	move.w	d4, d1
 	lsr.w	#3, d1
 	beq	wwc_paced_tail
 	subq.w	#1, d1
 wwc_paced_loop8:
-	/* Eight writes, 20 CPU cycles strobe to strobe (move.b 12 + addq 8). */
 	move.b	(a0)+, (a1)
 	addq.w	#2, a1
 	move.b	(a0)+, (a1)
@@ -2860,61 +2874,6 @@ wwc_paced_tail_loop:
 	move.b	(a0)+, (a1)
 	addq.w	#2, a1
 	dbra	d4, wwc_paced_tail_loop
-	bra	wwc_chunk_done
-
-wwc_burst:
-	/* A 68000 long read must be even-aligned.  An odd bitmap/entry length can
-	   leave audio on an odd address, so scalar-copy one byte before MOVE.L. */
-	move.l	a0, d0
-	btst	#0, d0
-	beq	wwc_aligned
-	move.b	(a0)+, (a1)
-	addq.w	#2, a1
-	subq.w	#1, d4
-	beq	wwc_chunk_done
-
-wwc_aligned:
-	/* 16-byte core: four contiguous reads to four interleaved PCM writes. */
-	move.w	d4, d0
-	lsr.w	#4, d0
-	beq	wwc_groups4
-	move.w	d0, d1
-	subq.w	#1, d1
-wwc_loop16:
-	move.l	(a0)+, d0
-	movep.l	d0, 0(a1)
-	move.l	(a0)+, d0
-	movep.l	d0, 8(a1)
-	move.l	(a0)+, d0
-	movep.l	d0, 16(a1)
-	move.l	(a0)+, d0
-	movep.l	d0, 24(a1)
-	lea	32(a1), a1
-	dbra	d1, wwc_loop16
-	andi.w	#0x000F, d4
-
-wwc_groups4:
-	/* Remaining four-byte groups (zero to three). */
-	move.w	d4, d1
-	lsr.w	#2, d1
-	beq	wwc_tail
-	subq.w	#1, d1
-wwc_loop4:
-	move.l	(a0)+, d0
-	movep.l	d0, 0(a1)
-	lea	8(a1), a1
-	dbra	d1, wwc_loop4
-	andi.w	#0x0003, d4
-
-wwc_tail:
-	/* Scalar-copy the final zero to three bytes. */
-	tst.w	d4
-	beq	wwc_chunk_done
-	subq.w	#1, d4
-wwc_tail_loop:
-	move.b	(a0)+, (a1)
-	addq.w	#2, a1
-	dbra	d4, wwc_tail_loop
 
 wwc_chunk_done:
 	add.w	d5, d2				/* advance the logical pointer by one chunk */
@@ -2936,6 +2895,7 @@ wwc_set_bank:
 wwc_write_bank:
 	ori.b	#0x80, d0
 	move.b	d0, (PCM_CTRL).l
+	PCM_REG_WAIT d0
 	lea	(PCM_WAVE).l, a1
 	bra	wwc_chunk
 
@@ -2948,6 +2908,7 @@ wwc_done:
 	move.w	d2, cur_lead			/* boot HUD reports reserve, not absolute write address */
 1:
 	move.b	#0xC0, (PCM_CTRL).l
+	PCM_REG_WAIT d0
 	movem.l	(sp)+, d0-d5/a0-a1
 	rts
 

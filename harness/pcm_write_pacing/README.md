@@ -43,20 +43,30 @@ build-time proof.
   writer at ~10.1 cycles per write (~6-8 inside one MOVEP.L) to reach
   29.97 fps. Every real-hardware test after that date carried the violation;
   the hardware noise report (issue #81, 2026-07-28) followed it.
-- `p153` split `write_wave_chunk`: while `pcm_running` is set the paced path
-  writes every 20 cycles (`move.b (a0)+,(a1)` 12 + `addq.w #2,a1` 8, unrolled
-  8x); the boot prefill runs with sounding suspended, where the manual allows
-  unrestricted writes, and keeps the MOVEP batch path.
+- `p153` split `write_wave_chunk`: the paced path writes every 20 cycles
+  (`move.b (a0)+,(a1)` 12 + `addq.w #2,a1` 8, unrolled 8x) whenever
+  `pcm_running` was set, and the boot prefill kept the MOVEP batch path on the
+  assumption that sounding was suspended there.
+- `p154` removed that exemption and the burst path with it. The writer sets
+  control-register bit 7 on every bank select, so by the manual's definition
+  the IC is sounding on every call, including the untimed BODY-arm prefill —
+  which is the first audio the listener hears. There is one always-paced
+  writer now. `p154` also spaced the internal-register writes: the wave-RAM
+  bank select lives in the control register and needs 384 cycles before the
+  next access, so the first byte of a bank could otherwise still land in the
+  previously selected bank.
 
 ## What the checker proves
 
-1. `write_wave_chunk` routes sounding-time writes away from the burst core
-   (`tst.w pcm_running` / `beq wwc_burst`), the burst core still contains the
-   MOVEP batch (so the guard guards what it claims to), and the paced block
-   contains no MOVEP.
+1. `write_wave_chunk` contains no MOVEP at all. A guard would be the wrong
+   contract here: there is no reachable state in which a batched wave write is
+   legal, so the checker requires the instruction's absence.
 2. Every strobe-to-strobe distance in the paced loop bodies, including the
    `dbra` seam between iterations, is at least 20 CPU cycles — the 16-cycle
    spec floor plus project margin for cycle-table uncertainty.
+3. Every internal-register write in `write_wave_chunk`, `pcm_on` and
+   `pcm_boot_init` is followed immediately by `PCM_REG_WAIT`, the 390-cycle
+   delay that satisfies the 384-cycle internal-register access period.
 
 The cycle table covers only the instructions the paced block is allowed to
 contain. An unknown instruction fails the check rather than being estimated:

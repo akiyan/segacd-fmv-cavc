@@ -37,6 +37,18 @@
 .equ PCM_LSL,                 0x00FF0009
 .equ PCM_LSH,                 0x00FF000B
 .equ PCM_ST,                  0x00FF000D
+/* RF5C164 spec (PCM manual 4-5): while the IC is sounding, internal register
+   writes need 384 or more source clock cycles between accesses (48 while
+   sounding is suspended). Control register bit 7 is set throughout this
+   routine, so use the sounding figure. Sub CPU and PCM share 12.5 MHz, so
+   384 source clocks are 384 CPU cycles; a taken dbra is 10, so 38 iterations
+   plus the 20-cycle write itself clear the requirement. Boot-only cost:
+   about 1.5 ms total. */
+.macro PCM_REG_WAIT reg=d1
+	moveq	#38, \reg
+9:	dbra	\reg, 9b
+.endm
+
 .equ PCM_CTRL,                0x00FF000F
 .equ PCM_ONOFF,               0x00FF0011
 .equ PCM_WAVE,                0x00FF2001
@@ -231,11 +243,13 @@ pcm_boot_init:
 	movem.l	d1-d3/a0, -(sp)
 	move.w	d0, d3
 	move.b	#0xFF, (PCM_ONOFF).l
+	PCM_REG_WAIT
 	moveq	#0, d2
 1:
 	move.w	d2, d0
 	ori.b	#0x80, d0
 	move.b	d0, (PCM_CTRL).l
+	PCM_REG_WAIT
 	lea	(PCM_WAVE).l, a0
 	move.w	#0x1000-1, d1
 2:
@@ -246,7 +260,9 @@ pcm_boot_init:
 	cmp.w	#16, d2
 	blo.s	1b
 	/* The full clear erased the ring loop-end marker: rewrite it last. */
+	PCM_REG_WAIT
 	move.b	#0x88, (PCM_CTRL).l
+	PCM_REG_WAIT
 	move.b	#0xFF, (PCM_WAVE).l
 	/* Park ch1..ch7 registers at silent known values. PCM_ONOFF already holds
 	   all channels off; pcm start later re-enables ch0 only (0xFE). */
@@ -255,51 +271,41 @@ pcm_boot_init:
 	move.w	d2, d0
 	ori.b	#0xC0, d0
 	move.b	d0, (PCM_CTRL).l
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_ENV).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_PAN).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_FDL).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_FDH).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_LSL).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_LSH).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_ST).l
-	nop
-	nop
+	PCM_REG_WAIT
 	addq.w	#1, d2
 	cmp.w	#8, d2
 	blo.s	1b
 	move.b	#0xC0, (PCM_CTRL).l
+	PCM_REG_WAIT
 	move.b	#0xFF, (PCM_ENV).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0xFF, (PCM_PAN).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	d3, (PCM_FDL).l
-	nop
-	nop
+	PCM_REG_WAIT
 	lsr.w	#8, d3
 	move.b	d3, (PCM_FDH).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_LSL).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x00, (PCM_LSH).l
-	nop
-	nop
+	PCM_REG_WAIT
 	move.b	#0x30, (PCM_ST).l
+	PCM_REG_WAIT
 	movem.l	(sp)+, d1-d3/a0
 	rts
 

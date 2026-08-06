@@ -167,6 +167,9 @@ SOURCE_SAR_DEN = _SOURCE_SAR.denominator
 _analysis_profile = CONFIG_PROFILE.section("analysis") if CONFIG_PROFILE else {}
 SOURCE_CANVAS = tuple(_analysis_profile.get("source_canvas", (RW, RH)))
 SOURCE_CANVAS_W, SOURCE_CANVAS_H = map(int, SOURCE_CANVAS)
+# Still, silent seconds appended after the picture ends, fading out across
+# them, so YouTube's end screen has somewhere to put its cards.
+TAIL_SECONDS = float(_analysis_profile.get("tail_seconds", 0.0))
 # H40画面の PAR・実機画面サイズ・表示アスペクト
 MODE = L.MODE_NAME
 PAR = L.PAR                                    # 1ドット横長比
@@ -1322,6 +1325,9 @@ def render(i):
 
 def mux(output: Path):
     audio = str(AUDIO_PATH)
+    has_audio = Path(audio).exists()
+    # Seconds of picture, from the frame count and the content rate.
+    content = NF / FPS
     vcodec = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr",
               "-cq", CQ, "-b:v", "0"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
@@ -1329,18 +1335,36 @@ def mux(output: Path):
            "-i", f"{FRAMES_DIR}/%05d.png",
            "-framerate", str(ANALYSIS_VIDEO_FPS), "-start_number", "0",
            "-i", f"{AUDIO_FRAMES_DIR}/%06d.png"]
-    if Path(audio).exists():
+    if has_audio:
         cmd += ["-i", audio]
     filter_graph = (
         f"[0:v]fps={ANALYSIS_VIDEO_FPS}[base];"
         f"[base][1:v]overlay={AUDIO_OVERLAY_X}:{AUDIO_OVERLAY_Y}:"
-        "shortest=1[v]")
-    cmd += ["-filter_complex", filter_graph, "-map", "[v]"]
-    if Path(audio).exists():
-        cmd += ["-map", "2:a:0"]
+        "shortest=1[vmain]")
+    vlabel, amap = "vmain", "2:a:0"
+    if TAIL_SECONDS > 0:
+        # Hold the last frame, silent, so an end screen's cards have somewhere
+        # to sit. The picture is left as it is rather than faded: the last frame
+        # stays readable underneath the cards.
+        filter_graph += (
+            f";[vmain]tpad=stop_duration={TAIL_SECONDS:.6f}:stop_mode=clone[v]")
+        vlabel = "v"
+        if has_audio:
+            filter_graph += (
+                f";[2:a]apad=whole_dur={content + TAIL_SECONDS:.6f}[a]")
+            amap = "[a]"
+    cmd += ["-filter_complex", filter_graph, "-map", f"[{vlabel}]"]
+    if has_audio:
+        cmd += ["-map", amap]
     cmd += vcodec + ["-pix_fmt", "yuv420p"]
-    if Path(audio).exists():
-        cmd += ["-c:a", "aac", "-ar", "22050", "-b:a", "96k", "-shortest"]  # 音声の標本化を保つ(ADPCM 22kHz対応)
+    if has_audio:
+        cmd += ["-c:a", "aac", "-ar", "22050", "-b:a", "96k"]  # 音声の標本化を保つ(ADPCM 22kHz対応)
+        if TAIL_SECONDS <= 0:
+            cmd += ["-shortest"]
+    if TAIL_SECONDS > 0:
+        # The padded audio and the cloned tail both end here; -shortest would
+        # cut whichever rounded shorter.
+        cmd += ["-t", f"{content + TAIL_SECONDS:.6f}"]
     cmd += ["-fps_mode", "cfr", str(output)]
     subprocess.run(cmd, check=True)
 

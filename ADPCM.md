@@ -86,8 +86,8 @@ Once the current control block is linear in Word RAM, the player:
 1. loads the checkpoint;
 2. reads next-index values and signed deltas from Sub PRG-RAM;
 3. converts each reconstructed sample through the output lookup table;
-4. sends the decoded buffer through the RF5C164 writer — paced while
-   sounding, batched only during the boot prefill (see below); and
+4. sends the decoded buffer through the RF5C164 writer, which is paced on
+   every call (see below); and
 5. continues with bitmap and cold-pattern expansion.
 
 At low frame rates one decode chunk can run longer than a CD-sector interval.
@@ -119,14 +119,25 @@ a continuous periodic hiss over otherwise intact ADPCM audio. Emulators and
 the Mega EverDrive Pro FPGA accept any write rate, so only real hardware
 exposes a violation.
 
-The player therefore splits `write_wave_chunk` by `pcm_running`. While
-sounding, the paced path strobes every 20 CPU cycles (`move.b (a0)+,(a1)` 12
-plus `addq.w #2,a1` 8, unrolled 8x; the loop seam adds 10). The boot prefill
-runs with sounding suspended and keeps the faster `MOVE.L` + `MOVEP.L` batch
-writer, which strobes every ~6-10 cycles and must never run while sounding.
-`harness/pcm_write_pacing/check_pacing.py` proves both facts at build time —
-the sounding guard and the 20-cycle floor — and `make disc` fails on a
-violating writer.
+"Sounding" is control-register bit 7, and `write_wave_chunk` sets that bit
+itself on every bank select. The IC is therefore sounding on every call to the
+writer, including the untimed BODY-arm prefill that produces the first audio
+the listener hears. No exemption exists, so there is one always-paced writer:
+it strobes every 20 CPU cycles (`move.b (a0)+,(a1)` 12 plus `addq.w #2,a1` 8,
+unrolled 8x; the loop seam adds 10) and contains no batched `MOVEP.L` path at
+all.
+
+The 384-cycle internal-register period covers the wave-RAM bank select too,
+because that select lives in the control register. A wave write issued 16
+cycles after it can still reach the previously selected bank, so every
+internal-register write in the writer, in `pcm_on` and in `pcm_boot_init` is
+followed by an explicit 390-cycle delay (`moveq #38` plus a `dbra` loop). The
+writer changes bank once per 4,096 wave bytes plus twice per call, under 0.2%
+of a frame at 30 fps.
+
+`harness/pcm_write_pacing/check_pacing.py` proves all three facts at build
+time — no `MOVEP` in the writer, the 20-cycle strobe floor, and a delay after
+every internal-register write — and `make disc` fails on a violating writer.
 
 ## Qualification scope
 
@@ -217,7 +228,7 @@ address、既存5-sector paddingへの収容、5 KiB resident BIOS module、全P
 1. checkpointを読み込みます。
 2. next-indexとsigned deltaをSub PRG-RAMから読んでdecodeします。
 3. 復元した各sampleをoutput lookup tableで変換します。
-4. decode済みbufferをbatched RF5C164 writerへ送ります。
+4. decode済みbufferをRF5C164 writerへ送ります。writerは常にpacedです (後述)。
 5. bitmapとcold-patternの展開を続けます。
 
 低frame rateでは、1 decode chunkの処理がCD-sector intervalより長くなる場合があります。
@@ -247,13 +258,23 @@ sounding中の書き込みは16 source clock cycle以上の間隔が必須で、
 MEGA EVERDRIVE ProのFPGAはどんな書き込み速度も受け入れるため、違反は実機で
 しか露見しません。
 
-そのためplayerは `write_wave_chunk` を `pcm_running` で分岐します。sounding中
-のpaced経路は20 CPU cycle間隔で書き込みます (`move.b (a0)+,(a1)` 12 +
-`addq.w #2,a1` 8 の8x unroll、ループ境界は+10)。boot prefillはsounding停止中に
-走るため、約6-10 cycle間隔の高速な `MOVE.L` + `MOVEP.L` batch writerを維持
-します。このbatch経路をsounding中に走らせてはいけません。
-`harness/pcm_write_pacing/check_pacing.py` がsounding guardと20 cycle床の
-両方をbuild時に証明し、違反するwriterでは `make disc` が失敗します。
+soundingとは制御レジスタのbit 7であり、`write_wave_chunk` はbank選択のたびに
+自分でそのbitを立てます。つまりwriterの呼び出しは常にsounding中であり、聴き手
+が最初に聞く音であるBODY-arm prefill (untimed) も例外ではありません。除外条件は
+存在しないため、writerは常時pacedの1経路だけです。20 CPU cycle間隔で書き込み
+(`move.b (a0)+,(a1)` 12 + `addq.w #2,a1` 8 の8x unroll、ループ境界は+10)、
+`MOVEP.L` によるbatch経路は一切持ちません。
+
+384 cycleの内部レジスタ間隔はwave RAMのbank選択にも及びます。bank選択は制御
+レジスタそのものだからです。その16 cycle後にwave書き込みを出すと、直前のbankへ
+落ちうるため、writer・`pcm_on`・`pcm_boot_init` の内部レジスタ書き込みはすべて
+390 cycleの明示的な遅延 (`moveq #38` と `dbra` ループ) を後置します。writerの
+bank変更はwave 4,096 byteごと + 呼び出しごとに2回で、30 fps時の1フレームの
+0.2%未満です。
+
+`harness/pcm_write_pacing/check_pacing.py` がこの3点 — writerに `MOVEP` が無い
+こと、20 cycleのstrobe床、内部レジスタ書き込み後の遅延 — をbuild時に証明し、
+違反するwriterでは `make disc` が失敗します。
 
 ## Qualification範囲
 

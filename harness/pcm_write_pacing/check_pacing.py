@@ -14,11 +14,18 @@ rather than a recording gate.
 
 The check reads ``boot/movieplay_sp.s`` and verifies two contracts:
 
-1. ``write_wave_chunk`` selects the paced path whenever ``pcm_running`` is
-   nonzero, so the MOVEP burst core is reachable only while sounding is
-   suspended (where the manual allows unrestricted writes).
+1. ``write_wave_chunk`` contains no batched (MOVEP) wave write at all. The
+   writer sets control-register bit 7 on every bank select, so by the
+   manual's definition the IC is sounding on every call — including the
+   untimed boot prefill. There is no state in which a burst is legal here,
+   so the safe contract is the absence of the instruction, not a guard.
 2. Every wave-RAM strobe in the paced path is at least MIN_PROJECT CPU
    cycles after the previous one, on every path through the loop bodies.
+3. Every internal-register write in the writer, in ``pcm_on`` and in the boot
+   init path is followed by an explicit delay. Those need 384 cycles while
+   sounding, so the wave-RAM bank select in the control register must not be
+   followed immediately by a wave write: the byte could still reach the
+   previously selected bank.
 
 The cycle table below covers only the instructions the paced block is allowed
 to contain. An unknown instruction is a failure, not a guess: whoever edits
@@ -51,9 +58,19 @@ CYCLES = {
     ("move.w", "d4", "d1"): 4,
 }
 STROBE = ("move.b", "(a0)+", "(a1)")
+# Internal registers of the RF5C164, addressed through the Sub CPU bus. Writes
+# to these need 384 or more source clock cycles between accesses while
+# sounding, versus 16 for external wave memory.
+INTERNAL_REG = re.compile(
+    r"move\.b\s+\S+\s*,\s*\((?:PCM_ENV|PCM_PAN|PCM_FDL|PCM_FDH|PCM_LSL|"
+    r"PCM_LSH|PCM_ST|PCM_ONOFF|PCM_CTRL)\)\.l")
 # Taken dbra adds 10 cycles between the last strobe of one iteration and the
 # first strobe of the next.
 DBRA_TAKEN = 10
+
+
+def strip_comment(raw: str) -> str:
+    return re.sub(r"/\*.*?\*/", "", raw).strip()
 
 
 def parse_block(lines: list[str], start: str, end: str) -> list[tuple[str, str, str | None]]:
@@ -115,28 +132,19 @@ def main() -> int:
     text = SOURCE.read_text(encoding="utf-8")
     lines = text.splitlines()
 
-    # Contract 1: sounding selects the paced path before the burst core.
-    guard = re.search(
-        r"tst\.w\s+pcm_running\s*(?:/\*.*?\*/\s*)?\n\s*beq\s+wwc_burst",
-        text)
-    if not guard:
-        print("FAIL  write_wave_chunk no longer routes sounding writes away "
-              "from the burst core (tst.w pcm_running / beq wwc_burst missing)")
-        return 1
-    burst_index = text.index("wwc_burst:")
-    if "movep.l" not in text[burst_index:burst_index + 4000].lower():
-        print("FAIL  the burst core after wwc_burst no longer contains MOVEP — "
-              "re-check which path is which before trusting this proof")
-        return 1
-    paced_index = text.index("wwc_paced:")
-    if "movep" in text[paced_index:burst_index].lower():
-        print("FAIL  the paced block contains a MOVEP; that batches strobes "
-              "below the RF5C164 minimum access period")
+    # Contract 1: no batched wave write survives anywhere in the writer.
+    writer_start = text.index("write_wave_chunk:")
+    writer_end = text.index("sp_int2:")
+    writer = re.sub(r"/\*.*?\*/", "", text[writer_start:writer_end], flags=re.S)
+    if "movep" in writer.lower():
+        print("FAIL  write_wave_chunk contains a MOVEP; that batches strobes "
+              "below the RF5C164 minimum access period, and control bit 7 is "
+              "set on every call so the chip is always sounding here")
         return 1
 
     failures = 0
     for label, end, extra in (("wwc_paced_loop8", "wwc_paced_tail", DBRA_TAKEN),
-                              ("wwc_paced_tail_loop", "wwc_burst", DBRA_TAKEN)):
+                              ("wwc_paced_tail_loop", "wwc_chunk_done", DBRA_TAKEN)):
         block = parse_block(lines, label, end)
         distances = strobe_distances(block, extra)
         worst = min(distances)
@@ -152,6 +160,39 @@ def main() -> int:
                 print(f"      {worst} cycles meets the bare spec but not the "
                       f"{MIN_PROJECT}-cycle project margin that covers cycle-"
                       "table uncertainty")
+
+    # Contract 3: every internal-register write in the boot init path is
+    # followed by an explicit delay. Line-based, so no regex backtracking can
+    # accept a bare newline as the required wait.
+    naked = []
+    checked = 0
+    for path, start_label in ((SOURCE.parent / "movieplay_sp_ext.s",
+                               "pcm_boot_init:"),
+                              (SOURCE, "pcm_on:")):
+        src_lines = path.read_text(encoding="utf-8").splitlines()
+        begin = next(i for i, l in enumerate(src_lines)
+                     if l.startswith(start_label))
+        for i in range(begin, len(src_lines)):
+            code = strip_comment(src_lines[i])
+            if not INTERNAL_REG.search(code):
+                continue
+            checked += 1
+            nxt = next((strip_comment(src_lines[j])
+                        for j in range(i + 1, len(src_lines))
+                        if strip_comment(src_lines[j])), "")
+            if not nxt.startswith("PCM_REG_WAIT"):
+                naked.append((path.name, i + 1, code))
+    if naked:
+        failures += 1
+        print(f"FAIL  {len(naked)} internal-register write(s) are not followed "
+              "by PCM_REG_WAIT; while sounding they need 384 or more cycles "
+              "before the next access to the IC")
+        for name, line_no, code in naked:
+            print(f"      {name}:{line_no}: {code}")
+    else:
+        print(f"internal registers: all {checked} write(s) in the writer, "
+              "pcm_on and pcm_boot_init are followed by PCM_REG_WAIT "
+              "(384-cycle spacing) ok")
 
     if failures:
         print("pcm write pacing: FAIL")
