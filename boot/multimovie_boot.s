@@ -36,9 +36,15 @@ HardwareType:
 Copyright:
 	.ascii "(C) AKIYAN 2026 "
 DomesticName:
-	.ascii "SCFMV MULTI VIDEO MENU                         "
+	.ascii "SCFMV MULTI VIDEO MENU"
+	.rept 26
+	.byte 0x20
+	.endr
 OverseasName:
-	.ascii "SCFMV MULTI VIDEO MENU                         "
+	.ascii "SCFMV MULTI VIDEO MENU"
+	.rept 26
+	.byte 0x20
+	.endr
 ProductCode:
 	.ascii "GM 00-0000-00   "
 IoSupport:

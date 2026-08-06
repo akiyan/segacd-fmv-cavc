@@ -407,15 +407,6 @@
 
 .text
 
-.ifdef MULTI_MENU
-/* The Word-RAM menu launcher has already published PLAYER_READY and cleared
-   CMD_MENU_LOAD before it overwrites this resident SP image.  Enter the
-   ordinary command loop without spending bytes on a second initialization. */
-.global multi_player_entry
-multi_player_entry:
-	bra.s	sp_main
-.endif
-
 sp_header:
 	.ascii	"MAIN       "
 	.byte	0
@@ -437,9 +428,21 @@ sp_jmptbl:
 sp_init:
 	move.w	#0x2700, sr
 	andi.w	#0xFFFA, (MEMMODE).l
+	.ifndef MULTI_MENU
 	move.w	#0, (COMSTAT0).l
+	.endif
 	move.w	#0, (COMSTAT1).l
 	rts
+
+.ifdef MULTI_MENU
+/* The Word-RAM menu launcher enters here after copying this module to the
+   resident SP slot.  Keep the standard BIOS module header at offset zero;
+   this private entry point lives after the header and init routine. */
+.global multi_player_entry
+multi_player_entry:
+	bsr.s	sp_init
+	bra.w	sp_main
+.endif
 
 .global sp_main
 sp_main:
@@ -466,6 +469,16 @@ do_stream:
 	ori.b	#0x3C, (SUB_GA_BASE+0x33).l	/* IEN: enable INT2-5 (timer/CDD/CDC) */
 	move.w	#0x2000, sr			/* enable ints BEFORE the BIOS calls */
 	.ifdef MULTI_MENU
+	/* The menu's synchronous reads leave the CDC data path usable, but the
+	   selected player still needs the BIOS drive state re-established before
+	   its interrupt-driven stream read.  Do this before loading the saved
+	   extents: the BIOS init owns scratch in this low-PRG area. */
+	lea	drv_init_tracklist, a0
+	BIOSCALL BIOS_DRV_INIT
+1:
+	BIOSCALL BIOS_CDB_STAT
+	andi.b	#0xF0, (CDB_STAT).w
+	bne.s	1b
 	lea	(MULTI_MENU_INFO_ADDR+16).w, a0
 	move.l	(a0)+, header_lba
 	move.l	(a0)+, header_total
@@ -1199,6 +1212,8 @@ multi_movie_menu_ip_wait:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	bsr	read_cd
+	/* The boot Sub loader installed the PRG-resident bank-switch stub.  The
+	   player occupies only SP-RES, so that fixed gap survives this handoff. */
 	jmp	(MULTI_MENU_WORD_ENTRY).l
 multi_movie_loop:
 	tst.w	(COMCMD0).l

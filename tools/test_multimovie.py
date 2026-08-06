@@ -92,6 +92,10 @@ class MultiMovieTests(unittest.TestCase):
         self.assertIn("0x56,0x30,0x30,0x30,0x31,0x53,0x50", include)
         self.assertIn("menu_player_header_names:", include)
         self.assertIn("menu_player_body_names:", include)
+        self.assertIn("MULTI_SELECTED_SP_INFO_ADDR, 0x00007F42", include)
+        self.assertIn("MULTI_WORD_SWAP_STUB, 0x00007F50", include)
+        self.assertIn("MULTI_MENU_RUNTIME_ADDR, 0x00007F70", include)
+        self.assertIn("MULTI_PLAYER_ENTRY, 0x00006040", include)
         self.assertIn("0x56,0x30,0x30,0x30,0x30,0x42,0x4F,0x44,0x2E", include)
 
     def test_menu_font_is_96_four_bpp_tiles(self) -> None:

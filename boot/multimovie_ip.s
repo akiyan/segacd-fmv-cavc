@@ -78,6 +78,7 @@ ip_entry:
 	bsr	load_menu_font
 	jsr	BIOS_VDP_DISP_ENABLE
 	bsr	init_controller
+	bsr	install_multi_launch
 
 /* The Sub launcher owns the CD and prepares both copies of MENUIP.BIN before
    the first menu frame is shown. */
@@ -167,23 +168,42 @@ launch_selected:
 	add.w	d0, d0
 	lea	menu_ip_sizes, a0
 	move.w	(a0,d0.w), d1
-	/* Main sees the Sub-loaded staging bank at PROBE_BANK. */
+	/* The selected bank is Main-visible only until the ACK below.  Copy the
+	   selected IP before acknowledging, through the resident free-RAM stub so
+	   the destination cannot overwrite the running menu copy. */
+	movea.l	#MULTI_RESTORE_CODE_ADDR, a0
+	jmp	(a0)
+
+/* Install the self-overwrite-safe selected-player copy routine once.  The
+   selected player replaces this menu image at PLAYER_ENTRY and installs its
+   own return routine in the same slot before playback begins. */
+install_multi_launch:
+	lea	multi_launch_entry, a0
+	movea.l	#MULTI_RESTORE_CODE_ADDR, a1
+	move.w	#((multi_launch_end-multi_launch_entry)/2)-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+	rts
+
+multi_launch_entry:
 	lea	(PROBE_BANK+PLAYER_IP_STAGE_OFF).l, a0
 	lea	PLAYER_ENTRY.l, a1
 	move.w	d1, d2
 	lsr.w	#1, d2
-	beq.s	4f
+	beq.s	2f
 	subq.w	#1, d2
-3:
+1:
 	move.w	(a0)+, (a1)+
-	dbra	d2, 3b
-4:
-	clr.w	(GA_COMCMD0).l			/* acknowledge the Word-RAM copy */
-5:
+	dbra	d2, 1b
+	2:
+	clr.w	(GA_COMCMD0).l			/* acknowledge the completed Word-RAM copy */
+	3:
 	cmp.w	#STAT_PLAYER_READY, (GA_COMSTAT0).l
-	bne	5b
+	bne	3b
 	movea.l	#PLAYER_ENTRY, a0
 	jmp	(a0)
+multi_launch_end:
 
 /* --- Input --- */
 init_controller:

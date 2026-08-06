@@ -25,6 +25,7 @@
 .equ SP_STACK,      0x0007FF00
 .equ MENU_SP_WORD_OFF,   0x0001E000
 .equ MENU_SP_WORD_ENTRY, 0x000DE000
+.equ MULTI_WORD_SWAP_STUB, 0x00007F50
 
 .macro BIOSCALL code
 	move.w	#\code, d0
@@ -89,6 +90,7 @@ sp_main:
 	bsr	read_cd
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
+	bsr	install_multi_word_swap_stub
 	jmp	(MENU_SP_WORD_ENTRY).l
 
 /* Read d1 sectors from absolute LBA d0 to address a0. */
@@ -187,6 +189,27 @@ swap_settle:
 	btst	#1, (MEMMODE+1).l
 	bne.s	1b
 	rts
+
+/* Install this tiny bank-switch routine in the fixed PRG-RAM gap.  The menu
+   launcher runs from Word RAM, so its own code cannot safely toggle the bank
+   that contains the currently executing copy. */
+install_multi_word_swap_stub:
+	lea	multi_word_swap_stub_image, a0
+	movea.l	#MULTI_WORD_SWAP_STUB, a1
+	moveq	#((multi_word_swap_stub_image_end-multi_word_swap_stub_image)/2)-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+	rts
+
+	.align	2
+multi_word_swap_stub_image:
+	bchg	#0, (MEMMODE+1).l
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	rts
+multi_word_swap_stub_image_end:
 
 	.align	2
 drv_init_tracklist:

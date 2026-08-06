@@ -96,26 +96,24 @@ sp_main:
 	move.l	d0, (MULTI_MENU_INFO_ADDR).w
 	lea	menu_ip_file, a0
 	bsr	find_file
-	move.l	d0, menu_ip_lba
-	move.l	d1, menu_ip_sectors
+	/* These values survive the first Word-RAM bank switch. */
+	move.l	d0, (MULTI_MENU_RUNTIME_ADDR).l
+	move.l	d1, (MULTI_MENU_RUNTIME_ADDR+4).l
 	move.l	d0, (MULTI_MENU_INFO_ADDR+8).w
 	cmp.l	#MENU_IP_IMAGE_SECTORS, d1
 	bne	menu_error
 
 	/* Load the fixed-size menu image into both physical banks. */
 	bset	#2, (MEMMODE+1).l
-	move.l	menu_ip_lba, d0
-	move.l	menu_ip_sectors, d1
+	move.l	(MULTI_MENU_RUNTIME_ADDR).l, d0
+	move.l	(MULTI_MENU_RUNTIME_ADDR+4).l, d1
 	lea	(SUB_BANK_1M+MENU_IMAGE_OFF).l, a0
 	bsr	read_cd
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
-	move.l	menu_ip_lba, d0
-	move.l	menu_ip_sectors, d1
+	jsr	(MULTI_WORD_SWAP_STUB).l
+	move.l	(MULTI_MENU_RUNTIME_ADDR).l, d0
+	move.l	(MULTI_MENU_RUNTIME_ADDR+4).l, d1
 	lea	(SUB_BANK_1M+MENU_IMAGE_OFF).l, a0
 	bsr	read_cd
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
 
 menu_ready:
 	move.w	#STAT_MENU_READY, (COMSTAT0).l
@@ -159,14 +157,12 @@ load_selected:
 	lea	(SUB_BANK_1M+PLAYER_IP_STAGE_OFF).l, a0
 	bsr	read_cd
 	/* Make the staging bank visible to Main and wait for its copy ACK. */
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
+	jsr	(MULTI_WORD_SWAP_STUB).l
 	move.w	#STAT_MENU_IP_READY, (COMSTAT0).l
 3:
 	tst.w	(COMCMD0).l
 	bne.s	3b
-	bchg	#0, (MEMMODE+1).l
-	bsr	swap_settle
+	jsr	(MULTI_WORD_SWAP_STUB).l
 
 	/* Save the selected stream extents in the marker-qualified low-PRG scratch.
 	   The resident player can then start without another ISO directory scan. */
@@ -193,16 +189,16 @@ load_selected:
 	lea	menu_player_sp_names, a0
 	movea.l	(a0,d0.w), a0
 	bsr	find_file
-	move.l	d0, selected_sp_lba
-	move.l	d1, selected_sp_sectors
-	move.l	d2, selected_sp_bytes
-	move.l	selected_sp_lba, d0
-	move.l	selected_sp_sectors, d1
+	move.l	d0, (MULTI_SELECTED_SP_INFO_ADDR).l
+	move.l	d1, (MULTI_SELECTED_SP_INFO_ADDR+4).l
+	move.l	d2, (MULTI_SELECTED_SP_INFO_ADDR+8).l
+	move.l	(MULTI_SELECTED_SP_INFO_ADDR).l, d0
+	move.l	(MULTI_SELECTED_SP_INFO_ADDR+4).l, d1
 	lea	ISO_BUF.l, a0
 	bsr	read_cd
 	lea	ISO_BUF.l, a0
 	lea	PLAYER_SP_BASE.l, a1
-	move.w	selected_sp_bytes, d0
+	move.l	(MULTI_SELECTED_SP_INFO_ADDR+8).l, d0
 	lsr.w	#1, d0
 	beq.s	selected_sp_ready
 	subq.w	#1, d0
@@ -212,7 +208,13 @@ load_selected:
 selected_sp_ready:
 	clr.w	(COMCMD1).l
 	move.w	#STAT_PLAYER_READY, (COMSTAT0).l
-	jmp	(PLAYER_SP_BASE).l
+	jmp	(MULTI_PLAYER_ENTRY).l
+
+swap_settle:
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	rts
 
 menu_error:
 	move.w	#0xDEAD, (COMSTAT0).l
@@ -314,33 +316,16 @@ find_file_info:
 	movem.l	(sp)+, a1-a2/a6
 	rts
 
-swap_settle:
-1:
-	btst	#1, (MEMMODE+1).l
-	bne.s	1b
-	rts
-
 	.align	2
 drv_init_tracklist:
 	.byte	1, 0xFF
 
 	bios_packet:
 	.long	0,0,0,0,0
-menu_ip_lba:
-	.long	0
-menu_ip_sectors:
-	.long	0
 selected_lba:
 	.long	0
 selected_sectors:
 	.long	0
-selected_sp_lba:
-	.long	0
-selected_sp_sectors:
-	.long	0
-selected_sp_bytes:
-	.long	0
-
 .global sp_int2
 sp_int2:
 	rts
