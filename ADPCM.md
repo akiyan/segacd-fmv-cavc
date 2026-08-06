@@ -86,7 +86,8 @@ Once the current control block is linear in Word RAM, the player:
 1. loads the checkpoint;
 2. reads next-index values and signed deltas from Sub PRG-RAM;
 3. converts each reconstructed sample through the output lookup table;
-4. sends the decoded buffer through the batched RF5C164 writer; and
+4. sends the decoded buffer through the RF5C164 writer — paced while
+   sounding, batched only during the boot prefill (see below); and
 5. continues with bitmap and cold-pattern expansion.
 
 At low frame rates one decode chunk can run longer than a CD-sector interval.
@@ -101,6 +102,31 @@ fixed chunk size bounds every table and output-buffer access.
 The DEBUG `adpcm_decode_units` field measures the decode phase, including an opportunistic
 CDC pump on low-rate profiles. One displayed unit is four 30.72 microsecond
 Mega-CD stopwatch ticks, about 0.1229 ms.
+
+## RF5C164 wave-memory access timing
+
+The official MEGA-CD HARDWARE MANUAL "PCM SOUND SOURCE" (VER 1.0 1991/10/14),
+section 4-5, limits Sub-CPU access to external wave memory by sounding state:
+while the IC is sounding, writes must be spaced 16 or more source clock cycles
+apart; while sounding is suspended they are unrestricted. Internal-register
+writes while sounding need 384 or more cycles between accesses. The Sub CPU
+and the RF5C164 share the 12.5 MHz clock (32,552 Hz x 384), so 16 source
+clocks equal 16 CPU cycles.
+
+The bus does not enforce the rule. Overrunning it does not fault; the real
+chip silently drops or corrupts the over-paced bytes, which reaches the ear as
+a continuous periodic hiss over otherwise intact ADPCM audio. Emulators and
+the Mega EverDrive Pro FPGA accept any write rate, so only real hardware
+exposes a violation.
+
+The player therefore splits `write_wave_chunk` by `pcm_running`. While
+sounding, the paced path strobes every 20 CPU cycles (`move.b (a0)+,(a1)` 12
+plus `addq.w #2,a1` 8, unrolled 8x; the loop seam adds 10). The boot prefill
+runs with sounding suspended and keeps the faster `MOVE.L` + `MOVEP.L` batch
+writer, which strobes every ~6-10 cycles and must never run while sounding.
+`harness/pcm_write_pacing/check_pacing.py` proves both facts at build time —
+the sounding guard and the 20-cycle floor — and `make disc` fails on a
+violating writer.
 
 ## Qualification scope
 
@@ -205,6 +231,29 @@ output-buffer accessを範囲内に保ちます。
 DEBUG HUDの`adpcm_decode_units` fieldは、low-rate profileでのopportunistic CDC pumpを含むdecode phaseを
 計測します。表示1 unitはMega-CD stopwatchの30.72 microsecond tick 4個分、約0.1229 ms
 です。
+
+## RF5C164 wave-memoryアクセスタイミング
+
+公式MEGA-CD HARDWARE MANUAL「PCM SOUND SOURCE」(VER 1.0 1991/10/14) の4-5は、
+Sub CPUによる外部wave memoryへのアクセスをsounding状態で制限します。IC が
+sounding中の書き込みは16 source clock cycle以上の間隔が必須で、sounding停止中
+は無制限です。sounding中の内部レジスタ書き込みは384 cycle以上の間隔が必要
+です。Sub CPUとRF5C164は12.5MHz clockを共有する (32,552Hz × 384) ため、
+16 source clockは16 CPU cycleに等しくなります。
+
+この規則をbusは強制しません。超過してもfaultにはならず、実チップは速すぎる
+書き込みを黙って取りこぼす/化けさせます。耳には、ADPCM音声自体は保たれた
+まま、その上に連続した周期的なザーというノイズとして届きます。エミュレータと
+MEGA EVERDRIVE ProのFPGAはどんな書き込み速度も受け入れるため、違反は実機で
+しか露見しません。
+
+そのためplayerは `write_wave_chunk` を `pcm_running` で分岐します。sounding中
+のpaced経路は20 CPU cycle間隔で書き込みます (`move.b (a0)+,(a1)` 12 +
+`addq.w #2,a1` 8 の8x unroll、ループ境界は+10)。boot prefillはsounding停止中に
+走るため、約6-10 cycle間隔の高速な `MOVE.L` + `MOVEP.L` batch writerを維持
+します。このbatch経路をsounding中に走らせてはいけません。
+`harness/pcm_write_pacing/check_pacing.py` がsounding guardと20 cycle床の
+両方をbuild時に証明し、違反するwriterでは `make disc` が失敗します。
 
 ## Qualification範囲
 

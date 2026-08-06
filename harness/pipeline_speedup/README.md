@@ -94,10 +94,23 @@ still gained via the nonlinear slip effect.
 ## opt5: interleaved PCM writes reach 29.97fps
 
 An audio-disable diagnostic reached ~29.9fps, proving that the supposedly small
-RF5C164 fixed cost was the missing margin. The final writer reads four contiguous
-samples with `MOVE.L` and writes them to the every-other-byte wave-RAM window with
-`MOVEP.L`. A 16-byte unrolled core handles the common path; scalar code handles an
-odd source address and the final zero to three bytes.
+RF5C164 fixed cost was the missing margin. The writer measured here reads four
+contiguous samples with `MOVE.L` and writes them to the every-other-byte
+wave-RAM window with `MOVEP.L`. A 16-byte unrolled core handles the common
+path; scalar code handles an odd source address and the final zero to three
+bytes.
+
+**Hardware correction.** This batch writer strobes wave RAM every ~6-10 CPU
+cycles, which violates the RF5C164's sounding-time minimum access period of
+16 source clock cycles (official PCM manual 4-5). The real chip drops or
+corrupts the over-paced bytes — a continuous periodic hiss on hardware
+(issue #81) that no emulator and no EverDrive FPGA reproduces, so every
+measurement in this file stayed clean. The MOVEP batch path now runs only
+during the boot prefill, where sounding is suspended and writes are
+unrestricted; playback uses a 20-cycle paced writer. The build-time proof
+lives in `harness/pcm_write_pacing/`. The fps measurements below remain valid
+as records of the batch writer's speed; the paced playback writer costs about
+8k more cycles per frame and holds the same HUD gate.
 
 Exact A/B used the same e14 Sonic `MOVIE.DAT`, lossless GPGX A/V capture and HUD
 frame counter:
