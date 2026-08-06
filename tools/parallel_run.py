@@ -39,9 +39,9 @@ STAGES = ("sim", "disc", "record", "hud")
 # with the default jp_mcd2_9212.bin BIOS once the replay generator mashes
 # START densely in emulated time (measured to the exact capture frame on
 # repeated runs). The bounded lossless capture is exactly ceil(duration) +
-# this margin, so it must also cover the player's 15-second end-of-movie
-# hold: 14.9 startup + 15 hold leaves the tail intact at 30.
-RECORD_MARGIN_SECONDS = 30
+# this margin, so it must also cover the player's 5-second end-of-movie
+# hold: 14.9 startup + 5 hold leaves the tail intact at 20.
+RECORD_MARGIN_SECONDS = 20
 
 _PRINT_LOCK = threading.Lock()
 

@@ -48,7 +48,8 @@
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic staging bank is available */
 .equ STAT_READY, 0x8003
-.equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
+.equ STAT_END,   0x8004			/* SPからの映画終端通知(5秒待って再ループ) */
+.equ MOVIE_END_HOLD_VBLANKS, 5*60	/* hold the final frame for five seconds */
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
@@ -587,8 +588,12 @@ play_loop:
 	addq.w	#1, frame_no
 	bra	play_loop
 
-/* 映画終端: 最終フレームを表示したまま15秒(900vblank)待ち、先頭からループ再生 */
+/* 映画終端: 最終フレームを表示したまま5秒(300vblank)待つ。 */
 movie_end_md:
+	move.w	#MOVIE_END_HOLD_VBLANKS-1, d2
+1:
+	bsr	wait_vblank
+	dbra	d2, 1b
 .ifdef MULTI_MENU
 	/* A-play returns through the resident menu. C-loop keeps the selected
 	   specialized player and therefore follows the normal replay path. */
@@ -600,13 +605,6 @@ movie_end_md:
 	jmp	(a0)
 movie_end_loop:
 .endif
-.ifdef MULTI_MENU
-	bra.s	movie_restart
-.endif
-	move.w	#900-1, d2
-1:
-	bsr	wait_vblank
-	dbra	d2, 1b
 movie_restart:
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
 	bsr	cmd_wait_ready			/* BODY arm + frame0 handoff完了まで待つ */
@@ -620,7 +618,7 @@ movie_restart:
 	clr.w	swap_request_pending
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
-	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
+	bsr	prime_fixed_cadence		/* 5s tail already satisfies frame0 cadence */
 	bra	play_loop
 
 .ifdef MULTI_MENU

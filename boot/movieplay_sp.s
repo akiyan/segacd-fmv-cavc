@@ -398,7 +398,7 @@
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic stage ready for one-time Main copy */
 .equ STAT_READY, 0x8003
-.equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは15秒待って CMD_STREAM 再送) */
+.equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは5秒待って CMD_STREAM 再送) */
 
 .macro BIOSCALL code
 	move.w	#\code, d0
@@ -1161,7 +1161,7 @@ xor_acc:
 	bra	stream_loop
 
 /* 映画終端: 最終フレームのswap要求に応えて表示→STAT_ENDをMDへ→PCM停止→
-   CMD_STREAM(再開)を待って stream_start へ(=15秒待ちはMD側が数える) */
+   CMD_STREAM(再開)を待って stream_start へ(=5秒待ちはMD側が数える) */
 movie_end:
 1:
 	cmp.w	#CMD_SWAP, (COMCMD0).l
