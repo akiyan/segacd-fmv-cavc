@@ -1,0 +1,4 @@
+interface:
+  display_name: "Burn CD-R"
+  short_description: "Burn a Sega CD image to CD-R for real hardware"
+  default_prompt: "Use $cdr to burn this Sega CD release image to a blank CD-R, checking the image region and the medium before writing."
