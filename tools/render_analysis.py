@@ -20,6 +20,8 @@ the sim's checkpointed playback model, never the clean source WAV.
   ANALYSIS_OUT     tmpfs artifactに使う要求mp4名
   ANALYSIS_TSV     明示した場合の永続TSV実体path (既定はlogs/のunique path)
   ANALYSIS_CQ      h264_nvenc cq (既定 23)
+  ANALYSIS_CRF     libx264 crf (既定 20、GPU が使えないときの mux)
+  ANALYSIS_VCODEC  h264_nvenc / libx264 を明示指定 (既定は自動)
 W/H/タイル数/表示アスペクト/諸元は sim 出力から自動導出。
 
 usage: python3 tools/render_analysis.py PROFILE.toml       # 全編→mp4
@@ -124,6 +126,13 @@ OUT_TSV = (
     if os.environ.get("ANALYSIS_TSV") else None
 )
 CQ = os.environ.get("ANALYSIS_CQ", "23")
+# Quality for the CPU fallback below, and a way to demand one encoder or the
+# other. Left unset, the GPU encoder is tried first and the CPU one takes over
+# if it cannot run.
+CRF = os.environ.get("ANALYSIS_CRF", "20")
+ANALYSIS_VCODEC = os.environ.get("ANALYSIS_VCODEC", "")
+if ANALYSIS_VCODEC not in {"", "h264_nvenc", "libx264"}:
+    raise SystemExit("ANALYSIS_VCODEC must be h264_nvenc or libx264")
 FRAMES_DIR = f"{SIM}/analysis_frames"
 AUDIO_FRAMES_DIR = f"{SIM}/analysis_audio_frames"
 AUDIO_STR = "22.05kHz mono IMA ADPCM"       # 既定。sim出力(stats)にラベルがあればそれを使う
@@ -1366,8 +1375,14 @@ def mux(output: Path):
     has_audio = Path(audio).exists()
     # Seconds of picture, from the frame count and the content rate.
     content = NF / FPS
-    vcodec = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr",
-              "-cq", CQ, "-b:v", "0"]
+    nvenc = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr",
+             "-cq", CQ, "-b:v", "0"]
+    # Same picture off the CPU, for when the GPU encoder cannot be reached.
+    # A driver upgrade that has not been rebooted into is the usual reason: the
+    # loaded kernel module and the installed libraries disagree and every NVENC
+    # session fails, while the frames themselves rendered fine because drawing
+    # them never needed the device.
+    x264 = ["-c:v", "libx264", "-crf", CRF, "-preset", "medium"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-framerate", str(FPS), "-start_number", "0",
            "-i", f"{FRAMES_DIR}/%05d.png",
@@ -1394,7 +1409,8 @@ def mux(output: Path):
     cmd += ["-filter_complex", filter_graph, "-map", f"[{vlabel}]"]
     if has_audio:
         cmd += ["-map", amap]
-    cmd += vcodec + ["-pix_fmt", "yuv420p"]
+    codec_at = len(cmd)
+    cmd += nvenc + ["-pix_fmt", "yuv420p"]
     if has_audio:
         cmd += ["-c:a", "aac", "-ar", "22050", "-b:a", "96k"]  # 音声の標本化を保つ(ADPCM 22kHz対応)
         if TAIL_SECONDS <= 0:
@@ -1404,7 +1420,19 @@ def mux(output: Path):
         # cut whichever rounded shorter.
         cmd += ["-t", f"{content + TAIL_SECONDS:.6f}"]
     cmd += ["-fps_mode", "cfr", str(output)]
-    subprocess.run(cmd, check=True)
+    if ANALYSIS_VCODEC == "libx264":
+        cmd[codec_at:codec_at + len(nvenc)] = x264
+        subprocess.run(cmd, check=True)
+        return
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        if ANALYSIS_VCODEC == "h264_nvenc":
+            raise
+        print(f"h264_nvenc failed (exit {exc.returncode}); "
+              f"muxing with libx264 crf {CRF} instead", flush=True)
+        cmd[codec_at:codec_at + len(nvenc)] = x264
+        subprocess.run(cmd, check=True)
 
 
 def main():
