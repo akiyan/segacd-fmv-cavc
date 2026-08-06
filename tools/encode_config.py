@@ -107,7 +107,8 @@ ALLOWED = {
     "analysis": {"source_canvas"},
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
-    "youtube": {"analysis_title", "playback_title"},
+    "youtube": {"analysis_title", "playback_title", "source_label",
+                "source_label_ja"},
 }
 REQUIRED = {
     "source": {"path", "fps", "duration"},
@@ -223,6 +224,15 @@ class EncodeProfile:
         """Profile-authored YouTube title for the playback recording."""
         return self.data.get("youtube", {}).get("playback_title")
 
+    @property
+    def source_label(self) -> str | None:
+        """One-line English source credit used by the description templates."""
+        return self.data.get("youtube", {}).get("source_label")
+
+    @property
+    def source_label_ja(self) -> str | None:
+        return self.data.get("youtube", {}).get("source_label_ja")
+
 
 def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     profile_path = Path(path).expanduser().resolve()
@@ -308,7 +318,8 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     youtube = data.get("youtube", {})
     if not isinstance(youtube, dict):
         raise ValueError(f"{profile_path}: [youtube] must be a table")
-    for key in ("analysis_title", "playback_title"):
+    for key in ("analysis_title", "playback_title", "source_label",
+                "source_label_ja"):
         if key not in youtube:
             continue
         title = youtube[key]
@@ -318,7 +329,7 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         if "\n" in title:
             raise ValueError(
                 f"{profile_path}: youtube.{key} must be a single line")
-        if len(title) > 100:
+        if key.endswith("title") and len(title) > 100:
             raise ValueError(
                 f"{profile_path}: youtube.{key} is {len(title)} characters; "
                 "YouTube truncates a title at 100")

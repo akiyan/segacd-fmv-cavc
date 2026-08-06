@@ -1,0 +1,34 @@
+I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec plays full motion video on unmodified Sega CD / Mega-CD hardware: the console decodes and displays every frame itself while reading one single-speed CD, with no extra chip. This video visualizes the encoder's per-frame decisions: left is the simulated Sega CD output, the rest shows the source, the per-tile decisions, and the meters behind them.
+
+Output: H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) centered in the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} ({cram_segments} segments). Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
+
+Source: {source_label}.
+
+Reading the layout. Right column: the source frame, a category map coloured by how each cell was produced, whole-clip totals, and an audio waveform and spectrum that redraw on every output frame of this video rather than on each Sega CD frame.
+
+Bottom status meters. Req is how many of the {cells} cells wanted a change this frame, with the unserved count beside it. Cold is how many new 32-byte patterns were loaded. Band is how much of the CD's 150 KiB/s that frame's disc read carried as useful data. R2V is how many words reached video RAM that frame: the pattern data DMA carries there, the name table and palette, plus a one-word repair each transfer needs. Run is how many separate transfer runs those patterns formed; lower means less fragmented. Prg is how full the streamed prefetch buffer is, Wrd is how much room is left in the pair loaded at startup, and Pre is how many patterns were written early for a later frame.
+
+Category legend, in preference order. Same: the exact pattern was already in video RAM, costing nothing. Near: a resident pattern was close enough to keep. Flbk: no exact pattern was affordable, so the cell fell back to a merely similar resident one. Raw: a new pattern was streamed from the CD. Prg, Wrd, Dic: the pattern came from one of the prefetch buffers rather than fresh CD payload. Miss: the cell wanted a change none could be funded, drawn as a red hole.
+
+Encoder. Resident tiles are reused: Same is an exact match, Near is close enough to keep, and neither costs delivery. Flbk points a cell at an inexact resident pattern for two bytes instead of a 32-byte pattern. New patterns come from one of several prefetch buffers in the console's spare RAM, each arriving by an exact per-frame deadline tied to the CD's own sector rate. Palettes are trained per segment.
+
+Codec timeline: {timeline_url}
+Playback recording on emulated hardware: {playback_url}
+Project: https://github.com/akiyan/segacd-fmv-cavc
+Build: {build}
+
+----
+
+Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Video Codec は、無改造の Sega CD / Mega-CD でfull motion videoを再生します。追加chipを使わず、単速CDを読みながら本体自身が毎frameをdecodeして表示します。この動画はencoderのframeごとの判断の可視化で、左がSega CD出力のsimulation、残りがsource、tileごとの判断、その裏のmeterです。
+
+出力: H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)を320x224 aperture中央へ配置。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは{cram_switches}回 ({cram_segments} segments)。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
+
+Source: {source_label_ja}。
+
+読み方。右列はsource frame、各cellの作られ方で色分けしたcategory map、全編合計、audio波形とspectrumです。波形とspectrumはSega CDのframeではなく、この動画の出力frameごとに描き直します。
+
+下部のstatus meter。Reqはそのframeで変更を求めたcell数(全{cells})で、隣に賄えなかった数が出ます。Coldは新規に読み込んだ32 byte patternの数。Bandはそのframeのdisc読み取りが150 KiB/sのうち有用なdataを運んだ割合。R2Vはそのframeでvideo RAMへ届いたword数で、DMAが運ぶpattern data、name tableとpalette、転送ごとに要る先頭1 wordの補修を含みます。Runはそのpatternが幾つの転送runにまとまったかで、少ないほど断片化が少ない。Prgはstream用の先読みbufferの詰まり具合、Wrdは起動時に読み込んだ2本の残り、Preは後のframeのために先に書き込んだpatternの数です。
+
+category legendは優先順です。Same: 正確なpatternが既にvideo RAMにあり費用ゼロ。Near: 常駐patternが維持できるほど近い。Flbk: 正確なpatternを賄えず、似ているだけの常駐patternへ落ちた。Raw: 新しいpatternをCDからstreamした。Prg / Wrd / Dic: 新規のCD payloadでなく、先読みbufferのいずれかから得た。Miss: 変更を求めたが賄えず、赤い穴として描かれる。
+
+encoderの動作。常駐tileは再利用します。Sameは完全一致、Nearは維持できるほど近いもので、どちらも配送を消費しません。Flbkはcellを完全一致でない常駐patternへ向ける選択で、32 byteのpatternではなく2 byteで済みます。新しいpatternは、本体の空きRAMに置いた複数の先読みbufferのいずれかから、CDのsector rateに結び付いたframeごとの正確な期限に届きます。paletteはsegmentごとに学習します。

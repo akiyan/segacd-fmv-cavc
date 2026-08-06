@@ -61,95 +61,37 @@ or fewer. When it is too long, shorten explanatory prose. Never drop the CRAM
 switch count, the specs, the layout reading guide, the encoder-technique
 section, the project link, or the current timeline links.
 
-## Write absolutely, never as a changelog
+## Descriptions come from templates
 
-Each description stands alone as a statement of what this build is and does, as
-though it were the only description ever written. Do not compare the video to
-an earlier upload, do not say what changed, improved, regressed, or was fixed,
-and do not narrate a build revision. "Now", "no longer", "previously",
-"instead of before", "this version adds", and measured before/after pairs
-belong to development notes. Naming the build the video was made from is not a
-changelog: the closing line states it once as a fact. When a technique exists because of a hardware constraint,
-state the constraint and the resulting behavior, not the history of arriving at
-it. A reader who has seen no other video in the series must still understand
-the whole picture.
+Descriptions are not written per upload. The wording lives in
+`templates/youtube/{analysis,playback,verification}.txt` and only per-video
+values are substituted:
 
-## Name the constraint, not the optimization
+```sh
+tools/python.sh tools/youtube_description.py --config profiles/PROFILE.toml \
+  --kind analysis --timeline-tsv logs/RUN_timeline.tsv \
+  --timeline-url GIST --playback-url URL --output DESCRIPTION.txt
+```
 
-When a technique needs explaining, give the hardware limit that forces it
-rather than calling it an optimization. Keep this inside the technique it
-belongs to; a standalone tour of the hardware reads as a lecture and is the
-first thing to cut when the description runs long. Internal buffer names mean
-nothing to a viewer: say what the RAM is used for, not `PrgBuf` or `DicBuf`
-with a capacity.
+Every number the renderer substitutes is read from the encode that produced
+the video: grid and cell count from the profile, CRAM switches from the sim
+decisions, the delivery rate from the analysis TSV, and the build from
+`tools/av_version.txt`. Nothing is retyped, so a description cannot carry a
+stale figure. An unresolved placeholder is an error, never a blank.
 
-## Video kinds
+Edit a template when the wording should change, and re-render every affected
+description. Do not hand-edit a rendered file: the next render would silently
+drop the change.
 
-Two kinds of video are published, and each stands alone. A viewer arriving at
-either one gets a complete account of what they are watching; the pair
-cross-reference each other as complements, never as a prerequisite.
+The templates already encode the rules that used to live here as prose. They
+describe the build absolutely rather than as a changelog, they carry no
+build-system vocabulary, they name what the RAM is used for instead of the
+internal buffer names, and they keep every URL in the English section. A
+playback template never mentions analysis panels, because that video has none.
 
-- **Analysis** — the 1920x1080 render whose frame carries the simulated Sega CD
-  output plus the source, category map, meters, and timelines.
-- **Playback** — a recording of the codec running, framed exactly as the
-  hardware outputs it. It has no analysis panels, no meters, and no timelines.
-- **Verification** — a diagnostic capture kept only so a build can be watched
-  back later, such as a run carrying the on-screen counter row. It is not a
-  published work and none of the rules below for the two public kinds apply to
-  it. Its title uses the older descriptive form ending in the build version,
-  and its description is Japanese only, carrying just that version and what the
-  encoder change was. Stating what changed is the point there, not a violation,
-  and the English half the public kinds need would only be noise in a record
-  written for this project's own author. Do not cross-link a verification
-  upload from a public description.
-
-Never describe analysis panels, meters, timelines, or the category legend in a
-playback description. Those elements are not on screen there, so naming them
-misleads the viewer. Describe what a playback video actually shows: the
-Mega-CD startup, the transition into the movie, the movie itself, and the
-on-screen counter row when one is present.
-
-The codec itself — what it is, what it achieves on this hardware, and which
-constraints shape the picture — belongs in both kinds.
-
-## Description structure
-
-In both languages, in this order.
-
-Shared by both kinds:
-
-1. **Introduction** — what the Sega CD Constraint-Aware Video Codec is: full
-   motion video that unmodified Sega CD / Mega-CD hardware decodes and displays
-   itself while reading one single-speed CD, and what this particular video
-   shows. Name the codec **Sega CD Constraint-Aware Video Codec**. Do not use
-   the current binary magic as a public codec or format name.
-2. **Output and source specs** — the SEGA-CD output (mode, grid WxH, tile
-   count, fps, audio, Prg/Wr0/Wr1/Dic capacities, CRAM palette switch count)
-   and the Source (resolution, fps, audio). Do not show source bitrate.
-3. **What the encoder does** — the techniques applied, each stated with the
-   hardware constraint that makes it necessary rather than as a separate
-   lecture on the hardware.
-
-Analysis only:
-
-4. **How to read the layout** — what each panel, meter, and timeline shows and
-   how to interpret it. See "Analysis layout terms" below.
-
-Playback only:
-
-4. **What the recording contains** — that it starts at the emulator launch and
-   keeps the Mega-CD startup and CD-player transition before playback begins,
-   whether an on-screen counter row is present, and how the native raster was
-   enlarged for delivery.
-
-Both kinds end with:
-
-5. **Links** — the project link, the cross-link to the other kind for the same
-   encode, and any timeline link. English section only.
-6. **Build line** — the last line of the description, in the English section
-   only: `Build: YYYYMMDD.eN.pM` read from `tools/av_version.txt`. Since the
-   title carries no version, this line is the only way to tell which encoder
-   and player produced the video.
+`harness/youtube_description/check_upload_text.py` re-checks a rendered file
+before upload. It is a safety net for a hand-edited or legacy description, not
+the primary path.
 
 ## CRAM switch count
 
@@ -253,86 +195,33 @@ sourceのrepository URL `https://github.com/akiyan/segacd-fmv-cavc` は常に
 spec、layoutの読み方、encoder技術の節、project link、現行のtimeline linkは
 削ってはいけません。
 
-## changelogではなく絶対的に書く
+## 説明文はtemplateから生成する
 
-各説明文は、それ単体で「このbuildが何であり何をしているか」を述べるもので、
-他に説明文が存在しないかのように書きます。前のuploadとの比較、変更点、改善・
-後退・修正の記述、そして散文中のbuild revisionを書いてはいけません。「now」
-「no longer」「previously」「instead of before」「this version adds」、および
-測定値のbefore/after対は開発notesのものです。build revisionを語ってはいけません。動画がどのbuildから作られたかを
-書くことはchangelogではなく、最終行がそれを事実として一度だけ述べます。ある技術がhardware制約ゆえに存在するときは、そこへ至った経緯
-ではなく制約と結果の挙動を書きます。このシリーズの他の動画を1本も見ていない
-読者が、それだけで全体を理解できなければなりません。
+説明文はuploadごとに書きません。文言は
+`templates/youtube/{analysis,playback,verification}.txt` にあり、動画ごとの値
+だけを差し込みます:
 
-## 最適化ではなく制約を名指しする
+```sh
+tools/python.sh tools/youtube_description.py --config profiles/PROFILE.toml \
+  --kind analysis --timeline-tsv logs/RUN_timeline.tsv \
+  --timeline-url GIST --playback-url URL --output DESCRIPTION.txt
+```
 
-技術の説明が要るときは、それを最適化と呼ぶのではなく、そうせざるを得ない
-hardwareの限界を書きます。説明はその技術の中に収めます。hardwareの解説を
-単体で並べると講義になり、説明文が長すぎるときに最初に削る対象になります。
-内部のbuffer名は視聴者に何も伝えません。`PrgBuf`や`DicBuf`と容量を並べるので
-はなく、そのRAMが何に使われるかを書きます。
+差し込まれる数値はすべて、その動画を作ったencodeから読みます。gridとcell数は
+profile、CRAM切り替えはsimのdecisions、配送レートは解析TSV、buildは
+`tools/av_version.txt`。手で打ち直す値が無いので、古い数字が残ることがあり
+ません。未解決のplaceholderは空文字ではなくerrorになります。
 
-## 動画の種類
+文言を変えるときはtemplateを直し、影響する説明文をすべて生成し直します。
+生成済みfileを手で編集しないこと。次の生成で黙って失われます。
 
-公開する動画は2種類あり、それぞれ単体で完結します。どちらから来た視聴者も、
-今見ているものの説明を一通り得られます。2つは互いを補完するものとして参照
-しあいますが、前提条件としては扱いません。
+かつてここにprose として書いていた規則は、templateが実体として持っています。
+changelogではなく絶対的に述べること、buildの用語を持たないこと、内部buffer名
+ではなくそのRAMの用途を書くこと、URLを英語節へ集約すること。playback templateは
+解析panelに触れません。その動画には無いからです。
 
-- **Analysis** — 1920x1080のrenderで、frameにSega CD出力のsimulationとsource、
-  category map、meter、timelineを持つもの。
-- **Playback** — codecの動作をhardwareが出力するそのままの画面で録画したもの。
-  解析panelもmeterもtimelineもありません。
-- **Verification** — 後からそのbuildを見返すためだけに残す診断用のcapture。
-  画面上のカウンタ行が入った録画などがこれにあたります。公開作品ではないので、
-  以下の公開2種類の規約は適用しません。titleは従来の説明的な形式でbuild
-  versionを末尾に置き、説明文は日本語のみで、そのversionとencoderの変更内容
-  だけを持ちます。そこでは変更内容を書くことが目的であり、違反ではありません。
-  公開2種類が持つ英語節は、このprojectの作者自身のための記録では雑音にしか
-  なりません。公開動画の説明文からverification uploadへcross-linkしません。
-
-playbackの説明文に解析panel、meter、timeline、category legendを書いては
-いけません。そこには映っていないので、名前を出すこと自体が視聴者を誤らせます。
-playbackで実際に映るもの、すなわちMega-CDの起動画面、映画への遷移、映画本体、
-そして在る場合は画面上のカウンタ行を書きます。
-
-codec自体が何であるか、このhardwareで何を成しているか、どの制約が絵を
-決めているかは、両方の種類に書きます。
-
-## 説明文の構成
-
-英日とも、この順で書きます。
-
-両方に共通:
-
-1. **導入** — Sega CD Constraint-Aware Video Codecとは何か。無改造の
-   Sega CD / Mega-CD自身が単速CDを読みながらdecodeして表示するfull motion
-   videoであること、そしてその動画が何を映しているか。codec名は
-   **Sega CD Constraint-Aware Video Codec** とし、現行のbinary magicを公開の
-   codec名やformat名として使いません。
-2. **出力とsourceのspec** — SEGA-CD出力 (mode、grid WxH、tile数、fps、音声、
-   Prg/Wr0/Wr1/Dicの容量、CRAM palette切り替え回数) とSource (解像度、fps、
-   音声)。sourceのbitrateは書きません。
-3. **encoderの動作** — 適用した技術。hardwareの解説を別立てにするのではなく、
-   各技術をそれが必要になる制約と一緒に述べます。
-
-Analysisのみ:
-
-4. **layoutの読み方** — 各panel、meter、timelineが何を示し、どう解釈するか。
-   下の「解析layoutの用語」を参照します。
-
-Playbackのみ:
-
-4. **録画に何が入っているか** — emulator起動から始まり、再生前のMega-CD起動
-   画面とCD playerの遷移を保っていること、画面上のカウンタ行があるかどうか、
-   そしてnative rasterを配信用にどう拡大したか。
-
-両方の末尾:
-
-5. **link** — project link、同じencodeのもう一方の種類へのcross-link、そして
-   timeline link。英語節のみ。
-6. **build行** — 説明文の最終行、英語節のみ: `tools/av_version.txt` から読んだ
-   `Build: YYYYMMDD.eN.pM`。titleがversionを持たないため、この行がどのencoderと
-   playerで作られた動画かを知る唯一の手段です。
+upload前に`harness/youtube_description/check_upload_text.py`で再確認します。
+これは手編集や過去の説明文に対する安全網であって、主経路ではありません。
 
 ## CRAM切り替え回数
 

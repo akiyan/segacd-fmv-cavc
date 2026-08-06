@@ -1,0 +1,6 @@
+動作確認用の録画。公開作品ではなく、後からこのbuildを見返すために残しています。
+
+Build: {build}
+
+このbuildでのencoderの変更:
+{change_note}
