@@ -138,7 +138,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             {path.name for path in (root / "profiles").glob("*.toml")},
             {
                 "bad-apple.toml",
-                "lunar.toml",
+                "lunar-ss-op.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
                 "ps2-sakura-op.toml",
@@ -158,7 +158,8 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             "CBRSIM_RING_CAP_KB": "999",
         }
         env = apply_profile_env(h40, inherited)
-        self.assertTrue(env["CBRSIM_SRC"].endswith("BadApple.mp4"))
+        self.assertTrue(env["CBRSIM_SRC"].endswith(
+            "assets/bad-apple/bad-apple.mp4"))
         self.assertEqual(
             env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX"], "2")
         self.assertEqual(
@@ -181,7 +182,8 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         profile = load_profile(root / "profiles/sonic-jam-op.toml")
         env = apply_profile_env(profile, {})
-        self.assertTrue(env["CBRSIM_SRC"].endswith("assets/SonicJamOp.avi"))
+        self.assertTrue(env["CBRSIM_SRC"].endswith(
+            "assets/sonic-jam-op/original-sonic-jam-op.avi"))
         self.assertEqual(env["CBRSIM_FPS"], "30")
         self.assertEqual(env["CBRSIM_DURATION"], "90.466667")
         self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")

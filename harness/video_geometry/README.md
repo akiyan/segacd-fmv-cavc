@@ -16,8 +16,8 @@ displayed width rather than its coded pixel width:
 Inspect a plan for a source:
 
 ```sh
-tools/python.sh tools/video_geometry.py --src assets/SonicJamOp.mp4
-tools/python.sh tools/video_geometry.py --src assets/SonicJamOp.mp4 --fit crop
+tools/python.sh tools/video_geometry.py --src assets/sonic-jam-op/original-sonic-jam-op.mp4
+tools/python.sh tools/video_geometry.py --src assets/sonic-jam-op/original-sonic-jam-op.mp4 --fit crop
 ```
 
 `tools/sim.py` uses the same helper whenever `CBRSIM_MASTER_VF` or

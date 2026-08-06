@@ -1,7 +1,7 @@
 schema_version = 4
 
 [source]
-path = "assets/SonicJamOp.avi"
+path = "assets/sonic-jam-op/original-sonic-jam-op.avi"
 fps = "30"
 duration = "45.000000"
 sar = "32:35"
