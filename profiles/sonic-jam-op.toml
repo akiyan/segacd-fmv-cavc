@@ -1,7 +1,7 @@
 schema_version = 5
 
 [source]
-path = "assets/SonicJamOp.avi"
+path = "assets/sonic-jam-op/original-sonic-jam-op.avi"
 fps = "30"
 duration = "90.466667"
 sar = "32:35"
@@ -33,3 +33,9 @@ algorithm = "mosaic-gm"
 
 [analysis]
 source_canvas = [320, 224]
+
+[youtube]
+analysis_title = "Sega CD FMV at 30 FPS — Sonic Jam Opening (288×200) Visual Analysis & Encoding Breakdown"
+playback_title = "Sega CD FMV at 30 FPS — Sonic Jam Opening (288×200) in Genesis Plus GX"
+source_label = "Sonic Jam (Sega Saturn, 1997), 288x200, 30 fps, 44.1 kHz stereo"
+source_label_ja = "Sonic Jam (Sega Saturn、1997)、288x200、30 fps、44.1 kHz stereo"

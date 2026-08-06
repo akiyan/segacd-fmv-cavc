@@ -1,7 +1,7 @@
 schema_version = 4
 
 [source]
-path = "assets/BadApple.mp4"
+path = "assets/bad-apple/bad-apple.mp4"
 fps = "30"
 duration = "120.000000"
 sar = "1:1"

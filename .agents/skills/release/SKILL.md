@@ -158,7 +158,7 @@ skill's chain instead: the byte-identical stream, the baseline gate, the LOGVDP
 comparison, and the visual inspection. State that substitution when reporting;
 do not present the release capture as carrying its own gate.
 
-Title and description follow `AGENTS.md` "YouTube Upload Style". A release
+Title and description follow `YOUTUBE.md`. A release
 capture is the plain `(playback)` video. When a DEBUG capture of the same
 encode was already uploaded, retitle it to `(playback, DEBUG HUD)` so the two
 stay distinguishable and the HUD-free one is the video a viewer is sent to.

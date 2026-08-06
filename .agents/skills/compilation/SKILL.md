@@ -127,14 +127,15 @@ H40の320x224 PAR 32:35は64:49の表示領域を表す。YouTubeへ非正方形
 5. **YouTubeへアップロードする**
 
    タイトル、英語→日本語の説明、CRAM切り替え回数、公開範囲、カテゴリ、再アップロード
-   の扱いは `AGENTS.md` の「YouTube Upload Style」を唯一の規約として使う。ここへ
-   同じ規約を複製しない。アップロードはunlisted、category 20とし、説明文の英日
-   両方に `https://github.com/akiyan/segacd-fmv-cavc` を含める。
+   の扱いは `YOUTUBE.md` を唯一の規約として使う。ここへ
+   同じ規約を複製しない。アップロードはunlisted、category 20とし、説明文へ
+   `https://github.com/akiyan/segacd-fmv-cavc` を含める。URLは言語に依存しない
+   ため英語側にのみ置き、日本語側へは繰り返さない。
    Public codec名は両言語とも **Sega CD Constraint-Aware Video Codec** とし、
    binary magicをcodec名やformat名として使わない。
    送信する説明文はUTF-8 text fileへ保存し、YouTubeの上限である5,000文字以下を
    事前にPythonの文字数で確認する。運用目標は4,800文字以下。超えた場合は説明部分を
-   短くし、CRAM切り替え回数、必須spec/layout/technique節、英日両方のproject linkを
+   短くし、CRAM切り替え回数、必須spec/layout/technique節、project linkを
    削ってはならない。上限超過のままuploadを試してAPIのrejectを待たない。
 
    ```sh

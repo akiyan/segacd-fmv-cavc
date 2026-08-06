@@ -1,7 +1,7 @@
 schema_version = 5
 
 [source]
-path = "assets/lunar_sss_op.mp4"
+path = "assets/lunar-ss-op/lunar-ss-op.mp4"
 fps = "24"
 duration = "105.641000"
 sar = "1:1"

@@ -342,7 +342,7 @@ PY=~/.config/youtube/venv/bin/python
   --category 20 --privacy unlisted
 ```
 
-Titles follow AGENTS.md "YouTube Upload Style": `SEGA-CD FMV of <work> -
+Titles follow `YOUTUBE.md`: `SEGA-CD FMV of <work> -
 <specs> <ver>`, where `<specs>` is the descriptive spec suffix (mode,
 resolution/grid) and `<ver>` is the build version `YYYYMMDD.eN.pM` read from
 `tools/av_version.txt`. Descriptive, never a sequence version such as
@@ -361,8 +361,8 @@ State the encode's CRAM palette switch count from `tools/cram_switches.py
 <sim_out>` in the spec section of both language halves, and add no YouTube
 chapters or description timestamp links.
 Shorten optional explanatory prose first; preserve that switch count, the
-specs/layout/technique sections, both project links, and current
-timeline links. Upload as unlisted, category 20. See
+specs/layout/technique sections, the project link, and current timeline
+links. URLs appear only once, in the English section. Upload as unlisted, category 20. See
 `[[youtube-upload-convention]]`.
 
 Use **Sega CD Constraint-Aware Video Codec** as the public codec name in both

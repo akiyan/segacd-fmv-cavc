@@ -20,7 +20,7 @@ Run it with the project Python environment and a new output directory:
 out=$(mktemp -d /tmp/sonic-dedither.XXXXXX)
 rmdir "$out"
 tools/python.sh harness/sonic_dedither/compare.py \
-  --source assets/SonicJamOp.avi \
+  --source assets/sonic-jam-op/original-sonic-jam-op.avi \
   --output "$out"
 ```
 
