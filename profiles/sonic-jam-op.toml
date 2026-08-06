@@ -200,7 +200,7 @@ encoderの動作。VRAMに常駐しているtileは、完全一致か十分近�
 # Links, in the order they are written. They are emitted at the end of the
 # English half, where YOUTUBE.md requires every URL to sit.
 [comparison.youtube.links]
-"Encoder decisions visualized" = "https://youtu.be/7LEBx-zyobg"
+"Encoder decisions visualized" = "https://youtu.be/GN8EW5ODGBA"
 "Playback recording of this encode" = "https://youtu.be/4bQNKx4mYTI"
 "Project" = "https://github.com/akiyan/segacd-fmv-cavc"
 

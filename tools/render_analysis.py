@@ -167,6 +167,18 @@ SOURCE_SAR_DEN = _SOURCE_SAR.denominator
 _analysis_profile = CONFIG_PROFILE.section("analysis") if CONFIG_PROFILE else {}
 SOURCE_CANVAS = tuple(_analysis_profile.get("source_canvas", (RW, RH)))
 SOURCE_CANVAS_W, SOURCE_CANVAS_H = map(int, SOURCE_CANVAS)
+# Pixel aspect the Source panel is displayed at. This is the aperture's aspect,
+# not the master's: raw/ already holds the encode's own raster, so a master that
+# was square-pixel before the crop still has to be shown with the console's
+# 32:35 pixels. [source] sar cannot serve here - it describes the master and
+# drives the sim's crop, so changing it would change the encode.
+_SOURCE_PAR = _analysis_profile.get("source_par")
+if _SOURCE_PAR is not None:
+    if (not isinstance(_SOURCE_PAR, list) or len(_SOURCE_PAR) != 2
+            or any(not isinstance(v, int) or v <= 0 for v in _SOURCE_PAR)):
+        raise SystemExit(
+            "analysis.source_par must be [positive_num, positive_den]")
+    SOURCE_SAR_NUM, SOURCE_SAR_DEN = _SOURCE_PAR
 # Still, silent seconds appended after the picture ends, fading out across
 # them, so YouTube's end screen has somewhere to put its cards.
 TAIL_SECONDS = float(_analysis_profile.get("tail_seconds", 0.0))

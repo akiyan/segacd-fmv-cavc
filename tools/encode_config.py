@@ -104,7 +104,7 @@ ALLOWED = {
     "output": {key for section, key in ENV_MAP if section == "output"},
     "encoder": {key for section, key in ENV_MAP if section == "encoder"},
     "palette": {key for section, key in ENV_MAP if section == "palette"},
-    "analysis": {"source_canvas", "tail_seconds"},
+    "analysis": {"source_canvas", "source_par", "tail_seconds"},
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
