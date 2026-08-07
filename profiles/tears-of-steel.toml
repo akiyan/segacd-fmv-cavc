@@ -175,7 +175,7 @@ I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec 
 
 Output: display mode H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) centered in the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} ({cram_segments} segments). Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
 
-Source: {source_label}.
+{source_line}
 
 The run-up is heard from the real-hardware capture, recorded in the room with the console. Once the codec playback panel starts, the audio hands over to that panel's own output, so from there on you hear the Sub CPU's ADPCM decode. The other panels stay silent throughout.
 
@@ -186,7 +186,7 @@ Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Vide
 
 出力: display mode H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)を320x224 aperture中央へ配置。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは{cram_switches}回 ({cram_segments} segments)。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
 
-Source: {source_label_ja}。
+{source_line_ja}
 
 冒頭の助走部分の音は実機撮影の音声で、本体と同じ部屋で録ったものです。codec playback panelが始まると音声はそのpanelの出力へ引き継がれ、そこから聞こえるのはSub CPUのADPCM decodeです。他のpanelは終始無音です。
 

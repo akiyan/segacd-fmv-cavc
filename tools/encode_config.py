@@ -109,7 +109,7 @@ ALLOWED = {
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
-                "source_label_ja"},
+                "source_label_ja", "source_url"},
     # Comparison-video composition: which footage fills each panel, how the
     # panels are synchronised, and the text drawn on the frame. Also outside
     # ENV_MAP, for the same reason as [youtube] - retiming a panel or editing a

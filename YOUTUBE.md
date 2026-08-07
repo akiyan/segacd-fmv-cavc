@@ -51,6 +51,20 @@ end of the English section.
 Always include the source repository URL
 `https://github.com/akiyan/segacd-fmv-cavc`.
 
+Where the master came from is cited from the profile, never typed into a
+description:
+
+```toml
+[youtube]
+source_url = "https://www.example.com/watch?v=..."
+```
+
+It is emitted as a `Source video:` line directly under the `Source:` sentence,
+in the English half only, and it stands on its own line rather than closing a
+sentence: a full stop glued to a URL is one character away from being the wrong
+link. A profile without the key keeps the plain `Source:` sentence, so nothing
+changes for a source that needs no citation.
+
 Never put `<` or `>` in a description. YouTube rejects them with
 `invalidDescription` (HTTP 400). Write "0.3s or more" or "within 4s" instead.
 
@@ -227,6 +241,18 @@ titleにversionが入らないため、説明文末尾の行がその動画のbu
 
 sourceのrepository URL `https://github.com/akiyan/segacd-fmv-cavc` は常に
 含めます。
+
+masterの出典はprofileから引きます。説明文へ直接書き込むことはしません:
+
+```toml
+[youtube]
+source_url = "https://www.example.com/watch?v=..."
+```
+
+`Source:` の文の直下へ `Source video:` の行として、英語側にのみ出力します。
+文末の句点をURLへ付けず独立した行に置きます。URLへ`.`が付くと1文字違いで別の
+linkになるためです。このkeyを持たないprofileは従来どおり `Source:` の文だけに
+なるので、出典の要らないsourceでは何も変わりません。
 
 説明文へ`<`と`>`を入れてはいけません。YouTubeが`invalidDescription`
 (HTTP 400)で拒否します。「0.3s or more」「within 4s」のように書きます。
