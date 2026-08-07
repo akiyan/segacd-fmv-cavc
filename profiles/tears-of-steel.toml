@@ -32,6 +32,12 @@ cold_cap = "2:180,3:230"
 [palette]
 algorithm = "mosaic-gm"
 
+[release]
+# Names the disc-image release on GitHub and inside each zip's README. The
+# figures beside it are read from the encode, so only the work's name is here.
+title = "Tears of Steel — Sega CD disc images"
+title_ja = "Tears of Steel — Sega CD ディスクイメージ"
+
 [analysis]
 # raw/ already holds the encode's own 320x168 raster, so the Source panel is
 # displayed with the console's pixels rather than the master's square ones. The

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, MutableMapping
 
 import av_config
+from disc_region import suffix as _region_suffix
 
 
 SCHEMA_VERSION = 5
@@ -110,6 +111,9 @@ ALLOWED = {
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
                 "source_label_ja", "source_url"},
+    # Disc-image release metadata, for the same reason as [youtube]: naming a
+    # release must not change the encode identity.
+    "release": {"title", "title_ja"},
     # Comparison-video composition: which footage fills each panel, how the
     # panels are synchronised, and the text drawn on the frame. Also outside
     # ENV_MAP, for the same reason as [youtube] - retiming a panel or editing a
@@ -224,6 +228,15 @@ class EncodeProfile:
     def release_disc_cue(self) -> Path:
         return ARTIFACT_ROOT / f"{self.artifact_stem}_release.cue"
 
+    # Japan keeps the plain release name, matching the Makefile, so the paths
+    # every other tool already uses stay valid. Another region gets its own
+    # pair rather than overwriting it.
+    def region_release_disc_iso(self, region: str) -> Path:
+        return ARTIFACT_ROOT / f"{self.artifact_stem}{_region_suffix(region)}_release.iso"
+
+    def region_release_disc_cue(self, region: str) -> Path:
+        return ARTIFACT_ROOT / f"{self.artifact_stem}{_region_suffix(region)}_release.cue"
+
     @property
     def analysis_title(self) -> str | None:
         """Profile-authored YouTube title for the analysis render."""
@@ -242,6 +255,21 @@ class EncodeProfile:
     @property
     def source_label_ja(self) -> str | None:
         return self.data.get("youtube", {}).get("source_label_ja")
+
+    @property
+    def source_url(self) -> str | None:
+        """Where the master came from. Optional; not every source has one."""
+        return self.data.get("youtube", {}).get("source_url")
+
+    @property
+    def release_title(self) -> str:
+        """Human name for the disc-image release. Falls back to the stem."""
+        return self.data.get("release", {}).get("title") or self.artifact_stem
+
+    @property
+    def release_title_ja(self) -> str:
+        return (self.data.get("release", {}).get("title_ja")
+                or self.release_title)
 
 
 def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
@@ -343,6 +371,19 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             raise ValueError(
                 f"{profile_path}: youtube.{key} is {len(title)} characters; "
                 "YouTube truncates a title at 100")
+    release = data.get("release", {})
+    if not isinstance(release, dict):
+        raise ValueError(f"{profile_path}: [release] must be a table")
+    for key in ("title", "title_ja"):
+        if key not in release:
+            continue
+        title = release[key]
+        if not isinstance(title, str) or not title.strip():
+            raise ValueError(
+                f"{profile_path}: release.{key} must be a non-empty string")
+        if "\n" in title:
+            raise ValueError(
+                f"{profile_path}: release.{key} must be a single line")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")
