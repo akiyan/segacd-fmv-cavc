@@ -1,7 +1,13 @@
 /*
  * Sega CD ブートセクタ。
  * boot.s / cdcbench_boot.s と同レイアウト。IP=still256(描画Main), SP=cdcbench_sp(待機)。
+ *
+ * The region-dependent header fields come from disc_region.inc, which the
+ * build copies from boot/region_<SECURITY_REGION>.inc beside the matching
+ * security code.
  */
+
+	.include "disc_region.inc"
 
 DiscHeader:
 DiscType:
@@ -43,7 +49,7 @@ SP_WorkRAM:
 	.ascii "                "
 
 HardwareType:
-	.ascii "SEGA MEGA DRIVE "
+	disc_hardware_type
 Copyright:
 	.ascii "(C) AKIYAN 2026 "
 DomesticName:
@@ -60,7 +66,13 @@ IoSupport:
 	.ascii "                "
 	.ascii "                "
 Region:
-	.ascii "J               "
+	disc_region_support
+
+	/* Both region fields are fixed-width, so a wrong one would silently
+	   push the IP off its sector boundary instead of failing here. */
+	.if . - DiscHeader != 0x200
+	.error "disc header must be exactly 512 bytes"
+	.endif
 
 IPStart:
 	.incbin "movieplay_ip.bin"

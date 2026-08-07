@@ -3,6 +3,10 @@ OUT_DIR := out
 DISC_DIR := $(OUT_DIR)/disc
 BOOT_DIR := boot
 CFG_DIR := cfg
+# Release region.  It picks the security code the console validates and the
+# disc-header fields that name the region, and it names the movie disc so a
+# second region cannot overwrite the first.  jp is the default and keeps the
+# unsuffixed output paths every other tool already uses.
 SECURITY_REGION ?= jp
 CONFIG ?=
 PYTHON ?= tools/python.sh
@@ -40,8 +44,11 @@ DEBUG ?= 0
 # リリースディスクは _release を付けて、同じ packed stream から作った
 # DEBUG ディスクと出力先で衝突させない。
 DISC_SUFFIX := $(if $(filter 1,$(DEBUG)),,_release)
-MOVIEPLAY_ISO := $(OUT_DIR)/$(CONFIG_STEM)$(DISC_SUFFIX).iso
-MOVIEPLAY_CUE := $(OUT_DIR)/$(CONFIG_STEM)$(DISC_SUFFIX).cue
+# jp keeps the plain name, so every existing recording, burn and release path
+# stays valid; another region gets its own disc rather than overwriting it.
+REGION_SUFFIX := $(if $(filter jp,$(SECURITY_REGION)),,_$(SECURITY_REGION))
+MOVIEPLAY_ISO := $(OUT_DIR)/$(CONFIG_STEM)$(REGION_SUFFIX)$(DISC_SUFFIX).iso
+MOVIEPLAY_CUE := $(OUT_DIR)/$(CONFIG_STEM)$(REGION_SUFFIX)$(DISC_SUFFIX).cue
 MOVIEPACK_OUTPUTS := \
 	$(MOVIEPLAY_STREAM_DIR)/HEADER.DAT \
 	$(MOVIEPLAY_STREAM_DIR)/BODY.DAT \
@@ -53,6 +60,7 @@ SP_EXTENSION_OBJ := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.o
 SP_EXTENSION_BIN := $(MOVIEPLAY_BUILD_DIR)/movieplay_sp_ext.bin
 SP_EXTENSION_CONSTANTS := $(MOVIEPLAY_BUILD_DIR)/sp_extension.inc
 MOVIEPLAY_SECURITY := $(MOVIEPLAY_BUILD_DIR)/security.bin
+MOVIEPLAY_REGION_INC := $(MOVIEPLAY_BUILD_DIR)/disc_region.inc
 MOVIEPLAY_DEBUG_FONT := $(MOVIEPLAY_BUILD_DIR)/dbgfont.bin
 
 MARSDEV ?= $(HOME)/toolchains/mars
@@ -335,13 +343,20 @@ $(SP_EXTENSION_BIN): $(SP_EXTENSION_OBJ)
 $(SP_EXTENSION_CONSTANTS): $(SP_EXTENSION_BIN) tools/sp_extension.py tools/av_config.py | movieplay-setup
 	$(PYTHON) tools/sp_extension.py $< --output $@
 
-$(MOVIEPLAY_SECURITY): $(BOOT_DIR)/sec_$(SECURITY_REGION).bin | movieplay-setup
+# Both region inputs are copied on every build.  Switching SECURITY_REGION
+# changes which source file is read without making the copy older than it, so
+# a timestamp rule would leave the previous region's security code and header
+# fields in place and the mismatch would only show up on the console.
+$(MOVIEPLAY_SECURITY): $(BOOT_DIR)/sec_$(SECURITY_REGION).bin movieplay-force | movieplay-setup
+	cp $< $@
+
+$(MOVIEPLAY_REGION_INC): $(BOOT_DIR)/region_$(SECURITY_REGION).inc movieplay-force | movieplay-setup
 	cp $< $@
 
 $(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
 	$(PYTHON) tools/gen_debugfont.py --output $@
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_REGION_INC) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
@@ -373,7 +388,7 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 			exit 1; \
 		fi
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin $(BOOT_DIR)/movieplay_boot.s
+$(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin $(BOOT_DIR)/movieplay_boot.s $(MOVIEPLAY_REGION_INC)
 	$(AS) $(ASFLAGS) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $(BOOT_DIR)/movieplay_boot.s -o $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out
 	$(OBJCOPY) -O binary $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out $@
 	@bytes=$$(wc -c < $@); \
