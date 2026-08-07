@@ -80,6 +80,12 @@ Each source has a strict TOML profile.
   through that profile.
 - **Palette algorithm:** `stl4` or `mosaic-gm`.
 - **Analysis canvas:** optional and never changes the encoded stream.
+- **Disc region:** Japan or North America, and both are NTSC.
+
+**The discs are NTSC only.** The player displays H40 V28 and paces every frame,
+the audio sync, and the CD delivery deadlines against a 60 Hz field rate. A
+50 Hz PAL console is not a target: it would need the whole timing model
+re-derived, not a different security code.
 
 H40 is the only display mode, and every profile here uses it. H32's wider dots
 make the dither this codec relies on read as coarse texture rather than tone,
@@ -310,6 +316,45 @@ Independent invocations use the same cross-process locks, so separate sessions
 need no shared job list. Use `--sequential` for an A/B timing or determinism
 baseline. Public timeline, Gist, and upload stages remain interactive.
 
+## Disc images for distribution
+
+`SECURITY_REGION` selects the release region. It picks the security code the
+console validates, the disc-header fields that name the region, and the disc's
+own name; Japan keeps the unsuffixed paths every other tool already uses.
+
+```sh
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0 SECURITY_REGION=us
+```
+
+```text
+out/PROFILE_release.iso     + .cue   Japan
+out/PROFILE_us_release.iso  + .cue   North America
+```
+
+A region is a boot-area difference and nothing else: `HEADER.DAT` and
+`BODY.DAT` are byte-identical across regions, so both discs play the same
+encode. Regions of one profile share an output-stem lock, so build them one
+after another.
+
+Package and publish one profile's discs:
+
+```sh
+tools/python.sh tools/region_release.py build --config profiles/PROFILE.toml
+tools/python.sh harness/regions/verify_release.py out/releases/PROFILE_*.zip
+tools/python.sh tools/region_release.py publish --config profiles/PROFILE.toml \
+  --zip out/releases/PROFILE_JP_DATE.eN.pM.zip \
+  --zip out/releases/PROFILE_US_DATE.eN.pM.zip
+```
+
+`build` writes `out/releases/<profile>_<REGION>_<date>.e<N>.p<M>.zip`, each
+holding that region's `.iso`, its `.cue`, and a README naming the region, the
+encode, the source, and how to burn it. `publish` creates one draft GitHub
+release per profile with both zips attached, and replaces an existing asset
+only when `--clobber` is passed.
+[`harness/regions/README.md`](harness/regions/README.md) states what the
+verification proves and what it does not.
+
 ## Recording
 
 Use emulator-synchronized A/V:
@@ -441,6 +486,11 @@ sourceごとにstrict TOML profileを使います。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
 - **Analysis canvas:** optionalで、encoded streamは変えない。
+- **Disc region:** 日本または北米。どちらもNTSC。
+
+**ディスクはNTSC専用です。** playerはH40 V28で表示し、frame進行・音声同期・CDの配送
+期限をすべて60 Hzのfield rateに合わせています。50 HzのPAL実機は対象外で、必要なのは
+別のsecurity codeではなくtiming model全体の再導出です。
 
 display modeはH40だけで、ここにある全profileがH40です。H32はドットが大きいため、
 このcodecが前提とするditherが階調ではなく粗いテクスチャとして見えます。さらに
@@ -658,6 +708,42 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 独立したinvocationも同じprocess間lockを使うため、別session間でjob listを共有する必要は
 ありません。A/B timingまたはdeterminism baselineには `--sequential` を使います。
 public timeline、Gist、upload stageは対話的に実行します。
+
+## 配布用disc image
+
+`SECURITY_REGION` がrelease regionを選びます。本体が検証するsecurity code、region名を
+書くdisc headerのfield、そしてdisc自身の名前がこれで決まります。日本は他のtoolが既に
+使っているsuffix無しのpathをそのまま使います。
+
+```sh
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0 SECURITY_REGION=us
+```
+
+```text
+out/PROFILE_release.iso     + .cue   日本
+out/PROFILE_us_release.iso  + .cue   北米
+```
+
+regionの差はboot領域だけです。`HEADER.DAT` と `BODY.DAT` はregion間でbyte一致するので、
+どちらのdiscも同じencodeを再生します。同一profileのregionはoutput stem lockを共有する
+ため、直列にbuildします。
+
+1つのprofileのdiscをpackageして公開します。
+
+```sh
+tools/python.sh tools/region_release.py build --config profiles/PROFILE.toml
+tools/python.sh harness/regions/verify_release.py out/releases/PROFILE_*.zip
+tools/python.sh tools/region_release.py publish --config profiles/PROFILE.toml \
+  --zip out/releases/PROFILE_JP_DATE.eN.pM.zip \
+  --zip out/releases/PROFILE_US_DATE.eN.pM.zip
+```
+
+`build` は `out/releases/<profile>_<REGION>_<date>.e<N>.p<M>.zip` を書きます。各zipには
+そのregionの `.iso`、`.cue`、そしてregion・encode・出典・焼き方を書いたREADMEが入ります。
+`publish` はprofileごとに1つのdraft GitHub releaseを作り、両方のzipを添付します。既存の
+assetを置き換えるのは `--clobber` を渡したときだけです。検証が何を証明し、何を証明しない
+かは [`harness/regions/README.md`](harness/regions/README.md) にあります。
 
 ## Recording
 
