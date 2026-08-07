@@ -26,6 +26,9 @@
 .equ MENU_SP_WORD_OFF,   0x0001E000
 .equ MENU_SP_WORD_ENTRY, 0x000DE000
 .equ MULTI_WORD_SWAP_STUB, 0x00007F50
+.equ MULTI_INT_STUB,     0x00007F64	/* after the 20-byte bank-switch stub */
+.equ BIOS_USERCALL2_TGT, 0x00005F36
+.equ BIOS_USERCALL3_TGT, 0x00005F3C
 
 .macro BIOSCALL code
 	move.w	#\code, d0
@@ -91,6 +94,15 @@ sp_main:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	bsr	install_multi_word_swap_stub
+	/* The BIOS user vectors registered from this bootstrap image would point
+	   into the resident SP slot after a selected player replaces it, so any
+	   later INT2 (the Main BIOS VINT raises one on every VBlank while the
+	   security license screen runs) would execute mid-player bytes as a
+	   handler.  Re-point the INT2/user calls at a permanent rts in the
+	   reserved PRG stub slot before any image swap can happen. */
+	move.w	#0x4E75, (MULTI_INT_STUB).l
+	move.l	#MULTI_INT_STUB, (BIOS_USERCALL2_TGT).l
+	move.l	#MULTI_INT_STUB, (BIOS_USERCALL3_TGT).l
 	jmp	(MENU_SP_WORD_ENTRY).l
 
 /* Read d1 sectors from absolute LBA d0 to address a0. */

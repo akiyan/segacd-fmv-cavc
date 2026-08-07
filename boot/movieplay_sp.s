@@ -469,6 +469,8 @@ do_stream:
 	ori.b	#0x3C, (SUB_GA_BASE+0x33).l	/* IEN: enable INT2-5 (timer/CDD/CDC) */
 	move.w	#0x2000, sr			/* enable ints BEFORE the BIOS calls */
 	.ifdef MULTI_MENU
+	/* Diagnostic breadcrumbs live in the unallocated RING-ALIGN gap. */
+	addq.w	#1, (0x0000D652).l		/* do_stream entry count */
 	/* The menu's synchronous reads leave the CDC data path usable, but the
 	   selected player still needs the BIOS drive state re-established before
 	   its interrupt-driven stream read.  Do this before loading the saved
@@ -479,11 +481,14 @@ do_stream:
 	BIOSCALL BIOS_CDB_STAT
 	andi.b	#0xF0, (CDB_STAT).w
 	bne.s	1b
+	move.w	#1, (0x0000D650).l		/* drive ready after DRV_INIT */
 	lea	(MULTI_MENU_INFO_ADDR+16).w, a0
 	move.l	(a0)+, header_lba
 	move.l	(a0)+, header_total
 	move.l	(a0)+, body_lba
 	move.l	(a0)+, body_total
+	move.l	header_lba, (0x0000D654).l	/* extents as read by the player */
+	move.l	body_lba, (0x0000D658).l
 	.else
 	andi.b	#0xFA, (MEMMODE+1).l
 	lea	drv_init_tracklist, a0
@@ -504,6 +509,9 @@ do_stream:
 	.endif
 	bset	#2, (MEMMODE+1).l
 stream_start:
+.ifdef MULTI_MENU
+	addq.w	#1, (0x0000D65C).l		/* stream_start entry count */
+.endif
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
 	   timed reader is idle, then starts BODY.DAT from its own ISO extent. */
 	clr.w	slip_count
@@ -680,6 +688,9 @@ pm_set:
 .endif
 	bra.s	header_accepted
 bad_header:
+.ifdef MULTI_MENU
+	addq.w	#1, (0x0000D65E).l		/* bad_header hit count */
+.endif
 	bra	bad_header
 header_accepted:
 	/* MDへヘッダ写しを渡す(frame0と同じバンクに書く=swap後にMDが読める) */
@@ -1189,20 +1200,25 @@ movie_end:
 	move.b	#0xFF, (PCM_ONOFF).l		/* 全chオフ(静音) */
 .ifdef MULTI_MENU
 	tst.w	(MULTI_LOOP_FLAG_ADDR).w
-	bne.s	multi_movie_loop
+	bne	multi_movie_loop
+	move.w	#0x21, (0x0000D662).l		/* diag: waiting for menu request */
 	multi_movie_menu_wait:
 	tst.w	(COMCMD1).l			/* Main requests the menu return */
 	beq.s	multi_movie_menu_wait
+	move.w	#0x22, (0x0000D662).l		/* diag: request seen */
 	move.l	(MULTI_MENU_INFO_ADDR+8).w, d0
 	moveq	#MULTI_MENU_IP_SECTORS, d1
 	lea	(SUB_BANK_1M+MULTI_MENU_IMAGE_OFF).l, a0
 	bsr	read_cd
+	move.w	#0x23, (0x0000D662).l		/* diag: MENUIP read into bank */
 	bchg	#0, (MEMMODE+1).l		/* menu image becomes Main-visible */
 	bsr	swap_settle
 	move.w	#MULTI_STAT_MENU_IP_READY, (COMSTAT0).l
 multi_movie_menu_ip_wait:
-	tst.w	(COMCMD0).l			/* Main copied MENUIP.BIN */
+	tst.w	(COMCMD1).l			/* Main drops its request once the
+						   MENUIP copy is complete */
 	bne.s	multi_movie_menu_ip_wait
+	move.w	#0x24, (0x0000D662).l		/* diag: Main copy ACKed */
 	bchg	#0, (MEMMODE+1).l		/* Sub owns the bank again */
 	bsr	swap_settle
 	move.l	(MULTI_MENU_INFO_ADDR).w, d0
@@ -1212,6 +1228,7 @@ multi_movie_menu_ip_wait:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	bsr	read_cd
+	move.w	#0x26, (0x0000D662).l		/* diag: MENUSP in both banks */
 	/* The boot Sub loader installed the PRG-resident bank-switch stub.  The
 	   player occupies only SP-RES, so that fixed gap survives this handoff. */
 	jmp	(MULTI_MENU_WORD_ENTRY).l
