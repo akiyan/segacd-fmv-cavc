@@ -123,6 +123,94 @@ class ReadmeTests(unittest.TestCase):
     def test_uses_crlf_for_a_text_file_read_on_windows(self):
         self.assertIn("\r\n", self._readme("jp"))
 
+    def test_a_source_with_no_licence_notice_gets_no_licence_section(self):
+        """bad-apple cites its master but carries no licence keys."""
+
+        self.assertIsNone(self.profile.source_license)
+        text = self._readme("us")
+        self.assertNotIn("License", text)
+        self.assertNotIn("ライセンス", text)
+
+
+class FoldTests(unittest.TestCase):
+    def test_english_breaks_at_spaces(self):
+        folded = region_release._fold("one two three four five", 10)
+        self.assertEqual(folded, ["one two", "three four", "five"])
+
+    def test_japanese_breaks_between_characters(self):
+        folded = region_release._fold("あいうえおかきくけこ", 8)
+        self.assertEqual(folded, ["あいうえ", "おかきく", "けこ"])
+
+    def test_a_japanese_full_stop_is_never_stranded(self):
+        folded = region_release._fold("あいう。えお", 6)
+        self.assertEqual(folded, ["あいう。", "えお"])
+
+    def test_every_line_fits_the_page(self):
+        text = ("(CC) Rights Holder | example.org。クリエイティブ・コモンズ "
+                "表示 3.0 非移植 にもとづいて利用しています。")
+        for line in region_release._fold(text, 40):
+            self.assertLessEqual(region_release._columns(line), 40, line)
+
+
+class LicenceReadmeTests(unittest.TestCase):
+    """A master offered under an attribution licence is credited in the zip."""
+
+    def setUp(self):
+        self.profile = load_profile(PROJECT_ROOT / "profiles"
+                                    / "tears-of-steel.toml")
+        with tempfile.NamedTemporaryFile(suffix=".iso") as handle:
+            handle.write(b"\0" * 4096)
+            handle.flush()
+            self.text = region_release.readme_text(
+                self.profile, "jp", Path(handle.name), "20260807")
+        self.lines = self.text.split(region_release.README_NEWLINE)
+
+    def _section(self, heading):
+        start = self.lines.index(heading) + 1
+        end = self.lines.index("", start)
+        return [line[2:] for line in self.lines[start:end]]
+
+    def test_both_halves_carry_a_licence_section(self):
+        self.assertIn("License", self.lines)
+        self.assertIn("ライセンス", self.lines)
+
+    def test_the_credit_is_the_one_the_licensor_asks_for(self):
+        credit = "(CC) Blender Foundation | mango.blender.org"
+        for heading in ("License", "ライセンス"):
+            self.assertTrue(self._section(heading)[0].startswith(credit),
+                            heading)
+
+    def test_the_terms_link_closes_each_section_unbroken(self):
+        for heading in ("License", "ライセンス"):
+            self.assertEqual(self._section(heading)[-1],
+                             self.profile.source_license_url, heading)
+
+    def test_says_the_disc_is_a_modified_version(self):
+        self.assertIn("modified version", " ".join(self._section("License")))
+        self.assertIn("改変版", "".join(self._section("ライセンス")))
+
+    def test_folds_the_notice_instead_of_running_it_on(self):
+        """A plain-text reader must not get one 190-column line."""
+
+        for heading in ("License", "ライセンス"):
+            body = self._section(heading)
+            self.assertGreater(len(body), 2, heading)
+            for line in body:
+                self.assertLessEqual(region_release._columns(line) + 2,
+                                     region_release.README_WIDTH, line)
+
+
+class ReleaseNotesLicenceTests(unittest.TestCase):
+    def test_the_release_page_states_the_licence_of_each_title(self):
+        licensed = load_profile(PROJECT_ROOT / "profiles"
+                                / "tears-of-steel.toml")
+        plain = load_profile(PROFILE)
+        notes = region_release.release_notes(
+            [licensed, plain], ["jp"], "20260807", [])
+        self.assertIn(f"- License: {licensed.source_license} "
+                      f"{licensed.source_license_url}", notes)
+        self.assertEqual(notes.count("- License:"), 1)
+
 
 class ZipTests(unittest.TestCase):
     def test_same_inputs_produce_the_same_bytes(self):

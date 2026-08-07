@@ -69,6 +69,10 @@ out/releases/<profile-stem>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip
 
 Each zip holds `<profile-stem>_<CONSOLE>_<REGION>.iso`, its `.cue`, and a
 `README.txt` naming the region, the encode, the source, and how to burn it.
+A profile whose master carries a licence notice adds a `License` section to
+that README in both languages and a `- License:` line to the release body,
+both read from the profile: a copy of the disc image travels without the
+release page, and the release page is read without opening a zip.
 The console is the name that region's machine was sold under, `MEGA-CD` for
 Japan and `SEGA-CD` for North America, so a downloaded file says what it is
 for before it is opened.

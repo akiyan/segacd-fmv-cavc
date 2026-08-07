@@ -81,7 +81,10 @@ source_license_url = "https://creativecommons.org/licenses/by/3.0/"
 The three keys stand or fall together and `tools/encode_config.py` rejects a
 partial set: a notice that omits the credit, the licence name, or the terms
 link is not a notice. A source that needs no credit sets none of them and its
-descriptions are unchanged.
+descriptions are unchanged. The same three keys are what
+`tools/region_release.py` puts on the disc-image release page and in the
+README inside each zip, so one profile edit covers every surface that
+carries the encode.
 
 The credit is emitted as a `License:` line under the `Source:` sentence in both
 halves, because it is a condition of using the work rather than a convenience
@@ -299,6 +302,9 @@ source_license_url = "https://creativecommons.org/licenses/by/3.0/"
 3つのkeyは一体で、`tools/encode_config.py` は欠けた組み合わせを拒否します。
 クレジット、ライセンス名、条文へのlinkのどれかを欠いた表示は表示として成立
 しません。クレジットの要らないsourceは3つとも書かず、説明文は変わりません。
+この3つのkeyは `tools/region_release.py` がディスクイメージのrelease pageと
+各zip内のREADMEへ出力するものでもあります。profileを1か所直せば、そのencodeを
+載せるすべての面に反映されます。
 
 クレジットは `Source:` の文の下の `License:` 行として英日の両方へ出力します。
 これは便宜的なlinkではなく、その作品を使うための条件だからです。英語側にのみ

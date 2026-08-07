@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import unicodedata
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
@@ -48,10 +49,59 @@ PROJECT_URL = "https://github.com/akiyan/segacd-fmv-cavc"
 # else and keeps that reader from seeing one run-on line.
 README_NEWLINE = "\r\n"
 
+# The README's body is hand-written to about this width. A licence notice
+# arrives from a profile as one paragraph, so it is folded to match instead of
+# landing as a single long line in a plain-text reader.
+README_WIDTH = 76
+
 # Fixed by the on-disc layout rather than by the profile.
 AUDIO_FORMAT_EN = "22.05 kHz mono IMA ADPCM, decoded by the Sub CPU"
 AUDIO_FORMAT_JA = "22.05 kHz モノラル IMA ADPCM、Sub CPU がデコード"
 APERTURE = "320x224"
+
+
+def _columns(text: str) -> int:
+    """Width in fixed-pitch columns, counting a Japanese character as two."""
+
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1
+               for ch in text)
+
+
+def _fold(text: str, width: int) -> list[str]:
+    """Break one paragraph into lines no wider than ``width`` columns.
+
+    ``textwrap`` only breaks at spaces, and Japanese prose has none, so a
+    Japanese notice would come back as the single long line the CRLF above
+    exists to avoid. This breaks at a space when the line has one and between
+    characters when it does not, and it keeps a closing bracket or a Japanese
+    full stop from being stranded at the head of the next line.
+    """
+
+    keep_with_previous = "。、）」』"
+    lines: list[str] = []
+    current = ""
+    for char in text:
+        if char == " " and _columns(current + char) > width:
+            # The space itself is where the line ends; it is not carried on
+            # to the next one.
+            lines.append(current)
+            current = ""
+            continue
+        if (current and char not in keep_with_previous
+                and _columns(current + char) > width):
+            head, space, tail = current.rpartition(" ")
+            if space:
+                lines.append(head)
+                current = tail
+            else:
+                lines.append(current)
+                current = ""
+        if not current and char == " ":
+            continue
+        current += char
+    if current:
+        lines.append(current)
+    return lines
 
 
 def _run(command: list[str], **kwargs) -> subprocess.CompletedProcess:
@@ -160,6 +210,30 @@ def readme_text(
         out.extend(f"{pad}{line}" for line in lines[1:])
         return out
 
+    def licence_section(heading: str, notice: str | None) -> list[str]:
+        """The licence of the master, in the language of its half.
+
+        A disc image made from a master that asks for a credit carries that
+        credit with the copy, which is what an attribution licence is about:
+        the release page can be read without ever opening a zip, and a zip
+        can be kept long after the page is gone.
+
+        It is a paragraph rather than a one-line value, so it takes the shape
+        the README already uses for prose - a heading with an indented body,
+        folded to the page - instead of the field table above. The terms link
+        closes it on a line of its own, unfolded, because a URL broken across
+        two lines stops being one. Both halves carry that link, as the source
+        citation above already does: this is a text file beside a disc image,
+        not a YouTube description with its English-only URL rule.
+
+        A master that needs no credit gives no section and no blank line.
+        """
+
+        if not profile.source_license:
+            return []
+        body = _fold(notice, README_WIDTH - 2) + [profile.source_license_url]
+        return ["", heading] + [f"  {line}" for line in body]
+
     english = [
         "Sega CD Constraint-Aware Video Codec",
         profile.release_title,
@@ -175,6 +249,7 @@ def readme_text(
         f"packaged {build_date}",
     ]
     english += block("Source      : ", source_lines)
+    english += licence_section("License", profile.source_license)
     english += [
         "",
         "NTSC only. This player's frame pacing, audio sync and CD delivery",
@@ -215,6 +290,7 @@ def readme_text(
         f"パッケージ {build_date}",
     ]
     japanese += block("出典          : ", source_lines_ja)
+    japanese += licence_section("ライセンス", profile.source_license_ja)
     japanese += [
         "",
         "NTSC 専用です。このプレイヤーのフレーム進行、音声同期、CD の配送期限は",
@@ -373,6 +449,12 @@ def release_notes(
             if profile.source_url:
                 source = f"{source} — {profile.source_url}"
             lines.append(f"- Source: {source}")
+        # A title whose master asks for a credit states it here too. The
+        # release page can be read without ever opening a zip, so the notice
+        # cannot live only in the README inside one.
+        if profile.source_license:
+            lines.append(f"- License: {profile.source_license} "
+                         f"{profile.source_license_url}")
         for path in _assets_for(profile, zips):
             size = path.stat().st_size / (1024 * 1024)
             lines.append(f"- `{path.name}` ({size:.1f} MiB)")

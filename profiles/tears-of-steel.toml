@@ -217,7 +217,11 @@ source_url = "https://mango.blender.org/download/"
 # project states the credit mango.blender.org asks for, verbatim, names the
 # licence, links its terms, and says the film was changed: a Sega CD encode is
 # an adaptation, and the licence asks an adaptation to say so.
-source_license = "(CC) Blender Foundation | mango.blender.org. Used under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0). This video is a modified version, re-encoded for the Sega CD."
-source_license_ja = "(CC) Blender Foundation | mango.blender.org。クリエイティブ・コモンズ 表示 3.0 非移植 (CC BY 3.0) にもとづいて利用しています。この動画はSega CD向けに再encodeした改変版です。"
+#
+# One string serves every surface that carries the encode - a video
+# description, the release page, the README inside a disc zip - so it says
+# "this is a modified version" rather than naming any one of them.
+source_license = "(CC) Blender Foundation | mango.blender.org. Used under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0). This is a modified version, re-encoded for the Sega CD."
+source_license_ja = "(CC) Blender Foundation | mango.blender.org。クリエイティブ・コモンズ 表示 3.0 非移植 (CC BY 3.0) にもとづいて利用しています。これはSega CD向けに再encodeした改変版です。"
 source_license_url = "https://creativecommons.org/licenses/by/3.0/"
 
