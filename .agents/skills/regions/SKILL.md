@@ -1,12 +1,13 @@
 ---
 name: regions
-description: Build a profile's release discs for every NTSC region (Japan and North America), package each as a zip with its cue sheet and README, verify the zips against the built bytes, and publish one draft GitHub release per profile. Use for "リージョン別にビルドして配布", "make the release zips", "GitHub Releases に iso を上げて", or "/regions".
+description: Build release discs for every NTSC region (Japan and North America) across one or more profiles, package each as a zip with its cue sheet and README, verify the zips against the built bytes, and publish them together as one draft GitHub release. Use for "リージョン別にビルドして配布", "make the release zips", "GitHub Releases に iso を上げて", or "/regions".
 ---
 
 # regions: per-region disc images and their GitHub release
 
-One profile becomes one release holding one zip per region. Everything about a
-particular title comes from its profile TOML; nothing is typed into the tools.
+One build becomes one release, holding one zip per title per region.
+Everything about a particular title comes from its profile TOML; nothing is
+typed into the tools.
 
 Run every command from the repository root.
 
@@ -47,17 +48,18 @@ run `run` first or state plainly in the report that the release is unqualified.
 
 ## Stage 2: Build and package
 
-One command per profile. It builds each region's `DEBUG=0` disc and writes its
-zip:
+One command for the whole release. `--config` is repeatable, and it builds each
+profile's `DEBUG=0` disc per region and writes its zip:
 
 ```sh
-tools/python.sh tools/region_release.py build --config profiles/A.toml
+tools/python.sh tools/region_release.py build \
+  --config profiles/A.toml --config profiles/B.toml
 ```
 
-Regions of one profile share an output-stem lock, so the tool builds them one
-after another. Different profiles may run at the same time. Add `--force` only
-to overwrite a zip that is already there, and `--date YYYYMMDD` only when the
-release must be dated other than today.
+The regions of one profile share an output-stem lock, so the tool builds
+everything one after another. Add `--force` only to overwrite a zip that is
+already there, and `--date YYYYMMDD` only when the release must be dated other
+than today.
 
 Outputs land in `out/releases/`:
 
@@ -89,32 +91,38 @@ project has been booted anywhere.
 
 Uploading is outward-facing, so it is a separate, deliberate step.
 
-Show the user the release body first:
+Show the user the release body first. It is English only: the release page is
+the project's public face, and the README inside each zip is where the same
+information is given in both languages.
 
 ```sh
-tools/python.sh tools/region_release.py notes --config profiles/A.toml \
-  --zip out/releases/A_JP_....zip --zip out/releases/A_US_....zip
+tools/python.sh tools/region_release.py notes \
+  --config profiles/A.toml --config profiles/B.toml \
+  --zip out/releases/A_JP_....zip --zip ...
 ```
 
 Push the branch before publishing, then create the draft against the commit
 that carries the tooling:
 
 ```sh
-tools/python.sh tools/region_release.py publish --config profiles/A.toml \
+tools/python.sh tools/region_release.py publish \
+  --config profiles/A.toml --config profiles/B.toml \
   --target "$(git rev-parse HEAD)" \
-  --zip out/releases/A_JP_....zip --zip out/releases/A_US_....zip
+  --zip out/releases/A_JP_....zip --zip ...
 ```
 
 The default is a draft. Ask the user before turning a draft into a public
 release; `--no-draft` publishes on creation, and an existing release's assets
 are replaced only with `--clobber`.
 
-One release per profile, tagged `<profile-stem>-<date>.e<N>.p<M>`, with every
-region's zip attached to it.
+One release, tagged `disc-<date>.e<N>.p<M>`, with every title's zips attached
+to it and one section per title. Do not split a build across several releases.
+After uploading, download the assets back and compare their hashes with the
+local zips, so the release is verified end to end.
 
 ## Report
 
-For each profile: the release tag, each zip's name and size, the verification
-result, the release URL, and whether it is still a draft. Name any profile
-whose playback is not qualified at this encoder/player version, and repeat that
-North American discs carry byte-level evidence only.
+The release tag and URL, whether it is still a draft, and for each profile its
+zips with their sizes and the verification result. Name any profile whose
+playback is not qualified at this encoder/player version, and repeat that North
+American discs carry byte-level evidence only.

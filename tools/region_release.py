@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Build per-region disc images and publish them as a GitHub release.
 
-One profile produces one release. Each release region gets its own zip holding
-that region's disc image, its cue sheet, and a README written for whoever
-downloads it. Nothing about a particular title lives here: every name, credit
-and figure is read from the profile TOML, the packed stream, and
-``tools/av_version.txt``.
+One build produces one release, holding every title packaged with it. Each
+title gets one zip per region, and a zip holds that region's disc image, its
+cue sheet, and a README written for whoever downloads it. Nothing about a
+particular title lives here: every name, credit and figure is read from the
+profile TOML, the packed stream, and ``tools/av_version.txt``.
 
 Two stages, kept apart on purpose:
 
@@ -16,9 +16,10 @@ Two stages, kept apart on purpose:
 Usage::
 
     tools/python.sh tools/region_release.py build \\
-        --config profiles/bad-apple.toml
+        --config profiles/bad-apple.toml --config profiles/tears-of-steel.toml
     tools/python.sh tools/region_release.py publish \\
-        --config profiles/bad-apple.toml --zip out/releases/....zip
+        --config profiles/bad-apple.toml --config profiles/tears-of-steel.toml \\
+        --zip out/releases/....zip --zip ...
 """
 
 from __future__ import annotations
@@ -88,8 +89,14 @@ def disc_stem(profile: EncodeProfile, region_code: str) -> str:
     return f"{profile.artifact_stem}_{tag}"
 
 
-def release_tag(profile: EncodeProfile, build_date: str) -> str:
-    return f"{profile.artifact_stem}-{build_date}.{_version_tag()}"
+def release_tag(build_date: str) -> str:
+    """One release per build, not one per title.
+
+    Every title packaged on the same day at the same encoder/player version
+    belongs on one page, so the tag names the build rather than a profile.
+    """
+
+    return f"disc-{build_date}.{_version_tag()}"
 
 
 def build_disc(profile: EncodeProfile, region_code: str) -> Path:
@@ -300,46 +307,37 @@ def package_region(
     return zip_path
 
 
+def _assets_for(profile: EncodeProfile, zips: list[Path]) -> list[Path]:
+    """The zips built from this profile, matched by their name prefix."""
+
+    prefix = f"{profile.artifact_stem}_"
+    return sorted(path for path in zips if path.name.startswith(prefix))
+
+
 def release_notes(
-    profile: EncodeProfile,
+    profiles: list[EncodeProfile],
     regions: list[str],
     build_date: str,
     zips: list[Path],
 ) -> str:
+    """One release body covering every title in the release.
+
+    English only. The release page is the project's public face, and the
+    per-region README inside each zip is where a reader gets the same thing in
+    Japanese.
+    """
+
     encoder, player = av_versions()
-    video = profile.data["video"]
-    width = int(video["width"])
-    height = int(video["height"])
-    fps = str(profile.data["source"]["fps"])
-    fit = "filling" if width == 320 and height == 224 else "centered in"
-    fit_ja = ("いっぱいに表示" if width == 320 and height == 224
-              else "の中央に配置")
     named = [disc_region.release_region(code) for code in regions]
-    region_list_en = ", ".join(r.name_en for r in named)
-    region_list_ja = "、".join(r.name_ja for r in named)
-    sizes = {
-        zip_path.name: f"{zip_path.stat().st_size / (1024 * 1024):.1f} MiB"
-        for zip_path in zips
-    }
+    region_list = ", ".join(r.name_en for r in named)
 
     lines = [
-        f"# {profile.release_title}",
-        "",
         "Bootable Sega CD disc images produced by the Sega CD "
         "Constraint-Aware Video Codec. The console decodes and displays every "
         "frame itself while reading one single-speed CD, with no extra chip.",
         "",
-        f"- Regions: {region_list_en}",
-        f"- Video: {width}x{height} {fit} the {APERTURE} H40 screen, {fps} fps",
-        f"- Audio: {AUDIO_FORMAT_EN}",
-        f"- Build: encoder {encoder}, player {player}, packaged {build_date}",
-    ]
-    if profile.source_label:
-        source = profile.source_label
-        if profile.source_url:
-            source = f"{source} — {profile.source_url}"
-        lines.append(f"- Source: {source}")
-    lines += [
+        f"Regions: {region_list}. "
+        f"Build: encoder {encoder}, player {player}, packaged {build_date}.",
         "",
         "**NTSC only.** The player's frame pacing, audio sync and CD delivery "
         "deadlines are all built on a 60 Hz field rate, so these discs are not "
@@ -350,44 +348,32 @@ def release_notes(
         "security code on the disc and refuses the other one. In an emulator, "
         "open the `.cue`. On real hardware, burn the `.iso` as a single "
         "Disc-At-Once session with one data track.",
-        "",
-        "| Asset | Size |",
-        "| --- | --- |",
     ]
-    lines += [f"| `{name}` | {size} |" for name, size in sorted(sizes.items())]
-    lines += [
-        "",
-        "---",
-        "",
-        f"# {profile.release_title_ja}",
-        "",
-        "Sega CD Constraint-Aware Video Codec で作った、起動可能な Sega CD の"
-        "ディスクイメージです。追加チップを使わず、単速 CD を読みながら本体自身が"
-        "毎フレームをデコードして表示します。",
-        "",
-        f"- リージョン: {region_list_ja}",
-        f"- 映像: {width}x{height}、{APERTURE} の H40 画面{fit_ja}、{fps} fps",
-        f"- 音声: {AUDIO_FORMAT_JA}",
-        f"- ビルド: encoder {encoder}、player {player}、"
-        f"パッケージ {build_date}",
-    ]
-    if profile.source_label_ja or profile.source_label:
-        source_ja = profile.source_label_ja or profile.source_label
-        if profile.source_url:
-            source_ja = f"{source_ja} — {profile.source_url}"
-        lines.append(f"- 出典: {source_ja}")
-    lines += [
-        "",
-        "**NTSC 専用です。** フレーム進行、音声同期、CD の配送期限はすべて 60 Hz を"
-        "前提に組んであります。50 Hz の PAL 実機向けではありません。",
-        "",
-        "各 zip にはそのリージョンの `.iso`、`.cue`、README が入っています。お使いの"
-        "本体に合うリージョンを選んでください。本体はディスク上のセキュリティコードを"
-        "確認し、合わないほうは起動しません。エミュレータでは `.cue` を開きます。実機"
-        "では `.iso` をデータトラック 1 本の Disc-At-Once・シングルセッションで焼いて"
-        "ください。",
-        "",
-    ]
+
+    for profile in profiles:
+        video = profile.data["video"]
+        width = int(video["width"])
+        height = int(video["height"])
+        fps = str(profile.data["source"]["fps"])
+        fit = "filling" if width == 320 and height == 224 else "centered in"
+        lines += [
+            "",
+            f"## {profile.release_title}",
+            "",
+            f"- Video: {width}x{height} {fit} the {APERTURE} H40 screen, "
+            f"{fps} fps",
+            f"- Audio: {AUDIO_FORMAT_EN}",
+        ]
+        if profile.source_label:
+            source = profile.source_label
+            if profile.source_url:
+                source = f"{source} — {profile.source_url}"
+            lines.append(f"- Source: {source}")
+        for path in _assets_for(profile, zips):
+            size = path.stat().st_size / (1024 * 1024)
+            lines.append(f"- `{path.name}` ({size:.1f} MiB)")
+
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -401,44 +387,53 @@ def gh_release_exists(tag: str) -> bool:
     return result.returncode == 0
 
 
+def _profiles(args: argparse.Namespace) -> list[EncodeProfile]:
+    return [load_profile(item) for item in args.config]
+
+
 def cmd_build(args: argparse.Namespace) -> int:
-    profile = load_profile(args.config)
     build_date = _build_date(args.date)
     output_dir = Path(args.output_dir) if args.output_dir else RELEASE_DIR
     zips = []
-    # Serial on purpose: both regions of one profile take the same output-stem
+    # Serial on purpose: the regions of one profile take the same output-stem
     # lock, and a second holder fails immediately rather than queueing.
-    for code in args.regions:
-        zips.append(package_region(
-            profile, code, build_date,
-            output_dir=output_dir,
-            skip_build=args.skip_build,
-            force=args.force,
-        ))
-    print(f"release tag: {release_tag(profile, build_date)}", flush=True)
+    for profile in _profiles(args):
+        for code in args.regions:
+            zips.append(package_region(
+                profile, code, build_date,
+                output_dir=output_dir,
+                skip_build=args.skip_build,
+                force=args.force,
+            ))
+    print(f"release tag: {release_tag(build_date)}", flush=True)
     for zip_path in zips:
         print(zip_path, flush=True)
     return 0
 
 
 def cmd_notes(args: argparse.Namespace) -> int:
-    profile = load_profile(args.config)
     build_date = _build_date(args.date)
     zips = [Path(item) for item in args.zip]
-    print(release_notes(profile, args.regions, build_date, zips))
+    print(release_notes(_profiles(args), args.regions, build_date, zips))
     return 0
 
 
 def cmd_publish(args: argparse.Namespace) -> int:
-    profile = load_profile(args.config)
+    profiles = _profiles(args)
     build_date = _build_date(args.date)
     zips = [Path(item) for item in args.zip]
     missing = [str(path) for path in zips if not path.is_file()]
     if missing:
         raise SystemExit("missing assets: " + ", ".join(missing))
+    unclaimed = set(zips) - {
+        path for profile in profiles for path in _assets_for(profile, zips)}
+    if unclaimed:
+        raise SystemExit(
+            "assets belong to no --config profile: "
+            + ", ".join(sorted(path.name for path in unclaimed)))
 
-    tag = args.tag or release_tag(profile, build_date)
-    notes = release_notes(profile, args.regions, build_date, zips)
+    tag = args.tag or release_tag(build_date)
+    notes = release_notes(profiles, args.regions, build_date, zips)
     with tempfile.NamedTemporaryFile(
             "w", suffix=".md", encoding="utf-8", delete=False) as handle:
         handle.write(notes)
@@ -455,7 +450,7 @@ def cmd_publish(args: argparse.Namespace) -> int:
         else:
             command = [
                 "gh", "release", "create", tag,
-                "--title", f"{profile.release_title} ({build_date})",
+                "--title", f"Sega CD disc images ({build_date}.{_version_tag()})",
                 "--notes-file", str(notes_path),
             ]
             if args.target:
@@ -476,8 +471,10 @@ def cmd_publish(args: argparse.Namespace) -> int:
 
 
 def _add_common(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", required=True,
-                        help="profile TOML, e.g. profiles/bad-apple.toml")
+    parser.add_argument(
+        "--config", action="append", required=True,
+        help="profile TOML, e.g. profiles/bad-apple.toml; repeatable. Every "
+             "profile named here goes on one release")
     parser.add_argument(
         "--region", dest="regions", action="append",
         choices=sorted(disc_region.RELEASE_REGIONS),
@@ -506,7 +503,7 @@ def main(argv: list[str] | None = None) -> int:
     publish = sub.add_parser("publish", help="create or update the release")
     _add_common(publish)
     publish.add_argument("--zip", action="append", default=[], required=True)
-    publish.add_argument("--tag", help="default <stem>-<date>.eN.pM")
+    publish.add_argument("--tag", help="default disc-<date>.eN.pM")
     publish.add_argument("--target", help="commit or branch the tag points at")
     publish.add_argument(
         "--draft", action=argparse.BooleanOptionalAction, default=True,

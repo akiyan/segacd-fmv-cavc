@@ -73,9 +73,9 @@ class NamingTests(unittest.TestCase):
         self.assertEqual(region_release.disc_stem(self.profile, "jp"),
                          "bad-apple_JP")
 
-    def test_release_tag_is_one_per_profile_not_per_region(self):
-        self.assertRegex(region_release.release_tag(self.profile, "20260806"),
-                         r"^bad-apple-20260806\.e\d+\.p\d+$")
+    def test_release_tag_names_the_build_not_a_title(self):
+        self.assertRegex(region_release.release_tag("20260806"),
+                         r"^disc-20260806\.e\d+\.p\d+$")
 
     def test_cue_names_the_iso_beside_it(self):
         self.assertIn('FILE "bad-apple_US.iso" BINARY',
@@ -138,25 +138,56 @@ class ZipTests(unittest.TestCase):
 
 class NotesTests(unittest.TestCase):
     def setUp(self):
-        self.profile = load_profile(PROFILE)
+        self.profiles = [
+            load_profile(PROFILE),
+            load_profile(PROJECT_ROOT / "profiles" / "tears-of-steel.toml"),
+        ]
 
-    def test_lists_every_region_and_the_ntsc_limit(self):
-        with tempfile.TemporaryDirectory() as work:
-            zips = []
+    def _notes(self, work):
+        zips = []
+        for profile in self.profiles:
             for code in ("jp", "us"):
                 path = Path(work) / (
-                    region_release.asset_stem(self.profile, code, "20260806")
+                    region_release.asset_stem(profile, code, "20260806")
                     + ".zip")
                 path.write_bytes(b"\0" * 1024)
                 zips.append(path)
-            notes = region_release.release_notes(
-                self.profile, ["jp", "us"], "20260806", zips)
+        return region_release.release_notes(
+            self.profiles, ["jp", "us"], "20260806", zips), zips
+
+    def test_lists_every_region_and_the_ntsc_limit(self):
+        with tempfile.TemporaryDirectory() as work:
+            notes, _ = self._notes(work)
         self.assertIn("Japan", notes)
         self.assertIn("North America", notes)
         self.assertIn("NTSC only", notes)
-        self.assertIn("NTSC 専用", notes)
+
+    def test_one_body_covers_every_title_and_asset(self):
+        with tempfile.TemporaryDirectory() as work:
+            notes, zips = self._notes(work)
+        for profile in self.profiles:
+            self.assertIn(f"## {profile.release_title}", notes)
         for path in zips:
             self.assertIn(path.name, notes)
+
+    def test_release_body_is_english_only(self):
+        with tempfile.TemporaryDirectory() as work:
+            notes, _ = self._notes(work)
+        japanese = [char for char in notes
+                    if "぀" <= char <= "ヿ"
+                    or "一" <= char <= "鿿"]
+        self.assertEqual(japanese, [])
+
+    def test_assets_are_grouped_under_their_own_title(self):
+        with tempfile.TemporaryDirectory() as work:
+            notes, zips = self._notes(work)
+        sections = notes.split("## ")
+        for profile in self.profiles:
+            section = next(part for part in sections
+                           if part.startswith(profile.release_title))
+            for path in zips:
+                belongs = path.name.startswith(f"{profile.artifact_stem}_")
+                self.assertEqual(path.name in section, belongs, path.name)
 
 
 if __name__ == "__main__":

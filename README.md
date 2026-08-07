@@ -337,21 +337,26 @@ A region is a boot-area difference and nothing else: `HEADER.DAT` and
 encode. Regions of one profile share an output-stem lock, so build them one
 after another.
 
-Package and publish one profile's discs:
+Package and publish the discs. `--config` is repeatable, and every profile
+named goes on one release:
 
 ```sh
-tools/python.sh tools/region_release.py build --config profiles/PROFILE.toml
-tools/python.sh harness/regions/verify_release.py out/releases/PROFILE_*.zip
-tools/python.sh tools/region_release.py publish --config profiles/PROFILE.toml \
-  --zip out/releases/PROFILE_JP_DATE.eN.pM.zip \
-  --zip out/releases/PROFILE_US_DATE.eN.pM.zip
+tools/python.sh tools/region_release.py build \
+  --config profiles/A.toml --config profiles/B.toml
+tools/python.sh harness/regions/verify_release.py out/releases/*.zip
+tools/python.sh tools/region_release.py publish \
+  --config profiles/A.toml --config profiles/B.toml \
+  --zip out/releases/A_JP_DATE.eN.pM.zip --zip out/releases/A_US_DATE.eN.pM.zip \
+  --zip out/releases/B_JP_DATE.eN.pM.zip --zip out/releases/B_US_DATE.eN.pM.zip
 ```
 
 `build` writes `out/releases/<profile>_<REGION>_<date>.e<N>.p<M>.zip`, each
 holding that region's `.iso`, its `.cue`, and a README naming the region, the
 encode, the source, and how to burn it. `publish` creates one draft GitHub
-release per profile with both zips attached, and replaces an existing asset
-only when `--clobber` is passed.
+release tagged `disc-<date>.e<N>.p<M>` with every zip attached and one section
+per title, and replaces an existing asset only when `--clobber` is passed. The
+release body is English; the README inside each zip carries the same
+information in English and Japanese.
 [`harness/regions/README.md`](harness/regions/README.md) states what the
 verification proves and what it does not.
 
@@ -729,21 +734,26 @@ regionの差はboot領域だけです。`HEADER.DAT` と `BODY.DAT` はregion間
 どちらのdiscも同じencodeを再生します。同一profileのregionはoutput stem lockを共有する
 ため、直列にbuildします。
 
-1つのprofileのdiscをpackageして公開します。
+discをpackageして公開します。`--config` は繰り返し渡せて、渡したprofileはすべて
+1つのreleaseに載ります。
 
 ```sh
-tools/python.sh tools/region_release.py build --config profiles/PROFILE.toml
-tools/python.sh harness/regions/verify_release.py out/releases/PROFILE_*.zip
-tools/python.sh tools/region_release.py publish --config profiles/PROFILE.toml \
-  --zip out/releases/PROFILE_JP_DATE.eN.pM.zip \
-  --zip out/releases/PROFILE_US_DATE.eN.pM.zip
+tools/python.sh tools/region_release.py build \
+  --config profiles/A.toml --config profiles/B.toml
+tools/python.sh harness/regions/verify_release.py out/releases/*.zip
+tools/python.sh tools/region_release.py publish \
+  --config profiles/A.toml --config profiles/B.toml \
+  --zip out/releases/A_JP_DATE.eN.pM.zip --zip out/releases/A_US_DATE.eN.pM.zip \
+  --zip out/releases/B_JP_DATE.eN.pM.zip --zip out/releases/B_US_DATE.eN.pM.zip
 ```
 
 `build` は `out/releases/<profile>_<REGION>_<date>.e<N>.p<M>.zip` を書きます。各zipには
 そのregionの `.iso`、`.cue`、そしてregion・encode・出典・焼き方を書いたREADMEが入ります。
-`publish` はprofileごとに1つのdraft GitHub releaseを作り、両方のzipを添付します。既存の
-assetを置き換えるのは `--clobber` を渡したときだけです。検証が何を証明し、何を証明しない
-かは [`harness/regions/README.md`](harness/regions/README.md) にあります。
+`publish` は `disc-<date>.e<N>.p<M>` をtagとする draft GitHub releaseを1つ作り、すべての
+zipを添付して、titleごとのsectionを書きます。既存のassetを置き換えるのは `--clobber` を
+渡したときだけです。release本文は英語で、同じ内容の英日はzip内のREADMEにあります。
+検証が何を証明し、何を証明しないかは
+[`harness/regions/README.md`](harness/regions/README.md) にあります。
 
 ## Recording
 
