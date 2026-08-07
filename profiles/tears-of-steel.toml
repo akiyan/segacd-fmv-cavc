@@ -211,4 +211,13 @@ analysis_title = "Sega CD FMV at 24 FPS — Tears of Steel (320×168) Visual Ana
 playback_title = "Sega CD FMV at 24 FPS — Tears of Steel (320×168) in Genesis Plus GX"
 source_label = "Tears of Steel (Blender Foundation, 2012), 1280x720, 24 fps, 44.1 kHz stereo"
 source_label_ja = "Tears of Steel (Blender Foundation、2012)、1280x720、24 fps、44.1 kHz stereo"
+source_url = "https://mango.blender.org/download/"
+# The film is offered under Creative Commons Attribution 3.0, which lets it be
+# reused and redistributed, commercially too, in exchange for a credit. The
+# project states the credit mango.blender.org asks for, verbatim, names the
+# licence, links its terms, and says the film was changed: a Sega CD encode is
+# an adaptation, and the licence asks an adaptation to say so.
+source_license = "(CC) Blender Foundation | mango.blender.org. Used under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0). This video is a modified version, re-encoded for the Sega CD."
+source_license_ja = "(CC) Blender Foundation | mango.blender.org。クリエイティブ・コモンズ 表示 3.0 非移植 (CC BY 3.0) にもとづいて利用しています。この動画はSega CD向けに再encodeした改変版です。"
+source_license_url = "https://creativecommons.org/licenses/by/3.0/"
 

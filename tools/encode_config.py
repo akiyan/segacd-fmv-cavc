@@ -110,7 +110,8 @@ ALLOWED = {
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
-                "source_label_ja", "source_url"},
+                "source_label_ja", "source_url", "source_license",
+                "source_license_ja", "source_license_url"},
     # Disc-image release metadata, for the same reason as [youtube]: naming a
     # release must not change the encode identity.
     "release": {"title", "title_ja"},
@@ -262,6 +263,25 @@ class EncodeProfile:
         return self.data.get("youtube", {}).get("source_url")
 
     @property
+    def source_license(self) -> str | None:
+        """One-line English licence notice for a freely licensed master.
+
+        Optional: a source used under a licence that asks for a credit needs
+        one, and a source that does not stays silent rather than carrying an
+        empty line.
+        """
+        return self.data.get("youtube", {}).get("source_license")
+
+    @property
+    def source_license_ja(self) -> str | None:
+        return self.data.get("youtube", {}).get("source_license_ja")
+
+    @property
+    def source_license_url(self) -> str | None:
+        """Where the licence's own terms are published."""
+        return self.data.get("youtube", {}).get("source_license_url")
+
+    @property
     def release_title(self) -> str:
         """Human name for the disc-image release. Falls back to the stem."""
         return self.data.get("release", {}).get("title") or self.artifact_stem
@@ -357,7 +377,8 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     if not isinstance(youtube, dict):
         raise ValueError(f"{profile_path}: [youtube] must be a table")
     for key in ("analysis_title", "playback_title", "source_label",
-                "source_label_ja"):
+                "source_label_ja", "source_license", "source_license_ja",
+                "source_license_url"):
         if key not in youtube:
             continue
         title = youtube[key]
@@ -371,6 +392,18 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             raise ValueError(
                 f"{profile_path}: youtube.{key} is {len(title)} characters; "
                 "YouTube truncates a title at 100")
+    # A licence notice is only a notice if it says who to credit, under which
+    # licence, and where those terms are: the three keys stand or fall
+    # together. The English notice carries the licence URL, so a profile that
+    # names one must give both languages and the link.
+    licence_keys = {"source_license", "source_license_ja", "source_license_url"}
+    present = licence_keys & set(youtube)
+    if present and present != licence_keys:
+        raise ValueError(
+            f"{profile_path}: [youtube] has {', '.join(sorted(present))} but "
+            f"not {', '.join(sorted(licence_keys - present))}; a source "
+            "licence notice needs the credit in both languages and the "
+            "licence URL")
     release = data.get("release", {})
     if not isinstance(release, dict):
         raise ValueError(f"{profile_path}: [release] must be a table")

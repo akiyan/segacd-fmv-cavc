@@ -65,6 +65,35 @@ sentence: a full stop glued to a URL is one character away from being the wrong
 link. A profile without the key keeps the plain `Source:` sentence, so nothing
 changes for a source that needs no citation.
 
+## Source licence
+
+A master offered under a licence that asks for a credit carries that credit in
+every description made from it. The wording is per source, so it lives in the
+profile beside the citation:
+
+```toml
+[youtube]
+source_license = "(CC) Rights Holder | example.org. Used under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0). This video is a modified version, re-encoded for the Sega CD."
+source_license_ja = "(CC) Rights Holder | example.org。クリエイティブ・コモンズ 表示 3.0 非移植 (CC BY 3.0) にもとづいて利用しています。この動画はSega CD向けに再encodeした改変版です。"
+source_license_url = "https://creativecommons.org/licenses/by/3.0/"
+```
+
+The three keys stand or fall together and `tools/encode_config.py` rejects a
+partial set: a notice that omits the credit, the licence name, or the terms
+link is not a notice. A source that needs no credit sets none of them and its
+descriptions are unchanged.
+
+The credit is emitted as a `License:` line under the `Source:` sentence in both
+halves, because it is a condition of using the work rather than a convenience
+link. Only `source_license_url` is English-only, on its own line, like every
+other URL.
+
+Write the credit exactly as the licensor asks for it, name the licence, and say
+the video is a modified version: a Sega CD encode is an adaptation, and an
+attribution licence asks an adaptation to identify itself as one. The notice
+costs a few hundred characters, so re-check the length against the 5,000 limit
+when adding it.
+
 Never put `<` or `>` in a description. YouTube rejects them with
 `invalidDescription` (HTTP 400). Write "0.3s or more" or "within 4s" instead.
 
@@ -253,6 +282,32 @@ source_url = "https://www.example.com/watch?v=..."
 文末の句点をURLへ付けず独立した行に置きます。URLへ`.`が付くと1文字違いで別の
 linkになるためです。このkeyを持たないprofileは従来どおり `Source:` の文だけに
 なるので、出典の要らないsourceでは何も変わりません。
+
+## sourceのライセンス
+
+クレジット表示を求めるライセンスで提供されているmasterは、そこから作るすべての
+説明文にそのクレジットを載せます。文言はsourceごとに異なるので、出典と並べて
+profileへ置きます。
+
+```toml
+[youtube]
+source_license = "(CC) Rights Holder | example.org. Used under the Creative Commons Attribution 3.0 Unported license (CC BY 3.0). This video is a modified version, re-encoded for the Sega CD."
+source_license_ja = "(CC) Rights Holder | example.org。クリエイティブ・コモンズ 表示 3.0 非移植 (CC BY 3.0) にもとづいて利用しています。この動画はSega CD向けに再encodeした改変版です。"
+source_license_url = "https://creativecommons.org/licenses/by/3.0/"
+```
+
+3つのkeyは一体で、`tools/encode_config.py` は欠けた組み合わせを拒否します。
+クレジット、ライセンス名、条文へのlinkのどれかを欠いた表示は表示として成立
+しません。クレジットの要らないsourceは3つとも書かず、説明文は変わりません。
+
+クレジットは `Source:` の文の下の `License:` 行として英日の両方へ出力します。
+これは便宜的なlinkではなく、その作品を使うための条件だからです。英語側にのみ
+置くのは `source_license_url` だけで、他のURLと同じく独立した行にします。
+
+クレジットはライセンサーが求める表記のとおりに書き、ライセンス名を示し、この
+動画が改変版であることを述べます。Sega CDへのencodeは二次的著作物であり、
+表示系ライセンスは二次的著作物にその旨を示すことを求めるためです。この表示は
+数百文字を消費するので、追加時に5,000文字の上限を確認し直します。
 
 説明文へ`<`と`>`を入れてはいけません。YouTubeが`invalidDescription`
 (HTTP 400)で拒否します。「0.3s or more」「within 4s」のように書きます。
