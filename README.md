@@ -344,9 +344,12 @@ uses the `_release` suffix. Each item is staged as its own four files:
 The menu itself has no DEBUG HUD. Up/Down selects an item, A plays it and
 returns to the menu, and C plays it continuously until reset. The selected
 player remains the normal profile-specialized player, so the ordinary
-single-video `make disc` path and its PrgBuf capacity are unchanged. During a
-return the player reloads the menu image and launcher from the same CD; no
-high-PRG module or extra permanent PrgBuf reservation is used.
+single-video `make disc` path and its PrgBuf capacity are unchanged. The menu
+keeps its persistent pieces outside PrgBuf: menu state and two small stubs in
+the `SP-GAP` reserve, and a menu-return routine in the `RING-ALIGN` gap
+([`PLAYER.md`](PLAYER.md)). During a return the player reloads the menu image
+and launcher from the same CD.
+
 ## Disc images for distribution
 
 `SECURITY_REGION` selects the release region. It picks the security code the
@@ -773,8 +776,11 @@ Manifestは`schema_version = 1`、`[menu]` table、各profileに1つの`[[videos
 
 Menu自身にはDEBUG HUDがありません。Up/Downでitemを選び、Aは再生後menuへ戻り、Cはresetまで
 連続再生します。選択したplayerは通常のprofile-specialized playerのままなので、通常の
-single-video `make disc` pathとPrgBuf容量は変わりません。戻り処理ではplayerが同じCDから
-menu imageとlauncherを再loadするため、high-PRG moduleや追加の恒久的なPrgBuf予約は使いません。
+single-video `make disc` pathとPrgBuf容量は変わりません。Menuの常駐部品はPrgBuf外に
+置きます。menu stateと2つの小さなstubは`SP-GAP` reserveに、menu-return routineは
+`RING-ALIGN` gapにあります([`PLAYER.md`](PLAYER.md))。戻り処理ではplayerが同じCDから
+menu imageとlauncherを再loadします。
+
 ## 配布用disc image
 
 `SECURITY_REGION` がrelease regionを選びます。本体が検証するsecurity code、region名を

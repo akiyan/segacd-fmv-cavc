@@ -38,7 +38,7 @@ and are listed in place.
 
 | Domain | Unallocated ranges |
 |---|---|
-| Sub PRG-RAM | `SP-GAP` 158 B (`0x07F42..0x07F4F` and `0x07F70..0x07FFF`), `SCRATCH` 256 B, and `RING-ALIGN` 448 B; the multi-video overlay uses 34 B for menu state and reserves a 32-B bank-switch stub slot |
+| Sub PRG-RAM | `SP-GAP` 158 B (`0x07F42..0x07F4F` and `0x07F70..0x07FFF`), `SCRATCH` 256 B, and `RING-ALIGN` 448 B; the multi-video overlay uses 34 B for menu state, a 32-B stub slot (bank switch + INT2 rts), and 238 B of `RING-ALIGN` for its menu-return routine |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
 | Main RAM | `M-FREE` 10.38 KiB in the ordinary player; the multi-video overlay uses its return stub and loop flag. The 192 B cushion below `M-STACK` is a guard, not allocatable |
 | VRAM | `0xDE80..0xDFFF` 384 B; unused Window/HScroll table rows remain reserved to those VDP structures. DEBUG shapes its HUD row with reg 18 only; reg 17 must stay 0 because Window row 24 cols 0-1 alias the HScroll table at `0xFC00`, which now carries nonzero scroll values |
@@ -52,7 +52,7 @@ PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 | `BIOS-LOW` | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area |
 | `SP-RES` | `0x06000..0x073FF` | 5.00 KiB | BIOS-loaded resident specialized SP image; the linker rejects a larger image |
 | `ADP-IDX` | `0x07400..0x07F1F` | 2,848 B | persistent ADPCM next-index table, copied once at boot; the full range is continuous-read marker-qualified |
-| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | marker-qualified tail; multi-video uses `0x07F20..0x07F41` for menu state, reserves `0x07F50..0x07F6F` for its PRG-resident bank-switch stub, and leaves the remaining bytes unallocated |
+| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | marker-qualified tail; multi-video uses `0x07F20..0x07F41` for menu state, reserves `0x07F50..0x07F6F` for its bank-switch stub (`0x07F50`) plus the BIOS INT2/user `rts` stub (`0x07F64`), and leaves the remaining bytes unallocated |
 | `PCM-BUF` | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer |
 | `WORD-PENDING0` | `0x08600..0x08DFF` | 2.00 KiB | first Sub-owned sector waiting for its parity WordBuf bank |
 | `WORD-PENDING1` | `0x08E00..0x095FF` | 2.00 KiB | second pending WordBuf sector |
@@ -60,7 +60,7 @@ PRG-RAM is 512 KiB at `0x00000..0x7FFFF`.
 | `SCRATCH` | `0x09700..0x097FF` | 256 B | unallocated marker-qualified scratch; the SP-tail diagnostic installs its checker here |
 | `BIOS-CD` | `0x09800..0x0BFFF` | 10.00 KiB | BIOS-touched during continuous reads |
 | `ADP-DELTA` | `0x0C000..0x0D63F` | 5,696 B | persistent signed ADPCM delta table, copied once at boot |
-| `RING-ALIGN` | `0x0D640..0x0D7FF` | 448 B | unallocated gap that sector-aligns PrgBuf |
+| `RING-ALIGN` | `0x0D640..0x0D7FF` | 448 B | gap that sector-aligns PrgBuf; unallocated in the ordinary player, and the multi-video overlay keeps its 238-byte menu-return routine at `0x0D680..0x0D76D` |
 | `PRG-BUF` | fps split, see next table | 374 / 394 KiB | streamed PrgBuf normal ceiling |
 | `JITTER` | fps split, see next table | 40 / 20 KiB | live delivery-jitter reserve above the scheduled ceiling |
 | `OBS-GUARD` | `0x75000..0x757FF` | 2.00 KiB | observation guard below pump back-pressure |
@@ -130,15 +130,26 @@ The selected player's SP image is loaded into the normal resident slot
 `0x06000..0x073FF`, so the video uses the same PrgBuf and APPLY map as an
 ordinary specialized build. The menu launcher records the menu and selected
 stream LBAs in the marker-qualified `SP-GAP` at `0x07F20..0x07F3F` and keeps
-the Sub-side loop flag at `0x07F40`, outside PrgBuf. The bootstrap installs a
-short bank-switch stub in the reserved `0x07F50..0x07F6F` slot; the Word-RAM
-launcher calls it for every physical bank handoff, and the slot remains live
-while a selected player occupies `SP-RES`. After an A-play, the player reloads
-the menu image into a free Word-RAM bank, Main restores the menu IP from that
-bank, and the player reloads `MENUSP.BIN` into both banks before returning to
-the menu. Each selected player clears the fixed `M-STATE` range before using
-its own Main-CPU `.bss`. Main's return stub is copied to `0xFF8880`; its loop
-choice is kept at `0xFFB1F0`.
+the Sub-side loop flag at `0x07F40`, outside PrgBuf. The bootstrap installs
+two permanent pieces in the reserved `0x07F50..0x07F6F` slot: the 20-byte
+bank-switch stub at `0x07F50` that the Word-RAM launcher calls for every
+physical bank handoff, and a single `rts` at `0x07F64` that the bootstrap
+points the BIOS usercall2/usercall3 (INT2/user) vectors at. Those vectors are
+registered from the replaceable resident slot, and the Main BIOS raises INT2
+on every VBlank while the security license screen runs, so they must target
+an address that survives the SP image swap. The bootstrap also copies a
+238-byte position-independent menu-return routine to `0x0D680` inside the
+`RING-ALIGN` gap; it carries its own synchronous CDC reader.
+
+After an A-play, the player jumps to that routine, which waits for Main's
+`COMCMD1` request, reloads the menu image into a free Word-RAM bank, waits for
+Main to drop `COMCMD1` after copying the menu IP, reloads `MENUSP.BIN` into
+both banks, and jumps back to the Word-RAM launcher. The multi-video player
+build reads its stream extents from the saved info block, so it assembles
+without the single-video synchronous ISO-directory reader. Each selected
+player clears the fixed `M-STATE` range before using its own Main-CPU `.bss`.
+Main's return stub is copied to `0xFF8880`; its loop choice is kept at
+`0xFFB1F0`.
 
 ### Boot-only overlays
 
@@ -506,7 +517,7 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 
 | Domain | 未割当range |
 |---|---|
-| Sub PRG-RAM | `SP-GAP` 158 B（`0x07F42..0x07F4F` と `0x07F70..0x07FFF`）、`SCRATCH` 256 B、`RING-ALIGN` 448 B。multi-video overlayはmenu stateに34 Bを使い、32 Bのbank-switch stub slotをreserveする |
+| Sub PRG-RAM | `SP-GAP` 158 B（`0x07F42..0x07F4F` と `0x07F70..0x07FFF`）、`SCRATCH` 256 B、`RING-ALIGN` 448 B。multi-video overlayはmenu stateに34 B、bank-switch＋INT2 rtsの32 B stub slot、menu-return routineに`RING-ALIGN`の238 Bを使う |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
 | Main RAM | 通常playerでは`M-FREE` 10.38 KiB。multi-video overlayはreturn stubとloop flagを使う。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
 | VRAM | `0xDE80..0xDFFF` 384 B。未使用Window/HScroll table rowは各VDP structure用に予約したまま。DEBUGのHUD行はreg 18だけで形成し、reg 17は0のまま保つ。Window row 24 col 0-1は`0xFC00`のHScroll tableとaliasし、そこはいまや非ゼロのscroll値を運ぶため |
@@ -520,7 +531,7 @@ PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 | `BIOS-LOW` | `0x00000..0x05FFF` | 24.00 KiB | BIOS / low PRG work area |
 | `SP-RES` | `0x06000..0x073FF` | 5.00 KiB | BIOS-loadされるresident specialized SP image。linkerがこれを超えるimageを拒否 |
 | `ADP-IDX` | `0x07400..0x07F1F` | 2,848 B | boot時に1回copyするpersistent ADPCM next-index table。全rangeをcontinuous-read markerで検証済み |
-| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | marker検証済みtail。multi-videoはmenu stateに`0x07F20..0x07F41`を使い、PRG-resident bank-switch stub用に`0x07F50..0x07F6F`をreserveし、残りを未割当とする |
+| `SP-GAP` | `0x07F20..0x07FFF` | 224 B | marker検証済みtail。multi-videoはmenu stateに`0x07F20..0x07F41`を使い、`0x07F50..0x07F6F`にbank-switch stub(`0x07F50`)とBIOS INT2/user用`rts` stub(`0x07F64`)をreserveし、残りを未割当とする |
 | `PCM-BUF` | `0x08000..0x085FF` | 1.50 KiB | live decoded ADPCM buffer |
 | `WORD-PENDING0` | `0x08600..0x08DFF` | 2.00 KiB | parity WordBuf bank待ちのSub所有1本目sector |
 | `WORD-PENDING1` | `0x08E00..0x095FF` | 2.00 KiB | 2本目のpending WordBuf sector |
@@ -528,7 +539,7 @@ PRG-RAMは`0x00000..0x7FFFF`の512 KiBです。
 | `SCRATCH` | `0x09700..0x097FF` | 256 B | 未割当のmarker検証済みscratch。SP-tail diagnosticはここへcheckerを置く |
 | `BIOS-CD` | `0x09800..0x0BFFF` | 10.00 KiB | continuous read中にBIOSが使用 |
 | `ADP-DELTA` | `0x0C000..0x0D63F` | 5,696 B | boot時に1回copyするpersistent signed ADPCM delta table |
-| `RING-ALIGN` | `0x0D640..0x0D7FF` | 448 B | PrgBufをsector alignmentする未割当gap |
+| `RING-ALIGN` | `0x0D640..0x0D7FF` | 448 B | PrgBufをsector alignmentするgap。通常playerでは未割当で、multi-video overlayは238 byteのmenu-return routineを`0x0D680..0x0D76D`に保持する |
 | `PRG-BUF` | fps分割、次表参照 | 374 / 394 KiB | streamed PrgBufのnormal上限 |
 | `JITTER` | fps分割、次表参照 | 40 / 20 KiB | scheduled上限より上のlive delivery-jitter予約 |
 | `OBS-GUARD` | `0x75000..0x757FF` | 2.00 KiB | pump back-pressure前の観測guard |
@@ -595,13 +606,22 @@ Word-RAM offset `0x00000..0x04FFF`へ置き、selected playerのIP imageを
 Selected playerのSP imageは通常のresident slot `0x06000..0x073FF`へloadするため、videoは
 通常のspecialized buildと同じPrgBuf / APPLY mapを使います。Menu launcherはmenuとselected
 streamのLBAをmarker検証済み`SP-GAP`の`0x07F20..0x07F3F`へ記録し、Sub側のloop flagを
-PrgBuf外の`0x07F40`に保持します。Bootstrapはreserveした`0x07F50..0x07F6F` slotへ短い
-bank-switch stubをinstallします。Word-RAM launcherは各physical bank handoffでこれを呼び、
-selected playerが`SP-RES`を使っている間もslotはliveです。A-play後はplayerがfreeになった
-Word-RAM bankへmenu imageをreloadし、Mainがそこからmenu IPをrestoreし、playerが`MENUSP.BIN`
-を両bankへ再loadしてmenuへ戻ります。各selected playerは自身のMain-CPU `.bss`を使う前に固定
-`M-STATE` rangeをclearします。Mainのreturn stubは`0xFF8880`へcopyし、Main側のloop choiceは
-`0xFFB1F0`に保持します。
+PrgBuf外の`0x07F40`に保持します。Bootstrapはreserveした`0x07F50..0x07F6F` slotへ常駐部品を
+2つ置きます。`0x07F50`の20 byte bank-switch stubはWord-RAM launcherが各physical bank
+handoffで呼び、`0x07F64`の単独`rts`はBIOSのusercall2/usercall3(INT2/user) vectorの
+飛び先になります。これらのvectorは入れ替わるresident slotから登録され、security license
+画面の表示中はMain BIOSが毎VBlankでINT2を上げるため、SP image swapを生き延びる
+addressを指す必要があります。Bootstrapはさらに238 byteのposition-independentな
+menu-return routineを`RING-ALIGN` gap内の`0x0D680`へcopyします。routineは自前の
+同期CDC readerを持ちます。
+
+A-play後、playerはこのroutineへjumpします。routineはMainの`COMCMD1` requestを待ち、
+freeになったWord-RAM bankへmenu imageをreloadし、Mainがmenu IPをcopyし終えて
+`COMCMD1`を落とすのを待ってから`MENUSP.BIN`を両bankへ再loadし、Word-RAM launcherへ
+戻ります。multi-video player buildはstream extentを保存済みinfo blockから読むため、
+single-video用の同期ISO directory readerはassembleされません。各selected playerは
+自身のMain-CPU `.bss`を使う前に固定`M-STATE` rangeをclearします。Mainのreturn stubは
+`0xFF8880`へcopyし、Main側のloop choiceは`0xFFB1F0`に保持します。
 
 ### Boot-only overlay
 

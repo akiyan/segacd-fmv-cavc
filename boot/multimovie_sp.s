@@ -100,7 +100,6 @@ sp_main:
 	move.l	d0, (MULTI_MENU_RUNTIME_ADDR).l
 	move.l	d1, (MULTI_MENU_RUNTIME_ADDR+4).l
 	move.l	d0, (MULTI_MENU_INFO_ADDR+8).w
-	move.w	#0x11, (0x0000D660).l		/* diag: MENUIP found */
 	cmp.l	#MENU_IP_IMAGE_SECTORS, d1
 	bne	menu_error
 
@@ -110,17 +109,13 @@ sp_main:
 	move.l	(MULTI_MENU_RUNTIME_ADDR+4).l, d1
 	lea	(SUB_BANK_1M+MENU_IMAGE_OFF).l, a0
 	bsr	read_cd
-	move.w	#0x12, (0x0000D660).l		/* diag: first bank read done */
 	jsr	(MULTI_WORD_SWAP_STUB).l
-	move.w	#0x13, (0x0000D660).l		/* diag: first swap done */
 	move.l	(MULTI_MENU_RUNTIME_ADDR).l, d0
 	move.l	(MULTI_MENU_RUNTIME_ADDR+4).l, d1
 	lea	(SUB_BANK_1M+MENU_IMAGE_OFF).l, a0
 	bsr	read_cd
-	move.w	#0x14, (0x0000D660).l		/* diag: second bank read done */
 
 menu_ready:
-	move.w	#0x15, (0x0000D660).l		/* diag: menu ready */
 	move.w	#STAT_MENU_READY, (COMSTAT0).l
 
 menu_command_loop:
@@ -136,7 +131,6 @@ menu_command_loop:
 	bra	menu_ready
 
 load_selected:
-	move.w	#1, (0x0000D640).l		/* diag: load_selected entered */
 	move.w	(COMCMD1).l, d7
 	move.w	d7, d6
 	andi.w	#0x7FFF, d6
@@ -186,9 +180,6 @@ load_selected:
 	bsr	find_file
 	move.l	d0, (MULTI_MENU_INFO_ADDR+24).w
 	move.l	d1, (MULTI_MENU_INFO_ADDR+28).w
-	move.w	#4, (0x0000D640).l		/* diag: extents saved */
-	move.l	(MULTI_MENU_INFO_ADDR+16).w, (0x0000D644).l
-	move.l	(MULTI_MENU_INFO_ADDR+24).w, (0x0000D648).l
 
 	/* The selected SP module is read to boot ISO scratch first.  ISO extents are
 	   sector-rounded, while the resident SP slot is only 5 KiB; copying the
@@ -215,7 +206,6 @@ load_selected:
 	move.w	(a0)+, (a1)+
 	dbra	d0, 1b
 selected_sp_ready:
-	move.w	#6, (0x0000D640).l		/* diag: jumping to the player */
 	clr.w	(COMCMD1).l
 	move.w	#STAT_PLAYER_READY, (COMSTAT0).l
 	jmp	(MULTI_PLAYER_ENTRY).l
@@ -227,7 +217,6 @@ swap_settle:
 	rts
 
 menu_error:
-	move.w	#0xEE, (0x0000D660).l		/* diag: menu_error */
 	move.w	#0xDEAD, (COMSTAT0).l
 1:
 	bra.s	1b

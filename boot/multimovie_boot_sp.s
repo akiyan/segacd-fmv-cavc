@@ -19,6 +19,7 @@
 
 .equ SUB_GA_BASE,   0x00FF8000
 .equ MEMMODE,       SUB_GA_BASE+0x0002
+.equ COMCMD1,       SUB_GA_BASE+0x0012
 .equ COMSTAT0,      SUB_GA_BASE+0x0020
 .equ SUB_BANK_1M,   0x000C0000
 .equ ISO_BUF,       0x00067000
@@ -29,6 +30,12 @@
 .equ MULTI_INT_STUB,     0x00007F64	/* after the 20-byte bank-switch stub */
 .equ BIOS_USERCALL2_TGT, 0x00005F36
 .equ BIOS_USERCALL3_TGT, 0x00005F3C
+.equ MULTI_RETURN_ROUTINE, 0x0000D680	/* PRG-resident A-play menu return */
+.equ MULTI_MENU_INFO,    0x00007F20
+.equ MENU_IMAGE_OFF,     0x00000000
+.equ MENU_IP_SECTORS,    10
+.equ MENU_SP_SECTORS,    3
+.equ STAT_MENU_IP_READY, 0x8006
 
 .macro BIOSCALL code
 	move.w	#\code, d0
@@ -94,6 +101,7 @@ sp_main:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 	bsr	install_multi_word_swap_stub
+	bsr	install_multi_return_routine
 	/* The BIOS user vectors registered from this bootstrap image would point
 	   into the resident SP slot after a selected player replaces it, so any
 	   later INT2 (the Main BIOS VINT raises one on every VBlank while the
@@ -222,6 +230,84 @@ multi_word_swap_stub_image:
 	bne.s	1b
 	rts
 multi_word_swap_stub_image_end:
+
+/* Install the A-play menu-return routine in the unallocated RING-ALIGN gap.
+   Every selected player jumps here at movie end, so it must survive both the
+   bootstrap image (replaced by the selected SP) and Word RAM (replaced by
+   WordBuf frames).  The image is position-independent: local branches only,
+   locals addressed pc-relative, external references absolute. */
+install_multi_return_routine:
+	lea	multi_return_image, a0
+	movea.l	#MULTI_RETURN_ROUTINE, a1
+	move.w	#((multi_return_image_end-multi_return_image)/2)-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+	rts
+
+multi_return_image:
+1:
+	tst.w	(COMCMD1).l			/* Main requests the menu return */
+	beq.s	1b
+	move.l	(MULTI_MENU_INFO+8).w, d0	/* saved MENUIP extent */
+	moveq	#MENU_IP_SECTORS, d1
+	lea	(SUB_BANK_1M+MENU_IMAGE_OFF).l, a0
+	bsr.w	mr_read_cd
+	bchg	#0, (MEMMODE+1).l		/* menu image becomes Main-visible */
+	bsr.w	mr_settle
+	move.w	#STAT_MENU_IP_READY, (COMSTAT0).l
+2:
+	tst.w	(COMCMD1).l			/* Main drops the request when its
+						   MENUIP copy is complete */
+	bne.s	2b
+	bchg	#0, (MEMMODE+1).l		/* Sub owns the bank again */
+	bsr.w	mr_settle
+	move.l	(MULTI_MENU_INFO).w, d0		/* saved MENUSP extent */
+	moveq	#MENU_SP_SECTORS, d1
+	lea	(SUB_BANK_1M+MENU_SP_WORD_OFF).l, a0
+	bsr.w	mr_read_cd
+	bchg	#0, (MEMMODE+1).l
+	bsr.w	mr_settle
+	bsr.w	mr_read_cd			/* same packet: second bank copy */
+	jmp	(MENU_SP_WORD_ENTRY).l
+
+mr_settle:
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	rts
+
+mr_read_cd:
+	movem.l	d0-d7/a0-a6, -(sp)
+	lea	mr_packet(pc), a5
+	move.l	d0, (a5)
+	move.l	d1, 4(a5)
+	move.l	a0, 8(a5)
+	movea.l	a5, a0
+	BIOSCALL BIOS_CDC_STOP
+	BIOSCALL BIOS_ROM_READN
+mr_stat:
+	BIOSCALL BIOS_CDC_STAT
+	bcs.s	mr_stat
+mr_data:
+	BIOSCALL BIOS_CDC_READ
+	bcc.s	mr_data
+mr_trn:
+	movea.l	8(a5), a0
+	lea	12(a5), a1
+	BIOSCALL BIOS_CDC_TRN
+	bcc.s	mr_trn
+	BIOSCALL BIOS_CDC_ACK
+	addq.l	#1, (a5)
+	addi.l	#0x0800, 8(a5)
+	subq.l	#1, 4(a5)
+	bne.s	mr_stat
+	movem.l	(sp)+, d0-d7/a0-a6
+	rts
+	.align	2
+mr_packet:
+	.long	0, 0, 0, 0, 0
+multi_return_image_end:
 
 	.align	2
 drv_init_tracklist:

@@ -334,7 +334,6 @@ ip_entry:
 	move.w	#0x2700, sr
 	lea	STACK, sp
 .ifdef MULTI_MENU
-	addq.w	#1, (0x00FFB1E2).l		/* diag: ip_entry count */
 	bsr	multi_clear_bss
 	bsr	install_multi_restore
 .endif
@@ -655,19 +654,16 @@ install_multi_restore:
    The player owns the CD-side reload because the menu launcher itself is
    transient Word-RAM code. */
 multi_restore_entry:
-	move.w	#0x31, (0x00FFB1EE).l		/* diag: restore entered */
 	move.w	#1, (GA_COMCMD1).l
 multi_restore_wait:
 	cmp.w	#MULTI_STAT_MENU_IP_READY, (GA_COMSTAT0).l
 	bne.s	multi_restore_wait
-	move.w	#0x32, (0x00FFB1EE).l		/* diag: menu image bank visible */
 	lea	(PROBE_BANK+MULTI_MENU_IMAGE_OFF).l, a0
 	lea	0x00FF0000.l, a1
 	move.w	#(MULTI_MENU_IP_BYTES/2)-1, d0
 1:
 	move.w	(a0)+, (a1)+
 	dbra	d0, 1b
-	move.w	#0x33, (0x00FFB1EE).l		/* diag: menu image copied */
 	clr.w	(GA_COMCMD1).l			/* drop the request: copy complete */
 	movea.l	#0x00FF0000, a0
 	jmp	(a0)
@@ -1962,17 +1958,11 @@ cmd_wait_startup:
 	move.w	#0xFFFF, d5			/* last displayed remaining count */
 1:
 	move.w	(GA_COMSTAT0).l, d0
-.ifdef MULTI_MENU
-	move.w	d0, (0x00FFB1E4).l		/* diag: last COMSTAT0 sample */
-.endif
 	cmp.w	#STAT_BOOT_STAGE, d0
 	beq.s	6f
 	cmp.w	#STAT_READY, d0
 	beq.s	3f
 	move.w	(GA_COMSTAT1).l, d0
-.ifdef MULTI_MENU
-	move.w	d0, (0x00FFB1E6).l		/* diag: last COMSTAT1 sample */
-.endif
 	tst.w	d0				/* zero is shown only after STAT_READY */
 	beq.s	7f
 	cmp.w	d5, d0

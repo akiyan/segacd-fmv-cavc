@@ -55,7 +55,6 @@
 ip_entry:
 	move.w	#0x2700, sr
 	lea	STACK, sp
-	addq.w	#1, (0x00FFB1E8).l		/* diag: menu ip_entry count */
 	clr.w	(MULTI_LOOP_FLAG_MAIN).l
 	move.w	#0, selected
 	move.w	#0, viewport_start
@@ -84,10 +83,8 @@ ip_entry:
 /* The Sub launcher owns the CD and prepares both copies of MENUIP.BIN before
    the first menu frame is shown. */
 wait_menu_ready:
-	move.w	(GA_COMSTAT0).l, (0x00FFB1EA).l	/* diag: live COMSTAT0 mirror */
 	cmp.w	#STAT_MENU_READY, (GA_COMSTAT0).l
 	bne	wait_menu_ready
-	move.w	#1, (0x00FFB1EC).l		/* diag: menu ready seen */
 	bsr	render_menu
 	bsr	wait_controller_release
 

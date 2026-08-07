@@ -263,6 +263,7 @@ def render_player_include(video: MenuVideo) -> str:
         ".equ MULTI_PLAYER_BSS_BYTES, 0x2100",
         ".equ MULTI_MENU_INFO_ADDR, 0x00007F20",
         ".equ MULTI_LOOP_FLAG_ADDR, 0x00007F40",
+        ".equ MULTI_RETURN_ROUTINE, 0x0000D680",
         ".equ MULTI_LOOP_FLAG_MAIN, 0x00FFB1F0",
         ".equ MULTI_RESTORE_CODE_ADDR, 0x00FF8880",
         ".equ MULTI_STAT_MENU_READY, 0x8005",
