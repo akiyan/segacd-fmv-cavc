@@ -27,6 +27,10 @@ class DiscRegionTests(unittest.TestCase):
         with self.assertRaises(KeyError):
             disc_region.region("br")
 
+    def test_each_region_names_the_console_it_was_sold_as(self):
+        self.assertEqual(disc_region.region("jp").console, "MEGA-CD")
+        self.assertEqual(disc_region.region("us").console, "SEGA-CD")
+
     def test_japan_keeps_the_unsuffixed_name(self):
         self.assertEqual(disc_region.suffix("jp"), "")
         self.assertEqual(disc_region.suffix("us"), "_us")
@@ -65,21 +69,24 @@ class NamingTests(unittest.TestCase):
     def setUp(self):
         self.profile = load_profile(PROFILE)
 
-    def test_asset_stem_carries_region_date_and_versions(self):
+    def test_asset_stem_carries_console_region_date_and_versions(self):
         stem = region_release.asset_stem(self.profile, "us", "20260806")
-        self.assertRegex(stem, r"^bad-apple_US_20260806\.e\d+\.p\d+$")
+        self.assertRegex(
+            stem, r"^bad-apple_SEGA-CD_US_20260806\.e\d+\.p\d+$")
 
-    def test_disc_stem_is_the_name_inside_the_zip(self):
+    def test_disc_stem_names_the_console_that_region_was_sold_as(self):
         self.assertEqual(region_release.disc_stem(self.profile, "jp"),
-                         "bad-apple_JP")
+                         "bad-apple_MEGA-CD_JP")
+        self.assertEqual(region_release.disc_stem(self.profile, "us"),
+                         "bad-apple_SEGA-CD_US")
 
     def test_release_tag_names_the_build_not_a_title(self):
         self.assertRegex(region_release.release_tag("20260806"),
                          r"^disc-20260806\.e\d+\.p\d+$")
 
     def test_cue_names_the_iso_beside_it(self):
-        self.assertIn('FILE "bad-apple_US.iso" BINARY',
-                      region_release.cue_text("bad-apple_US"))
+        self.assertIn('FILE "bad-apple_SEGA-CD_US.iso" BINARY',
+                      region_release.cue_text("bad-apple_SEGA-CD_US"))
 
 
 class ReadmeTests(unittest.TestCase):
@@ -105,8 +112,8 @@ class ReadmeTests(unittest.TestCase):
 
     def test_names_the_files_packed_beside_it(self):
         text = self._readme("jp")
-        self.assertIn("bad-apple_JP.iso", text)
-        self.assertIn("bad-apple_JP.cue", text)
+        self.assertIn("bad-apple_MEGA-CD_JP.iso", text)
+        self.assertIn("bad-apple_MEGA-CD_JP.cue", text)
 
     def test_credits_the_source(self):
         text = self._readme("jp")

@@ -64,11 +64,14 @@ than today.
 Outputs land in `out/releases/`:
 
 ```text
-out/releases/<profile-stem>_<REGION>_<date>.e<N>.p<M>.zip
+out/releases/<profile-stem>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip
 ```
 
-Each zip holds `<profile-stem>_<REGION>.iso`, its `.cue`, and a `README.txt`
-naming the region, the encode, the source, and how to burn it.
+Each zip holds `<profile-stem>_<CONSOLE>_<REGION>.iso`, its `.cue`, and a
+`README.txt` naming the region, the encode, the source, and how to burn it.
+The console is the name that region's machine was sold under, `MEGA-CD` for
+Japan and `SEGA-CD` for North America, so a downloaded file says what it is
+for before it is opened.
 
 ## Stage 3: Verify before anything leaves the machine
 
@@ -98,7 +101,7 @@ information is given in both languages.
 ```sh
 tools/python.sh tools/region_release.py notes \
   --config profiles/A.toml --config profiles/B.toml \
-  --zip out/releases/A_JP_....zip --zip ...
+  --zip out/releases/A_MEGA-CD_JP_....zip --zip ...
 ```
 
 Push the branch before publishing, then create the draft against the commit
@@ -108,7 +111,7 @@ that carries the tooling:
 tools/python.sh tools/region_release.py publish \
   --config profiles/A.toml --config profiles/B.toml \
   --target "$(git rev-parse HEAD)" \
-  --zip out/releases/A_JP_....zip --zip ...
+  --zip out/releases/A_MEGA-CD_JP_....zip --zip ...
 ```
 
 The default is a draft. Ask the user before turning a draft into a public

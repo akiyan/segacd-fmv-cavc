@@ -346,13 +346,17 @@ tools/python.sh tools/region_release.py build \
 tools/python.sh harness/regions/verify_release.py out/releases/*.zip
 tools/python.sh tools/region_release.py publish \
   --config profiles/A.toml --config profiles/B.toml \
-  --zip out/releases/A_JP_DATE.eN.pM.zip --zip out/releases/A_US_DATE.eN.pM.zip \
-  --zip out/releases/B_JP_DATE.eN.pM.zip --zip out/releases/B_US_DATE.eN.pM.zip
+  --zip out/releases/A_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/A_SEGA-CD_US_DATE.eN.pM.zip \
+  --zip out/releases/B_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/B_SEGA-CD_US_DATE.eN.pM.zip
 ```
 
-`build` writes `out/releases/<profile>_<REGION>_<date>.e<N>.p<M>.zip`, each
-holding that region's `.iso`, its `.cue`, and a README naming the region, the
-encode, the source, and how to burn it. `publish` creates one draft GitHub
+`build` writes `out/releases/<profile>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip`,
+each holding that region's `.iso`, its `.cue`, and a README naming the region,
+the encode, the source, and how to burn it. The console is named because Sega
+sold the same machine as the Mega-CD and as the Sega CD: `MEGA-CD` for Japan,
+`SEGA-CD` for North America. `publish` creates one draft GitHub
 release tagged `disc-<date>.e<N>.p<M>` with every zip attached and one section
 per title, and replaces an existing asset only when `--clobber` is passed. The
 release body is English; the README inside each zip carries the same
@@ -743,12 +747,16 @@ tools/python.sh tools/region_release.py build \
 tools/python.sh harness/regions/verify_release.py out/releases/*.zip
 tools/python.sh tools/region_release.py publish \
   --config profiles/A.toml --config profiles/B.toml \
-  --zip out/releases/A_JP_DATE.eN.pM.zip --zip out/releases/A_US_DATE.eN.pM.zip \
-  --zip out/releases/B_JP_DATE.eN.pM.zip --zip out/releases/B_US_DATE.eN.pM.zip
+  --zip out/releases/A_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/A_SEGA-CD_US_DATE.eN.pM.zip \
+  --zip out/releases/B_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/B_SEGA-CD_US_DATE.eN.pM.zip
 ```
 
-`build` は `out/releases/<profile>_<REGION>_<date>.e<N>.p<M>.zip` を書きます。各zipには
-そのregionの `.iso`、`.cue`、そしてregion・encode・出典・焼き方を書いたREADMEが入ります。
+`build` は `out/releases/<profile>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip` を書きます。
+各zipにはそのregionの `.iso`、`.cue`、そしてregion・encode・出典・焼き方を書いたREADMEが
+入ります。同じ機械がメガCDとSega CDの2つの名前で売られたので、ファイル名にconsole名を
+入れます。日本は `MEGA-CD`、北米は `SEGA-CD` です。
 `publish` は `disc-<date>.e<N>.p<M>` をtagとする draft GitHub releaseを1つ作り、すべての
 zipを添付して、titleごとのsectionを書きます。既存のassetを置き換えるのは `--clobber` を
 渡したときだけです。release本文は英語で、同じ内容の英日はzip内のREADMEにあります。

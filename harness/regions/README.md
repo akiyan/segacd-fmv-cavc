@@ -19,11 +19,13 @@ zero only when nothing failed.
 
 Per zip:
 
-1. **The name.** `<profile-stem>_<REGION>_<date>.e<N>.p<M>.zip`, with a region
-   tag that is an actual release region. Europe fails here: this player is
-   NTSC only.
-2. **The members.** Exactly `<profile-stem>_<REGION>.iso`,
-   `<profile-stem>_<REGION>.cue`, and `README.txt`, and no member is corrupt.
+1. **The name.** `<profile-stem>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip`, with
+   a region tag that is an actual release region and a console name that is
+   the one that region's machine was sold under — `MEGA-CD` for `JP`,
+   `SEGA-CD` for `US`. A zip that names one console and carries the other
+   region's disc fails here. Europe fails too: this player is NTSC only.
+2. **The members.** Exactly `<profile-stem>_<CONSOLE>_<REGION>.iso`, its
+   `.cue`, and `README.txt`, and no member is corrupt.
 3. **The cue sheet.** Its `FILE` line names the ISO packed beside it, so the
    pair works from whatever directory it is unpacked into.
 4. **The disc.** The image starts with `SEGADISCSYSTEM`, so it is a Sega CD

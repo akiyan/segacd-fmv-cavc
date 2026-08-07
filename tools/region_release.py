@@ -76,17 +76,21 @@ def _mib(path: Path) -> str:
 
 
 def asset_stem(profile: EncodeProfile, region_code: str, build_date: str) -> str:
-    """`<profile-stem>_<REGION>_<date>.e<N>.p<M>`, the zip's own name."""
+    """`<profile>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>`, the zip's own name."""
 
-    tag = disc_region.release_region(region_code).tag
-    return f"{profile.artifact_stem}_{tag}_{build_date}.{_version_tag()}"
+    return f"{disc_stem(profile, region_code)}_{build_date}.{_version_tag()}"
 
 
 def disc_stem(profile: EncodeProfile, region_code: str) -> str:
-    """`<profile-stem>_<REGION>`, the names used inside the zip."""
+    """`<profile-stem>_<CONSOLE>_<REGION>`, the names used inside the zip.
 
-    tag = disc_region.release_region(region_code).tag
-    return f"{profile.artifact_stem}_{tag}"
+    The console is named because Sega sold the same machine as the Mega-CD and
+    as the Sega CD, and a file sitting in a downloads folder should say which
+    one it is for before it is opened.
+    """
+
+    region = disc_region.release_region(region_code)
+    return f"{profile.artifact_stem}_{region.console}_{region.tag}"
 
 
 def release_tag(build_date: str) -> str:
@@ -447,6 +451,10 @@ def cmd_publish(args: argparse.Namespace) -> int:
             if args.clobber:
                 command.append("--clobber")
             _run(command, cwd=PROJECT_ROOT)
+            # The body lists the assets by name, so it goes stale the moment
+            # the set of assets changes. Rewrite it from the zips just sent.
+            _run(["gh", "release", "edit", tag,
+                  "--notes-file", str(notes_path)], cwd=PROJECT_ROOT)
         else:
             command = [
                 "gh", "release", "create", tag,

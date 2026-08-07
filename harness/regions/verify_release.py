@@ -43,9 +43,10 @@ BOOT_AREA_BYTES = 32768
 SECTOR_BYTES = 2048
 STREAM_FILES = ("HEADER.DAT", "BODY.DAT")
 
-# <profile-stem>_<REGION>_<date>.e<N>.p<M>.zip
+# <profile-stem>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip
 ASSET_RE = re.compile(
     r"^(?P<stem>[A-Za-z0-9][A-Za-z0-9._-]*?)"
+    r"_(?P<console>[A-Z-]+CD)"
     r"_(?P<tag>[A-Z]{2})"
     r"_(?P<date>\d{8})\.(?P<version>e\d+\.p\d+)\.zip$")
 
@@ -58,10 +59,17 @@ class CheckFailed(Exception):
 class Zip:
     path: Path
     stem: str
+    console: str
     tag: str
     date: str
     version: str
     region: disc_region.DiscRegion
+
+    @property
+    def disc_stem(self) -> str:
+        """The name the ISO and cue carry inside the zip."""
+
+        return f"{self.stem}_{self.console}_{self.tag}"
 
 
 def parse_asset_name(path: Path) -> Zip:
@@ -69,7 +77,7 @@ def parse_asset_name(path: Path) -> Zip:
     if not match:
         raise CheckFailed(
             f"{path.name}: not a release asset name "
-            "(<profile-stem>_<REGION>_<date>.eN.pM.zip)")
+            "(<profile-stem>_<CONSOLE>_<REGION>_<date>.eN.pM.zip)")
     tag = match.group("tag")
     for region in disc_region.REGIONS.values():
         if region.tag == tag:
@@ -79,13 +87,18 @@ def parse_asset_name(path: Path) -> Zip:
     if not region.releasable:
         raise CheckFailed(
             f"{path.name}: {region.name_en} is not a release target")
-    return Zip(path=path, stem=match.group("stem"), tag=tag,
+    console = match.group("console")
+    if console != region.console:
+        raise CheckFailed(
+            f"{path.name}: names the {console} but carries the {tag} region, "
+            f"which is a {region.console} disc")
+    return Zip(path=path, stem=match.group("stem"), console=console, tag=tag,
                date=match.group("date"), version=match.group("version"),
                region=region)
 
 
 def check_members(archive: zipfile.ZipFile, asset: Zip) -> None:
-    names = f"{asset.stem}_{asset.tag}"
+    names = asset.disc_stem
     expected = {f"{names}.iso", f"{names}.cue", "README.txt"}
     found = set(archive.namelist())
     if found != expected:
@@ -97,7 +110,7 @@ def check_members(archive: zipfile.ZipFile, asset: Zip) -> None:
 
 
 def check_cue(archive: zipfile.ZipFile, asset: Zip) -> None:
-    names = f"{asset.stem}_{asset.tag}"
+    names = asset.disc_stem
     text = archive.read(f"{names}.cue").decode("utf-8")
     first = text.splitlines()[0].strip()
     expected = f'FILE "{names}.iso" BINARY'
@@ -213,7 +226,7 @@ def verify(paths: list[Path]) -> int:
                     raise CheckFailed(f"{path.name}: corrupt member {bad}")
                 check_members(archive, asset)
                 check_cue(archive, asset)
-                image = archive.read(f"{asset.stem}_{asset.tag}.iso")
+                image = archive.read(f"{asset.disc_stem}.iso")
             check_disc_header(image[:BOOT_AREA_BYTES], asset)
             check_security_code(image[:BOOT_AREA_BYTES], asset)
             files = iso_files(image)

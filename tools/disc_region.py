@@ -21,7 +21,14 @@ class DiscRegion:
     """Lowercase build knob, as in `make SECURITY_REGION=<code>`."""
 
     tag: str
-    """Uppercase name used in artifact and asset filenames."""
+    """Uppercase region name used in artifact and asset filenames."""
+
+    console: str
+    """The console this region's disc is for, as spelled in filenames.
+
+    Sega sold the same machine under two names, and a downloaded file should
+    say which one it is for without being opened.
+    """
 
     hardware_type: str
     """The 16-byte disc-header field at 0x100."""
@@ -38,6 +45,7 @@ REGIONS: dict[str, DiscRegion] = {
     "jp": DiscRegion(
         code="jp",
         tag="JP",
+        console="MEGA-CD",
         hardware_type="SEGA MEGA DRIVE ",
         region_field="J               ",
         name_en="Japan (Mega-CD, NTSC)",
@@ -47,6 +55,7 @@ REGIONS: dict[str, DiscRegion] = {
     "us": DiscRegion(
         code="us",
         tag="US",
+        console="SEGA-CD",
         hardware_type="SEGA GENESIS    ",
         region_field="U               ",
         name_en="North America (Sega CD, NTSC)",
@@ -56,6 +65,7 @@ REGIONS: dict[str, DiscRegion] = {
     "eu": DiscRegion(
         code="eu",
         tag="EU",
+        console="MEGA-CD",
         hardware_type="SEGA MEGA DRIVE ",
         region_field="E               ",
         name_en="Europe (Mega-CD, PAL)",
