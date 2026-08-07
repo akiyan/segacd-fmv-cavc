@@ -38,12 +38,17 @@ BACKDROP = "0x0e1014"
 
 
 def build_graph(spec: Comparison, present: list[Panel], overlay_index: int,
-                *, still: bool = False) -> tuple[str, str]:
+                *, still: bool = False,
+                still_seek: dict[str, float] | None = None) -> tuple[str, str]:
     """Return the filter_complex string and the final video label.
 
-    For a still, each input has already been seeked to its own moment and only
-    one frame is taken, so the output-rate conversion and the black run-up
-    padding are both left out.
+    For a still, only one frame is taken, so the output-rate conversion and the
+    black run-up padding are both left out. Most panels have already been
+    seeked on their input; a panel listed in `still_seek` is seeked here
+    instead, because an input seek and an input rate override do not compose -
+    `-ss` works in the material's stored timestamps while `-r` replaces them,
+    so asking for both lands on the wrong frame and a preview would show
+    panels out of step that the video itself keeps together.
     """
     rects = spec.rects()
     start = spec.picture_start
@@ -63,6 +68,12 @@ def build_graph(spec: Comparison, present: list[Panel], overlay_index: int,
     for index, panel in enumerate(present):
         x, y, w, h = rects[panel.key]
         filters: list[str] = []
+        seek = (still_seek or {}).get(panel.key)
+        if seek is not None:
+            # `t` here is already in the re-timed timeline the rate override
+            # produced, which is the same timeline the video path's fps filter
+            # reads, so this lands on the frame the video would show.
+            filters.append(f"select='gte(t\\,{seek:.6f})'")
         if panel.crop:
             cx, cy, cw, ch = panel.crop
             filters.append(f"crop={cw}:{ch}:{cx}:{cy}")
@@ -72,11 +83,13 @@ def build_graph(spec: Comparison, present: list[Panel], overlay_index: int,
         if panel.pad:
             pw, ph, px, py = panel.pad
             filters.append(f"pad={pw}:{ph}:{px}:{py}:color=black")
-        filters.append(f"scale={w}:{h}:flags=lanczos")
+        filters.append(f"scale={w}:{h}:flags={panel.resize}")
         if still:
             # Each input was seeked independently, and a seek does not always
             # land its first frame on PTS 0. Pin one frame to 0 so overlay
             # composites it instead of leaving the blacked-out rectangle.
+            # This select counts what reaches it, so it takes the first frame
+            # the seek above let through.
             filters.append("select=eq(n\\,0)")
             filters.append("setpts=0")
         else:
@@ -181,15 +194,25 @@ def build_still_command(spec: Comparison, output: Path, *, at: float,
         active.append((panel, panel.source_start + (at - panel_start)))
 
     cmd: list[str] = ["ffmpeg", "-y"]
+    still_seek: dict[str, float] = {}
     for panel, source_time in active:
+        source_time = max(source_time, 0.0)
         if panel.input_fps:
+            # A rate override replaces the material's timestamps, so an input
+            # seek would work in the stored ones and land on another frame.
+            # Decode from the start and seek in the graph instead, where the
+            # re-timed clock is the one being read. These panels are source
+            # masters, small enough that decoding to the moment costs seconds.
             cmd += ["-r", panel.input_fps]
-        cmd += ["-ss", f"{max(source_time, 0.0):.6f}", "-i", str(panel.path)]
+            still_seek[panel.key] = source_time
+        else:
+            cmd += ["-ss", f"{source_time:.6f}"]
+        cmd += ["-i", str(panel.path)]
     overlay_index = len(active)
     cmd += ["-i", str(overlay_png)]
 
     graph, vlabel = build_graph(spec, [p for p, _ in active], overlay_index,
-                               still=True)
+                               still=True, still_seek=still_seek)
     cmd += ["-filter_complex", graph, "-map", f"[{vlabel}]",
             "-frames:v", "1", str(output)]
     return cmd

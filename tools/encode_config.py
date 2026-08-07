@@ -104,11 +104,12 @@ ALLOWED = {
     "output": {key for section, key in ENV_MAP if section == "output"},
     "encoder": {key for section, key in ENV_MAP if section == "encoder"},
     "palette": {key for section, key in ENV_MAP if section == "palette"},
-    "analysis": {"source_canvas", "tail_seconds"},
+    "analysis": {"source_canvas", "source_par", "source_spec",
+                 "tail_seconds"},
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
-                "source_label_ja"},
+                "source_label_ja", "source_url"},
     # Comparison-video composition: which footage fills each panel, how the
     # panels are synchronised, and the text drawn on the frame. Also outside
     # ENV_MAP, for the same reason as [youtube] - retiming a panel or editing a

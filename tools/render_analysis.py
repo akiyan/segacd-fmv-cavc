@@ -20,6 +20,8 @@ the sim's checkpointed playback model, never the clean source WAV.
   ANALYSIS_OUT     tmpfs artifactに使う要求mp4名
   ANALYSIS_TSV     明示した場合の永続TSV実体path (既定はlogs/のunique path)
   ANALYSIS_CQ      h264_nvenc cq (既定 23)
+  ANALYSIS_CRF     libx264 crf (既定 20、GPU が使えないときの mux)
+  ANALYSIS_VCODEC  h264_nvenc / libx264 を明示指定 (既定は自動)
 W/H/タイル数/表示アスペクト/諸元は sim 出力から自動導出。
 
 usage: python3 tools/render_analysis.py PROFILE.toml       # 全編→mp4
@@ -62,8 +64,14 @@ SIM = str(sim_work_dir())
 SRCLABEL = os.environ.get("CBRSIM_SRCLABEL", "Source")
 
 
-def _source_spec():
-    """Source見出し併記用: 元動画の 解像度 / fps / 音声仕様 を ffprobe で組み立てる(ビットレートは省略)。"""
+def _source_spec(template=None):
+    """Source見出し併記用の諸元をffprobeで組み立てる(ビットレートは省略)。
+
+    既定は 解像度 / fps / 音声 を並べる。profileが [analysis] source_spec を
+    与えた場合はそれを書式として使い、{width} {height} {fps} {audio}
+    {audio_codec} {audio_khz} {audio_channels} を差し込む。数値はここで測った
+    ものだけを使うので、書式を選んでも値を打ち直すことにはならない。
+    """
     src = os.environ.get("CBRSIM_SRC", "")
     if not src or not Path(src).exists():
         return ""
@@ -77,6 +85,9 @@ def _source_spec():
         num, den = vj["r_frame_rate"].split("/")
         fps = round(float(num) / float(den))
         parts = ["%dx%d" % (vj["width"], vj["height"]), "%dfps" % fps]
+        fields = {"width": int(vj["width"]), "height": int(vj["height"]),
+                  "fps": fps, "audio": "", "audio_codec": "",
+                  "audio_khz": "", "audio_channels": ""}
         aj = _json.loads(subprocess.run(
             ["ffprobe", "-v", "error", "-select_streams", "a:0",
              "-show_entries", "stream=codec_name,sample_rate,channels", "-of", "json", src],
@@ -84,13 +95,30 @@ def _source_spec():
         if aj:
             a = aj[0]; ch = int(a.get("channels", 0)); sr = int(a.get("sample_rate", 0))
             chs = {1: "mono", 2: "stereo"}.get(ch, "%dch" % ch)
-            parts.append("%s %gkHz %s" % (a["codec_name"].upper(), sr / 1000.0, chs))
-        return " / ".join(parts)
+            audio = "%s %gkHz %s" % (a["codec_name"].upper(), sr / 1000.0, chs)
+            parts.append(audio)
+            fields.update(audio=audio, audio_codec=a["codec_name"].upper(),
+                          audio_khz="%gkHz" % (sr / 1000.0),
+                          audio_channels=chs)
+        if template is None:
+            return " / ".join(parts)
+        try:
+            return template.format(**fields)
+        except KeyError as exc:
+            raise SystemExit(
+                f"analysis.source_spec: unknown field {exc}; available are "
+                + ", ".join(sorted(fields)))
+    except SystemExit:
+        raise
     except Exception:
         return ""
 
 
-SRC_SPEC = _source_spec()
+# The profile is read here rather than with the rest of [analysis] below,
+# because the Source spec is needed before that block runs.
+SRC_SPEC = _source_spec(
+    (CONFIG_PROFILE.section("analysis") or {}).get("source_spec")
+    if CONFIG_PROFILE else None)
 OUT_MP4 = Path(os.environ.get(
     "ANALYSIS_OUT", str(artifact_path("analysis", sim_dir=SIM))))
 OUT_TSV = (
@@ -98,6 +126,13 @@ OUT_TSV = (
     if os.environ.get("ANALYSIS_TSV") else None
 )
 CQ = os.environ.get("ANALYSIS_CQ", "23")
+# Quality for the CPU fallback below, and a way to demand one encoder or the
+# other. Left unset, the GPU encoder is tried first and the CPU one takes over
+# if it cannot run.
+CRF = os.environ.get("ANALYSIS_CRF", "20")
+ANALYSIS_VCODEC = os.environ.get("ANALYSIS_VCODEC", "")
+if ANALYSIS_VCODEC not in {"", "h264_nvenc", "libx264"}:
+    raise SystemExit("ANALYSIS_VCODEC must be h264_nvenc or libx264")
 FRAMES_DIR = f"{SIM}/analysis_frames"
 AUDIO_FRAMES_DIR = f"{SIM}/analysis_audio_frames"
 AUDIO_STR = "22.05kHz mono IMA ADPCM"       # 既定。sim出力(stats)にラベルがあればそれを使う
@@ -167,6 +202,18 @@ SOURCE_SAR_DEN = _SOURCE_SAR.denominator
 _analysis_profile = CONFIG_PROFILE.section("analysis") if CONFIG_PROFILE else {}
 SOURCE_CANVAS = tuple(_analysis_profile.get("source_canvas", (RW, RH)))
 SOURCE_CANVAS_W, SOURCE_CANVAS_H = map(int, SOURCE_CANVAS)
+# Pixel aspect the Source panel is displayed at. This is the aperture's aspect,
+# not the master's: raw/ already holds the encode's own raster, so a master that
+# was square-pixel before the crop still has to be shown with the console's
+# 32:35 pixels. [source] sar cannot serve here - it describes the master and
+# drives the sim's crop, so changing it would change the encode.
+_SOURCE_PAR = _analysis_profile.get("source_par")
+if _SOURCE_PAR is not None:
+    if (not isinstance(_SOURCE_PAR, list) or len(_SOURCE_PAR) != 2
+            or any(not isinstance(v, int) or v <= 0 for v in _SOURCE_PAR)):
+        raise SystemExit(
+            "analysis.source_par must be [positive_num, positive_den]")
+    SOURCE_SAR_NUM, SOURCE_SAR_DEN = _SOURCE_PAR
 # Still, silent seconds appended after the picture ends, fading out across
 # them, so YouTube's end screen has somewhere to put its cards.
 TAIL_SECONDS = float(_analysis_profile.get("tail_seconds", 0.0))
@@ -1328,8 +1375,14 @@ def mux(output: Path):
     has_audio = Path(audio).exists()
     # Seconds of picture, from the frame count and the content rate.
     content = NF / FPS
-    vcodec = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr",
-              "-cq", CQ, "-b:v", "0"]
+    nvenc = ["-c:v", "h264_nvenc", "-preset", "p6", "-tune", "hq", "-rc", "vbr",
+             "-cq", CQ, "-b:v", "0"]
+    # Same picture off the CPU, for when the GPU encoder cannot be reached.
+    # A driver upgrade that has not been rebooted into is the usual reason: the
+    # loaded kernel module and the installed libraries disagree and every NVENC
+    # session fails, while the frames themselves rendered fine because drawing
+    # them never needed the device.
+    x264 = ["-c:v", "libx264", "-crf", CRF, "-preset", "medium"]
     cmd = ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
            "-framerate", str(FPS), "-start_number", "0",
            "-i", f"{FRAMES_DIR}/%05d.png",
@@ -1356,7 +1409,8 @@ def mux(output: Path):
     cmd += ["-filter_complex", filter_graph, "-map", f"[{vlabel}]"]
     if has_audio:
         cmd += ["-map", amap]
-    cmd += vcodec + ["-pix_fmt", "yuv420p"]
+    codec_at = len(cmd)
+    cmd += nvenc + ["-pix_fmt", "yuv420p"]
     if has_audio:
         cmd += ["-c:a", "aac", "-ar", "22050", "-b:a", "96k"]  # 音声の標本化を保つ(ADPCM 22kHz対応)
         if TAIL_SECONDS <= 0:
@@ -1366,7 +1420,19 @@ def mux(output: Path):
         # cut whichever rounded shorter.
         cmd += ["-t", f"{content + TAIL_SECONDS:.6f}"]
     cmd += ["-fps_mode", "cfr", str(output)]
-    subprocess.run(cmd, check=True)
+    if ANALYSIS_VCODEC == "libx264":
+        cmd[codec_at:codec_at + len(nvenc)] = x264
+        subprocess.run(cmd, check=True)
+        return
+    try:
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError as exc:
+        if ANALYSIS_VCODEC == "h264_nvenc":
+            raise
+        print(f"h264_nvenc failed (exit {exc.returncode}); "
+              f"muxing with libx264 crf {CRF} instead", flush=True)
+        cmd[codec_at:codec_at + len(nvenc)] = x264
+        subprocess.run(cmd, check=True)
 
 
 def main():

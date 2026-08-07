@@ -77,6 +77,40 @@ spec = "spec"
 """
 
 
+# Three panels: the arrangement for a source whose 1993 release is neither the
+# same music nor full motion video, so there is nothing for a fourth panel.
+PANELS3 = """
+[comparison]
+title = "T"
+audio_panel = "emu"
+duration = 10.0
+
+[comparison.panels.emu]
+label = "Playback"
+slot = "main"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = ["one", "two"]
+path = "assets/sonic-jam-op/original-sonic-jam-op.avi"
+fmv_start = 5.0
+lead = 5.0
+
+[comparison.panels.src]
+label = "Source"
+slot = "right_top"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = ["one", "two"]
+
+[comparison.panels.real]
+label = "Real hardware"
+slot = "right_bottom"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = "spec"
+"""
+
+
 def written(body: str) -> Path:
     tmp = tempfile.NamedTemporaryFile("w", suffix=".toml", delete=False,
                                       encoding="utf-8")
@@ -234,6 +268,48 @@ class ComparisonProfileTests(unittest.TestCase):
             'spec = "spec"\npath =', 'spec = ["a", "b"]\npath =')
         self.assertEqual(load(written(body)).panel("emu").spec, ("a", "b"))
 
+    def test_three_panels_stack_the_right_column(self) -> None:
+        spec = load(written(BASE + PANELS3))
+        self.assertEqual(spec.arrangement, "three")
+        self.assertEqual(load(PROFILE).arrangement, "four")
+        rects = spec.rects()
+        g = spec.geometry()
+        main, top, bottom = rects["emu"], rects["src"], rects["real"]
+        # The left column still takes all the height there is.
+        self.assertEqual(main[1], layout_mod.PANEL_TOP)
+        self.assertEqual(main[1] + main[3], g["main_bottom"])
+        # The stack shares one height, and its lower edge is flush with the
+        # left column's, so both bottom spec lines share a baseline.
+        self.assertEqual(top[3], bottom[3])
+        self.assertEqual(bottom[1] + bottom[3], main[1] + main[3])
+        # Right-aligned to the derived page margin, which the headline shares.
+        self.assertEqual(top[0] + top[2], g["right_edge"])
+        self.assertEqual(bottom[0] + bottom[2], g["right_edge"])
+        self.assertEqual(main[0], g["margin"])
+        # The lower panel's label clears the upper panel's last spec line.
+        self.assertGreaterEqual(bottom[1] - layout_mod.LABEL_GAP,
+                                g["top_spec_baseline"] + layout_mod.ROW_GAP)
+        # Every panel keeps its own displayed aspect.
+        for key in ("emu", "src", "real"):
+            _, _, w, h = rects[key]
+            self.assertAlmostEqual(w / h, spec.panel(key).display_aspect,
+                                   places=2)
+        # The slack two stacked 4:3 screens leave becomes page margin on both
+        # sides rather than a hole beside them, so the margins are equal and
+        # wider than the fixed one a four-panel frame uses.
+        self.assertEqual(g["margin"], layout_mod.CANVAS[0] - g["right_edge"])
+        self.assertGreater(g["margin"], layout_mod.MARGIN)
+        # The stack never overlaps the left column.
+        self.assertGreaterEqual(g["column_gap"], layout_mod.COLUMN_GAP)
+        self.assertGreater(top[0], main[0] + main[2])
+
+    def test_a_partial_arrangement_is_rejected(self) -> None:
+        # Slots from two different arrangements are not an arrangement.
+        body = BASE + PANELS3.replace('slot = "right_bottom"',
+                                      'slot = "lower"')
+        with self.assertRaisesRegex(ValueError, "no known arrangement"):
+            load(written(body))
+
     def test_every_slot_must_be_filled_exactly_once(self) -> None:
         body = BASE + PANELS.replace('slot = "lower"', 'slot = "main"')
         with self.assertRaisesRegex(ValueError, "share one slot"):
@@ -246,8 +322,48 @@ aperture = [16, 9]
 pixel_aspect = [1, 1]
 spec = "spec"
 """, "")
-        with self.assertRaisesRegex(ValueError, "no panel in slot"):
+        with self.assertRaisesRegex(ValueError, "no known arrangement"):
             load(written(body))
+
+    def test_a_panel_chooses_how_it_is_scaled(self) -> None:
+        # A panel fed material already at the console's raster is enlarging
+        # real console pixels, so it must be able to ask for nearest-neighbour
+        # instead of the default reduction filter.
+        spec = load(written(BASE + PANELS3))
+        self.assertEqual([p.resize for p in spec.panels],
+                         ["lanczos"] * 3)
+        body = PANELS3.replace('spec = ["one", "two"]\npath =',
+                               'spec = ["one", "two"]\nresize = "neighbor"\npath =')
+        self.assertEqual(load(written(BASE + body)).panel("emu").resize,
+                         "neighbor")
+        bad = PANELS3.replace('spec = ["one", "two"]\npath =',
+                              'spec = ["one", "two"]\nresize = "smooth"\npath =')
+        with self.assertRaisesRegex(ValueError, "resize must be one of"):
+            load(written(BASE + bad))
+
+    def test_a_headline_wider_than_the_frame_is_rejected(self) -> None:
+        # Centring the three arrangement leaves the headline less room than
+        # the four arrangement's fixed page margin, and nothing else on the
+        # frame measures text, so an over-long title would simply run off the
+        # canvas and show up only in a rendered still.
+        spec = load(written(BASE + PANELS3))
+        geometry = spec.geometry()
+        room = geometry["right_edge"] - geometry["margin"]
+        self.assertLessEqual(layout_mod.check_headline(spec), room)
+        long_title = 'title = "' + "W" * 200 + '"'
+        wide = load(written(BASE + PANELS3.replace('title = "T"', long_title)))
+        with self.assertRaisesRegex(ValueError, "shorten it by"):
+            layout_mod.check_headline(wide)
+
+    def test_shipped_profiles_keep_their_headlines_inside_the_frame(self) -> None:
+        for profile in sorted(ROOT.glob("profiles/*.toml")):
+            spec = None
+            try:
+                spec = load(profile)
+            except ValueError:
+                continue  # no [comparison] section: nothing to measure
+            with self.subTest(profile=profile.name):
+                layout_mod.check_headline(spec)
 
     def test_audio_panel_must_name_a_panel_that_has_footage(self) -> None:
         with self.assertRaisesRegex(ValueError, "audio_panel must name"):
