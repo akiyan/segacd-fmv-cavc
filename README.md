@@ -80,6 +80,12 @@ Each source has a strict TOML profile.
   through that profile.
 - **Palette algorithm:** `stl4` or `mosaic-gm`.
 - **Analysis canvas:** optional and never changes the encoded stream.
+- **Disc region:** Japan or North America, and both are NTSC.
+
+**The discs are NTSC only.** The player displays H40 V28 and paces every frame,
+the audio sync, and the CD delivery deadlines against a 60 Hz field rate. A
+50 Hz PAL console is not a target: it would need the whole timing model
+re-derived, not a different security code.
 
 H40 is the only display mode, and every profile here uses it. H32's wider dots
 make the dither this codec relies on read as coarse texture rather than tone,
@@ -341,6 +347,53 @@ player remains the normal profile-specialized player, so the ordinary
 single-video `make disc` path and its PrgBuf capacity are unchanged. During a
 return the player reloads the menu image and launcher from the same CD; no
 high-PRG module or extra permanent PrgBuf reservation is used.
+## Disc images for distribution
+
+`SECURITY_REGION` selects the release region. It picks the security code the
+console validates, the disc-header fields that name the region, and the disc's
+own name; Japan keeps the unsuffixed paths every other tool already uses.
+
+```sh
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0 SECURITY_REGION=us
+```
+
+```text
+out/PROFILE_release.iso     + .cue   Japan
+out/PROFILE_us_release.iso  + .cue   North America
+```
+
+A region is a boot-area difference and nothing else: `HEADER.DAT` and
+`BODY.DAT` are byte-identical across regions, so both discs play the same
+encode. Regions of one profile share an output-stem lock, so build them one
+after another.
+
+Package and publish the discs. `--config` is repeatable, and every profile
+named goes on one release:
+
+```sh
+tools/python.sh tools/region_release.py build \
+  --config profiles/A.toml --config profiles/B.toml
+tools/python.sh harness/regions/verify_release.py out/releases/*.zip
+tools/python.sh tools/region_release.py publish \
+  --config profiles/A.toml --config profiles/B.toml \
+  --zip out/releases/A_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/A_SEGA-CD_US_DATE.eN.pM.zip \
+  --zip out/releases/B_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/B_SEGA-CD_US_DATE.eN.pM.zip
+```
+
+`build` writes `out/releases/<profile>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip`,
+each holding that region's `.iso`, its `.cue`, and a README naming the region,
+the encode, the source, and how to burn it. The console is named because Sega
+sold the same machine as the Mega-CD and as the Sega CD: `MEGA-CD` for Japan,
+`SEGA-CD` for North America. `publish` creates one draft GitHub
+release tagged `disc-<date>.e<N>.p<M>` with every zip attached and one section
+per title, and replaces an existing asset only when `--clobber` is passed. The
+release body is English; the README inside each zip carries the same
+information in English and Japanese.
+[`harness/regions/README.md`](harness/regions/README.md) states what the
+verification proves and what it does not.
 
 ## Recording
 
@@ -473,6 +526,11 @@ sourceごとにstrict TOML profileを使います。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
 - **Analysis canvas:** optionalで、encoded streamは変えない。
+- **Disc region:** 日本または北米。どちらもNTSC。
+
+**ディスクはNTSC専用です。** playerはH40 V28で表示し、frame進行・音声同期・CDの配送
+期限をすべて60 Hzのfield rateに合わせています。50 HzのPAL実機は対象外で、必要なのは
+別のsecurity codeではなくtiming model全体の再導出です。
 
 display modeはH40だけで、ここにある全profileがH40です。H32はドットが大きいため、
 このcodecが前提とするditherが階調ではなく粗いテクスチャとして見えます。さらに
@@ -717,6 +775,50 @@ Menu自身にはDEBUG HUDがありません。Up/Downでitemを選び、Aは再�
 連続再生します。選択したplayerは通常のprofile-specialized playerのままなので、通常の
 single-video `make disc` pathとPrgBuf容量は変わりません。戻り処理ではplayerが同じCDから
 menu imageとlauncherを再loadするため、high-PRG moduleや追加の恒久的なPrgBuf予約は使いません。
+## 配布用disc image
+
+`SECURITY_REGION` がrelease regionを選びます。本体が検証するsecurity code、region名を
+書くdisc headerのfield、そしてdisc自身の名前がこれで決まります。日本は他のtoolが既に
+使っているsuffix無しのpathをそのまま使います。
+
+```sh
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0
+make disc CONFIG=profiles/PROFILE.toml DEBUG=0 SECURITY_REGION=us
+```
+
+```text
+out/PROFILE_release.iso     + .cue   日本
+out/PROFILE_us_release.iso  + .cue   北米
+```
+
+regionの差はboot領域だけです。`HEADER.DAT` と `BODY.DAT` はregion間でbyte一致するので、
+どちらのdiscも同じencodeを再生します。同一profileのregionはoutput stem lockを共有する
+ため、直列にbuildします。
+
+discをpackageして公開します。`--config` は繰り返し渡せて、渡したprofileはすべて
+1つのreleaseに載ります。
+
+```sh
+tools/python.sh tools/region_release.py build \
+  --config profiles/A.toml --config profiles/B.toml
+tools/python.sh harness/regions/verify_release.py out/releases/*.zip
+tools/python.sh tools/region_release.py publish \
+  --config profiles/A.toml --config profiles/B.toml \
+  --zip out/releases/A_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/A_SEGA-CD_US_DATE.eN.pM.zip \
+  --zip out/releases/B_MEGA-CD_JP_DATE.eN.pM.zip \
+  --zip out/releases/B_SEGA-CD_US_DATE.eN.pM.zip
+```
+
+`build` は `out/releases/<profile>_<CONSOLE>_<REGION>_<date>.e<N>.p<M>.zip` を書きます。
+各zipにはそのregionの `.iso`、`.cue`、そしてregion・encode・出典・焼き方を書いたREADMEが
+入ります。同じ機械がメガCDとSega CDの2つの名前で売られたので、ファイル名にconsole名を
+入れます。日本は `MEGA-CD`、北米は `SEGA-CD` です。
+`publish` は `disc-<date>.e<N>.p<M>` をtagとする draft GitHub releaseを1つ作り、すべての
+zipを添付して、titleごとのsectionを書きます。既存のassetを置き換えるのは `--clobber` を
+渡したときだけです。release本文は英語で、同じ内容の英日はzip内のREADMEにあります。
+検証が何を証明し、何を証明しないかは
+[`harness/regions/README.md`](harness/regions/README.md) にあります。
 
 ## Recording
 

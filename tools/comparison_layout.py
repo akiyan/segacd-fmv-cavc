@@ -39,6 +39,9 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 from encode_config import load_profile
+# The same set of scaling filters the encoder's own geometry offers, so a
+# panel cannot be given a filter the rest of the project does not know.
+from video_geometry import RESIZE_FILTERS
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -101,7 +104,15 @@ PANEL_TOP = HEADLINE_BASELINE + HEADLINE_TO_LABEL + LABEL_GAP
 
 RIGHT_RIGHT = CANVAS[0] - MARGIN
 
-SLOTS = ("main", "top_left", "top_right", "lower")
+# A profile picks its arrangement by which slots its panels use. Four panels
+# put two side by side in the right column's upper row with a wide one beneath;
+# three stack the right column instead. A source whose 1993 release is neither
+# the same music nor full motion video has nothing to put in a fourth panel.
+LAYOUTS = {
+    "four": ("main", "top_left", "top_right", "lower"),
+    "three": ("main", "right_top", "right_bottom"),
+}
+SLOTS = tuple(sorted({slot for slots in LAYOUTS.values() for slot in slots}))
 
 
 @dataclass(frozen=True)
@@ -132,6 +143,14 @@ class Panel:
     # Rate the material is re-timed to on input, when its stored rate is not
     # the rate the console displays it at.
     input_fps: str | None
+    # How the material is scaled into its rectangle. Material already at the
+    # console's own raster wants "neighbor": the panel is an enlargement of
+    # real console pixels, and an interpolating filter would blend colours the
+    # hardware never put next to each other, softening dither patterns that
+    # are part of what the encode does. Anything else - a camera capture, a
+    # source master far larger than its panel - is being reduced and wants the
+    # default "lanczos".
+    resize: str
     # Where the moving picture begins inside the material.
     fmv_start: float
     # Seconds of run-up before fmv_start that stay on the timeline.
@@ -209,8 +228,108 @@ class Comparison:
         """Baseline of the lowest text on the frame."""
         return CANVAS[1] - MARGIN - DESCENDER
 
+    @property
+    def arrangement(self) -> str:
+        """Which slot arrangement this profile's panels form."""
+        used = frozenset(p.slot for p in self.panels)
+        for name, slots in LAYOUTS.items():
+            if used == frozenset(slots):
+                return name
+        raise ValueError(
+            f"{self.profile}: panels use slots {sorted(used)}, which is "
+            f"no known arrangement: "
+            + "; ".join(f"{n} needs {sorted(s)}" for n, s in LAYOUTS.items()))
+
+    def _left_column(self) -> tuple[int, int, int, int, int]:
+        """Return (main_bottom, main_height, main_width, right_left, width).
+
+        The left column is the panel the video is about, so it takes all the
+        height there is: its bottom edge follows back up from the lowest text on
+        the frame, past however many spec lines stand between them, and its
+        width follows from its aspect. The right column starts a gap past it, so
+        enlarging the left one narrows the right instead of overlapping it.
+        """
+        main = {p.slot: p for p in self.panels}["main"]
+        lowest = self.bottom_baseline
+        if self.show_audio_note:
+            lowest -= NOTE_GAP
+        main_bottom = lowest - main.spec_depth
+        main_height = main_bottom - PANEL_TOP
+        main_width = round(main_height * main.display_aspect)
+        right_left = MARGIN + main_width + COLUMN_GAP
+        return (main_bottom, main_height, main_width, right_left,
+                RIGHT_RIGHT - right_left)
+
+    def _geometry_three(self) -> dict[str, int]:
+        """Three panels: one large left, two stacked in the right column.
+
+        The stack is what sets its own size. Two 4:3 screens one above the other
+        are much taller than they are wide, so the height the left column leaves
+        them decides the width, and that width is narrower than the column. The
+        leftover is not padding to be removed: closing it would need the left
+        panel taller than the canvas allows. The stack is pushed to the right
+        edge instead, so its frames line up with each other and with the
+        headline's right margin, and the slack reads as the gap between the two
+        columns rather than as a hole beside them.
+        """
+        by_slot = {p.slot: p for p in self.panels}
+        main = by_slot["main"]
+        top, bottom = by_slot["right_top"], by_slot["right_bottom"]
+
+        # Vertical first, because nothing horizontal can relax it: the left
+        # column runs from the headline down to the lowest text on the frame.
+        lowest = self.bottom_baseline
+        if self.show_audio_note:
+            lowest -= NOTE_GAP
+        main_bottom = lowest - main.spec_depth
+        main_height = main_bottom - PANEL_TOP
+        main_width = round(main_height * main.display_aspect)
+
+        # Both stacked rows share one height so their frames match; the upper
+        # row's spec and the row gap stand between them, and the lower row's
+        # bottom edge is flush with the left column's.
+        stack_height = (main_height - top.spec_depth - ROW_GAP - LABEL_GAP) // 2
+        if stack_height < 1:
+            raise ValueError("the right column has no height left for two "
+                             "stacked panels")
+        stack_width = round(stack_height * max(top.display_aspect,
+                                               bottom.display_aspect))
+
+        # Two 4:3 screens stacked are far taller than wide, so their width is
+        # narrower than a right column sized from a fixed page margin, and the
+        # difference cannot be closed by shrinking anything: it would need the
+        # left panel taller than the canvas allows. So the page margin is not
+        # fixed here - it is whatever centres the content that the vertical
+        # constraint produced. The slack becomes margin on both sides of the
+        # frame instead of a hole beside the stack.
+        content_width = main_width + COLUMN_GAP + stack_width
+        margin = (CANVAS[0] - content_width) // 2
+        if margin < MARGIN:
+            raise ValueError(
+                f"the content is {content_width}px wide, leaving only "
+                f"{margin}px of margin against the {MARGIN}px minimum")
+        right_edge = CANVAS[0] - margin
+        return {
+            "arrangement": 3,
+            "margin": margin,
+            "right_edge": right_edge,
+            "content_width": content_width,
+            "main_bottom": main_bottom,
+            "main_height": main_height,
+            "main_width": main_width,
+            # The stack is flush right, so this gap also absorbs the rounding
+            # left over from centring an odd-width content block.
+            "column_gap": right_edge - stack_width - (margin + main_width),
+            "stack_height": stack_height,
+            "stack_width": stack_width,
+            "top_spec_baseline": PANEL_TOP + stack_height + top.spec_depth,
+            "bottom_top": main_bottom - stack_height,
+        }
+
     def geometry(self) -> dict[str, int]:
         """The derived measurements the rectangles are built from."""
+        if self.arrangement == "three":
+            return self._geometry_three()
         by_slot = {p.slot: p for p in self.panels}
 
         main = by_slot["main"]
@@ -260,6 +379,9 @@ class Comparison:
                 f"them, under the {INNER_GAP}px minimum")
 
         return {
+            "arrangement": 4,
+            "margin": MARGIN,
+            "right_edge": RIGHT_RIGHT,
             "main_bottom": main_bottom,
             "inner_gap": inner_gap,
             "main_height": main_height,
@@ -276,6 +398,18 @@ class Comparison:
         """Each panel's video rectangle as (x, y, width, height)."""
         by_slot = {p.slot: p for p in self.panels}
         g = self.geometry()
+        if self.arrangement == "three":
+            top, bottom = by_slot["right_top"], by_slot["right_bottom"]
+            top_w = round(g["stack_height"] * top.display_aspect)
+            bottom_w = round(g["stack_height"] * bottom.display_aspect)
+            return {
+                by_slot["main"].key: (g["margin"], PANEL_TOP, g["main_width"],
+                                      g["main_height"]),
+                top.key: (g["right_edge"] - top_w, PANEL_TOP, top_w,
+                          g["stack_height"]),
+                bottom.key: (g["right_edge"] - bottom_w, g["bottom_top"],
+                             bottom_w, g["stack_height"]),
+            }
         rects: dict[str, tuple[int, int, int, int]] = {}
 
         rects[by_slot["main"].key] = (MARGIN, PANEL_TOP, g["main_width"],
@@ -323,7 +457,7 @@ def load(profile_path: Path | str) -> Comparison:
 
     allowed = {"label", "short_label", "slot", "aperture", "pixel_aspect",
                "spec", "placeholder", "path", "crop", "pad", "input_fps",
-               "fmv_start", "lead"}
+               "resize", "fmv_start", "lead"}
     panels: list[Panel] = []
     for key, table in raw_panels.items():
         if not isinstance(table, dict):
@@ -349,6 +483,11 @@ def load(profile_path: Path | str) -> Comparison:
         else:
             raise ValueError(f"[comparison.panels.{key}] spec must be a "
                              f"string or a non-empty list of strings")
+        resize = table.get("resize", "lanczos")
+        if resize not in RESIZE_FILTERS:
+            raise ValueError(
+                f"[comparison.panels.{key}] resize must be one of "
+                f"{', '.join(sorted(RESIZE_FILTERS))}")
         path = table.get("path")
         panels.append(Panel(
             key=key,
@@ -365,6 +504,7 @@ def load(profile_path: Path | str) -> Comparison:
             pad=(_pair(table["pad"], "pad", key, 4)
                  if "pad" in table else None),
             input_fps=table.get("input_fps"),
+            resize=resize,
             fmv_start=float(table.get("fmv_start", 0.0)),
             lead=float(table.get("lead", 0.0)),
         ))
@@ -372,10 +512,14 @@ def load(profile_path: Path | str) -> Comparison:
     used = [p.slot for p in panels]
     if len(set(used)) != len(used):
         raise ValueError(f"{profile.path}: two panels share one slot")
-    missing_slots = set(SLOTS) - set(used)
-    if missing_slots:
-        raise ValueError(f"{profile.path}: no panel in slot(s) "
-                         f"{', '.join(sorted(missing_slots))}")
+    # The slots used must form one whole arrangement: a missing slot would
+    # leave a hole the geometry has no rule for.
+    if frozenset(used) not in {frozenset(s) for s in LAYOUTS.values()}:
+        raise ValueError(
+            f"{profile.path}: panels use slots {sorted(set(used))}, which is "
+            f"no known arrangement: "
+            + "; ".join(f"{name} needs {sorted(slots)}"
+                        for name, slots in LAYOUTS.items()))
 
     audio_panel = data.get("audio_panel")
     if audio_panel not in {p.key for p in panels}:
@@ -414,12 +558,43 @@ def load(profile_path: Path | str) -> Comparison:
     )
 
 
+def headline_width(spec: Comparison) -> int:
+    """Drawn width of the badge and title, in pixels."""
+    font = ImageFont.truetype(FONT_BOLD, TITLE_SIZE)
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    width = round(draw.textlength(spec.title, font=font))
+    if spec.badge:
+        width += round(draw.textlength(spec.badge, font=font)) + BADGE_GAP
+    return width
+
+
+def check_headline(spec: Comparison) -> int:
+    """Return the headline's width, refusing one wider than the frame.
+
+    The headline shares the left edge of the panels below it, and the three
+    arrangement centres those, so its room is whatever that centring leaves -
+    a good deal less than the four arrangement's fixed page margin. Nothing
+    else measures text, so without this a title simply runs off the canvas and
+    only a rendered still shows it.
+    """
+    geometry = spec.geometry()
+    room = geometry["right_edge"] - geometry["margin"]
+    width = headline_width(spec)
+    if width > room:
+        raise ValueError(
+            f"{spec.profile}: the headline is {width}px wide but only "
+            f"{room}px is free between the margins; shorten it by "
+            f"{width - room}px")
+    return width
+
+
 def layout(spec: Comparison) -> dict:
     """The layout as plain data, for the muxing stage and for review."""
     rects = spec.rects()
     return {
         "profile": str(spec.profile),
         "headline": " ".join(x for x in (spec.badge, spec.title) if x),
+        "headline_width": check_headline(spec),
         "canvas": {"width": CANVAS[0], "height": CANVAS[1]},
         "geometry": spec.geometry(),
         "picture_start": round(spec.picture_start, 6),
@@ -438,6 +613,7 @@ def layout(spec: Comparison) -> dict:
                          "width": rects[panel.key][2],
                          "height": rects[panel.key][3]},
                 "spec": list(panel.spec),
+                "resize": panel.resize,
                 "footage": str(panel.path) if panel.path else None,
                 "source_start": round(panel.source_start, 6),
                 "timeline_start": round(spec.picture_start - panel.lead, 6),
@@ -464,11 +640,13 @@ def render(spec: Comparison, *, transparent_windows: bool) -> Image.Image:
     a placeholder block, which is how a layout is reviewed before any footage
     exists.
     """
+    check_headline(spec)
     image = Image.new("RGBA", CANVAS, BG)
     draw = ImageDraw.Draw(image)
     font = _fonts()
+    margin = spec.geometry()["margin"]
 
-    headline_x = MARGIN
+    headline_x = margin
     if spec.badge:
         draw.text((headline_x, HEADLINE_BASELINE), spec.badge,
                   font=font["title"], fill=BADGE_FILL, anchor="ls")
@@ -477,7 +655,7 @@ def render(spec: Comparison, *, transparent_windows: bool) -> Image.Image:
     draw.text((headline_x, HEADLINE_BASELINE), spec.title, font=font["title"],
               fill=TITLE_FILL, anchor="ls")
     if spec.show_audio_note:
-        draw.text((MARGIN, spec.bottom_baseline), spec.audio_note,
+        draw.text((margin, spec.bottom_baseline), spec.audio_note,
                   font=font["note"], fill=NOTE_FILL, anchor="ls")
 
     rects = spec.rects()

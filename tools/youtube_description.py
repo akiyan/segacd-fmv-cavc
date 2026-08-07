@@ -181,6 +181,26 @@ def main(argv: list[str] | None = None) -> int:
                     f"{args.config}: [youtube] {name} is required for "
                     f"--kind {args.kind}")
             values[name] = value
+        # Where the master came from. The citation is a URL, so it sits in the
+        # English half only, on its own line: a URL with a sentence's full stop
+        # glued to it is one character away from being the wrong link. A
+        # profile with no [youtube] source_url keeps the plain sentence.
+        source_url = (profile.section("youtube") or {}).get("source_url", "")
+        # A master offered under a licence that asks for a credit carries that
+        # credit in both halves, because the notice is part of what the licence
+        # grants the film in return. Only the terms link is English-only, for
+        # the same reason every other URL is, and it likewise stands on its own
+        # line.
+        licence = profile.source_license
+        values["source_line"] = (
+            f"Source: {values['source_label']}."
+            + (f"\nSource video: {source_url}" if source_url else "")
+            + (f"\nLicense: {licence}"
+               f"\nLicense terms: {profile.source_license_url}"
+               if licence else ""))
+        values["source_line_ja"] = (
+            f"Source: {values['source_label_ja']}。"
+            + (f"\nLicense: {profile.source_license_ja}" if licence else ""))
         values.update(
             width=width, height=height, cols=cols, rows=rows,
             cells=cols * rows,

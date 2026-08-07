@@ -1,0 +1,4 @@
+interface:
+  display_name: "Region release"
+  short_description: "Build JP/US disc images, zip them, verify them, and draft a GitHub release"
+  default_prompt: "Use $regions to build this profile's Japanese and North American release discs, package and verify the zips, and create the draft GitHub release."

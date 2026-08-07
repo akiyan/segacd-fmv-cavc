@@ -546,6 +546,7 @@ overrides listed above can switch them off for isolation.
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
 | `MULTI_MENU` | 0 | Internal per-video module flag used by the separate `multi-disc` build; ordinary `disc` builds leave it zero. |
+| `SECURITY_REGION` | `jp` | Release region: the security code a console validates, the disc-header hardware type and region field, the Main IP entry offset, and the disc's own name. `jp` and `us` are release targets and both are NTSC; `eu` assembles for diagnostics only. `jp` keeps the unsuffixed `out/<profile>_release.iso`, another region adds `_<region>`. |
 
 Specialized builds compare the CRC-32 header-contract signature before playback.
 The identifying magic bytes are excluded from that signature. The
@@ -1104,6 +1105,7 @@ resident pool、segmented palette、Near、boot prefetch、4つの物理供給�
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
 | `MULTI_MENU` | 0 | 別ビルドの`multi-disc`が各動画moduleに内部指定するflag。通常の`disc` buildではzero。 |
+| `SECURITY_REGION` | `jp` | Release region。本体が検証するsecurity code、disc headerのhardware typeとregion field、Main IPのentry offset、discの名前を決める。`jp` と `us` がrelease対象でどちらもNTSC。`eu` は診断用にassembleできるだけ。`jp` はsuffix無しの `out/<profile>_release.iso` を使い、他のregionは `_<region>` を付ける。 |
 
 specialized buildはplayback前にCRC-32 header contract signatureを比較します。
 識別用magic byteはsignatureの対象外です。Resident Subの

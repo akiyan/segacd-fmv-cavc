@@ -319,10 +319,15 @@
 
 .text
 
+	/* The BIOS enters the IP here, at the region's security code, and that
+	   code falls through to this branch.  Both the code and the offset the
+	   branch target is padded to belong to the region, because the three
+	   security codes are 342, 1390 and 1412 bytes long. */
+	.include "disc_region.inc"
 	.incbin "security.bin"
 
 	bra.w	ip_entry
-	.org	0x584
+	.org	DISC_IP_ENTRY_OFFSET
 
 .global ip_entry
 ip_entry:

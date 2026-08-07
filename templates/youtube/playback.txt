@@ -2,7 +2,7 @@ I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec 
 
 Output: display mode H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) centered in the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} ({cram_segments} segments). Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
 
-Source: {source_label}.
+{source_line}
 
 What the encoder does. Tiles already resident in VRAM are reused whenever an exact or close-enough match is on hand, and those cost no CD delivery at all. A cell that cannot afford its exact pattern is pointed at a resident one for two bytes instead of a 32-byte pattern. New patterns come from one of several prefetch buffers in the console's spare RAM, each arriving by an exact per-frame deadline tied to the CD's own sector rate, so the picture never runs ahead of what the drive can physically deliver. Palettes are trained per segment.
 
@@ -18,7 +18,7 @@ Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Vide
 
 出力: display mode H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)を320x224 aperture中央へ配置。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは{cram_switches}回 ({cram_segments} segments)。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
 
-Source: {source_label_ja}。
+{source_line_ja}
 
 encoderの動作。VRAMに常駐しているtileは、完全一致か十分近いものがあれば再利用し、CD配送を一切使いません。正確なpatternを賄えないcellは、32 byteのpatternではなく2 byteで常駐patternへ向けます。新しいpatternは、本体の空きRAMに置いた複数の先読みbufferのいずれかから、CDのsector rateに結び付いたframeごとの正確な期限に届きます。そのため絵がdriveの物理的な配送能力を先回りすることはありません。paletteはsegmentごとに学習します。
 
