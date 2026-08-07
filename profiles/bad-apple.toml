@@ -31,6 +31,12 @@ cold_cap = 210
 [palette]
 algorithm = "mosaic-gm"
 
+[release]
+# Names the disc-image release on GitHub and inside each zip's README. The
+# figures beside it are read from the encode, so only the work's name is here.
+title = "Bad Apple!! — Sega CD disc images"
+title_ja = "Bad Apple!! — Sega CD ディスクイメージ"
+
 [analysis]
 # raw/ already holds the 320x224 H40 raster, so the Source panel is displayed
 # with the console's pixels rather than the master's square ones. Without this
