@@ -270,7 +270,7 @@ def build(args: argparse.Namespace) -> None:
             shutil.rmtree(child)
     _write_text_if_changed(
         disc_dir / "README.TXT",
-        "SCFMV multi-video menu build\n",
+        "CAVC FMV multi-video menu build\n",
     )
     shutil.copy2(menu_ip, disc_dir / "MENUIP.BIN")
     shutil.copy2(menu_word, disc_dir / "MENUSP.BIN")
@@ -288,7 +288,7 @@ def build(args: argparse.Namespace) -> None:
         iso_path.unlink()
     _run([
         iso_tool, "-iso-level", "1", "-G", str(boot_image), "-pad",
-        "-V", "SCFMV_MUL", "-o", str(iso_path), str(disc_dir),
+        "-V", "CAVC_FMV_MUL", "-o", str(iso_path), str(disc_dir),
     ], root)
     _write_text_if_changed(
         cue_path,

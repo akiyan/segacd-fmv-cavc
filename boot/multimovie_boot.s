@@ -4,7 +4,7 @@ DiscHeader:
 DiscType:
 	.ascii "SEGADISCSYSTEM  "
 VolumeName:
-	.asciz "SCFMV_MENU "
+	.asciz "CAVC_FMV   "
 VolumeSystem:
 	.word 0x0100, 0x0001
 SystemName:
@@ -36,13 +36,13 @@ HardwareType:
 Copyright:
 	.ascii "(C) AKIYAN 2026 "
 DomesticName:
-	.ascii "SCFMV MULTI VIDEO MENU"
-	.rept 26
+	.ascii "CAVC FMV MULTI VIDEO MENU"
+	.rept 23
 	.byte 0x20
 	.endr
 OverseasName:
-	.ascii "SCFMV MULTI VIDEO MENU"
-	.rept 26
+	.ascii "CAVC FMV MULTI VIDEO MENU"
+	.rept 23
 	.byte 0x20
 	.endr
 ProductCode:

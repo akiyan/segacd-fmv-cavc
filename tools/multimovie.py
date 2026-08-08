@@ -132,7 +132,7 @@ def load_manifest(path: str | Path) -> MenuManifest:
     if not isinstance(menu, dict):
         raise ValueError("menu manifest requires a [menu] table")
     title = _validate_ascii(
-        menu.get("title", "SCFMV VIDEO SELECT"), "menu.title", 38)
+        menu.get("title", "CAVC FMV VIDEO SELECT"), "menu.title", 38)
     subtitle = _validate_ascii(
         menu.get("subtitle", "SELECT A MOVIE"), "menu.subtitle", 38)
     output_stem = _validate_stem(
