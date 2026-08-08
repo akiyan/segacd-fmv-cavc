@@ -314,10 +314,12 @@ movieplay-internal: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 movieplay-module: check-tools moviepack $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin
 
 MENU_CONFIG ?=
+# The multi-video disc is a playback deliverable: its players always build as
+# release, so the target takes no DEBUG selection.
 multi-disc: check-tools
 	@test -n "$(MENU_CONFIG)" || (echo "MENU_CONFIG is required; for example: make multi-disc MENU_CONFIG=menus/menu.toml" >&2; exit 1)
 	$(PYTHON) tools/multimovie_build.py build \
-		--manifest "$(MENU_CONFIG)" --debug "$(DEBUG)" \
+		--manifest "$(MENU_CONFIG)" \
 		--security-region "$(SECURITY_REGION)" --marsdev "$(MARSDEV)" \
 		--m68k-prefix "$(M68K_PREFIX)" --python "$(PYTHON)" \
 		--mkisofs "$(MKISOFS)"

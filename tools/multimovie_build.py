@@ -203,17 +203,16 @@ def _assemble_menu(
 def build(args: argparse.Namespace) -> None:
     root = Path(__file__).resolve().parents[1]
     manifest = multimovie.load_manifest(args.manifest)
-    debug = int(args.debug)
-    if debug not in (0, 1):
-        raise ValueError("--debug must be 0 or 1")
+    # A multi-video disc is a playback deliverable: every selected player is
+    # always the release build, and the menu never carries a DEBUG HUD.
+    debug = 0
     output_stem = f"{manifest.output_stem}_multi"
-    suffix = "" if debug else "_release"
-    work_dir = root / "tmp" / f"{output_stem}{suffix}"
+    work_dir = root / "tmp" / output_stem
     build_dir = work_dir / "build"
     disc_dir = work_dir / "disc"
     out_dir = root / "out"
-    iso_path = out_dir / f"{output_stem}{suffix}.iso"
-    cue_path = out_dir / f"{output_stem}{suffix}.cue"
+    iso_path = out_dir / f"{output_stem}.iso"
+    cue_path = out_dir / f"{output_stem}.cue"
     build_dir.mkdir(parents=True, exist_ok=True)
     disc_dir.mkdir(parents=True, exist_ok=True)
 
@@ -306,7 +305,6 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("build", choices=("build",))
     parser.add_argument("--manifest", required=True, type=Path)
-    parser.add_argument("--debug", default="0")
     parser.add_argument("--security-region", default="jp")
     parser.add_argument("--marsdev", required=True)
     parser.add_argument("--m68k-prefix", required=True)

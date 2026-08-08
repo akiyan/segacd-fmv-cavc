@@ -331,17 +331,20 @@ manifest, then build the disc with:
 
 ```sh
 tools/python.sh tools/multimovie.py menus/multi-menu.toml --print-summary
-make multi-disc MENU_CONFIG=menus/multi-menu.toml DEBUG=1
+make multi-disc MENU_CONFIG=menus/multi-menu.toml
 ```
 
 The manifest uses `schema_version = 1`, a `[menu]` table, and one `[[videos]]`
 table per profile. Menu text is printable ASCII so the fixed bitmap font and
 the 40-column H40 name table have deterministic bounds. The sample manifest
-produces `out/cavc-demo_multi.iso` and `out/cavc-demo_multi.cue`; `DEBUG=0`
-uses the `_release` suffix. Each item is staged as its own four files:
-`V0000HDR.DAT`, `V0000BOD.DAT`, `V0000IP.BIN`, and `V0000SP.BIN`.
+produces `out/cavc-demo_multi.iso` and `out/cavc-demo_multi.cue`. Each item is
+staged as its own four files: `V0000HDR.DAT`, `V0000BOD.DAT`, `V0000IP.BIN`,
+and `V0000SP.BIN`.
 
-The menu itself has no DEBUG HUD. Up/Down selects an item, A plays it and
+The multi-video disc is a playback deliverable: every selected player is
+always the release build, and the menu has no DEBUG HUD, so the target takes
+no `DEBUG` selection. Debug work happens on single-video discs.
+Up/Down selects an item, A plays it and
 returns to the menu, and C plays it continuously until reset. The selected
 player remains the normal profile-specialized player, so the ordinary
 single-video `make disc` path and its PrgBuf capacity are unchanged. The menu
@@ -765,16 +768,18 @@ public timeline、Gist、upload stageは対話的に実行します。
 
 ```sh
 tools/python.sh tools/multimovie.py menus/multi-menu.toml --print-summary
-make multi-disc MENU_CONFIG=menus/multi-menu.toml DEBUG=1
+make multi-disc MENU_CONFIG=menus/multi-menu.toml
 ```
 
 Manifestは`schema_version = 1`、`[menu]` table、各profileに1つの`[[videos]]` tableを
 使います。menu textはprintable ASCIIに限定し、fixed bitmap fontと40-column H40 name tableの
 境界を決定的にします。sample manifestの出力は`out/cavc-demo_multi.iso`と
-`out/cavc-demo_multi.cue`です。`DEBUG=0`では`_release` suffixを使います。各itemは独立した
-4 file、`V0000HDR.DAT`、`V0000BOD.DAT`、`V0000IP.BIN`、`V0000SP.BIN`としてstageされます。
+`out/cavc-demo_multi.cue`です。各itemは独立した4 file、`V0000HDR.DAT`、`V0000BOD.DAT`、
+`V0000IP.BIN`、`V0000SP.BIN`としてstageされます。
 
-Menu自身にはDEBUG HUDがありません。Up/Downでitemを選び、Aは再生後menuへ戻り、Cはresetまで
+Multi-video discはplayback用の成果物です。選択される各playerは常にrelease buildで、
+menuにDEBUG HUDはなく、targetは`DEBUG`指定を受け取りません。debug作業は
+single-video discで行います。Up/Downでitemを選び、Aは再生後menuへ戻り、Cはresetまで
 連続再生します。選択したplayerは通常のprofile-specialized playerのままなので、通常の
 single-video `make disc` pathとPrgBuf容量は変わりません。Menuの常駐部品はPrgBuf外に
 置きます。menu stateと2つの小さなstubは`SP-GAP` reserveに、menu-return routineは
