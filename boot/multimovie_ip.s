@@ -32,7 +32,6 @@
 .equ JOY_C,          0x0020
 .equ JOY_A,          0x0040
 
-.equ MENU_PALETTE_ATTR, 0x2000
 .equ CMD_MENU_LOAD, 0x0052
 .equ STAT_MENU_READY, 0x8005
 .equ STAT_MENU_IP_READY, 0x8006
@@ -340,11 +339,9 @@ menu_rows:
 	add.w	d7, d6
 	cmp.w	#MENU_COUNT, d6
 	bhs.s	menu_rows_done
+	/* The selected row is marked only by the left `>` cursor; a palette-swap
+	   row highlight left the selected title unreadable. */
 	moveq	#0, d5
-	cmp.w	selected, d6
-	bne.s	1f
-	move.w	#MENU_PALETTE_ATTR, d5
-1:
 	move.w	d7, d0
 	addq.w	#3, d0				/* row */
 	move.w	d5, d1
