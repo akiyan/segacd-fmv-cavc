@@ -89,10 +89,12 @@ fix the build rather than the check.
 [`harness/regions/README.md`](../../../harness/regions/README.md) states what
 each check proves.
 
-Report honestly what the verification does not cover: a North American disc is
-checked at the byte level only. This repository has no North American Mega-CD
-BIOS and the hardware here is Japanese, so no North American disc in this
-project has been booted anywhere.
+Report honestly what each verification covers. The zip harness itself checks a
+North American disc at the byte level. When the user has supplied the
+git-ignored `original/us_scd1_9210.bin`, separately boot each US ISO with
+Genesis Plus GX and report that emulator evidence. The hardware here is still
+Japanese, so never present an emulator pass as North American real-hardware
+evidence.
 
 ## Stage 4: Publish
 
@@ -131,5 +133,6 @@ local zips, so the release is verified end to end.
 
 The release tag and URL, whether it is still a draft, and for each profile its
 zips with their sizes and the verification result. Name any profile whose
-playback is not qualified at this encoder/player version, and repeat that North
-American discs carry byte-level evidence only.
+playback is not qualified at this encoder/player version. For North American
+discs, distinguish the zip harness's byte-level result, any separate Genesis
+Plus GX boot result, and the absence of North American real-hardware evidence.

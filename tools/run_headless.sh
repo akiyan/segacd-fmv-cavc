@@ -56,8 +56,8 @@
 #                under vendor/gpgx-logvdp; no system-core fallback)
 #   BIOS_REGION jp or us; selects the staged BIOS filename and GPGX region
 #               (default: jp)
-#   BIOS_IMAGE  BIOS image for BIOS_REGION (default: jp_mcd2_9212.bin for jp;
-#               required for us)
+#   BIOS_IMAGE  BIOS image for BIOS_REGION (default: jp_mcd2_9212.bin for jp,
+#               us_scd1_9210.bin for us)
 #   SYSTEM_DIR  RetroArch system dir holding the selected BIOS (default:
 #               <repo>/tmp/retroarch-system). The BIOS is immutable, so every
 #               run shares this one read-only directory. Keep the path short:
@@ -200,7 +200,7 @@ case "$BIOS_REGION" in
     CORE_REGION="ntsc-j"
     ;;
   us)
-    DEFAULT_BIOS_IMAGE=""
+    DEFAULT_BIOS_IMAGE="$ROOT/original/us_scd1_9210.bin"
     BIOS_FILENAME="bios_CD_U.bin"
     CORE_REGION="ntsc-u"
     ;;
@@ -210,10 +210,6 @@ case "$BIOS_REGION" in
     ;;
 esac
 BIOS_IMAGE="${BIOS_IMAGE:-$DEFAULT_BIOS_IMAGE}"
-if [ -z "$BIOS_IMAGE" ]; then
-  echo "BIOS_IMAGE is required when BIOS_REGION=us" >&2
-  exit 2
-fi
 OUTDIR="${OUTDIR:-$ROOT/tmp/$DISC_STEM/record}"
 mkdir -p "$OUTDIR"
 RA_LOG="$OUTDIR/retroarch_${TAG}.log"
