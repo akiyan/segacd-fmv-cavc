@@ -267,7 +267,7 @@ fi
 CORE_SHA="$(sha256sum "$CORE" | awk '{print $1}')"
 echo "Core: $CORE sha256=$CORE_SHA"
 [ -f "$BIOS_IMAGE" ] || {
-  echo "Japanese Mega-CD BIOS not found: $BIOS_IMAGE (set BIOS_IMAGE=)" >&2
+  echo "Mega-CD BIOS not found for $BIOS_REGION: $BIOS_IMAGE (set BIOS_IMAGE=)" >&2
   exit 1
 }
 
@@ -314,10 +314,10 @@ BIOS_SHA="$(sha256sum "$BIOS_IMAGE" | awk '{print $1}')"
 # directory instead of each copying it into a private per-run path. Install it
 # atomically so a second run never observes a partially written image.
 install -d -m 700 "$SYSTEM_DIR"
-STAGED_BIOS="$SYSTEM_DIR/bios_CD_J.bin"
+STAGED_BIOS="$SYSTEM_DIR/$BIOS_FILENAME"
 if [ ! -f "$STAGED_BIOS" ] ||
    [ "$(sha256sum "$STAGED_BIOS" | awk '{print $1}')" != "$BIOS_SHA" ]; then
-  BIOS_TMP="$(mktemp "$SYSTEM_DIR/.bios_CD_J.bin.XXXXXX")"
+  BIOS_TMP="$(mktemp "$SYSTEM_DIR/.${BIOS_FILENAME}.XXXXXX")"
   install -m 600 "$BIOS_IMAGE" "$BIOS_TMP"
   mv -f "$BIOS_TMP" "$STAGED_BIOS"
 fi
@@ -364,7 +364,7 @@ video_vsync = "$VIDEO_VSYNC"
 video_scale = "2"
 video_smooth = "false"
 input_player1_start = "enter"
-genesis_plus_gx_region_detect = "ntsc-j"
+genesis_plus_gx_region_detect = "$CORE_REGION"
 genesis_plus_gx_bios = "enabled"
 EOF
 
