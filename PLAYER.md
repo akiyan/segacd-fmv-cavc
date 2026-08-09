@@ -259,19 +259,6 @@ differs.
 
 ### Startup
 
-Before `ip_entry`, the default build has the BIOS load the declared
-`0x48000`-byte Main IP from disc offset `0x200` into 256-KiB Word RAM. The
-first pass contains the selected region's byte-exact security code. The final
-32 KiB comes from `AIP.BIN` at disc offset `0x40200`, wraps onto the same
-Word-RAM destination, and differs from the original boot window only where the
-call to the BIOS licence screen is replaced by two NOPs. The BIOS validates
-the original copy and executes the post-wrap copy. `AIP.BIN` occupies LBA 24
-through 151, and `BODY.DAT` begins at LBA 152 or later. A profile with
-`[disc] skip_license_screen = false` instead declares the actual IP size,
-retains the ordinary BIOS call, and has no `AIP.BIN`. Either boot-only path
-finishes before player startup and is not part of the timed BODY delivery
-model.
-
 One `CMD_STREAM` command spans the complete startup. The BOOT_STAGE ownership
 exchange still uses `STAT_BOOT_STAGE` plus `COMCMD1`, because Main must copy
 palette, switch table, dictionary, and sidecar data before Sub reuses that physical bank.
@@ -707,16 +694,6 @@ Cadence-final VBlank中に、gridのcentered top-left cellからfinal cellまで
 以下のsequenceは15、24、30 fpsで同一で、cadenceだけが異なります。
 
 ### Startup
-
-`ip_entry`より前に、default buildではBIOSがdisc offset `0x200`から申告値`0x48000`
-byteのMain IPを256 KiB Word RAMへloadします。最初の周には選択regionのbyte一致
-security codeが入ります。最後の32 KiBはdisc offset `0x40200`の`AIP.BIN`から読み、
-同じWord-RAM destinationへwrapして元のboot windowに上書きします。異なるのはBIOS
-license画面の呼び出しを2個のNOPへ置換した場所だけです。BIOSは元のcopyを検証し、
-wrap後のcopyを実行します。`AIP.BIN`はLBA 24から151を占有し、`BODY.DAT`はLBA 152
-以降から始まります。profileに `[disc] skip_license_screen = false` を指定した場合は、
-実際のIP sizeを申告して通常のBIOS callを残し、`AIP.BIN`を入れません。どちらのboot
-専用readもplayer startup前に完了し、timed BODY delivery modelには含まれません。
 
 1個の`CMD_STREAM` commandがstartup全体を通してassertされたままです。
 BOOT_STAGEのownership交換には引き続き`STAT_BOOT_STAGE`と`COMCMD1`を使います。

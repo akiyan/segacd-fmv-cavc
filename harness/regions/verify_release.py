@@ -10,16 +10,12 @@ Per zip:
 2. the cue sheet's FILE line names the ISO packed beside it;
 3. the ISO is a Sega CD disc (`SEGADISCSYSTEM` at offset 0);
 4. the disc header's hardware type and region field are the region's;
-5. the boot area carries that region's security code, once, byte for byte;
-6. the disc uses one valid BIOS-screen mode: either the default
-   post-validation Word-RAM-wrap copy changes only the licence-screen call and
-   BODY.DAT follows its fixed AIP.BIN extent, or the profile-requested ordinary
-   boot declares its actual IP size and has no AIP.BIN.
+5. the boot area carries that region's security code, once, byte for byte.
 
 Across two regions of one profile:
 
-7. HEADER.DAT and BODY.DAT are byte-identical, which is the proof that the
-   regions differ only in boot data and that both discs play the same
+6. HEADER.DAT and BODY.DAT are byte-identical, which is the proof that the
+   regions differ only in the boot area and that both discs play the same
    encode.
 
 Usage::
@@ -42,7 +38,6 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT / "tools"))
 
 import disc_region  # noqa: E402
-import security_boot  # noqa: E402
 
 BOOT_AREA_BYTES = 32768
 SECTOR_BYTES = 2048
@@ -163,17 +158,6 @@ def check_security_code(boot: bytes, asset: Zip) -> None:
                 f"{occurrences} time(s) in the boot area, expected {wanted}")
 
 
-def check_post_validation_boot(image: bytes, asset: Zip) -> str:
-    security = (PROJECT_ROOT / "boot" /
-                f"sec_{asset.region.code}.bin").read_bytes()
-    try:
-        mode, _body = security_boot.verify_image_mode(
-            image, security, asset.region.code)
-    except ValueError as exc:
-        raise CheckFailed(f"{asset.path.name}: {exc}") from exc
-    return mode
-
-
 def iso_files(image: bytes) -> dict[str, bytes]:
     """Read the ISO 9660 root directory and return each file's contents.
 
@@ -245,7 +229,6 @@ def verify(paths: list[Path]) -> int:
                 image = archive.read(f"{asset.disc_stem}.iso")
             check_disc_header(image[:BOOT_AREA_BYTES], asset)
             check_security_code(image[:BOOT_AREA_BYTES], asset)
-            screen_mode = check_post_validation_boot(image, asset)
             files = iso_files(image)
             by_stem[asset.stem].append((asset, files))
         except CheckFailed as exc:
@@ -254,8 +237,7 @@ def verify(paths: list[Path]) -> int:
             continue
         checks += 1
         print(f"PASS {path.name}: {asset.region.name_en}, "
-              f"{len(image) / (1024 * 1024):.1f} MiB image, "
-              f"BIOS screen {screen_mode}", flush=True)
+              f"{len(image) / (1024 * 1024):.1f} MiB image", flush=True)
 
     for stem, assets in sorted(by_stem.items()):
         if len(assets) < 2:

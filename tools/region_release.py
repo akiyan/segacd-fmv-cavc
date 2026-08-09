@@ -245,9 +245,6 @@ def readme_text(
         f"Video       : {width}x{height} {fit} the {APERTURE} H40 screen, "
         f"{fps} fps",
         f"Audio       : {AUDIO_FORMAT_EN}",
-        "BIOS screen : " + (
-            "skipped after security validation"
-            if profile.skip_license_screen else "shown"),
         f"Build       : encoder {encoder}, player {player}, "
         f"packaged {build_date}",
     ]
@@ -289,9 +286,6 @@ def readme_text(
         f"映像          : {width}x{height}、{APERTURE} の H40 画面"
         f"{fit_ja}、{fps} fps",
         f"音声          : {AUDIO_FORMAT_JA}",
-        "BIOS 画面     : " + (
-            "セキュリティ確認後に省略"
-            if profile.skip_license_screen else "表示"),
         f"ビルド        : encoder {encoder}、player {player}、"
         f"パッケージ {build_date}",
     ]
@@ -449,9 +443,6 @@ def release_notes(
             f"- Video: {width}x{height} {fit} the {APERTURE} H40 screen, "
             f"{fps} fps",
             f"- Audio: {AUDIO_FORMAT_EN}",
-            "- BIOS screen: " + (
-                "skipped after security validation"
-                if profile.skip_license_screen else "shown"),
         ]
         if profile.source_label:
             source = profile.source_label

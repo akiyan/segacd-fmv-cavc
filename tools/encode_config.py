@@ -115,9 +115,6 @@ ALLOWED = {
     # Disc-image release metadata, for the same reason as [youtube]: naming a
     # release must not change the encode identity.
     "release": {"title", "title_ja"},
-    # Disc construction only. Keep this outside ENV_MAP so changing the BIOS
-    # presentation cannot invalidate or duplicate the encoded movie cache.
-    "disc": {"skip_license_screen"},
     # Comparison-video composition: which footage fills each panel, how the
     # panels are synchronised, and the text drawn on the frame. Also outside
     # ENV_MAP, for the same reason as [youtube] - retiming a panel or editing a
@@ -294,12 +291,6 @@ class EncodeProfile:
         return (self.data.get("release", {}).get("title_ja")
                 or self.release_title)
 
-    @property
-    def skip_license_screen(self) -> bool:
-        """Skip the BIOS licence screen after its security check by default."""
-
-        return self.data.get("disc", {}).get("skip_license_screen", True)
-
 
 def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
     profile_path = Path(path).expanduser().resolve()
@@ -426,13 +417,6 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         if "\n" in title:
             raise ValueError(
                 f"{profile_path}: release.{key} must be a single line")
-    disc = data.get("disc", {})
-    if not isinstance(disc, dict):
-        raise ValueError(f"{profile_path}: [disc] must be a table")
-    if ("skip_license_screen" in disc
-            and not isinstance(disc["skip_license_screen"], bool)):
-        raise ValueError(
-            f"{profile_path}: disc.skip_license_screen must be a boolean")
     preprocess = data["source"].get("preprocess", {})
     if not isinstance(preprocess, dict):
         raise ValueError(f"{profile_path}: [source.preprocess] must be a table")
@@ -590,7 +574,6 @@ def main() -> None:
     output.add_argument("--print-stem", action="store_true")
     output.add_argument("--print-sim-output", action="store_true")
     output.add_argument("--print-artifacts", action="store_true")
-    output.add_argument("--print-skip-license-screen", action="store_true")
     args = parser.parse_args()
     try:
         profile = load_profile(args.config)
@@ -602,8 +585,6 @@ def main() -> None:
         print(profile.artifact_stem)
     elif args.print_sim_output:
         print(profile.output_dir)
-    elif args.print_skip_license_screen:
-        print("1" if profile.skip_license_screen else "0")
     elif args.print_artifacts:
         print(json.dumps({
             "stem": profile.artifact_stem,
@@ -617,7 +598,6 @@ def main() -> None:
             "cue": str(profile.disc_cue),
             "release_iso": str(profile.release_disc_iso),
             "release_cue": str(profile.release_disc_cue),
-            "skip_license_screen": profile.skip_license_screen,
             "analysis_title": profile.analysis_title,
             "playback_title": profile.playback_title,
         }, indent=2, sort_keys=True))

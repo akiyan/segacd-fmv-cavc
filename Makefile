@@ -31,13 +31,8 @@ CONFIG_STEM := $(shell $(PYTHON) tools/encode_config.py "$(CONFIG)" --print-stem
 ifeq ($(strip $(CONFIG_STEM)),)
 $(error invalid CONFIG: $(CONFIG))
 endif
-SKIP_LICENSE_SCREEN := $(shell $(PYTHON) tools/encode_config.py "$(CONFIG)" --print-skip-license-screen)
-ifneq ($(filter 0 1,$(SKIP_LICENSE_SCREEN)),$(SKIP_LICENSE_SCREEN))
-$(error invalid disc.skip_license_screen in CONFIG: $(CONFIG))
-endif
 else
 CONFIG_STEM := movieplay
-SKIP_LICENSE_SCREEN := 1
 endif
 
 MOVIEPLAY_STREAM_DIR := $(OUT_DIR)/$(CONFIG_STEM)
@@ -67,7 +62,6 @@ SP_EXTENSION_CONSTANTS := $(MOVIEPLAY_BUILD_DIR)/sp_extension.inc
 MOVIEPLAY_SECURITY := $(MOVIEPLAY_BUILD_DIR)/security.bin
 MOVIEPLAY_REGION_INC := $(MOVIEPLAY_BUILD_DIR)/disc_region.inc
 MOVIEPLAY_DEBUG_FONT := $(MOVIEPLAY_BUILD_DIR)/dbgfont.bin
-MOVIEPLAY_ALT_IP := $(MOVIEPLAY_DISC)/AIP.BIN
 
 MARSDEV ?= $(HOME)/toolchains/mars
 M68K_PREFIX ?= $(MARSDEV)/m68k-elf/bin/m68k-elf-
@@ -395,7 +389,7 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o
 		fi
 
 $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin $(BOOT_DIR)/movieplay_boot.s $(MOVIEPLAY_REGION_INC)
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(SKIP_LICENSE_SCREEN)),--defsym SKIP_LICENSE_SCREEN=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $(BOOT_DIR)/movieplay_boot.s -o $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out
+	$(AS) $(ASFLAGS) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $(BOOT_DIR)/movieplay_boot.s -o $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out
 	$(OBJCOPY) -O binary $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.out $@
 	@bytes=$$(wc -c < $@); \
 		if [ "$$bytes" -ne 32768 ]; then \
@@ -404,31 +398,14 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.b
 			exit 1; \
 		fi
 
-$(MOVIEPLAY_ISO): $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT tools/security_boot.py | movieplay-setup
-	@rm -rf $(MOVIEPLAY_DISC)
+$(MOVIEPLAY_ISO): $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT | movieplay-setup
 	@mkdir -p $(MOVIEPLAY_DISC)
 	@printf "delta stream phase B2\n" > $(MOVIEPLAY_DISC)/README.TXT
-ifeq ($(SKIP_LICENSE_SCREEN),1)
-	$(PYTHON) tools/security_boot.py stage --region "$(SECURITY_REGION)" \
-		--boot "$(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin" \
-		--ip "$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin" \
-		--security "$(MOVIEPLAY_SECURITY)" --output "$(MOVIEPLAY_ALT_IP)"
-endif
+	@rm -f $(MOVIEPLAY_DISC)/MOVIE.DAT $(MOVIEPLAY_DISC)/HEADER.DAT $(MOVIEPLAY_DISC)/BODY.DAT
 	cp $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_DISC)/HEADER.DAT
 	cp $(MOVIEPLAY_STREAM_DIR)/BODY.DAT $(MOVIEPLAY_DISC)/BODY.DAT
 	@rm -f $@ $(MOVIEPLAY_CUE)
 	$(MKISOFS) -iso-level 1 -G $< -pad -V "SCFMV_DLT" -o $@ $(MOVIEPLAY_DISC)
-ifeq ($(SKIP_LICENSE_SCREEN),1)
-	$(PYTHON) tools/security_boot.py verify --region "$(SECURITY_REGION)" \
-		--iso "$@" --boot "$(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin" \
-		--ip "$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin" \
-		--security "$(MOVIEPLAY_SECURITY)"
-else
-	$(PYTHON) tools/security_boot.py verify-original --region "$(SECURITY_REGION)" \
-		--iso "$@" --boot "$(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin" \
-		--ip "$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin" \
-		--security "$(MOVIEPLAY_SECURITY)"
-endif
 
 $(MOVIEPLAY_CUE): $(MOVIEPLAY_ISO)
 	@rm -f $@

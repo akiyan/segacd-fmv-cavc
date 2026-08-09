@@ -501,7 +501,6 @@ tmp/<profile>/
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
-| `[disc]` | optional `skip_license_screen` | Disc-only BIOS presentation. Omission or `true` keeps the region's validated security bytes but skips the following licence screen; `false` uses the ordinary screen and omits the alternate boot file. This does not change the encode or sim-cache identity. |
 
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
 the output raster while preserving displayed aspect and may discard outer
@@ -546,7 +545,7 @@ overrides listed above can switch them off for isolation.
 | `MAIN_CODEGEN` | 1 | Generate specialized bitmap handlers. Zero selects the reference bit loop. |
 | `PLAYER_SPECIALIZE` | 1 | Bake generated header/profile constants into both player objects. Zero selects runtime header reads. |
 | `DEBUG` | 1 in recording tools | Display the values-only HUD. Set release explicitly when required. |
-| `SECURITY_REGION` | `jp` | Release region: the byte-exact security code a console validates, the disc-header hardware type and region field, the Main IP entry offset, and the disc's own name. The default single-video boot keeps that code unchanged and skips its licence-screen call only in the post-validation Word-RAM-wrap copy; `[disc] skip_license_screen = false` retains the ordinary call. `jp` and `us` are release targets and both are NTSC; `eu` assembles for diagnostics only. `jp` keeps the unsuffixed `out/<profile>_release.iso`, another region adds `_<region>`. |
+| `SECURITY_REGION` | `jp` | Release region: the security code a console validates, the disc-header hardware type and region field, the Main IP entry offset, and the disc's own name. `jp` and `us` are release targets and both are NTSC; `eu` assembles for diagnostics only. `jp` keeps the unsuffixed `out/<profile>_release.iso`, another region adds `_<region>`. |
 
 Specialized builds compare the CRC-32 header-contract signature before playback.
 The identifying magic bytes are excluded from that signature. The
@@ -1042,7 +1041,6 @@ tmp/<profile>/
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
-| `[disc]` | optional `skip_license_screen` | disc組み立てだけのBIOS表示設定。省略または`true`ではregionのsecurity byteをそのまま検証させ、続くlicense画面をskipする。`false`では通常画面を使い、alternate boot fileを省く。encodeおよびsim cacheのidentityは変えない。 |
 
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
 保ってoutput rasterを埋めるため、source外周を捨てる場合があります。
@@ -1082,7 +1080,7 @@ resident pool、segmented palette、Near、boot prefetch、4つの物理供給�
 | `MAIN_CODEGEN` | 1 | specialized bitmap handlerを生成する。zeroはreference bit loop。 |
 | `PLAYER_SPECIALIZE` | 1 | 生成済みheader/profile constantを両player objectへ埋め込む。zeroはruntime header read。 |
 | `DEBUG` | recording toolでは1 | values-only HUDを表示する。必要なときだけreleaseを明示する。 |
-| `SECURITY_REGION` | `jp` | Release region。本体がbyte一致で検証するsecurity code、disc headerのhardware typeとregion field、Main IPのentry offset、discの名前を決める。defaultの単一動画bootはそのcodeを変更せず、検証後のWord-RAM-wrap copyだけでlicense画面呼び出しをskipする。`[disc] skip_license_screen = false` では通常のcallを残す。`jp` と `us` がrelease対象でどちらもNTSC。`eu` は診断用にassembleできるだけ。`jp` はsuffix無しの `out/<profile>_release.iso` を使い、他のregionは `_<region>` を付ける。 |
+| `SECURITY_REGION` | `jp` | Release region。本体が検証するsecurity code、disc headerのhardware typeとregion field、Main IPのentry offset、discの名前を決める。`jp` と `us` がrelease対象でどちらもNTSC。`eu` は診断用にassembleできるだけ。`jp` はsuffix無しの `out/<profile>_release.iso` を使い、他のregionは `_<region>` を付ける。 |
 
 specialized buildはplayback前にCRC-32 header contract signatureを比較します。
 識別用magic byteはsignatureの対象外です。Resident Subの

@@ -334,20 +334,10 @@ out/PROFILE_release.iso     + .cue   Japan
 out/PROFILE_us_release.iso  + .cue   North America
 ```
 
-A region is a boot-only difference and nothing else: `HEADER.DAT` and
+A region is a boot-area difference and nothing else: `HEADER.DAT` and
 `BODY.DAT` are byte-identical across regions, so both discs play the same
 encode. Regions of one profile share an output-stem lock, so build them one
 after another.
-
-By default, every single-video disc keeps the selected region's security code
-byte-exact at disc offset `0x200`, where the BIOS validates it, and skips the
-following licence screen. The declared 288-KiB Main IP load wraps once through
-256-KiB Word RAM and finishes with a 32-KiB copy from `AIP.BIN`. That copy is
-identical to the executable boot window except that the BIOS licence-screen
-call is replaced by two NOPs. `AIP.BIN` adds 256 KiB to the ISO and is
-boot-only; it consumes no playback buffer. Set
-`[disc] skip_license_screen = false` in the profile to retain the ordinary BIOS
-screen; that build declares the actual IP size and omits `AIP.BIN` entirely.
 
 Package and publish the discs. `--config` is repeatable, and every profile
 named goes on one release:
@@ -748,17 +738,9 @@ out/PROFILE_release.iso     + .cue   日本
 out/PROFILE_us_release.iso  + .cue   北米
 ```
 
-regionの差はboot専用dataだけです。`HEADER.DAT` と `BODY.DAT` はregion間でbyte一致するので、
+regionの差はboot領域だけです。`HEADER.DAT` と `BODY.DAT` はregion間でbyte一致するので、
 どちらのdiscも同じencodeを再生します。同一profileのregionはoutput stem lockを共有する
 ため、直列にbuildします。
-
-単一動画discはdefaultで、選択regionのsecurity codeをdisc offset `0x200`にbyte一致の
-まま置いてBIOSに照合させ、その後のlicense画面をskipします。申告するMain IP loadは
-288 KiBで、256 KiBのWord RAMを1周wrapした後、`AIP.BIN`から最後の32 KiBを同じ位置へ
-上書きします。このcopyは実行boot windowと同一ですが、BIOSのlicense画面呼び出しだけを
-2個のNOPへ置換します。`AIP.BIN`によるISO増加は256 KiBで、boot専用のためplayback
-bufferは消費しません。profileに `[disc] skip_license_screen = false` を指定すると通常の
-BIOS画面を残します。そのbuildは実際のIP sizeを申告し、`AIP.BIN`を完全に省きます。
 
 discをpackageして公開します。`--config` は繰り返し渡せて、渡したprofileはすべて
 1つのreleaseに載ります。
