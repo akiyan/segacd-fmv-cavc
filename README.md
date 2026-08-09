@@ -248,10 +248,12 @@ Check the toolchain and ISO writer:
 make check-tools CONFIG=profiles/PROFILE.toml
 ```
 
-The Japanese Mega-CD BIOS is user-supplied and git-ignored:
+The region BIOS images are user-supplied and git-ignored. Japan is the default;
+set `BIOS_REGION=us` to use the North American image:
 
 ```sh
 test -f original/jp_mcd2_9212.bin
+test -f original/us_scd1_9210.bin
 ```
 
 Build the managed Genesis Plus GX diagnostic core once:
@@ -652,10 +654,12 @@ toolchainとISO writerを確認します。
 make check-tools CONFIG=profiles/PROFILE.toml
 ```
 
-Japanese Mega-CD BIOSはuser suppliedかつgit-ignoredです。
+region別BIOS imageはuser suppliedかつgit-ignoredです。defaultは日本で、北米imageを
+使うときは `BIOS_REGION=us` を指定します。
 
 ```sh
 test -f original/jp_mcd2_9212.bin
+test -f original/us_scd1_9210.bin
 ```
 
 managed Genesis Plus GX diagnostic coreを一度buildします。

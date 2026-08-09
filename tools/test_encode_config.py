@@ -141,7 +141,7 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 "lunar-ss-op.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
-                "ps2-sakura-op.toml",
+                "sakura-taisen-3-op.toml",
                 "sonic-jam-ed-good.toml",
                 "sonic-jam-op.toml",
                 "tears-of-steel.toml",
