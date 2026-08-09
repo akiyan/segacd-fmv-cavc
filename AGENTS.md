@@ -12,6 +12,23 @@ back toward the old game-specific port unless the user explicitly asks for it.
 - The priority is that the explanation is understandable, not that it uses the
   most formal vocabulary.
 
+## Result Reporting
+
+Starvation and Miss are designed-in outcomes of a fixed CD 1x budget, not
+defects. Reporting them by default turns every ordinary encode into a false
+alarm.
+
+- Do not report the starved-frame count or percentage in a routine result. It
+  counts any frame that left even one cell unserved, so a demanding source
+  reads as 98% while looking correct. Keep allowing starvation rather than
+  shrinking the raster to suppress it.
+- Report Miss volume only when the work is codec tuning - comparing encoder
+  settings, thresholds, priorities, or a quality regression. Then give the
+  per-frame Miss distribution beside the request volume, because Miss alone
+  says nothing without knowing how much was asked for.
+- Both remain in the analysis overlay, the timeline image, and the TSV. They
+  stay available for anyone who looks; they just do not lead a delivery report.
+
 ## Chat Media Links
 
 - In Codex chat responses, never use inline embedding syntax for video or
