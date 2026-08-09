@@ -23,7 +23,17 @@ SystemVersion:
 IP_Addr:
 	.long 0x00000800
 IP_Size:
+	.ifdef SKIP_LICENSE_SCREEN
+	/* Keep the validated IP at disc +0x200 unchanged, then load through one
+	   complete 256-KiB Word-RAM wrap.  The final 32 KiB comes from AIP.BIN
+	   at disc +0x40200 and replaces only the executable copy; its BIOS
+	   licence-screen call is NOPed by tools/security_boot.py. */
+	.long 0x00048000
+	.else
+	/* Profile override: use the ordinary BIOS flow and display the original
+	   region security program's licence screen before entering the player. */
 	.long IPEnd-IPStart
+	.endif
 IP_Entry:
 	.long 0x00000000
 IP_WorkRAM:

@@ -37,18 +37,24 @@ Per zip:
    codes at all. This is the check that catches a build that switched
    `SECURITY_REGION` but reused the previous region's copied inputs, which is
    otherwise invisible until a console rejects the disc.
+7. **The post-validation boot mode.** The default skip build declares a
+   `0x48000`-byte IP load, places `AIP.BIN` at LBA 24 through 151, starts
+   `BODY.DAT` at LBA 152 or later, and changes only the region-specific
+   licence-screen call in the wrapped 32-KiB copy. A profile-requested ordinary
+   build instead declares its actual IP size, retains that call, and contains
+   no `AIP.BIN`.
 
 Across the regions of one profile:
 
-7. **The stream.** `HEADER.DAT` and `BODY.DAT` are byte-identical between
-   regions. That is the proof that a region is a boot-area difference and
+8. **The stream.** `HEADER.DAT` and `BODY.DAT` are byte-identical between
+   regions. That is the proof that a region is a boot-only difference and
    nothing else, and that both discs play the same encode.
 
 ## Why it reads the ISO itself
 
 Two details are easy to get wrong by comparing files instead of contents.
 
-- **Whole-image comparison does not work for check 7.** `mkisofs` stamps
+- **Whole-image comparison does not work for check 8.** `mkisofs` stamps
   creation timestamps into the primary volume descriptor, so two images built
   a second apart differ outside the boot area no matter what the payload is.
   The script walks the ISO 9660 root directory and hashes the two stream files

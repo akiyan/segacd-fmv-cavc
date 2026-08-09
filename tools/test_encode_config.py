@@ -46,6 +46,55 @@ algorithm = "mosaic-gm"
 
 
 class EncodeProfileArtifactTests(unittest.TestCase):
+    def test_license_screen_skip_defaults_on(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "default-disc.toml"
+            path.write_text(PROFILE)
+            profile = load_profile(path)
+        self.assertTrue(profile.skip_license_screen)
+
+    def test_license_screen_can_be_enabled_by_profile(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "show-license.toml"
+            path.write_text(
+                PROFILE + "\n[disc]\nskip_license_screen = false\n")
+            profile = load_profile(path)
+        self.assertFalse(profile.skip_license_screen)
+
+    def test_license_screen_option_must_be_boolean(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "bad-disc.toml"
+            path.write_text(
+                PROFILE + '\n[disc]\nskip_license_screen = "false"\n')
+            with self.assertRaisesRegex(
+                    ValueError, "disc.skip_license_screen must be a boolean"):
+                load_profile(path)
+
+    def test_cli_prints_license_screen_mode(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as tmp:
+            default_path = Path(tmp) / "default.toml"
+            display_path = Path(tmp) / "display.toml"
+            default_path.write_text(PROFILE)
+            display_path.write_text(
+                PROFILE + "\n[disc]\nskip_license_screen = false\n")
+            values = []
+            for path in (default_path, display_path):
+                result = subprocess.run(
+                    [
+                        str(root / "tools" / "python.sh"),
+                        str(root / "tools" / "encode_config.py"),
+                        str(path),
+                        "--print-skip-license-screen",
+                    ],
+                    cwd=root,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                values.append(result.stdout.strip())
+        self.assertEqual(values, ["1", "0"])
+
     def test_removed_schema_v4_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old-schema.toml"
