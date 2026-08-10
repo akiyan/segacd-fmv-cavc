@@ -11,14 +11,23 @@ sar = "1:1"
 audio_filter = "aformat=channel_layouts=mono,volume=13.6dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
 
 [video]
+# Letterbox raster sized to the picture, machi-op style: the grid is the
+# picture, so the aperture's black bars are never encoded and the player
+# centers the grid inside the 320x224 screen.
+#
+# The master's picture is a fixed 640x376 letterbox, which lands on 320x172
+# after HAR 32:35 - 21.5 tile rows, so the top and bottom rows would each be
+# half black and half picture. Taking 4 more source rows off each edge gives
+# 640x368, still perfectly symmetric at 56/56, and that maps to exactly 21
+# tile rows. The displayed aspect moves by 0.14%, under one pixel.
 width = 320
-height = 224
+height = 168
 fit = "pad"
-master_filter = "setsar=1,crop=640:376:0:52,scale=1280:752:flags=lanczos,hqdn3d=6:6:8:8,gblur=sigma=1.6,scale=320:172:flags=lanczos,pad=320:224:0:26:color=black,setsar=1"
-raw_filter = "setsar=1,crop=640:376:0:52,scale=320:172:flags=lanczos,pad=320:224:0:26:color=black,setsar=1"
+master_filter = "setsar=1,crop=640:368:0:56,scale=1280:736:flags=lanczos,hqdn3d=6:6:8:8,gblur=sigma=1.6,scale=320:168:flags=lanczos,setsar=1"
+raw_filter = "setsar=1,crop=640:368:0:56,scale=320:168:flags=lanczos,setsar=1"
 
 [output]
-directory = "tmpfs/sakura-taisen-3-op_H40_320x224_adpcm22/sim"
+directory = "tmpfs/sakura-taisen-3-op_H40_320x168_adpcm22/sim"
 reuse = false
 emit_decisions = true
 
@@ -29,11 +38,10 @@ cold_cap = 200
 algorithm = "mosaic-gm"
 
 [analysis]
-# raw/ already holds the encode's own 320x224 raster, so the Source panel is
+# raw/ already holds the encode's own 320x168 raster, so the Source panel is
 # displayed with the console's pixels rather than the master's square ones.
-# Without this the panel is drawn at 320/224 = 1.4286 instead of the 1.3061
-# the hardware shows. The letterbox bars the picture sits between are part of
-# that raster, so the panel shows them too - that is what the console outputs.
+# The canvas is the whole aperture, so the letterbox bars the player centres
+# the grid inside are shown too - that is what the hardware puts on screen.
 source_canvas = [320, 224]
 source_par = [32, 35]
 # Still, silent seconds held after the picture ends, so YouTube's end screen
@@ -41,8 +49,8 @@ source_par = [32, 35]
 tail_seconds = 5.0
 
 [youtube]
-analysis_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×224) Visual Analysis & Encoding Breakdown"
-playback_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×224) in Genesis Plus GX"
+analysis_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×168) Visual Analysis & Encoding Breakdown"
+playback_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×168) in Genesis Plus GX"
 # The master's own specification, not the encode's: a 4:3 capture whose picture
 # is a fixed 640x376 letterbox, carried at 59.94 fps. The encode displays every
 # second frame, which the title states as 30 FPS. Which console the capture came
