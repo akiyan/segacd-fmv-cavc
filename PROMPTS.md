@@ -82,6 +82,239 @@ constraints and cause rework. Rework is ad-hoc symptomatic treatment.
 too. After the pipeline is clean like that, let us add back a step that
 reduces run counts as "planned rework" in a set-localiy style.
 
+## 6. Making a principle absolute
+
+$new: Fold the universally usable parts of the earlier findings document into
+AGENTS.md (in English). Especially the "**schedules where the average fits
+but the deadline is missed**" part matters. In this project every cd1x moment
+is constant at every instant, and fitting by average is meaningless. That is
+the absolute premise. And
+
+## 7. Carrying in my own analysis
+
+When H40 Bad Apple at cold240 produced SLIP and the HUD gate FAILED, the
+following exchange happened.
+
+More like transfer volume crossing the boundary and waiting for the next
+VBlank than run fragmentation.
+At 30fps one frame can use 2 VBlanks, the first VBLANK and the next VBLANK.
+Can the first runs and CPU transfers run before the first VBLANK now? Or,
+depending on preprocessing, could the CPU and DMA runs skip the first VBLANK
+and get aggregated into the next VBLANK?
+
+[Quoted assistant reply from another session, abridged: preprocessing can
+miss V1 and push the whole cold transfer to V2, delaying flip to V3; but the
+first cold240 FAIL was not preprocessing delay — 240 patterns need 3,840
+words against the 3,400-word single-VBlank budget, whose theoretical ceiling
+is floor(3400/16) = 212 patterns.]
+
+From this, I want to consider transferring cold patterns split across 2
+VBLANKs (at 30fps). 4 VBLANKs at 15fps. Let me hear your thinking first.
+
+## 8. A crushed face
+
+In machi op F067D, the face of the person at upper left gets crushed and
+stays that way until the scene changes, which bothers me. The face at lower
+right moves, so it naturally becomes an update target and the crush resolves,
+but the upper left never changes, so the Near verdict keeps the crushed look
+until the scene change. I want to fix it by adjusting the cold priority logic
+or something. My guess: when cold target tiles are selected at the first
+appearance of this scene, they are measured by "tiles with large change,"
+but because of the scene change nearly everything is near maximum change. Or
+nearly tied. First, let us check why this face did not become cold. Bring
+the frame info from the current data and check. (No re-sim.)
+
+## 9. Dither edges, keep the dither
+
+Looking at BadApple's dither expression on real hardware, the boundary areas
+still bother me. Where the black-white boundary is clearly distinct, dark
+dots that look like dither use stick out into the bright side, and conversely
+bright dither-like dots stick out into the dark side, reading as jagged edges
+and noise at the boundary. I want to fix this. But I do not want to remove
+dither itself; wide gradient fills in particular look very coarsely stepped
+without dither. Reconciling both may be hard, but first, without editing
+files, give me ideas.
+
+## 10. White dots that are not in the source
+
+$new: In H40 Sonic there are frames where bright white dots appear that do
+not exist in the source video. The tile category is Raw, so they do not come
+from Near or Flbk. Could something be wrong in quantization?
+
+Frame 0x012B can be confirmed in both sim and real hardware. The source has
+no white dots.
+
+In coordinates counted from the upper left, the empty area at X=05 Y=2. Other
+tiles have them too.
+
+Frame 0x0232 shows it especially prominently.
+
+## 11. To split or not
+
+Whether to split or not is really tricky. If it is the active period between
+two VBLANKs, maybe it does not need a container? If split, things doable
+during the active period become undoable. What do you think?
+
+## 12. First report of the mystery noise
+
+Playing on real hardware, a mysterious noise keeps sounding constantly. But
+the ADPCM audio itself is audible. A real-hardware-specific PCM-RAM-not-
+cleared problem seems likely first. Create a gh issue to clear PCM-RAM at
+boot.
+
+## 13. Play it through
+
+Use the lossless MKV for lunar too. Copy it from tmps.
+Ignore the tears Japanese text.
+
+For all three, what I want is not a "still" grabbed at some nice-looking
+point, but the emu playback properly played through to the final stop (if the
+re-loop restart shows collapse or restart, cut just before that).
+Right now it feels stopped midway. Play it through.
+All three have Original and Real frames slightly misaligned left-right (not
+aligned). A proper 4:3 should align, so one of them is wrong.
+
+Also, title lunar's source as "Original Video" with no resolution or audio,
+FPS only.
+Make lunar's analysis-side Source specs FPS only too.
+If FPS is inserted automatically, make the format per-profile in TOML.
+
+Regenerate everything and upload. Skipping checks in videos is fine.
+
+## 14. From experiment to release
+
+Do not keep experiment modes. Adopt the exclusion of unneeded deep black.
+Make it the quantization default. /finish, take it into the release-build
+branch too, return to release prep work, /run SonicOP with the latest
+encoder, and build the release build disc as well. Name the release build
+disc cue and iso files with _release.
+
+## 15. Show me the progress
+
+That policy is fine. Proceed while reporting work status in Japanese step by
+step. Before cadence stabilizes is fine; I want to see what it looks like
+once scrolling works without screen collapse, so upload a recording and show
+me the progress. For iteration, use short (but not too short) clips around
+the scroll, as done with 29-scroll-reuse.
+
+## 16. Judged by eye
+
+I rewatched the non-cap video, and the gradation is out — the quality is
+obvious at a glance. No cap method.
+
+Do candidate-2 mixing. Candidate 1 also concerns me, but the tile-noise
+suppression effect from mosaic-gm palette sharing cannot be ignored.
+(Though making it a candidate may produce tile noise.)
+
+Cancel cap, upload a multi-candidate mixed video and show me.
+
+## 17. Those Misses cannot be right
+
+There are massive Misses during scrolling, but I do not think that is right?
+Also, the legend scrolls in tile units, but can you shift it properly by 5px?
+Add a new category Scrl:XXX next to Dic, no tile frame needed.
+Videos without scroll detection should not show Scrl:XXX or Scroll ---.
+
+## 18. Try vertical scroll detection
+
+/run H40 Lunar with dither, and Sonic OP too. Sonic OP has a scene where
+vertical scroll detection seems possible, but it is short so the outcome is
+unknown. Run it through either way; if detected, tell me. If not detected,
+tell me whether detection can be made possible (and what effects that would
+have).
+
+## 19. A dynamic-range hypothesis
+
+In SonicOP, blacker-than-source black dots appear from the beginning or
+throughout the video. This happened before, did it not? It occurs at
+analysis time, so is it a palette or quantization problem? Is dynamic range
+expansion kicking in? I traced the video but could not tell when it started.
+
+## 20. Contributors hygiene
+
+claude keeps remaining in the GitHub Contributors. I thought I removed
+auther-by-claude lines from the repository, but it stays. What should I do?
+I want to migrate to a fresh repository, but the issues are assets, so it is
+a dilemma.
+
+## 21. Judge by watching
+
+Feels like gradation decreased, but let us judge by watching the actual
+video. Make it a debug recording and upload.
+
+Since we assume this dithering, we may need to select palettes accordingly —
+let me try that later too. I feel too-close palette colors lower gradation
+expressiveness and should be fixed.
+
+## 22. Just fix them
+
+> Note: tools/test_encode_config.py has 3 pre-existing failures (tests not
+following the 1663→1743 resident pool change in commit 7a3aef0; unrelated to
+this change). I can fix them separately if needed.
+
+Fix them.
+
+## 23. Scenes the Mega CD never shows
+
+In both tears-of-steel analysis and recording, several scenes never show on
+the Mega CD side. "IN THE NEAR FUTRE" right after the video starts,
+"THIS SUMMER" around F065A. Fade in/out scenes, I wonder?
+
+## 24. Phrase it plainly
+
+"From one of the PRG-RAM ring, the two Word-RAM banks loaded at boot, or the
+512-entry dictionary" — nobody who does not know the codec understands this,
+so phrase it like "divided prefetch buffers" or so.
+
+## 25. Descriptions that stand alone
+
+Make the recording video's description self-contained as a standalone
+recording, referencing the other as complementary. Writing about analysis
+frames would be odd. Codec description and selling points are fine.
+https://www.youtube.com/watch?v=7LEBx-zyobg
+
+## 26. Drop that sentence
+
+"That is pure black, the edge of the Mega Drive color space. That entry is
+used for color reproduction only when the segment's own picture is at least
+3% black pixels, and dark halos in bright scenes settle to the darkest color
+the picture asks for." Drop this.
+
+## 27. A four-way comparison
+
+Build a new video playing four in parallel: emu recording, Source, SonicCD
+version, real recording. The frame template is below. Adjust from there.
+
+sonic-jam-op/comparison.svg
+
+## 28. Spec the spec lines
+
+Two lines are fine for the bottom descriptions of Staturn Original and SegaCD
+Ver. For Saturn, specs as accurate as the analysis video.
+For SegaCD ver, show both the full-screen resolution and the inner video
+resolution.
+
+## 29. Record the opening on real hardware
+
+I want to record the opening movie with G-6021.iso. Boot it with the
+existing real-hardware recording harness and fast-record, make a videos
+directory at the project root and put it there. It starts automatically after
+a while from boot.
+
+## 30. Go with the encoder fix
+
+1. Fix the encoder (recommended) — implement a feasibility gate at planning
+time, re-encode TOS as e187, verify other profiles' fade adoption is
+unchanged, then resume /run.
+
+Go with that.
+
+## 31. How to show scrolling
+
+In the current branch, when hardware scroll is working, I want the analysis
+video's legend area to express that scrolling is happening. What expression
+methods exist? Think of several and show me examples as images.
+
 ---
 
 <a id="jp"></a>
@@ -129,3 +362,207 @@ CD-Rを何度も焼きたくないので、情報を探すなどして正確性�
 ## 5. 想定外の手戻りはだめ
 
 いいと思います。後工程で制約を破ってしまい手戻りが起きるということがないパイプラインにリフレッシュしましょう。手戻り is 場当たりで対症療法です。「想定外の手戻り」はだめです。大きい仕事になりますが、利益も大きいです。そうしたクリーンなパイプラインになったあとで、「想定『内』の手戻り」としてrun数を削減する set-localiy 的な工程をまた入れましょう。
+
+## 6. 原則の言語化
+
+$new 先程の知見ドキュメントから普遍的に使えるものをAGENTS.md(英語)に盛り込んで。特に**「平均は合うが、期限には間に合わないschedule」の部分は重要。このプロジェクトにおいて全てのcd1x時間はすべての瞬間において一定で、平均で合わせに行くのは意味がない。これは絶対の前提。そし
+
+## 7. 自分の考察の持ち込み
+
+H40 Bad Apple を cold240 にしたとき、SLIPが発生して HUD gate がFAILになったあと、以下のやりとりがあった。
+
+run fragmentationより、転送量が境界を越えて次のVBlankを待った形
+30fpsだと1フレームの処理に2VBlankが使えて、最初のVBLANKと次のVBLANKがある。現在、最初のrunやCPU転送は最初のVBLANK前から行われうる？それとも前処理次第では、CPUもDMArunも最初のVBLANKでは行われず、次のVBLANKに集約されてしまったりする？
+3:07
+3m 33s作業しました
+はい、後者は起こり得ます。まず「30fpsで2 VBlank使える」の内訳を明確にすると、現行H40 N2では通常こうです。
+
+```
+V0: 前フレームをflip
+    └ active期間: swap、Pass1、shadow更新、NT staging
+
+V1: cold pattern転送
+    └ DMA runと1–2 tileのCPU直書き
+
+V2: NT DMA、HUD、CRAM、表示flip
+```
+
+つまり、cold pattern転送に自由に使えるのは通常V1の1回です。V2は表示flip用に予約されています。
+実装上の挙動
+
+* Pass1のRUN_TABLE構築などはactive表示中に実行できます。
+* 実際のVRAM pattern転送は、DMAもCPU直書きもPass2にまとめられており、VBlank内でしか実行しません。
+* Pass2到達時にすでにVBlankなら、その途中から即座に転送開始します。
+* active中なら、次のVBlank開始まで待ちます。
+* 前処理がV1を過ぎると、cold転送全体がV2へ送られます。その後NT DMAは新しいVBlankを要求するため、flipはV3へ遅れます。
+
+
+```
+前処理がV1を逃した場合:
+
+V0 ── prework ── V1(未使用) ── prework ── V2(cold) ── V3(NT DMA + flip)
+```
+
+これは現在のコードで実際に可能です。[Pass2入口 (line 989)](/home/akiyan/segacd-fmv-ttrc/boot/movieplay_ip.s:989)では、現在VBlank中ならそのまま進み、そうでなければ次を待ちます。
+cold240の最初のFAILは前処理遅延ではない
+`f0167` は以下でした。
+
+* `E=0x33`、Pass2到達は前回flipから約6.27ms
+* V1までは約16.7msなので、前処理は十分早い
+* cold/DMA = 240 patterns
+* H40の1 VBlank予算 = 3,400 words
+* 240 patterns = 3,840 words
+
+したがって、freshなV1を丸ごと使っても入りません。
+
+```
+V1: cold前半
+V2: cold残り
+V3: NT DMA + flip
+```
+
+これはCPU時間の推測ではなく、現在の固定word予算だけで確定します。H40で1 VBlankに入る理論上限は、
+
+```
+floor(3400 / 16) = 212 patterns
+```
+
+です。cold180は2,880 wordsなので1回に収まりますが、220、230、240はcapまで使えば必ず複数VBlankになります。
+もう一つ注意点があります。Pass2がVBlankの途中に到達した場合でも、現在は残り時間を測らず、3,400 wordsの全予算を設定します。そのため、capが212付近では「VBlank途中から全予算を使おうとする」問題も別途あり得ます。ただしcold240の`f0167`はV1前に到達しているため、この問題とは無関係です。
+結論として、先ほどの説明はさらに限定できます。
+cold240はMain CPUが何となく重くなったのではなく、現行H40 N2プレイヤーが持つ「cold転送1 VBlank = 最大212 patterns」という固定枠を超え、表示用VBlankを消費した。
+前処理によるV1取り逃しも可能ですが、最初のFAIL原因はそれではありません。
+
+
+このことから、(30fpsの場合)2VBLANKに分けてcold pattern転送を行えるか考えたい。15fpsなら4VBLANKである。一度考えを聞かせて。
+
+## 8. つぶれた顔
+
+machi op の F067D の人物（左上）の顔がつぶれてしまってシーン切り替わりまで残ってしまい気になる。右下の顔は動いているので自然と更新対象になりつぶれが解消するが、左上は変化が無いためNear判定でそのままつぶれた感じがシーン切り替わりまで持続してしまう。cold優先度のロジックの調整か何かで解決したい。推測だが、最初にこのシーンが出る際のcold対象タイルの選定時点で「変化が大きいタイル」で測っていると思うが、シーンの切り替わりのため、全てどれも変化が最大近くになってしまっているのではないだろうか。あるいは僅差。まずはなぜこの顔のほうがcoldになっていないのか確認しよう。現行データから当該フレームの情報を持ってきて確認。（再simなどはしないで）
+
+## 9. ディザは残す
+
+BadAppleのディザ表現を実機で見ると、境界部分がまだ気になった。白黒境界がわかりとはっきりしているところで、明るい方に飛び出たかたちの暗いディザ用と思われるドット、また逆に暗い方に飛び出ている明るいディザ用と思われるドットが、境界のギザギザやノイズに見える。これを解決したい。ただしディザ自体は無くしたくない、特に広い範囲のグラデーション塗りなどはディザが無いと非常に階調が荒く見えてしまう。両立するのは難しいかもしれないが、まずはファイル編集せずにアイデアを出してみてほしい。
+
+## 10. ソースに無い白点
+
+$new H40 Sonic で元動画には無い明るい白の点が出現しているフレームがある。タイルのカテゴリはRawなのでNearやFlbk由来ではない。量子化で何かおかしなことがおきていないだろうか。
+
+Frame 0x012B で sim、実機 ともに確認できる。ソースには白の点は存在しない。
+
+左上から数える座標でいうと、X=05 Y=2 の空の部分。他のタイルにもある。
+
+Frame 0x0232 なんかは特に顕著に発生して見える。
+
+## 11. 分割の悩み
+
+分割したほうがいいか、しないほうがいいか、とても悩ましい。2VBLANKの間にあるactive期間なら別に器にしなくてもいいんじゃない？分割したら、active期間中にできたことができない。どう思う？
+
+## 12. 雑音の第一報
+
+実機で再生したところ、謎の雑音が常時なりっぱなしだった。ただ、ADPCMの音声自体は聞き取れる。実機特有のPCM-RAM未クリア問題がまずは考えられる。PCM-RAMクリアをboot時に行うようにする gh issue を作成。
+
+## 13. 再生しきって
+
+lunarもロスレスMKVを使うようにして。tmpsからコピーしてきて。
+tearsの日本語テキストは気にしない。
+
+3つとも言えるが、なんかいい感じっぽいところでの「止め絵」が欲しいのではなく、エミュ再生は最後の停止部分までちゃんと再生しきって止めてほしかった（た再ループ開始で表示が崩れたり、再開したりするところまでもし写ってるなら、その手前で）。
+今は途中で止まった感じになっている。再生しきって。
+3つともOriginalの枠とRealの枠の左右が微妙に揃ってない（整列してない）。ちゃんと4:3なら揃うはず。どちらかが間違っている。
+
+また、Lunarのsourceのタイトルは「Original Video」にして、解像度と音声は無し。FPSだけ。
+Lunarの解析の方のSourceの諸元もFPSだけにして。
+FPSが自動で入っていたりするならtomlで個別フォーマット化して。
+
+全て再生成してアップロード。videosでの確認は飛ばしてよい。
+
+## 14. 実験から出荷へ
+
+実験モードは残さない。不要な深い黒の除外を採用。量子化のデフォルト動作とする。 /finish し、 release-build ブランチにも取り込んで release 準備作業に戻り、最新エンコーダーで SonicOP を /run し、 release ビルドディスクも作って。releaseビルドディスクの cue と iso のファイル名には _release をつけるようにして。
+
+## 15. 途中経過を見せて
+
+その方針でよいです。日本語で作業状況を逐一報告しながら進めてください。cadenceが安定する前でいいので、画面崩壊せずにスクロールが行えたらどんな感じか見てみたいので、録画をアップして途中経過を見せてください。イテレーションは 29-scroll-reuse でやっていたようにスクロール前後の短尺（ただし短すぎない）動画を素材としてやってください。
+
+## 16. 目で見た裁決
+
+non cap の動画を改めて見たが、階調が出ていて品質は一目瞭然だった。cap方式は無し。
+
+2の他候補混合をやる。1も気になるが、mosaic-gmのパレット共有によるタイルノイズ抑制の効果は無視できない。（ただし他候補にしたことでタイルノイズは出るかもしれない）
+
+capはキャンセルし、多候補混合の動画をアップしてみせて。
+
+## 17. Missへの疑義
+
+スクロール中に大量のMissが出ていますが、そうじゃないと思いますが？
+また、凡例がタイル単位でスクロールしてますが、5pxづつちゃんとずらせますか？
+Dicの横に新カテゴリScrl:XXX を追加 ただしタイル枠は不要。
+Scroll検出が無い動画は Scrl:XXX と Scroll --- は出さないようにしてください。
+
+## 18. 縦スクロール検出の試行
+
+H40 Lunar ディザありを /run し、 Sonic OP も /run 。 Sonic OP には縦スクロール検出できそうなシーンがあるが、短いのでどうなるか未知。検出してもしなくても一度通して、検出したら教えて。検出しなかったら、検出できるようにできるか（どのような影響があるか）教えて。
+
+## 19. 黒点の仮説
+
+SonicOP、動画序盤または全般的に、ソースにはない黒すぎる黒点が出現するようになっています。以前もこのようなことがありましたね。解析時点で発生しているのでパレットや量子化の問題でしょうか。ダイナミックレンジ拡張が効いてしまっている？動画を辿ってみましたがいつから発生しているかわかりませんでした。
+
+## 20. Contributorsの悩み
+
+githubのContributorsにclaudeが残り続けている。レポジトリからauther by claudeのログは消したはずだけど、残ってしまう。どうしたら消えるだろうか。レポジトリを別で作って移行したいが、Issueが資産になっているので悩ましい。
+
+## 21. 目で判断する
+
+なんか階調が減った感じがするかまあ実際の動画を見て判断しよう。debug録画にしてアップして
+
+こういうディザを行うのを前提にパレットを選定すべきかもしれないからあとでそれも試させて。近すぎるパレット色があると階調表現度が下がるのを解消すべき気がした
+
+## 22. なおして
+
+> なお tools/test_encode_config.py に既存の失敗が3件あります（コミット 7a3aef0 のresidentプール1663→1743化にテストが未追従。今回の変更とは無関係）。必要なら別途直します。
+
+なおして
+
+## 23. 映らないシーン
+
+tears-of-steel の解析でも録画でも、メガCD側に表示されないシーンがいくつかある。動画開始すぐの「IN THE NEAR FUTRE」、F065Aあたりの「THIS SUMMER」。フェードインアウトシーンだろうか？
+
+## 24. 平易な言い方に
+
+「PRG-RAM ring、bootで読み込んだ2つのWord-RAM bank、512 entryのdictionaryのいずれかから」これはCodecを知らないとわからないので、複数に分かれた先読みバッファくらいの言い方にして
+
+## 25. 単体で立つ説明文に
+
+録画動画の方も単体録画であり、相互補完関係で参照する説明にして。解析フレームのことは書くとおかしい。Codecの説明やウリは書いていい。
+https://www.youtube.com/watch?v=7LEBx-zyobg
+
+## 26. その一文はいらない
+
+「それは純黒、Mega Driveの色空間の端です。そのentryが色再現に使われるのはsegment自身の絵が画素の3%以上黒である場合だけで、明るい場面の暗部haloは絵が求める最暗色へ落ち着きます。」これはいらない
+
+## 27. 4並列の比較動画
+
+エミュ録画、Source、SonicCD版、リアル録画を4つ並べて再生する動画を新規に作っていく。フレームのテンプレートは以下。まずはこれを調整していく。
+
+sonic-jam-op/comparison.svg
+
+## 28. 諸元の書き分け
+
+Staturn Original と SegaCD Ver の下部説明は2行にしていい。Saturn の方は諸元を解析動画のように正確に。
+SegaCD ver は画面全体の解像度と内部の動画の解像度を併記して
+
+## 29. 実機録画の発注
+
+G-6021.iso でオープニングムービーを録画したい。既存実機録画ハーネスを使って起動して高速録画して、プロジェクトルートにvideosディレクトリを作って置いて。起動してしばらくすると自動で始まるから。
+
+## 30. エンコーダ修正で
+
+1. エンコーダを修正する（推奨） — 計画時の実現可能性ゲートを実装し、e187 として TOS を再エンコード、他プロファイルのフェード採否が変わらないことを検証してから `/run` を再開
+
+
+で
+
+## 31. スクロールの見せ方相談
+
+現在のブランチで進行しているハードウェアスクロールが効いている場合に解析動画の判例部分を使ってスクロールしていることをわかる表現をしたい。どういう表現手法があるか、いくつか考えて例を画像で見せて下さい
