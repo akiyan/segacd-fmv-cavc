@@ -152,6 +152,10 @@ upload metadata; do not restate its rules here or inside a skill.
     rules for every codec video upload. Keep its analysis-layout terms in sync
     with `tools/layout_preview.py` and `tools/analysis_style.py`, and its
     version rules in sync with `tools/av_version.txt`.
+  - [`PROMPTS.md`](PROMPTS.md) - verbatim record of representative human
+    prompts sent during development, with English translations. The Japanese
+    text is authoritative and must never be edited; fix the English text only
+    when it mistranslates the Japanese.
 - Keep the analysis-overlay specification beside its implementation:
   `tools/layout_preview.py` owns layout and reading rules,
   `tools/analysis_style.py` owns category semantics and colours, and

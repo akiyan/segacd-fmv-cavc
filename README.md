@@ -156,6 +156,8 @@ defines the values-only hardware/emulator DEBUG HUD.
   budgets for planning a profile.
 - [`REMOVED.md`](REMOVED.md): implementation notes for absent features that
   may support a clean reimplementation.
+- [`PROMPTS.md`](PROMPTS.md): verbatim record of representative development
+  prompts with English translations; the Japanese text is authoritative.
 - [`AGENTS.md`](AGENTS.md): repository maintenance, terminology,
   documentation, validation, recording, and attribution rules.
 - [`CLAUDE.md`](CLAUDE.md): compatibility entry point that delegates
@@ -577,6 +579,8 @@ timed-work valueとgraph maximumから除外します。
   一次budget。
 - [`REMOVED.md`](REMOVED.md): cleanな再実装の参考になる、現在存在しないfeatureの
   実装情報。
+- [`PROMPTS.md`](PROMPTS.md): 開発中の代表的なpromptのverbatim記録と英語訳。
+  日本語文が正。
 - [`AGENTS.md`](AGENTS.md): repository maintenance、用語、documentation、
   validation、recording、attribution rule。
 - [`CLAUDE.md`](CLAUDE.md): repository guidanceを `AGENTS.md` へ委譲する
