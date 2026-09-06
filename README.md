@@ -24,6 +24,16 @@ made inside physical limits before downstream stages begin. Reusing resident
 Flbk reuse save CD delivery and VBlank transfer work, leaving more capacity for
 frames that need new patterns.
 
+**Tile reuse.** The Mega Drive does not draw pixels directly on the screen. It keeps
+8x8-dot tile patterns in VRAM and builds the screen from a placement list
+(the name table) that says which tile pattern goes where. Reuse means rewriting
+only this list. One placement entry costs 2 bytes, while bringing in one new tile
+pattern costs 32 bytes plus CD and VBlank work. So cells that an existing tile
+pattern can cover keep using it, and new tile patterns go only where they are
+truly needed. Using an exactly matching tile pattern (Exact), or covering with
+a visually close one (Near) or one that improves the current display (Flbk), is
+all part of this reuse.
+
 ## Hardware-shaped design
 
 - **Use every separated memory domain.** PrgBuf in PRG-RAM continuously streams
@@ -448,6 +458,15 @@ Encoderは、どのframeへqualityを使うか、patternをどのmemory domain�
 どちらがいつ運ぶかを、後工程で物理上限を破れない形で先に決めます。8x8 resident pattern
 の再利用はそのための有効な手段の1つです。Exact、Near、Flbk再利用によってCD deliveryと
 VBlank transferを節約し、その余裕を新しいpatternが必要なframeへ回します。
+
+**タイルの使い回し。**メガドライブは画面にピクセルを直接描きません。8x8ドットの
+タイルパターンをVRAMに置き、どのタイルパターンをどこに並べるかの指示書
+（ネームテーブル）で画面を作ります。使い回しとは、この指示書だけを書き換えることです。
+指示1件は2バイトで済みますが、新しいタイルパターンを1個運ぶには32バイトとCD・VBlankの
+手間がかかります。そこで、すでにあるタイルパターンで済む場所はそのまま使い、新しい
+タイルパターンは本当に必要な場所だけにします。ぴったり同じタイルパターンがあれば
+それを使い（Exact）、なければ見た目が近いもの（Near）や今より良くなるもの（Flbk）で
+しのぐのも、この使い回しの一部です。
 
 ## Hardwareに合わせた設計
 
