@@ -62,6 +62,26 @@ difference either.
 I do not want to burn CD-Rs over and over, so I want an accurate fix, looking
 up information where needed.
 
+## 4. Withdrawing my own constraint
+
+Generalization to support 15fps is definitely happening, but wait a moment. I
+imposed the constraint "use WordBuf first," but that may have been my
+mistake. WordBuf is inefficient, so if we schedule it as "use it when PrgBuf
+runs out, and refill it when PrgBuf is full," it would serve as a "PrgBuf
+backup" and feel less likely to fall back across the whole movie. Also,
+instead of "must accumulate refill but overflows if over-accumulated, so NG,"
+we could "refill only when there is room to build a delivery schedule that
+can refill promptly," making refill happen within possible limits. What do
+you think?
+
+## 5. No unplanned rework
+
+Sounds good. Let us refresh the pipeline so that later stages never break
+constraints and cause rework. Rework is ad-hoc symptomatic treatment.
+"Unplanned rework" is not acceptable. It is big work, but the payoff is big
+too. After the pipeline is clean like that, let us add back a step that
+reduces run counts as "planned rework" in a set-localiy style.
+
 ---
 
 <a id="jp"></a>
@@ -101,3 +121,11 @@ issue #81 を行ったはずですが、まだ実機メガドライブ2/メガCD
 また、MEGA EVERDRIVE PRO から iso 起動した場合はまったくノイズが出ずクリアです。MEGA EVERDRIVE PROは内部にメガCDの回路を持っているけど実機と挙動が異なりそうですね。biosはこのメガCD2から抽出したbiosをMEGA EVERDRIVE PROで使っているので、bios差もありません。
 
 CD-Rを何度も焼きたくないので、情報を探すなどして正確性の高い対処を行いたいです。
+
+## 4. 自分の制約の撤回
+
+15fpsに対応できる汎用化は絶対にやるが、ちょっと待ってください。「WordBufを先に使う」という制約を課しましたが、これは私のミスだったかもしれません。WordBufは非効率なので、あくまで「PrgBufが無くなったときに使い、PrgBufが満たされたときにrefillするスケジュールを組む」ようにすれば、「PrgBufのバックアップ」として機能して、全編fallbackしにくい気がします。また「refillを貯めなければいけないが、貯めすぎて溢れてしまうからNG」ではなく、「すぐにrefillできる配送スケジュールが組める余裕があるがあるときだけrefillする」ようにすれば、可能な範囲でrefillになります。どうですか？
+
+## 5. 想定外の手戻りはだめ
+
+いいと思います。後工程で制約を破ってしまい手戻りが起きるということがないパイプラインにリフレッシュしましょう。手戻り is 場当たりで対症療法です。「想定外の手戻り」はだめです。大きい仕事になりますが、利益も大きいです。そうしたクリーンなパイプラインになったあとで、「想定『内』の手戻り」としてrun数を削減する set-localiy 的な工程をまた入れましょう。
