@@ -17,6 +17,7 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
+    watch: { ignored: ["**/.toolchain/**", "**/encoder/target/**"] },
     allowedHosts: ["terminal.local", "level-ubuntu.taildb3e9c.ts.net"],
     warmup: {
       clientFiles: ["./src/main.jsx"],

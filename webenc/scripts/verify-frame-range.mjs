@@ -4,7 +4,7 @@ const browser=await chromium.launch({headless:true});
 try {
  for(const [locale,region] of [['en-GB','North America'],['ja-JP','Japan']]) {
   const page=await browser.newPage({locale,viewport:{width:1440,height:1100}});
-  await page.goto('http://127.0.0.1:4173');
+  await page.goto(process.env.WEBENC_URL||'http://127.0.0.1:4173');
   await expect(page.getByRole('button',{name:'Generate CAVC',exact:true})).toBeDisabled();
   await page.locator('input[type=file]').first().setInputFiles(fileURLToPath(new URL('../public/sample-test.mp4',import.meta.url)));
   await expect(page.getByRole('button',{name:'Generate CAVC',exact:true})).toBeEnabled();
@@ -30,7 +30,7 @@ try {
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   await page.close();
  }
- const page=await browser.newPage();await page.goto('http://127.0.0.1:4173/equivalence-runner.html');
+ const page=await browser.newPage();await page.goto((process.env.WEBENC_URL||'http://127.0.0.1:4173')+'/equivalence-runner.html');
  const result=await page.evaluate(async()=>{
   const {normalizeVideo}=await import('/src/cavc-normalize.js');
   const {inspectVideo}=await import('/src/metadata.js');

@@ -16,6 +16,7 @@ try {
  await expect(generate).toBeDisabled();await expect(page.getByText('Choose a source video to begin',{exact:true})).toBeVisible();
  await expect(page.getByLabel('Picture dimensions')).toHaveValue('320x224');
  expect(requests.some(url=>url.includes('sample-test.mp4'))).toBe(false);
+ expect(requests.some(url=>url.includes('/ffmpeg-runtime/'))).toBe(false);
  await expect(page.getByRole('button',{name:'Download ZIP',exact:true})).toContainText('ISO · CUE · MP4');
  for(const rate of ['60','60000/1001']) {
   const file=path.join(output,`source-${rate==='60'?'60':'59.94'}fps.mp4`);

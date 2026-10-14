@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "test:sites": "node --test tests/sites-worker.test.mjs",
     "test:ui": "bash scripts/test-ui.sh",
-    "predev": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh",
-    "prebuild": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh",
+    "predev": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh && node scripts/prepare-ffmpeg-runtime.mjs",
+    "prebuild": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh && node scripts/prepare-ffmpeg-runtime.mjs",
     "test:playback": "node scripts/verify-playback.mjs",
     "sync:profiles": "python3 scripts/sync-profile-caps.py",
     "test:cold-cap": "node scripts/verify-cold-cap.mjs",
@@ -26,6 +26,7 @@
     "deploy:pages": "npm run build && node scripts/deploy-pages.mjs"
   },
   "dependencies": {
+    "@ffmpeg/core": "0.12.10",
     "@mediabunny/aac-encoder": "1.61.4",
     "@phosphor-icons/react": "^2.1.10",
     "@vitejs/plugin-react": "5.0.4",

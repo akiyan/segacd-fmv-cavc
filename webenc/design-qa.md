@@ -44,9 +44,12 @@ final result: passed
 - A browser-built ISO boots and displays changing movie images in Genesis Plus
   GX. Input data is kept private in the managed tmpfs comparison workspace.
 
-The full MP4 browser test is an ordinary WebCodecs/Canvas normalization path;
-its pixels/PCM are not asserted identical to native FFmpeg preprocessing.
-Normalized-input comparison and ordinary-input functional coverage are separate.
+Ordinary media preprocessing uses FFmpeg Wasm. The preprocessing harness
+compares every RGB pixel and PCM sample with native FFmpeg using recorded
+commands and `-cpuflags 0`. The qualified crop/aspect/cadence cases and complete
+one-minute source pass byte comparison. Default native CPU options and arbitrary
+media/version pairs are not qualified. Normalized-input stream comparison and
+ordinary-input functional coverage remain separate.
 
 ## Interaction checks
 

@@ -107,9 +107,21 @@ bytes are distinct from the CAVC stream target. Use the first half of Sonic Jam
 OP (1,357 frames / 45.233333 s) for iteration, then verify complete 2,714-frame
 processing. Do not call half-only coverage completion of a full-profile goal.
 
-Ordinary source decode/crop/resize and 22.05 kHz mono conversion use WebCodecs,
-Canvas and PCM normalization. Do not claim those bytes match native FFmpeg.
-No arbitrary FFmpeg audio/image filters are required. Optional profile filters
+Ordinary source decode/crop/resize, output cadence and 22.05 kHz mono conversion
+use self-hosted single-thread FFmpeg Wasm in the encoder Worker. Match the
+no-denoise Lanczos geometry in tools/video_geometry.py after the explicit source
+crop. FFmpeg fps rounding chooses output frames; 60/59.94 still become 30 fps.
+Stream PNGs through a device into Pyodide instead of retaining all frames in
+FFmpeg's filesystem. Read source Blobs through WORKERFS. Decode/resample audio
+from its head, then trim/pad to the generated frame count. Show real download,
+frame and sample progress; cancellation must terminate FFmpeg with its owning
+worker. Split the Wasm runtime into checksum-verified assets below 25 MiB for
+Pages. Load it only when Generate processes ordinary media. Retain upstream
+source/build archives, dependency source references and licenses.
+Native preprocessing byte proofs require the recorded command options,
+including -cpuflags 0 to disable CPU-specific optimized routines. Do not claim
+equality with default native FFmpeg or arbitrary untested media/version pairs.
+No arbitrary FFmpeg audio/image filters are exposed. Optional profile filters
 can be applied offline to a shared normalized comparison archive. Freeze
 normalized-archive settings so that replay and stream proofs retain their input.
 For completed normalized inputs, explicitly set both master/raw filters to

@@ -31,8 +31,11 @@ The timeline's independent playhead scrubs source frames; its end handles select
 the encode interval. Source preview playback stops at the selected end. Encoded
 H40 geometry and 32:35 pixel aspect are preserved inside the 4:3 display box.
 
-WebCodecs/Canvas normalize frames and 22.05 kHz mono PCM in the worker. Optional
-FFmpeg audio/image filters are not implemented. `.cavc-input.zip` also accepts
+FFmpeg Wasm normalizes frames with Lanczos resize and converts audio to 22.05 kHz
+mono signed-16 PCM inside the encoder worker. It applies source crop/aspect,
+padding or center crop, and the selected output cadence. Audio is resampled from
+the head before trimming, then padded to the generated video duration. Arbitrary
+FFmpeg audio/image filters are not exposed. `.cavc-input.zip` also accepts
 shared offline-normalized RGB/PCM and fixed profile settings for comparisons.
 All processing happens in browser memory; source media is not uploaded.
 
@@ -81,14 +84,27 @@ project's locked NumPy 2.3.5 environment. Subsequent builds reuse compiled tools
 Pyodide 314.0.7, NumPy 2.4.6, Pillow 12.2.0, m68k tools and encoder/player code
 are self-hosted assets. GNU Binutils source, its build script and GPL license
 are available under `m68k-runtime/`. Generated libraries live in ignored paths.
+FFmpeg core 0.12.10 (FFmpeg 5.1.4) is self-hosted under `ffmpeg-runtime/`, alongside
+source archives, licenses and pinned build/dependency source references. Its
+30.7 MiB Wasm is split into four checksum-verified chunks for the Pages asset
+limit and downloaded only when Generate needs ordinary-media preprocessing.
+WORKERFS reads the selected Blob without copying the complete source into the
+FFmpeg heap; an image pipe transfers each completed PNG directly into Pyodide.
+Cancel terminates the owning worker, including FFmpeg.
 
 ## Verification scope
 
 `harness/equivalence/README.md` documents normalized-input reference checks.
 The Sonic Jam profile's half and complete sources have passed HEADER/BODY/MOVIE
-byte comparison between native Python and Python/Wasm. Browser video decoding,
-Canvas resizing and PCM normalization are not asserted byte-identical to native
-FFmpeg. CAVC output and lossy MP4 container bytes are separate comparisons.
+byte comparison between native Python and Python/Wasm. The FFmpeg preprocessing
+harness compares every RGB pixel and PCM sample against native FFmpeg using
+the recorded filter and command options. Native `-cpuflags 0` disables
+CPU-specific optimized routines whose rounding can differ from Wasm. The
+qualified synthetic cases include 60/59.94 to 30 fps, trimming, padding, center
+crop, custom crop/aspect, silence, stereo audio and a complete one-minute source. They pass byte
+comparison against FFmpeg 8.0.1 with that option; default native FFmpeg and
+arbitrary media/version pairs are not qualified. CAVC output and lossy MP4
+container bytes are separate comparisons.
 RGB replay hashes and the pre-AAC reconstructed WAV expose playback fidelity.
 
 `npm run test:ui` checks the SPA controls, cancel/retry, playback, ZIP and viewport.
@@ -101,6 +117,10 @@ ISO/CUE/stream extraction checks. `WEBENC_INPUT`, `WEBENC_URL`,
 controls, mobile layout, exact selected frame pixels and matching trimmed PCM.
 `npm run test:sites`, `test:audio` and `test:cold-cap` cover static hosting,
 audio configuration and cap selection.
+`WEBENC_TEST_LONG=1 node harness/ffmpeg/verify.mjs` runs preprocessing comparisons,
+including all 1,440 frames of a one-minute source; set `WEBENC_URL` to a local
+development server and `WEBENC_TEST_OUTPUT` to a managed tmpfs fixture directory.
+Diagnostic hashes and comparison receipts are retained under `logs/`.
 
 A narrowly bounded diagnostic adapter handles unused whole-sector padding when
 the entire Prg stream fits in the boot prebuffer. It changes no encoding choices
@@ -121,8 +141,9 @@ and Custom. Auto currently uses 1:1 and does not detect the source's pixel
 aspect. These presets affect source framing and normalization; output stays H40.
 
 Ordinary video output supports 15, 24 and 30 fps. Auto chooses the closest
-supported output rate; 60 and 59.94 fps sources use 30 fps. Frames are sampled
-at output timestamps, preserving duration and audio speed. Source fps remains
+supported output rate; 60 and 59.94 fps sources use 30 fps. FFmpeg's fps filter
+selects frames for the output cadence, preserving audio speed and rounding
+duration to the output frame interval. Source fps remains
 separate for source-frame trimming.
 
 The empty Source preview supports click-to-browse and video drag-and-drop.
