@@ -1,0 +1,44 @@
+{
+  "name": "webenc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build && node scripts/prepare-sites-build.mjs",
+    "preview": "vite preview",
+    "test:sites": "node --test tests/sites-worker.test.mjs",
+    "test:ui": "bash scripts/test-ui.sh",
+    "predev": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh",
+    "prebuild": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh",
+    "test:playback": "node scripts/verify-playback.mjs",
+    "sync:profiles": "python3 scripts/sync-profile-caps.py",
+    "test:cold-cap": "node scripts/verify-cold-cap.mjs",
+    "build:kernel": "node scripts/build-kernel.mjs",
+    "test:kernel": "node scripts/build-kernel.mjs && ../tools/python.sh scripts/kernel-reference.py && node scripts/verify-kernel.mjs && node scripts/verify-temporal.mjs",
+    "test:encode": "node scripts/verify-encode.mjs && ../tools/python.sh scripts/verify-preview-media.py",
+    "test:temporal": "node scripts/verify-temporal.mjs",
+    "test:schedule": "python3 scripts/sync-profile-caps.py && ../tools/python.sh scripts/schedule-reference.py && node scripts/verify-schedule.mjs",
+    "test:encode:long": "bash scripts/test-encode-long.sh",
+    "test:admission": "node scripts/verify-admission.mjs",
+    "test:encode:stress": "bash scripts/test-encode-stress.sh",
+    "test:audio": "node scripts/verify-preview-audio.mjs",
+    "deploy:pages": "npm run build && node scripts/deploy-pages.mjs"
+  },
+  "dependencies": {
+    "@mediabunny/aac-encoder": "1.61.4",
+    "@phosphor-icons/react": "^2.1.10",
+    "@vitejs/plugin-react": "5.0.4",
+    "fflate": "^0.8.3",
+    "mediabunny": "1.61.4",
+    "pyodide": "314.0.7",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "vite": "6.4.2"
+  },
+  "devDependencies": {
+    "@cloudflare/deploy-helpers": "^0.20.3",
+    "@playwright/test": "^1.64.0",
+    "mime": "^4.1.1"
+  }
+}
