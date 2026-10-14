@@ -1,0 +1,45 @@
+schema_version = 5
+
+[source]
+path = "assets/sonic-mania-op.mp4"
+# Native 24000/1001 fps uses the player's 24 fps cadence.
+fps = "24"
+duration = "86.146032"
+sar = "1:1"
+
+[video]
+# H40 PAR 32:35 first fits the source to 320x164. Crop two rows from
+# each edge to align the picture and 32-row black bars to 8x8 tiles.
+width = 320
+height = 224
+fit = "pad"
+# Average the high-resolution artwork without adding blur to its outlines.
+resize_filter = "area"
+master_denoise = false
+master_filter = "setsar=1,scale=320:164:flags=area,crop=320:160:0:2,pad=320:224:0:32:color=black"
+raw_filter = "setsar=1,scale=320:164:flags=area,crop=320:160:0:2,pad=320:224:0:32:color=black"
+
+[output]
+directory = "tmpfs/sonic_mania_op_H40_320x224_adpcm22/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+# Use the existing 24 fps baseline for alternating 2/3-VBlank slots.
+# This source still requires full playback qualification.
+cold_cap = "2:180,3:230"
+
+[palette]
+algorithm = "mosaic-gm"
+core_boost_steps = 1
+
+[analysis]
+source_canvas = [320, 224]
+source_par = [32, 35]
+
+[youtube]
+playback_title = "Custom Sega CD FMV Codec Demo — Sonic Mania Opening at 24 FPS"
+analysis_title = "Sega CD FMV at 24 FPS — Sonic Mania Opening Visual Analysis & Encoding Breakdown"
+source_label = "Sonic Mania - Opening Animation, 1920x1080, 23.976 fps, 44.1 kHz stereo; cropped to a 320x160 picture with 32-row letterbox bars"
+source_label_ja = "Sonic Mania - Opening Animation、1920x1080、23.976 fps、44.1 kHzステレオ。上下を少し切り、映像320x160と上下32行の黒帯に調整"
+source_url = "https://www.youtube.com/watch?v=zA9zwpMj_8A"

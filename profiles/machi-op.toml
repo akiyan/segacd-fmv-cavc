@@ -37,3 +37,7 @@ cold_cap = 480
 
 [palette]
 algorithm = "mosaic-gm"
+
+[youtube]
+source_label = "Machi opening"
+source_label_ja = "街 オープニング"

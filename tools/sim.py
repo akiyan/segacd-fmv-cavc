@@ -1530,13 +1530,13 @@ def main(demoted_fade_anchors=frozenset()):
     # Vertical windows roll the 64x32 plane through all 32 rows behind the
     # full-screen viewport, so they additionally need the 28-row grid; a
     # letterboxed grid would scroll its letterbox rows on screen.
-    # CBRSIM_SCROLL=0 is a diagnostic isolation knob: it disables adoption so
-    # the ordinary no-scroll allocation path can be A/B tested on the same
-    # source (e.g. reproducing issue #113 without a rolling plane).
+    # The profile can disable detection and adoption together, retaining the
+    # ordinary allocator without spending time scanning for scroll windows.
+    auto_scroll = os.environ.get("CBRSIM_SCROLL", "1") != "0"
     scroll_supported = bool(
         TCOLS == av_config.SCREEN_COLS
         and PATTERN_SUPPLY_ON
-        and os.environ.get("CBRSIM_SCROLL", "1") != "0"
+        and auto_scroll
     )
     scroll_axes = (
         (scroll_frames.AXIS_HORIZONTAL, scroll_frames.AXIS_VERTICAL)
@@ -1671,6 +1671,8 @@ def main(demoted_fade_anchors=frozenset()):
         )
     else:
         print(
+            "automatic scroll: disabled by encoder.auto_scroll=false"
+            if not auto_scroll else
             "automatic scroll: disabled; requires the full-width 40-column "
             "grid with pattern supply",
             flush=True,

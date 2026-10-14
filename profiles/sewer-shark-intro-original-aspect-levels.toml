@@ -1,0 +1,116 @@
+schema_version = 5
+
+[source]
+path = "assets/sewer_shark_intro_hd.mkv"
+# The 25 fps delivery repeats the underlying approximately 15 fps picture.
+# Preserve that picture cadence rather than spending updates on repeats.
+fps = "15"
+duration = "279.336000"
+sar = "1:1"
+
+[video]
+width = 320
+height = 176
+fit = "crop"
+resize_filter = "area"
+master_denoise = false
+# Remove the fixed source borders and squeeze height from 188 to 176 pixels.
+# Matching objects measured about 6.7% wider in the original NTSC disc capture.
+# 320x176 forms a 40x22 tile grid; H40 PAR remains 32:35.
+master_filter = "setsar=1,crop=2224:1424:174:8,scale=320:176:flags=area,setsar=1,scale=in_range=auto:out_range=full,format=yuv444p,eq=contrast=1.05:gamma=1.90,format=gbrp,colorlevels=rimin=0.20:gimin=0.20:bimin=0.20,scale=in_range=full:out_range=limited,format=yuv444p,setsar=1"
+raw_filter = "setsar=1,crop=2224:1424:174:8,scale=320:176:flags=area,setsar=1,scale=in_range=auto:out_range=full,format=yuv444p,eq=contrast=1.05:gamma=1.90,format=gbrp,colorlevels=rimin=0.20:gimin=0.20:bimin=0.20,scale=in_range=full:out_range=limited,format=yuv444p,setsar=1"
+
+[output]
+directory = "tmpfs/sewer_shark_intro_hd_levels_H40_320x176_adpcm22/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+# Existing 15 fps playback baseline; qualify this source through its HUD gate.
+cold_cap = 380
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 176]
+source_par = [32, 35]
+
+[youtube]
+analysis_title = "Sega CD FMV at 15 FPS — Sewer Shark Intro Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo — Sewer Shark Intro at 15 FPS"
+source_label = "Sewer Shark intro, VGSuite's 3DO-based HD remaster; 2560x1440/25 fps, approximately 15 fps picture cadence; 44.1 kHz stereo; borders removed, 320x176 picture; object proportions matched to the original NTSC disc capture"
+source_label_ja = "Sewer Sharkイントロ、VGSuiteによる3DO版のHDリマスター。2560x1440・配信25 fps／映像更新約15 fps、44.1 kHzステレオ。黒縁を除去し映像320x176に調整。NTSCオリジナル版の物体比率に合わせて縦方向を補正"
+source_url = "https://www.youtube.com/watch?v=hZwLgB4QOQM"
+
+[comparison]
+badge = "CAVC"
+title = "Sewer Shark Intro — CAVC vs Sega CD Original"
+audio_panel = "emu"
+audio_note = false
+output = "/dev/shm/segacd-fmv-cavc/artifacts/comparison-render-sewer-shark-preencode-levels-vs-716ff5ca2053/data/sewer_shark_preencode_levels_vs.mp4"
+duration = 295.624851600
+tail_seconds = 5.0
+
+[comparison.panels.emu]
+label = "CAVC — Source: 3DO Remaster"
+slot = "main"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = ["320×176  •  15 FPS  •  22.05 kHz mono ADPCM",
+        "H40 320×224 screen  •  Genesis Plus GX"]
+path = "/dev/shm/segacd-fmv-cavc/artifacts/record-sewer_shark_intro_hd_levels_H40_320x176_adpcm22_rel-home-akiyan-segacd-fmv-cavc-out-sewer-shark-intro-original-aspect-levels_release.cue-310-0-ffv1-flac-320x224-1-980f2d6bb0a1/data/sewer_shark_intro_hd_levels_H40_320x176_adpcm22_rel_lossless.mkv"
+resize = "neighbor"
+# Tone and black levels are applied to the source before palette training/encoding.
+contrast = 1.0
+gamma = 1.0
+# No comparison-stage tone adjustment; display the actual recorded codec output.
+black_point = 0.0
+fmv_start = 15.939000000
+lead = 15.939000000
+
+[comparison.panels.segacd]
+label = "Sega CD original"
+slot = "right"
+aperture = [256, 224]
+pixel_aspect = [8, 7]
+# Native H32 capture: apply NTSC dot aspect once, ignoring recorder SAR.
+# Intro film pixels occupy x=40..207, y=48..151; gameplay has a different view.
+spec = ["Intro: 168×104  •  14.985 FPS",
+        "Original US disc  •  Genesis Plus GX"]
+path = "/dev/shm/segacd-fmv-cavc/artifacts/original-record-sewer-shark-us-native256-69419da94c24/data/sewer_shark_original.mkv"
+resize = "neighbor"
+fmv_start = 41.62
+lead = 0.0
+
+[comparison.youtube]
+title = "Sega CD FMV at 15 FPS — Sewer Shark Intro (320×176) Side-by-Side Comparison"
+description_en = """
+I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec plays full motion video on unmodified Sega CD / Mega-CD hardware: the console decodes and displays every frame itself while reading one single-speed CD, with no extra chip. This video compares the codec with the original Sega CD release recorded from the US disc in Genesis Plus GX.
+
+Output: display mode H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) centered in the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} ({cram_segments} segments). Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
+
+{source_line}
+
+The remaster is corrected before encoding to match the original disc recording's object proportions. Brightness, contrast, and black-level range adjustment are applied to the remaster before palette training and encoding. The comparison displays the recorded codec output without further tone adjustment. The original intro film is 168x104 pixels at 14.985 fps, with H32 NTSC pixel aspect 8:7.
+
+Audio comes only from the codec playback, captured in Genesis Plus GX. During the movie you hear the Sub CPU's ADPCM decode.
+
+What the encoder does. Tiles already resident in VRAM are reused whenever an exact or close-enough match is on hand, and those cost no CD delivery at all. A cell that cannot afford its exact pattern is pointed at a resident one for two bytes instead of a 32-byte pattern. New patterns come from one of several prefetch buffers in the console's spare RAM, each arriving by an exact per-frame deadline tied to the CD's own sector rate, so the picture never runs ahead of what the drive can physically deliver. Palettes are trained per segment.
+"""
+description_ja = """
+Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Video Codec は、無改造の Sega CD / Mega-CD でfull motion videoを再生します。追加chipを使わず、単速CDを読みながら本体自身が毎frameをdecodeして表示します。この動画ではcodecの出力を、米国版ディスクからGenesis Plus GXで録画したSega CDオリジナル版と比較します。
+
+出力: display mode H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)を320x224 aperture中央へ配置。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは{cram_switches}回 ({cram_segments} segments)。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
+
+{source_line_ja}
+
+Remasterはエンコード前にオリジナル版の物体比率へ補正しています。明るさ・コントラスト・黒レベルのレンジ調整は、Remaster素材のパレット学習とエンコードより前に適用しています。比較画面には録画したcodec出力を追加の画像調整なしで表示しています。オリジナル版のイントロ動画部分は168x104 pixels・14.985 fpsで、H32のNTSCドットアスペクト比8:7を適用しています。
+
+音声はGenesis Plus GXで収録したcodec再生からのみ使用しています。本編で聞こえるのはSub CPUのADPCM decodeです。
+
+encoderの動作。VRAMに常駐しているtileは、完全一致か十分近いものがあれば再利用し、CD配送を一切使いません。正確なpatternを賄えないcellは、32 byteのpatternではなく2 byteで常駐patternへ向けます。新しいpatternは、本体の空きRAMに置いた複数の先読みbufferのいずれかから、CDのsector rateに結び付いたframeごとの正確な期限に届きます。そのため絵がdriveの物理的な配送能力を先回りすることはありません。paletteはsegmentごとに学習します。
+"""
+
+[comparison.youtube.links]
+"Project" = "https://github.com/akiyan/segacd-fmv-cavc"

@@ -385,5 +385,30 @@ spec = "spec"
             load(written(BASE))
 
 
+
+class TwoPanelTests(unittest.TestCase):
+    def two_body(self):
+        return BASE + PANELS3.split('[comparison.panels.real]')[0].replace('slot = "right_top"', 'slot = "right"').replace('aperture = [320, 224]\npixel_aspect = [32, 35]\nspec = ["one", "two"]\n\n', 'aperture = [640, 480]\npixel_aspect = [1, 1]\nspec = ["one", "two"]\n\n')
+
+    def test_two_screens_fit_at_equal_height_and_keep_aspect(self):
+        spec = load(written(self.two_body()))
+        self.assertEqual(spec.arrangement, 'two')
+        boxes = spec.rects()
+        a, b = boxes['emu'], boxes['src']
+        self.assertEqual(a[1], b[1])
+        self.assertEqual(a[3], b[3])
+        self.assertGreaterEqual(a[0], layout_mod.MARGIN)
+        self.assertLessEqual(b[0] + b[2], layout_mod.CANVAS[0] - layout_mod.MARGIN)
+        self.assertGreaterEqual(b[0] - a[0] - a[2], layout_mod.COLUMN_GAP)
+        for panel in spec.panels:
+            _, _, w, h = boxes[panel.key]
+            self.assertLessEqual(abs(w - h * panel.display_aspect), .5)
+
+    def test_invalid_tone_is_rejected(self):
+        body = self.two_body().replace('label = "Playback"', 'label = "Playback"\ngamma = nan')
+        with self.assertRaisesRegex(ValueError, 'gamma must be between'):
+            load(written(body))
+
+
 if __name__ == "__main__":
     unittest.main()

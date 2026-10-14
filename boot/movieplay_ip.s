@@ -48,7 +48,12 @@
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic staging bank is available */
 .equ STAT_READY, 0x8003
-.equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
+.equ STAT_END,   0x8004			/* Sub has completed the movie */
+.ifdef MULTI_MENU
+.equ MOVIE_END_HOLD_VBLANKS, 5*60
+.else
+.equ MOVIE_END_HOLD_VBLANKS, 15*60
+.endif
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
@@ -312,6 +317,10 @@
 .endif
 .endm
 
+.ifdef MULTI_MENU
+	.include "multi_player.inc"
+.endif
+
 .text
 
 	/* The BIOS enters the IP here, at the region's security code, and that
@@ -328,6 +337,10 @@
 ip_entry:
 	move.w	#0x2700, sr
 	lea	STACK, sp
+.ifdef MULTI_MENU
+	bsr	multi_clear_bss
+	bsr	install_multi_restore
+.endif
 
 	/* Real hardware powers up the Z80, PSG and YM2612 undefined; an unheld
 	   Z80 executes garbage RAM and can drive constant noise over PCM
@@ -584,12 +597,27 @@ play_loop:
 	addq.w	#1, frame_no
 	bra	play_loop
 
-/* 映画終端: 最終フレームを表示したまま15秒(900vblank)待ち、先頭からループ再生 */
+/* Hold the final frame for the configured single/menu tail. Playlist returns
+   immediately so its loader can prepare the next movie. */
 movie_end_md:
-	move.w	#900-1, d2
+ .ifndef PLAYLIST
+	move.w	#MOVIE_END_HOLD_VBLANKS-1, d2
 1:
 	bsr	wait_vblank
 	dbra	d2, 1b
+ .endif
+.ifdef MULTI_MENU
+	/* A-play returns through the resident menu. C-loop keeps the selected
+	   specialized player and therefore follows the normal replay path. */
+	tst.w	(MULTI_LOOP_FLAG_MAIN).l
+	bne.s	movie_end_loop
+	/* The copy routine executes from the reserved Main-RAM gap because the
+	   destination overwrites this player image. */
+	movea.l	#MULTI_RESTORE_CODE_ADDR, a0
+	jmp	(a0)
+movie_end_loop:
+.endif
+movie_restart:
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
 	bsr	cmd_wait_ready			/* BODY arm + frame0 handoff完了まで待つ */
 	bsr	show_frame_minus_one
@@ -602,8 +630,56 @@ movie_end_md:
 	clr.w	swap_request_pending
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
-	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
+	bsr	prime_fixed_cadence		/* the tail already satisfies frame0 cadence */
 	bra	play_loop
+
+.ifdef MULTI_MENU
+/* A selected player IP image is copied over the menu image, so BIOS zeroing
+   cannot be assumed on later selections.  Clear the fixed M-STATE reservation
+   before any player startup code reads its .bss variables. */
+multi_clear_bss:
+	lea	MULTI_PLAYER_BSS_BASE.l, a0
+	moveq	#0, d0
+	move.w	#(MULTI_PLAYER_BSS_BYTES/4)-1, d1
+1:
+	move.l	d0, (a0)+
+	dbra	d1, 1b
+	rts
+
+/* Install the self-overwrite-safe return routine in the free Main-RAM gap. */
+install_multi_restore:
+	lea	multi_restore_entry, a0
+	lea	MULTI_RESTORE_CODE_ADDR.l, a1
+	move.w	#((multi_restore_end-multi_restore_entry)/2)-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+	rts
+
+/* The return loader executes from the reserved Main-RAM gap while it waits for
+   the resident player to put MENUIP.BIN into the Main-visible Word-RAM bank.
+   The player owns the CD-side reload because the menu launcher itself is
+   transient Word-RAM code. */
+multi_restore_entry:
+	move.w	#1, (GA_COMCMD1).l
+multi_restore_wait:
+	cmp.w	#MULTI_STAT_MENU_IP_READY, (GA_COMSTAT0).l
+	bne.s	multi_restore_wait
+	lea	(PROBE_BANK+MULTI_MENU_IMAGE_OFF).l, a0
+	lea	0x00FF0000.l, a1
+	move.w	#(MULTI_MENU_IP_BYTES/2)-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+	clr.w	(GA_COMCMD1).l			/* drop the request: copy complete */
+ .ifdef PLAYLIST
+	movea.l	#PLAYLIST_RETURN_ENTRY, a0
+ .else
+	movea.l	#0x00FF0000, a0
+ .endif
+	jmp	(a0)
+multi_restore_end:
+.endif
 
 .ifdef MAIN_CODEGEN
 /* Emit the 256 straight-line bitmap handlers once into Main RAM.

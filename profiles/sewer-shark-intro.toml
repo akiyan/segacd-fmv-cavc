@@ -1,0 +1,124 @@
+schema_version = 5
+
+[source]
+path = "assets/sewer_shark_intro_hd.mkv"
+# The 25 fps delivery repeats the underlying approximately 15 fps picture.
+# Preserve that picture cadence rather than spending updates on repeats.
+fps = "15"
+duration = "279.336000"
+sar = "1:1"
+
+[video]
+width = 320
+height = 184
+fit = "crop"
+resize_filter = "area"
+master_denoise = false
+# Remove the fixed borders of the 2560x1440 remaster, then account for
+# H40 PAR 32:35. Trim two output rows at each edge to form a 40x23 tile grid.
+master_filter = "setsar=1,crop=2224:1424:174:8,scale=320:188:flags=area,crop=320:184:0:2,setsar=1"
+raw_filter = "setsar=1,crop=2224:1424:174:8,scale=320:188:flags=area,crop=320:184:0:2,setsar=1"
+
+[output]
+directory = "tmpfs/sewer_shark_intro_hd_H40_320x184_adpcm22/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+# Existing 15 fps playback baseline; qualify this source through its HUD gate.
+cold_cap = 380
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 184]
+source_par = [32, 35]
+
+[youtube]
+analysis_title = "Sega CD FMV at 15 FPS — Sewer Shark Intro Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo — Sewer Shark Intro at 15 FPS"
+source_label = "Sewer Shark intro, VGSuite's 3DO-based HD remaster; 2560x1440/25 fps, approximately 15 fps picture cadence; 44.1 kHz stereo; borders removed, 320x184 picture"
+source_label_ja = "Sewer Sharkイントロ、VGSuiteによる3DO版のHDリマスター。2560x1440・配信25 fps／映像更新約15 fps、44.1 kHzステレオ。黒縁を除去し映像320x184に調整"
+source_url = "https://www.youtube.com/watch?v=hZwLgB4QOQM"
+
+[comparison]
+badge = "CAVC"
+title = "CUSTOM SEGA CD FMV CODEC DEMO — Sewer Shark Intro"
+audio_panel = "emu"
+audio_note = false
+output = "/dev/shm/segacd-fmv-cavc/artifacts/comparison-mp4-home-akiyan-segacd-fmv-cavc-sewer_shark_comparison.mp4-32fe31415340/sewer_shark_comparison.mp4"
+duration = 295.562
+tail_seconds = 5.0
+
+[comparison.panels.emu]
+label = "Custom FMV Codec Playback — SEGA-CD Emulator (Genesis Plus GX)"
+short_label = "the codec playback panel"
+slot = "main"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = ["320×184 movie in 320×224 (H40) screen  •  15 FPS  •  22.05 kHz mono ADPCM",
+        "147 KiB/s off a single-speed CD  •  41.9 MiB disc image"]
+path = "/dev/shm/segacd-fmv-cavc/artifacts/record-sewer_shark_intro_hd_H40_320x184_adpcm22_rel-home-akiyan-segacd-fmv-cavc-out-sewer-shark-intro_release.cue-310-0-ffv1-flac-320x224-1-adf4f0cd1d39/data/sewer_shark_intro_hd_H40_320x184_adpcm22_rel_lossless.mkv"
+resize = "neighbor"
+fmv_start = 15.949267
+lead = 15.949267
+
+[comparison.panels.src]
+label = "3DO Remaster"
+slot = "right_top"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = ["VGSuite's HD remaster  •  3DO footage",
+        "2560×1440 source  •  borders removed"]
+path = "assets/sewer_shark_intro_hd.mkv"
+# Match the encode's picture crop and its tile-aligned position in H40.
+crop = [174, 24, 2224, 1392]
+pad = [2224, 1696, 0, 120]
+input_fps = "25000/1001"
+fmv_start = 0.0
+lead = 0.0
+
+[comparison.panels.segacd]
+label = "Sega CD ver"
+slot = "right_bottom"
+aperture = [640, 480]
+pixel_aspect = [1, 1]
+spec = ["Original Sega CD intro",
+        "640×480 capture  •  29.97 FPS"]
+# Downloaded reference, retimed at 29.905877976 fps and trimmed at
+# 28.722787250 s on that retimed clock before composition.
+path = "/dev/shm/segacd-fmv-cavc/artifacts/comparison-source-home-akiyan-segacd-fmv-cavc-sewer_shark_segacd_aligned.mkv-d40dfd058c41/sewer_shark_segacd_aligned.mkv"
+fmv_start = 0.0
+lead = 0.0
+
+[comparison.youtube]
+title = "Sega CD FMV at 15 FPS — Sewer Shark Intro (320×184) Side-by-Side Comparison"
+description_en = """
+I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec plays full motion video on unmodified Sega CD / Mega-CD hardware: the console decodes and displays every frame itself while reading one single-speed CD, with no extra chip. This video compares the codec with its source material and the original Sega CD release.
+
+Output: display mode H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) centered in the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} ({cram_segments} segments). Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
+
+{source_line}
+
+Audio comes only from the codec playback, captured in Genesis Plus GX. During the movie you hear the Sub CPU's ADPCM decode.
+
+What the encoder does. Tiles already resident in VRAM are reused whenever an exact or close-enough match is on hand, and those cost no CD delivery at all. A cell that cannot afford its exact pattern is pointed at a resident one for two bytes instead of a 32-byte pattern. New patterns come from one of several prefetch buffers in the console's spare RAM, each arriving by an exact per-frame deadline tied to the CD's own sector rate, so the picture never runs ahead of what the drive can physically deliver. Palettes are trained per segment.
+"""
+description_ja = """
+Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Video Codec は、無改造の Sega CD / Mega-CD でfull motion videoを再生します。追加chipを使わず、単速CDを読みながら本体自身が毎frameをdecodeして表示します。この動画ではcodecの出力を、元にした素材とSega CD版の映像と比較します。
+
+出力: display mode H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)を320x224 aperture中央へ配置。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは{cram_switches}回 ({cram_segments} segments)。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
+
+{source_line_ja}
+
+音声はGenesis Plus GXで収録したcodec再生からのみ使用しています。本編で聞こえるのはSub CPUのADPCM decodeです。
+
+encoderの動作。VRAMに常駐しているtileは、完全一致か十分近いものがあれば再利用し、CD配送を一切使いません。正確なpatternを賄えないcellは、32 byteのpatternではなく2 byteで常駐patternへ向けます。新しいpatternは、本体の空きRAMに置いた複数の先読みbufferのいずれかから、CDのsector rateに結び付いたframeごとの正確な期限に届きます。そのため絵がdriveの物理的な配送能力を先回りすることはありません。paletteはsegmentごとに学習します。
+"""
+
+[comparison.youtube.links]
+"Encoder decisions visualized" = "https://gist.github.com/akiyan/9abc130b5ada9762f7b6e5f4045b4738"
+"Playback recording of this encode" = "https://youtu.be/JEX9jWjLhYQ"
+"Sega CD reference recording" = "https://www.youtube.com/watch?v=aDz7reqssSI"
+"Project" = "https://github.com/akiyan/segacd-fmv-cavc"

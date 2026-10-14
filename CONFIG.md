@@ -191,7 +191,8 @@ emits frame type 3 scroll controls (see [`MOVIE.md`](MOVIE.md)). Eligibility
 requires the full-width 40-column grid and pattern supply; vertical
 windows additionally require the full-screen 28-row grid. Window anchors
 avoid palette-segment boundaries, fade frames, and fade-preparation frames.
-`CBRSIM_SCROLL=0` disables adoption for diagnostic A/B isolation only.
+`[encoder].auto_scroll = false` skips automatic scroll detection and adoption.
+It defaults to true; its environment mirror is `CBRSIM_SCROLL`.
 
 | Stage | Name | Default | Meaning |
 |---|---|---:|---|
@@ -400,7 +401,7 @@ Leave them unset for a qualified encode.
 
 | Env | Default | Meaning |
 |---|---:|---|
-| `CBRSIM_SCROLL` | 1 | `0` disables hardware-scroll adoption for A/B isolation. |
+| `CBRSIM_SCROLL` | 1 | Env mirror of `[encoder].auto_scroll`; `0` skips detection and adoption. |
 | `CBRSIM_BOOT_VRAM_PREFETCH` | 1 | `0` disables boot VRAM prefetch for diagnosis. |
 | `CBRSIM_RAW_PREFETCH` | 1 | Env mirror of the `[encoder].raw_prefetch` profile key. |
 | `CBRSIM_GPU` | 1 | `0`/`off`/`false`/`no` forces the CPU quantization path. |
@@ -418,6 +419,7 @@ Leave them unset for a qualified encode.
 | Name | Default | Meaning |
 |---|---:|---|
 | `palette.algorithm` | `stl4` | Segmented four-line Tile-Lloyd selector. `mosaic-gm` is also available. |
+| `palette.core_boost_steps` | 0 | Non-negative integer. After MOSAIC-GM automatic selection, raise the shared-colour count by this many entries in the sorted core-size candidates and refit. Clamp at the largest candidate; a single line stays unchanged. Keep the automatically selected line count. Positive values require `mosaic-gm`. Env mirror: `CBRSIM_PAL_CORE_BOOST_STEPS`. |
 | `PALETTE_MAP_WEIGHT` | 1.0 | Cost for mapping one RGB333 source colour differently across lines. |
 | `PALETTE_SEAM_WEIGHT` | 8.0 | Cost for a quantisation discontinuity introduced at an 8x8 boundary. |
 | `PALETTE_SEAM_ITERATIONS` | 2 | Deterministic checkerboard assignment passes. |
@@ -498,8 +500,8 @@ tmp/<profile>/
 | `[source.preprocess]` | optional `auto_range` | Whole-movie automatic black/white dynamic-range expansion after extraction. |
 | `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct tmpfs path. |
-| `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
-| `[palette]` | `algorithm` | Palette selector. |
+| `[encoder]` | required `cold_cap`; optional `auto_scroll`, `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, automatic scroll detection (boolean, default true), timed raw prefetch, and the non-negative CRAM-risk search length. |
+| `[palette]` | `algorithm`, `core_boost_steps` | Palette selector and shared-colour boost. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
@@ -537,6 +539,53 @@ and a negative or non-integer CRAM-risk search length. GPU, the
 1,743-tile resident pool, segmented palettes, Near, boot prefetch, and the four
 physical supplies are fixed behavior; only the diagnostic-only environment
 overrides listed above can switch them off for isolation.
+
+## Playlist profiles
+
+A playlist is a separate schema from an encode profile. Each entry has a unique
+filename-safe `id` and a `profile` path relative to the playlist file. Entry
+order is playback order; wraparound is automatic. Nested playlists are rejected.
+
+An optional `[youtube]` table accepts a `playback_title` of 1–100 characters.
+It controls upload metadata only and does not change encoded item settings.
+`tools/playlist_youtube_description.py` renders the playlist playback template
+from `--config`, the captured `--manifest`, and published `--graphs` receipts.
+Source labels and license credits come from the referenced source profiles;
+encode figures remain bound to the captured effective profiles and their TSVs.
+
+```toml
+schema_version = 1
+[playlist]
+[[playlist.items]]
+id = "first"
+profile = "sonic-jam-op.toml"
+[[playlist.items]]
+id = "second"
+profile = "sonic-mania-op.toml"
+[playlist.items.overrides.encoder]
+cold_cap = "2:170,3:220"
+auto_scroll = false
+[playlist.items.overrides.palette]
+core_boost_steps = 1
+```
+
+The optional overrides currently accept only `encoder.cold_cap`,
+`encoder.auto_scroll`, and `palette.core_boost_steps`. The effective settings
+use the ordinary encode-profile validation. Overrides do not mutate the source
+profile or its packed output; each playlist entry gets a separate build identity.
+Equivalent source bytes and encoder settings can still share the SIM cache.
+
+For player-only diagnostics after SIM eviction, `tools/playlist_build.py
+--manifest profiles/playlist.toml --debug 0 --packed-manifest BUILD_JSON`
+authenticates source, effective settings, HEADER/BODY and palette hashes
+against a saved build. It permits reordering and upload-metadata edits, but
+rejects changed encoder versions or settings. Normal builds still repack.
+
+The dispatcher tables are generated for the configured entry count. There is
+no two- or five-entry special case. Build-time module sizes, loader capacity,
+ISO directory size (64 KiB), and disc capacity (360,000 sectors) are checked;
+an oversized playlist fails the build. Theoretical table indexing permits
+8,192 entries, but player/loader memory limits apply first.
 
 ## Build switches
 
@@ -750,7 +799,8 @@ Encoderは持続する単一軸のcamera scrollを検出し、固定gridより�
 だけを採用してframe type 3のscroll controlを出力します（[`MOVIE.md`](MOVIE.md)参照）。
 採用条件は全幅40列gridとpattern supplyで、vertical windowは全画面28行gridが
 追加で必要です。Window anchorはpalette segment境界、fade frame、fade準備frameを
-避けます。`CBRSIM_SCROLL=0` は診断用A/B分離としてのみ採用を無効化します。
+避けます。`[encoder].auto_scroll = false` はスクロールの自動検出と採用を省略します。
+既定値はtrueで、環境変数は `CBRSIM_SCROLL` です。
 
 | Stage | Name | Default | 意味 |
 |---|---|---:|---|
@@ -947,7 +997,7 @@ qualified encodeでは未設定にしてください。
 
 | Env | Default | 意味 |
 |---|---:|---|
-| `CBRSIM_SCROLL` | 1 | `0`でhardware-scroll採用をA/B分離用に無効化。 |
+| `CBRSIM_SCROLL` | 1 | `[encoder].auto_scroll` のenv mirror。`0`で自動検出と採用を省略。 |
 | `CBRSIM_BOOT_VRAM_PREFETCH` | 1 | `0`でboot VRAM prefetchを診断用に無効化。 |
 | `CBRSIM_RAW_PREFETCH` | 1 | profile key `[encoder].raw_prefetch` のenv mirror。 |
 | `CBRSIM_GPU` | 1 | `0`/`off`/`false`/`no`でCPU quantization pathを強制。 |
@@ -965,6 +1015,7 @@ qualified encodeでは未設定にしてください。
 | Name | Default | 意味 |
 |---|---:|---|
 | `palette.algorithm` | `stl4` | segmented four-line Tile-Lloyd selector。`mosaic-gm` も選択可能。 |
+| `palette.core_boost_steps` | 0 | 0以上の整数。MOSAIC-GMの自動選択後、共有色数を昇順の候補で指定段階数だけ上げて再学習する。最大候補で頭打ちとし、1本だけの場合は変更しない。自動選択された本数を維持する。正の値には `mosaic-gm` が必要。環境変数は `CBRSIM_PAL_CORE_BOOST_STEPS`。 |
 | `PALETTE_MAP_WEIGHT` | 1.0 | 1つのRGB333 source colourをline間で別mappingするcost。 |
 | `PALETTE_SEAM_WEIGHT` | 8.0 | 8x8境界に量子化不連続を作るcost。 |
 | `PALETTE_SEAM_ITERATIONS` | 2 | deterministic checkerboard assignment pass数。 |
@@ -1038,8 +1089,8 @@ tmp/<profile>/
 | `[source.preprocess]` | optional `auto_range` | 展開後に動画全編で判定する黒/白dynamic-range自動拡張。 |
 | `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
-| `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
-| `[palette]` | `algorithm` | palette selector。 |
+| `[encoder]` | 必須`cold_cap`、optional `auto_scroll`、`raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、自動スクロール検出（真偽値、既定true）、timed raw prefetch、非負のCRAM-risk search長。 |
+| `[palette]` | `algorithm`, `core_boost_steps` | palette selectorと共有色数の底上げ。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
@@ -1072,6 +1123,51 @@ tile境界に揃わないdimension、
 負または非integerのCRAM-risk search長を拒否します。GPU、1,743-tile
 resident pool、segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 上に挙げた診断専用environment overrideだけが分離用にこれらを無効化できます。
+
+## Playlist profile
+
+Playlistはencode profileとは別の設定形式です。各項目に重複しないファイル名として
+安全な `id` と、playlistファイルからの相対パス `profile` を指定します。
+記載順に再生し、末尾から先頭へ自動的に戻ります。Playlistの入れ子は拒否します。
+
+任意の `[youtube]` tableには1–100文字の `playback_title` を指定できます。
+投稿metadataだけに使用し、各項目のencode設定は変えません。
+`tools/playlist_youtube_description.py` は `--config`、録画した `--manifest`、
+公開済みの `--graphs` receiptからplaylist再生用templateを展開します。
+素材名とlicense creditは参照元profileから取得し、encode数値は録画に対応する
+effective profileとそのTSVから取得します。
+
+```toml
+schema_version = 1
+[playlist]
+[[playlist.items]]
+id = "first"
+profile = "sonic-jam-op.toml"
+[[playlist.items]]
+id = "second"
+profile = "sonic-mania-op.toml"
+[playlist.items.overrides.encoder]
+cold_cap = "2:170,3:220"
+auto_scroll = false
+[playlist.items.overrides.palette]
+core_boost_steps = 1
+```
+
+任意の上書き設定は、現在 `encoder.cold_cap`、`encoder.auto_scroll`、
+`palette.core_boost_steps` のみ受け付けます。上書き後の設定にも通常のencode profile
+検証を適用します。参照元profileとそのpacked出力は変更せず、playlistの項目ごとに
+build identityを分けます。入力バイト列とencoder設定が同じ場合、SIM cacheは共有できます。
+
+SIM消去後にplayerだけを診断用に再buildする場合は、`tools/playlist_build.py
+--manifest profiles/playlist.toml --debug 0 --packed-manifest BUILD_JSON` が
+保存済みbuildに対してsource、effective設定、HEADER/BODY、paletteのhashを検証します。
+順序変更と投稿metadataの編集は許容し、encoder versionやencode設定の変更は拒否します。
+通常のbuildでは引き続きrepackします。
+
+Dispatcherのtableは設定された項目数から生成し、2本・5本の特別扱いはありません。
+Moduleサイズ、loader容量、ISO directoryサイズ（64 KiB）、disc容量（360,000 sectors）を
+build時に検証し、上限を超えるplaylistは失敗します。Table indexの理論上限は
+8,192項目ですが、それより先にplayer/loaderのメモリ上限が適用されます。
 
 ## Build switch
 

@@ -36,6 +36,9 @@
 .endif
 .endif
 	.include "sp_extension.inc"
+.ifdef MULTI_MENU
+	.include "multi_player.inc"
+.endif
 
 /* The packed cold-run parser is used by every unified pattern-supply stream
    and by the dense 24/30fps cadence.  A legacy lower-rate plain-Prg diagnostic
@@ -395,7 +398,7 @@
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic stage ready for one-time Main copy */
 .equ STAT_READY, 0x8003
-.equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは15秒待って CMD_STREAM 再送) */
+.equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは5秒待って CMD_STREAM 再送) */
 
 .macro BIOSCALL code
 	move.w	#\code, d0
@@ -425,9 +428,21 @@ sp_jmptbl:
 sp_init:
 	move.w	#0x2700, sr
 	andi.w	#0xFFFA, (MEMMODE).l
+	.ifndef MULTI_MENU
 	move.w	#0, (COMSTAT0).l
+	.endif
 	move.w	#0, (COMSTAT1).l
 	rts
+
+.ifdef MULTI_MENU
+/* The Word-RAM menu launcher enters here after copying this module to the
+   resident SP slot.  Keep the standard BIOS module header at offset zero;
+   this private entry point lives after the header and init routine. */
+.global multi_player_entry
+multi_player_entry:
+	bsr.s	sp_init
+	bra.w	sp_main
+.endif
 
 .global sp_main
 sp_main:
@@ -453,6 +468,23 @@ do_stream:
 	ori.b	#0x04, (SUB_GA_BASE+0x37).l	/* HOCK: enable CDD communication */
 	ori.b	#0x3C, (SUB_GA_BASE+0x33).l	/* IEN: enable INT2-5 (timer/CDD/CDC) */
 	move.w	#0x2000, sr			/* enable ints BEFORE the BIOS calls */
+	.ifdef MULTI_MENU
+	/* The menu's synchronous reads leave the CDC data path usable, but the
+	   selected player still needs the BIOS drive state re-established before
+	   its interrupt-driven stream read.  Do this before loading the saved
+	   extents: the BIOS init owns scratch in this low-PRG area. */
+	lea	drv_init_tracklist, a0
+	BIOSCALL BIOS_DRV_INIT
+1:
+	BIOSCALL BIOS_CDB_STAT
+	andi.b	#0xF0, (CDB_STAT).w
+	bne.s	1b
+	lea	(MULTI_MENU_INFO_ADDR+16).w, a0
+	move.l	(a0)+, header_lba
+	move.l	(a0)+, header_total
+	move.l	(a0)+, body_lba
+	move.l	(a0)+, body_total
+	.else
 	andi.b	#0xFA, (MEMMODE+1).l
 	lea	drv_init_tracklist, a0
 	BIOSCALL BIOS_DRV_INIT
@@ -469,6 +501,7 @@ do_stream:
 	bsr	find_file
 	move.l	d0, body_lba
 	move.l	d1, body_total
+	.endif
 	bset	#2, (MEMMODE+1).l
 stream_start:
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
@@ -487,8 +520,6 @@ stream_start:
 .endif
 	move.b	#0xFF, (PCM_ONOFF).l		/* extension initializes the channel after HEADER load */
 	clr.w	pcm_running
-	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
-	clr.l	base_msf
 	move.l	header_lba, d0
 	move.l	header_total, d1
 	bsr	issue_file_readn		/* complete startup file */
@@ -825,8 +856,6 @@ pb_done:
 	move.l	body_total, d0
 	cmp.l	d1, d0
 	blo	bad_header
-	clr.l	prev_msf
-	clr.l	base_msf
 	move.l	body_lba, d0
 	bsr	issue_file_readn
 
@@ -909,8 +938,6 @@ timed_suffix_start:
 	move.l	body_total, d1
 	sub.l	d2, d1
 	beq	timed_suffix_armed
-	clr.l	prev_msf
-	clr.l	base_msf
 	bsr	issue_file_readn
 arm_frame1:
 	bsr	pump1_core
@@ -1140,8 +1167,8 @@ xor_acc:
 .endif
 	bra	stream_loop
 
-/* 映画終端: 最終フレームのswap要求に応えて表示→STAT_ENDをMDへ→PCM停止→
-   CMD_STREAM(再開)を待って stream_start へ(=15秒待ちはMD側が数える) */
+/* Finish the final swap, report STAT_END, and stop PCM. Main owns any tail
+   hold; a multi player returns to its loader or restarts the selected movie. */
 movie_end:
 1:
 	cmp.w	#CMD_SWAP, (COMCMD0).l
@@ -1154,23 +1181,51 @@ movie_end:
 	bne	2b
 	move.w	#0, (COMSTAT0).l
 	move.b	#0xFF, (PCM_ONOFF).l		/* 全chオフ(静音) */
+.ifdef MULTI_MENU
+	tst.w	(MULTI_LOOP_FLAG_ADDR).w
+	bne.s	multi_movie_loop
+	/* The boot Sub loader installed the PRG-resident menu-return routine
+	   and bank-switch stub; both survive this image being replaced. */
+	jmp	(MULTI_RETURN_ROUTINE).l
+multi_movie_loop:
+	tst.w	(COMCMD0).l
+	bne.s	multi_movie_loop
+	bra	stream_start
+.else
 3:
 	cmp.w	#CMD_STREAM, (COMCMD0).l	/* MDの再開指示を待つ */
 	bne	3b
 	bra	stream_start
+.endif
 
-/* Start one finite ISO file read. d0=absolute LBA, d1=sector count.  The caller
-   establishes base_msf/prev_msf first so the very first sector is verifiable.
-   Callers need no registers preserved. */
+/* Start an ISO extent at d0=absolute LBA, d1=sector count. Anchor MSF to
+   the requested address, including its first sector. This runs only at
+   startup read boundaries, before PCM or timed CD service has begun. */
 issue_file_readn:
 	lea	bios_packet, a5
 	move.l	d0, read_lba
 	move.l	d1, read_total
+	move.l	d0, d2
+	addi.l	#150, d2
+	move.l	d2, base_msf
+	subq.l	#1, d2
+	move.l	d2, prev_msf
 	move.l	d0, (a5)
 	move.l	d1, 4(a5)
 	move.l	#SUB_BANK_1M, 8(a5)
 	movea.l	a5, a0
 	BIOSCALL BIOS_CDC_STOP
+	/* Allow about 100 ms for a physical drive to settle after STOP. Read
+	 * the free-running timer without resetting it; no timed sectors or
+	 * audio are running here, so this adds loading time only. */
+	move.w	(GA_STOPWATCH_ABS_W).w, d2
+1:
+	move.w	(GA_STOPWATCH_ABS_W).w, d3
+	sub.w	d2, d3
+	andi.w	#0x0FFF, d3
+	cmpi.w	#3256, d3
+	blo.s	1b
+	movea.l	a5, a0
 	BIOSCALL BIOS_ROM_READN
 	move.l	read_total, stream_remaining
 	rts
@@ -2558,6 +2613,10 @@ swap_settle:
 	bne.s	1b
 	rts
 
+/* The multi-video player reads its extents from the launcher's saved info
+   block, so the synchronous helper set below is only assembled for the
+   single-video ISO directory scan. */
+.ifndef MULTI_MENU
 read_cd:
 	movem.l	d0-d7/a0-a6, -(sp)
 	lea	bios_packet, a5
@@ -2648,6 +2707,7 @@ get_info:
 	lsr.l	d2, d1
 	movem.l	(sp)+, a1-a2/a6
 	rts
+.endif
 
 /* ---- RF5C164 PCM ---- */
 pcm_on:
@@ -2921,10 +2981,12 @@ sp_user:
 
 drv_init_tracklist:
 	.byte	1, 0xFF
+.ifndef MULTI_MENU
 file_header:
 	.asciz	"HEADER.DAT"
 file_body:
 	.asciz	"BODY.DAT"
+.endif
 	.align	2
 
 bios_packet:

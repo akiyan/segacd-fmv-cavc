@@ -582,6 +582,25 @@ def build_mosaic_palettes(train_tiles, n_pal=4, return_stats=False,
         merged.append(line)
         current = candidate
 
+    # Apply the preference only after automatic Grow/Merge has finished, so
+    # raising the shared core cannot veto growth or change the selected count.
+    auto_core_colors = current.core_colors
+    boost_steps = int(os.environ.get("CBRSIM_PAL_CORE_BOOST_STEPS", "0"))
+    if boost_steps < 0:
+        raise ValueError("CBRSIM_PAL_CORE_BOOST_STEPS must be non-negative")
+    higher = [size for size in core_sizes if size > auto_core_colors]
+    if boost_steps and higher and len(current.palettes) > 1:
+        target_core = higher[min(boost_steps, len(higher)) - 1]
+        independent = _fit_independent(current.palettes, evaluator)
+        assign = evaluator.errors(independent).argmin(1)
+        for _ in range(2):
+            counts = evaluator.color_histograms(
+                assign, groups=len(independent), weighted=True)
+            shared = _shared_rows(independent, target_core, global_counts, counts)
+            current = score_palettes(
+                tiles, shared, evaluator=evaluator, core_colors=target_core)
+            assign = current.assign
+
     active = current.palettes
     hardware = [palette.copy() for palette in active]
     while len(hardware) < 4:
@@ -589,12 +608,15 @@ def build_mosaic_palettes(train_tiles, n_pal=4, return_stats=False,
     stats = {
         "algo": MOSAIC_GM,
         **current.summary(),
+        "auto_core_colors": auto_core_colors,
+        "core_boost_steps": boost_steps,
         "grows": grows,
         "merged_lines": merged,
         "hardware_lines": 4,
     }
     print(
         f"[MOSAIC-GM] active={stats['active_lines']} core={stats['core_colors']} "
+        f"auto_core={auto_core_colors} boost_steps={boost_steps} "
         f"pixel={stats['pixel_error_per_pixel']:.6f} "
         f"map={stats['mapping_noise_per_pixel']:.6f} "
         f"fractions={','.join(f'{value:.3f}' for value in stats['line_fraction'])}"

@@ -83,6 +83,20 @@ def build_graph(spec: Comparison, present: list[Panel], overlay_index: int,
         if panel.pad:
             pw, ph, px, py = panel.pad
             filters.append(f"pad={pw}:{ph}:{px}:{py}:color=black")
+        if panel.contrast != 1.0 or panel.gamma != 1.0 or panel.black_point != 0.0:
+            # Normalize luma to full range for tone math, then restore the
+            # compositor's limited range so aperture black stays black.
+            filters.extend(["scale=in_range=auto:out_range=full", "format=yuv444p",
+                            f"eq=contrast={panel.contrast:.6f}:gamma={panel.gamma:.6f}"])
+            if panel.black_point != 0.0:
+                # Anchor raised shadow RGB values to neutral black after gamma.
+                # Keep white at 1 and use one fixed level throughout the movie.
+                black = panel.black_point
+                filters.extend(["format=gbrp",
+                                f"colorlevels=rimin={black:.6f}:gimin={black:.6f}:bimin={black:.6f}"])
+            filters.append("scale=in_range=full:out_range=limited")
+            if panel.black_point != 0.0:
+                filters.append("format=yuv444p")
         filters.append(f"scale={w}:{h}:flags={panel.resize}")
         if still:
             # Each input was seeked independently, and a seek does not always

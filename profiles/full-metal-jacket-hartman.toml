@@ -1,0 +1,41 @@
+schema_version = 5
+
+[source]
+path = "assets/full-metal-jacket-hartman.mp4"
+fps = "24"
+# First 16,384 output frames; the complete source lasts 701.289070 seconds.
+duration = "682.666667"
+sar = "1:1"
+
+[video]
+width = 320
+height = 224
+fit = "pad"
+resize_filter = "area"
+master_denoise = false
+# Fit H40 PAR, then crop two rows per edge for tile-aligned letterboxing.
+master_filter = "setsar=1,scale=320:164:flags=area,crop=320:160:0:2,pad=320:224:0:32:color=black"
+raw_filter = "setsar=1,scale=320:164:flags=area,crop=320:160:0:2,pad=320:224:0:32:color=black"
+
+[output]
+directory = "tmpfs/full_metal_jacket_hartman_H40_320x224_adpcm22/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+auto_scroll = false
+cold_cap = "2:180,3:230"
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 224]
+source_par = [32, 35]
+
+[youtube]
+analysis_title = "Sega CD FMV at 24 FPS — Full Metal Jacket: Hartman Introduction Visual Analysis"
+playback_title = "Custom Sega CD FMV Codec Demo — Full Metal Jacket: Hartman Introduction at 24 FPS"
+source_label = "Full Metal Jacket - Gunnery Sergeant Hartman Introduction, Warner Bros. Rewind; 640x360, 23.976 fps, 44.1 kHz stereo; first 16,384 output frames, cropped to 320x160 with 32-row letterbox bars"
+source_label_ja = "Full Metal Jacket - Gunnery Sergeant Hartman Introduction、Warner Bros. Rewind。640x360、23.976 fps、44.1 kHzステレオ。出力の先頭16,384フレーム、映像320x160と上下32行の黒帯に調整"
+source_url = "https://www.youtube.com/watch?v=E3-GT_0eWP0"

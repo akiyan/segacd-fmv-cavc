@@ -4,6 +4,10 @@
 from __future__ import annotations
 
 import unittest
+import subprocess
+import sys
+import textwrap
+from pathlib import Path
 
 import analyze
 import read_frameno
@@ -51,6 +55,35 @@ class MovieAnchorTest(unittest.TestCase):
         self.assertFalse(used_sentinel)
         self.assertEqual(
             [row.values["frame"] for row in selected], [0, 1, 2, 3])
+
+
+class DecoderDiagnosticsTest(unittest.TestCase):
+    def test_stderr_larger_than_a_pipe_does_not_block_frame_reads(self):
+        # The decoder writes diagnostics before its first frame. The outer
+        # timeout makes the former two-pipe deadlock a bounded test failure.
+        script = textwrap.dedent('''
+            import sys
+            from fractions import Fraction
+            from pathlib import Path
+            from unittest.mock import patch
+            sys.path.insert(0, 'harness/startup_resync')
+            import analyze
+            real_popen = analyze.subprocess.Popen
+            fields = analyze.read_frameno.hud_fields_for_layout(analyze.read_frameno.hud_layout())
+            def decoder(command, **kwargs):
+                code = "import sys; sys.stderr.write('diagnostic\\\\n' * 32768); sys.stderr.flush(); sys.stdout.buffer.write(bytes(320 * 32))"
+                return real_popen([sys.executable, '-c', code], **kwargs)
+            probe = analyze.Probe(width=320, height=224, fps=Fraction(60), start_time=0)
+            with patch.object(analyze.subprocess, 'Popen', decoder), patch.object(
+                analyze.read_frameno, 'read_hud', return_value={key: (0, 1.0) for key in fields}
+            ):
+                samples = list(analyze.iter_samples(Path('unused'), probe, 0.9, 0))
+            assert len(samples) == 1 and samples[0].capture == 0
+        ''')
+        result = subprocess.run([sys.executable, "-c", script],
+                                cwd=Path(__file__).resolve().parents[2],
+                                capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":

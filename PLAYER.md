@@ -221,6 +221,47 @@ completely, with zero spare bytes. Main keeps no run-plan cursor or WordBuf
 read cursor: Sub owns both parity cursors and hands off already-resolved
 records.
 
+### Playlist overlays
+
+A playlist reserves Main RAM `0xFFB1D0..0xFFB1DF` for its signature, entry
+index, cycle, and visit counters, and `0xFFB1F0..0xFFB1F1` for the multi-player
+loop flag. The self-replacement copy stub starts at `0xFF8880`; its linked size
+is checked against the persistent state. These addresses are not free in a
+playlist build. Movie BSS clearing stops below the stub and persistent state.
+
+The multi loader reserves Sub PRG `0x7F20..0x7F4F` for selected-file extents,
+`0x7F50..0x7F63` for the Word-RAM bank-switch stub, and `0x7F64..0x7F65` for a
+BIOS interrupt return stub. The resident movie-return routine occupies 368
+bytes at `0xD680..0xD7EF`, inside `RING-ALIGN`, with a checked ceiling at
+`0xD800`. It does not reduce PrgBuf or the APPLY ring. The loader is installed
+in both Word-RAM banks at offset `0x1E000` and reloaded after movie playback;
+WordBuf data may overwrite its inactive copy during playback.
+
+Finite loader reads check each sector's BCD minute/second/frame header against
+the requested disc address. A stale sector is acknowledged and discarded at
+the same destination; only a matching sector advances the copy. Each read has
+a 75-mismatch limit, after which the loader stops with `COMSTAT0=0xDEAD`.
+
+At EOF, Main requests return and copies the restored dispatcher before
+clearing the request. Sub waits for both request edges before reusing Word
+RAM. The dispatcher advances the entry index, reloads the selected Main/Sub
+programs and startup data, and enters the generated player entry addresses.
+The per-movie startup sequence then establishes a fresh frame-0/CD/PCM epoch.
+Only playlist counters survive; live movie buffers are initialized again.
+
+Finite loader transfers compare each sector's MSF address with the requested
+LBA. Stale sectors are discarded; a skipped required sector triggers a new read
+of the remaining extent at the same destination, within a 75-mismatch budget.
+The movie-selection loader waits 3,256 stopwatch ticks (about 100 ms) after
+STOP before starting each read. The resident return routine occupies 368 of
+its reserved 384 bytes.
+
+The single-movie player also anchors the first sector to the requested LBA,
+rather than accepting whichever sector arrives first. Its three startup reads
+(HEADER, untimed BODY arm, and timed suffix) each wait about 100 ms after STOP.
+These waits precede physical timed delivery and PCM start. Recovery during
+active playback adds no such delay; the continuous CD 1x schedule is unchanged.
+
 ## VRAM Map
 
 The movie uses one displayed Plane A name table. No per-frame register-2
@@ -658,6 +699,41 @@ build-time checkされます。
 buildは`M-STATE`予約を余りゼロで使い切ります。Mainは
 run-plan cursorもWordBuf read cursorも持たず、Subが両parity cursorを所有して
 解決済みrecordを渡します。
+
+### Playlistのoverlay
+
+PlaylistではMain RAM `0xFFB1D0..0xFFB1DF` をsignature、項目index、周回・再生回数に、
+`0xFFB1F0..0xFFB1F1` をmulti-playerのloop flagに予約します。自己置換用copy stubは
+`0xFF8880` から配置し、link後のサイズが永続状態に重ならないことを確認します。
+Playlist buildではこれらの領域は未割当ではありません。動画のBSS clearはstubと
+永続状態より下で止まります。
+
+Multi loaderはSub PRG `0x7F20..0x7F4F` を選択ファイルのextent、
+`0x7F50..0x7F63` をWord-RAM bank切り替えstub、`0x7F64..0x7F65` をBIOS割り込みの
+return stubに予約します。動画から戻る常駐routineは `RING-ALIGN` 内の
+`0xD680..0xD7EF` に368 bytesを配置し、`0xD800` を超えないことを確認します。
+PrgBufやAPPLY ringは縮小しません。Loaderは両Word-RAM bankのoffset `0x1E000` に
+配置し、動画再生後に読み直します。再生中はWordBufが非実行側のcopyを上書きできます。
+
+Loaderの有限長readは各sectorのBCD形式の分・秒・frame headerを要求したdisc addressと
+照合します。古いsectorはACKして同じ転送先で破棄し、一致したsectorだけcopy先を進めます。
+各readで不一致が75回に達すると、`COMSTAT0=0xDEAD` を設定してloaderを停止します。
+
+EOFでMainがreturnを要求し、復元されたdispatcherをcopyしてから要求をクリアします。
+Subは要求の両edgeを待ってからWord RAMを再利用します。Dispatcherは項目indexを
+進め、選択したMain/Sub programと起動データを読み直し、自動生成されたplayerの
+entry addressへ移ります。動画ごとのstartup sequenceがframe 0、CD、PCMの開始を
+新しく確立します。Playlistのcounterだけを保持し、動画のbufferは再初期化します。
+
+有限loader転送では各sectorのMSF addressを要求LBAと比較します。古いsectorは
+破棄し、必要なsectorを飛び越えた場合は同じ転送先へ残りのextentを読み直します。
+不一致の上限は75回です。動画選択loaderは各読み出しのSTOP後にstopwatchの
+3,256 tick（約100 ms）を待ちます。常駐return routineは予約384 byte中368 byteを使います。
+
+単体playerも、最初に届いたsectorを無条件に受け入れず、要求LBAから先頭sectorを
+検証します。3回の起動読み出し（HEADER、非時間管理BODY arm、timed suffix）は
+それぞれSTOP後に約100 ms待ちます。待ちは物理的なtimed配送とPCM開始より前です。
+再生中の回復処理にはこの待ちを加えず、連続CD 1x scheduleは維持します。
 
 ## VRAM map
 

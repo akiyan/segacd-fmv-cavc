@@ -1,0 +1,22 @@
+Sega CD Constraint-Aware Video Codec: continuous playback from one single-speed CD, with automatic looping and no selection menu. The sources below play in order.
+
+H40, centered in 320x224; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Useful BODY rates below share the CD 1x ceiling of 150 KiB/s. VRAM tiles are reused through exact or close matches; new patterns are prefetched into spare console RAM against per-frame CD delivery deadlines. Palettes are trained per segment.
+
+{items_en}
+
+Captured in Genesis Plus GX with the Japanese Mega-CD BIOS. All movies have no diagnostic overlay. The complete startup and return to the first movie are retained. Native 320x224 is enlarged with nearest-neighbour scaling to 2048x1568 square pixels, preserving the H40 64:49 display shape.
+
+Encoder decisions for each source:
+{links}
+Project: https://github.com/akiyan/segacd-fmv-cavc
+Build: {build}
+
+----
+
+Sega CD Constraint-Aware Video Codec：単速CD 1枚から、選択メニューなしで連続再生し、自動ループします。以下の素材を順に再生します。
+
+H40、320x224の中央に配置。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。以下の有効BODY配送量はCD 1x上限150 KiB/s内です。VRAMのtileを完全一致または近似で再利用し、新しいpatternは各frameのCD配送期限に合わせて本体の空きRAMへ先読みします。paletteはsegmentごとに学習します。
+
+{items_ja}
+
+日本語Mega-CD BIOSを使用したGenesis Plus GXでの録画です。全作品の本編に診断表示はありません。起動画面から先頭作品へのループ復帰まで収録しています。native 320x224をnearest-neighbourで2048x1568の正方形画素へ拡大し、H40の64:49の表示形状を保ちます。各素材のencoder判断の可視化とprojectへのリンクは英語側に掲載しています。

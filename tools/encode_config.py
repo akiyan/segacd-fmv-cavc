@@ -56,13 +56,17 @@ ENV_MAP = {
     ("output", "directory"): "CBRSIM_OUT",
     ("output", "reuse"): "CBRSIM_REUSE",
     ("output", "emit_decisions"): "CBRSIM_EMIT_DEC",
+    ("encoder", "auto_scroll"): "CBRSIM_SCROLL",
     ("encoder", "raw_prefetch"): "CBRSIM_RAW_PREFETCH",
     ("encoder", "cold_cap"): "CBRSIM_COLD_CAP",
     ("encoder", "cram_quality_priority_search_frames"):
         "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES",
     ("palette", "algorithm"): "CBRSIM_PAL_ALGO",
+    ("palette", "core_boost_steps"): "CBRSIM_PAL_CORE_BOOST_STEPS",
 }
 PROFILE_ENV_DEFAULTS = {
+    "CBRSIM_SCROLL": "1",
+    "CBRSIM_PAL_CORE_BOOST_STEPS": "0",
     # An empty audio filter chain means "extract the source audio as-is".
     # Always overwritten so an inherited shell value cannot leak between
     # profiles.
@@ -316,6 +320,14 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         if missing:
             raise ValueError(
                 f"{profile_path}: missing [{section}] keys: {', '.join(sorted(missing))}")
+    if type(data["encoder"].get("auto_scroll", True)) is not bool:
+        raise ValueError(f"{profile_path}: encoder.auto_scroll must be a boolean")
+    boost = data["palette"].get("core_boost_steps", 0)
+    if type(boost) is not int or boost < 0:
+        raise ValueError(f"{profile_path}: palette.core_boost_steps must be a non-negative integer")
+    if boost and str(data["palette"]["algorithm"]).strip().lower() not in (
+            "mosaic-gm", "mosaic_gm", "mosaic"):
+        raise ValueError(f"{profile_path}: palette.core_boost_steps requires mosaic-gm")
     if int(data["video"]["width"]) % 8 or int(data["video"]["height"]) % 8:
         raise ValueError(f"{profile_path}: video width and height must be multiples of 8")
     if (int(data["video"]["width"]) > av_config.SCREEN_WIDTH

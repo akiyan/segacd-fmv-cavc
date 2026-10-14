@@ -119,6 +119,16 @@ tools/python.sh tools/youtube_description.py --config profiles/PROFILE.toml \
   --timeline-url GIST --playback-url URL --output DESCRIPTION.txt
 ```
 
+For a qualified HUD-free playback recording, add `--hud-free` to include the
+absence of a diagnostic overlay in both languages.
+
+Playlist playback uses `templates/youtube/playlist_playback.txt` through
+`tools/playlist_youtube_description.py --config PLAYLIST --manifest BUILD_JSON
+--graphs PUBLISHED_GRAPHS_JSON --output DESCRIPTION.txt`. Its title comes from
+the playlist's `[youtube].playback_title`. Each entry's source credits come
+from its referenced profile; figures and links come from the captured effective
+profiles and matching published graphs. Metadata edits do not change the encode.
+
 Every number the renderer substitutes is read from the encode that produced
 the video: grid and cell count from the profile, CRAM switches from the sim
 decisions, the delivery rate from the analysis TSV, and the build from
@@ -327,6 +337,13 @@ spec、layoutの読み方、encoder技術の節、project link、現行のtimeli
 
 ## 説明文はtemplateから生成する
 
+Playlistの再生動画は `tools/playlist_youtube_description.py --config PLAYLIST
+--manifest BUILD_JSON --graphs PUBLISHED_GRAPHS_JSON --output DESCRIPTION.txt`
+で `templates/youtube/playlist_playback.txt` を展開します。Titleはplaylistの
+`[youtube].playback_title`、各素材のcreditは参照元profile、数値とリンクは録画に
+対応するeffective profileと公開済みの対応graphから取得します。
+Metadataの編集はencodeを変更しません。
+
 説明文はuploadごとに書きません。文言は
 `templates/youtube/{analysis,playback,verification}.txt` にあり、動画ごとの値
 だけを差し込みます:
@@ -336,6 +353,9 @@ tools/python.sh tools/youtube_description.py --config profiles/PROFILE.toml \
   --kind analysis --timeline-tsv logs/RUN_timeline.tsv \
   --timeline-url GIST --playback-url URL --output DESCRIPTION.txt
 ```
+
+検証済みのHUDなし再生録画では `--hud-free` を追加し、診断表示を重ねていない
+ことを両言語で記載します。
 
 差し込まれる数値はすべて、その動画を作ったencodeから読みます。gridとcell数は
 profile、CRAM切り替えはsimのdecisions、配送レートは解析TSV、buildは

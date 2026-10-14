@@ -8,8 +8,16 @@ Constraint-Aware Video Codec**. `tools/pack_stream.py` writes them from the
 `boot/movieplay_ip.s` displays them.
 
 The packer also writes `MOVIE.DAT = HEADER.DAT || BODY.DAT` for off-disc
-analysis and regression tools. The disc contains only `HEADER.DAT` and
-`BODY.DAT`.
+analysis and regression tools. Single-movie discs store the split
+`HEADER.DAT` / `BODY.DAT` pair.
+
+Playlist discs store one pair per entry as `V0000HDR.DAT` / `V0000BOD.DAT`,
+`V0001HDR.DAT` / `V0001BOD.DAT`, and so on. Each pair uses the format described
+here without adding playlist fields to the stream. Matching `V0000IP.BIN` /
+`V0000SP.BIN` files contain the specialized player modules. `MENUIP.BIN` and
+`MENUSP.BIN` contain the automatic dispatcher and loader. Build-generated
+tables associate each entry's files and player entry addresses; the loader
+passes the selected header/body extents into the player before startup.
 
 All multi-byte integers are big-endian. Every region is sector-aligned. The Sub
 CPU reads the static `HEADER.DAT`, reads and stops at the finite untimed
@@ -573,8 +581,16 @@ frame boundaries.
 担当します。
 
 packer はディスク外の解析・回帰確認用に
-`MOVIE.DAT = HEADER.DAT || BODY.DAT` も生成します。ディスクに収録するのは
-`HEADER.DAT` と `BODY.DAT` だけです。
+`MOVIE.DAT = HEADER.DAT || BODY.DAT` も生成します。単一動画のディスクは
+分割された `HEADER.DAT` / `BODY.DAT` の組を収録します。
+
+Playlist discでは項目ごとに `V0000HDR.DAT` / `V0000BOD.DAT`、
+`V0001HDR.DAT` / `V0001BOD.DAT` のように収録します。各組はここで説明する形式を
+使い、stream内にplaylist用のfieldは追加しません。対応する `V0000IP.BIN` /
+`V0000SP.BIN` は特殊化したplayer moduleです。`MENUIP.BIN` と `MENUSP.BIN` は
+自動dispatcherとloaderです。Build時に生成するtableで各項目のファイルとplayerの
+entry addressを対応付け、loaderが選択したheader/bodyのextentをplayerの起動前に
+渡します。
 
 複数バイト整数はすべてビッグエンディアンです。各領域は sector 境界に揃えます。
 Sub CPUはstaticな `HEADER.DAT` を読み、有限でuntimedな `BODY.DAT` armだけを読んで

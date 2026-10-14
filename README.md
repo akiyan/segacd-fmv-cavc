@@ -198,6 +198,8 @@ run.
 | Target | Purpose |
 |---|---|
 | `movieplay` / `disc` | Codec player disc. |
+| `playlist` | Menu-free sequential playback and wraparound from referenced profiles. |
+| `multi-disc` | Multi-video menu disc selected by `MENU_CONFIG`. |
 | `cdcbench` | Continuous and restarted CD-read measurement. |
 | `dmabench` | Maximum VRAM DMA per VBlank. |
 | `cpuvrambench` | CPU-to-VRAM data-port write throughput during VBlank. |
@@ -209,6 +211,24 @@ run.
 | `test1m` | 1M/1M Word-RAM swap test. |
 | `prgtest` | PRG-RAM and streaming interaction test. |
 | `asictest` / `upscaletest` | Graphics ASIC and CPU-upscale experiments. |
+
+## Looping playlists
+
+`make playlist CONFIG=profiles/playlist.toml` builds `out/playlist.iso` and
+`out/playlist.cue`. The playlist references ordinary single-video profiles,
+plays them in listed order without a menu, and returns from the last entry to
+the first. The initial Mega-CD startup remains visible. Each transition reloads
+the next player and its startup data; transitions are not gapless.
+
+Playlist builds default to `DEBUG=1` for qualification. Use `DEBUG=0` for
+`out/playlist_release.iso` and its cue sheet. `PLAYLIST_ENCODE=0` reuses existing
+SIM data and fails if it is missing. Referenced profiles remain unchanged;
+entry-specific overrides are materialized under `tmp/playlist/profiles/`.
+DEBUG and release build manifests are saved separately as `playlist.json` and
+`playlist_release.json` under `out/playlist/`; they record each entry's stream
+and palette hashes for release qualification.
+See [CONFIG.md](CONFIG.md) for the schema and
+[harness/playlist/README.md](harness/playlist/README.md) for loop verification.
 
 ## Workstation setup
 
@@ -616,6 +636,8 @@ build intermediate、tmpfs leaseはrunごとに分離します。
 | Target | 用途 |
 |---|---|
 | `movieplay` / `disc` | Codec player disc。 |
+| `playlist` | 参照profileをメニューなしで順送りし、末尾から先頭へ戻るdisc。 |
+| `multi-disc` | `MENU_CONFIG` で指定する複数動画のmenu disc。 |
 | `cdcbench` | continuous/restarted CD read計測。 |
 | `dmabench` | VBlank当たり最大VRAM DMA。 |
 | `cpuvrambench` | VBlank中のCPU→VRAM data port書き込みthroughput実測。 |
@@ -627,6 +649,24 @@ build intermediate、tmpfs leaseはrunごとに分離します。
 | `test1m` | 1M/1M Word-RAM swap test。 |
 | `prgtest` | PRG-RAMとstreaming interaction test。 |
 | `asictest` / `upscaletest` | graphics ASICとCPU upscale experiment。 |
+
+## 連続ループするplaylist
+
+`make playlist CONFIG=profiles/playlist.toml` は `out/playlist.iso` と
+`out/playlist.cue` を生成します。通常の単一動画profileを参照し、メニューを
+表示せず記載順に再生し、最後の項目から先頭に戻ります。初回のMega-CD起動画面は
+表示されます。切り替えごとに次のplayerと起動データを読み込むため、動画間には
+読み込み時間があります。
+
+検証用にplaylist buildは `DEBUG=1` が既定です。`DEBUG=0` では
+`out/playlist_release.iso` とcue sheetを生成します。`PLAYLIST_ENCODE=0` は既存の
+SIMデータを再利用し、存在しなければ失敗します。参照元profileは変更せず、
+項目別の上書き設定を `tmp/playlist/profiles/` に生成します。
+DEBUGとreleaseのbuild manifestは `out/playlist/` 以下の `playlist.json` と
+`playlist_release.json` に分けて保存し、release照合用に各項目のstreamとpaletteの
+hashを記録します。
+設定形式は [CONFIG.md](CONFIG.md)、周回検証は
+[harness/playlist/README.md](harness/playlist/README.md) を参照してください。
 
 ## Workstation setup
 

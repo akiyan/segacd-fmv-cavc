@@ -17,7 +17,7 @@ screen is a 320x224 aperture with pixel aspect 32:35, displayed as 292.57x224
 (1.3061), so a 4:3 panel would stretch it horizontally by 2.1%.
 
 Sizes and positions are derived, not typed twice. The frame is one headline
-plus four panels, and the left column takes all the height between them: its
+plus two, three, or four panels, and the left column takes all the height between them: its
 top follows the headline, its bottom is fixed by the audio note that has to
 clear the bottom margin, and its width follows from its aspect. Everything else
 follows from that. The right column starts a gap past the left column, so
@@ -111,6 +111,7 @@ RIGHT_RIGHT = CANVAS[0] - MARGIN
 LAYOUTS = {
     "four": ("main", "top_left", "top_right", "lower"),
     "three": ("main", "right_top", "right_bottom"),
+    "two": ("main", "right"),
 }
 SLOTS = tuple(sorted({slot for slots in LAYOUTS.values() for slot in slots}))
 
@@ -151,6 +152,10 @@ class Panel:
     # source master far larger than its panel - is being reduced and wants the
     # default "lanczos".
     resize: str
+    # Display-only tone adjustment; source/codec bytes remain unchanged.
+    contrast: float
+    gamma: float
+    black_point: float
     # Where the moving picture begins inside the material.
     fmv_start: float
     # Seconds of run-up before fmv_start that stay on the timeline.
@@ -260,6 +265,30 @@ class Comparison:
         return (main_bottom, main_height, main_width, right_left,
                 RIGHT_RIGHT - right_left)
 
+    def _geometry_two(self) -> dict[str, int]:
+        """Two screens at equal height, sized from their displayed aspects."""
+        by_slot = {p.slot: p for p in self.panels}
+        left, right = by_slot["main"], by_slot["right"]
+        lowest = self.bottom_baseline - (NOTE_GAP if self.show_audio_note else 0)
+        available_height = lowest - max(left.spec_depth, right.spec_depth) - PANEL_TOP
+        available_width = CANVAS[0] - 2 * MARGIN - COLUMN_GAP
+        height = min(available_height, int(available_width /
+                     (left.display_aspect + right.display_aspect)))
+        if height < 1:
+            raise ValueError("no room for two comparison panels")
+        left_width = round(height * left.display_aspect)
+        right_width = round(height * right.display_aspect)
+        content_width = left_width + COLUMN_GAP + right_width
+        margin = (CANVAS[0] - content_width) // 2
+        top = PANEL_TOP + (available_height - height) // 2
+        return {"arrangement": 2, "margin": margin,
+                "right_edge": margin + content_width,
+                "content_width": content_width, "main_height": height,
+                "main_width": left_width, "right_width": right_width,
+                "panel_top": top, "main_bottom": top + height,
+                "right_left": margin + left_width + COLUMN_GAP,
+                "column_gap": COLUMN_GAP}
+
     def _geometry_three(self) -> dict[str, int]:
         """Three panels: one large left, two stacked in the right column.
 
@@ -328,6 +357,8 @@ class Comparison:
 
     def geometry(self) -> dict[str, int]:
         """The derived measurements the rectangles are built from."""
+        if self.arrangement == "two":
+            return self._geometry_two()
         if self.arrangement == "three":
             return self._geometry_three()
         by_slot = {p.slot: p for p in self.panels}
@@ -398,6 +429,11 @@ class Comparison:
         """Each panel's video rectangle as (x, y, width, height)."""
         by_slot = {p.slot: p for p in self.panels}
         g = self.geometry()
+        if self.arrangement == "two":
+            return {by_slot["main"].key: (g["margin"], g["panel_top"],
+                        g["main_width"], g["main_height"]),
+                    by_slot["right"].key: (g["right_left"], g["panel_top"],
+                        g["right_width"], g["main_height"])}
         if self.arrangement == "three":
             top, bottom = by_slot["right_top"], by_slot["right_bottom"]
             top_w = round(g["stack_height"] * top.display_aspect)
@@ -457,7 +493,7 @@ def load(profile_path: Path | str) -> Comparison:
 
     allowed = {"label", "short_label", "slot", "aperture", "pixel_aspect",
                "spec", "placeholder", "path", "crop", "pad", "input_fps",
-               "resize", "fmv_start", "lead"}
+               "resize", "fmv_start", "lead", "contrast", "gamma", "black_point"}
     panels: list[Panel] = []
     for key, table in raw_panels.items():
         if not isinstance(table, dict):
@@ -488,6 +524,14 @@ def load(profile_path: Path | str) -> Comparison:
             raise ValueError(
                 f"[comparison.panels.{key}] resize must be one of "
                 f"{', '.join(sorted(RESIZE_FILTERS))}")
+        tone = {}
+        for name, default, minimum, maximum in (("contrast", 1.0, 0.0, 4.0),
+                                                ("gamma", 1.0, 0.1, 10.0),
+                                                ("black_point", 0.0, 0.0, 0.99)):
+            value = table.get(name, default)
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not minimum <= value <= maximum:
+                raise ValueError(f"[comparison.panels.{key}] {name} must be between {minimum} and {maximum}")
+            tone[name] = float(value)
         path = table.get("path")
         panels.append(Panel(
             key=key,
@@ -505,6 +549,9 @@ def load(profile_path: Path | str) -> Comparison:
                  if "pad" in table else None),
             input_fps=table.get("input_fps"),
             resize=resize,
+            contrast=tone["contrast"],
+            gamma=tone["gamma"],
+            black_point=tone["black_point"],
             fmv_start=float(table.get("fmv_start", 0.0)),
             lead=float(table.get("lead", 0.0)),
         ))
@@ -614,6 +661,9 @@ def layout(spec: Comparison) -> dict:
                          "height": rects[panel.key][3]},
                 "spec": list(panel.spec),
                 "resize": panel.resize,
+                "contrast": panel.contrast,
+                "gamma": panel.gamma,
+                "black_point": panel.black_point,
                 "footage": str(panel.path) if panel.path else None,
                 "source_start": round(panel.source_start, 6),
                 "timeline_start": round(spec.picture_start - panel.lead, 6),

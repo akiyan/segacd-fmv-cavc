@@ -143,5 +143,16 @@ class ResizeTests(unittest.TestCase):
         self.assertIn("flags=lanczos", graph)
 
 
+
+class ToneTests(unittest.TestCase):
+    def test_preview_and_video_apply_tone_and_restore_black_range(self):
+        spec = load(written(BODY.replace('label = "Playback"', 'label = "Playback"\ncontrast = 1.05\ngamma = 1.9')))
+        for cmd in [render_comparison.build_still_command(spec, Path('/tmp/still.png'), at=8, overlay_png=Path('/tmp/overlay.png')),
+                    render_comparison.build_command(spec, Path('/tmp/movie.mp4'), duration=10, overlay_png=Path('/tmp/overlay.png'))]:
+            graph = cmd[cmd.index('-filter_complex') + 1]
+            self.assertEqual(graph.count('eq=contrast=1.050000:gamma=1.900000'), 1)
+            self.assertIn('scale=in_range=full:out_range=limited', graph)
+
+
 if __name__ == "__main__":
     unittest.main()

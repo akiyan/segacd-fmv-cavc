@@ -1,0 +1,26 @@
+schema_version = 1
+
+[youtube]
+playback_title = "Custom Sega CD FMV Codec Demo — Five-Video Continuous Playback in Genesis Plus GX"
+
+[playlist]
+
+[[playlist.items]]
+id = "mania"
+profile = "sonic-mania-op.toml"
+
+[[playlist.items]]
+id = "jam"
+profile = "sonic-jam-op.toml"
+
+[[playlist.items]]
+id = "lunar"
+profile = "lunar-ss-op.toml"
+
+[[playlist.items]]
+id = "machi"
+profile = "machi-op.toml"
+
+[[playlist.items]]
+id = "tears"
+profile = "tears-of-steel.toml"

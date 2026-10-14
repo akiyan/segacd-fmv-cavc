@@ -27,6 +27,9 @@
 #   --record-offline  explicit uncapped FFV1/FLAC test mode. Implies --record
 #                     and requires --max-frames plus --play-replay.
 #   --max-frames N    stop normally after exactly N emulator video frames.
+#   --snapshot-on-exit
+#                     save emulator state at that frame limit; without a video
+#                     recording, run uncapped for CPU/memory diagnostics.
 #   --play-replay FILE
 #                     play a RetroArch input replay instead of sending START.
 #   --record-replay FILE
@@ -100,6 +103,7 @@ OFFLINE_RECORD=0
 MAX_FRAMES=""
 PLAY_REPLAY=""
 RECORD_REPLAY=""
+SNAPSHOT_ON_EXIT=false
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -127,6 +131,7 @@ while [ $# -gt 0 ]; do
     --max-frames) MAX_FRAMES="$2"; shift 2;;
     --play-replay) PLAY_REPLAY="$2"; shift 2;;
     --record-replay) RECORD_REPLAY="$2"; shift 2;;
+    --snapshot-on-exit) SNAPSHOT_ON_EXIT=true; shift;;
     --audio-driver) AUDIO_DRIVER="$2"; shift 2;;
     --audio-device) AUDIO_DEVICE="$2"; shift 2;;
     --sdl-audio-driver) SDL_AUDIO_DRIVER="$2"; shift 2;;
@@ -173,6 +178,10 @@ if [ "$OFFLINE_RECORD" -eq 1 ]; then
   }
 fi
 DISC_STEM="$(basename "${DISC%.*}")"
+if [ "$SNAPSHOT_ON_EXIT" = true ] && [ -z "$MAX_FRAMES" ]; then
+  echo "--snapshot-on-exit requires --max-frames N" >&2
+  exit 2
+fi
 [ -z "$TAG" ] && TAG="$DISC_STEM"
 if [ "$REALTIME_RECORD" -eq 1 ]; then
   [ -z "$RECORD_PRESET" ] && RECORD_PRESET="flac-fast"
@@ -337,6 +346,9 @@ if [ "$OFFLINE_RECORD" -eq 1 ]; then
   AUDIO_RATE_CONTROL=false
   VIDEO_VSYNC=false
 fi
+if [ "$SNAPSHOT_ON_EXIT" = true ] && [ "$RECORD" -eq 0 ]; then
+  VIDEO_VSYNC=false
+fi
 cat > "$CFG" <<EOF
 video_driver = "gl"
 video_context_driver = "x"
@@ -367,6 +379,13 @@ input_player1_start = "enter"
 genesis_plus_gx_region_detect = "$CORE_REGION"
 genesis_plus_gx_bios = "enabled"
 EOF
+
+if [ "$SNAPSHOT_ON_EXIT" = true ]; then
+  cat >> "$CFG" <<EOF
+savestate_auto_save = "true"
+savestate_auto_load = "false"
+EOF
+fi
 
 if [ "$RECORD" -eq 1 ] && [ -z "$RECORD_PATH" ]; then
   RECORD_PATH="$OUTDIR/${TAG}.mkv"

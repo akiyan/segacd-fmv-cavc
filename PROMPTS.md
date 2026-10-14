@@ -102,14 +102,6 @@ Can the first runs and CPU transfers run before the first VBLANK now? Or,
 depending on preprocessing, could the CPU and DMA runs skip the first VBLANK
 and get aggregated into the next VBLANK?
 
-[Quoted assistant reply from another session, abridged: preprocessing can
-miss V1 and push the whole cold transfer to V2, delaying flip to V3; but the
-first cold240 FAIL was not preprocessing delay — 240 patterns need 3,840
-words against the 3,400-word single-VBlank budget, whose theoretical ceiling
-is floor(3400/16) = 212 patterns.]
-
-From this, I want to consider transferring cold patterns split across 2
-VBLANKs (at 30fps). 4 VBLANKs at 15fps. Let me hear your thinking first.
 
 ## 8. A crushed face
 
@@ -218,70 +210,8 @@ $new 先程の知見ドキュメントから普遍的に使えるものをAGENTS
 
 H40 Bad Apple を cold240 にしたとき、SLIPが発生して HUD gate がFAILになったあと、以下のやりとりがあった。
 
-run fragmentationより、転送量が境界を越えて次のVBlankを待った形
-30fpsだと1フレームの処理に2VBlankが使えて、最初のVBLANKと次のVBLANKがある。現在、最初のrunやCPU転送は最初のVBLANK前から行われうる？それとも前処理次第では、CPUもDMArunも最初のVBLANKでは行われず、次のVBLANKに集約されてしまったりする？
-3:07
-3m 33s作業しました
-はい、後者は起こり得ます。まず「30fpsで2 VBlank使える」の内訳を明確にすると、現行H40 N2では通常こうです。
+run fragmentationより、転送量が境界を越えて次のVBlankを待った形 30fpsだと1フレームの処理に2VBlankが使えて、最初のVBLANKと次のVBLANKがある。現在、最初のrunやCPU転送は最初のVBLANK前から行われうる？それとも前処理次第では、CPUもDMArunも最初のVBLANKでは行われず、次のVBLANKに集約されてしまったりする？
 
-```
-V0: 前フレームをflip
-    └ active期間: swap、Pass1、shadow更新、NT staging
-
-V1: cold pattern転送
-    └ DMA runと1–2 tileのCPU直書き
-
-V2: NT DMA、HUD、CRAM、表示flip
-```
-
-つまり、cold pattern転送に自由に使えるのは通常V1の1回です。V2は表示flip用に予約されています。
-実装上の挙動
-
-* Pass1のRUN_TABLE構築などはactive表示中に実行できます。
-* 実際のVRAM pattern転送は、DMAもCPU直書きもPass2にまとめられており、VBlank内でしか実行しません。
-* Pass2到達時にすでにVBlankなら、その途中から即座に転送開始します。
-* active中なら、次のVBlank開始まで待ちます。
-* 前処理がV1を過ぎると、cold転送全体がV2へ送られます。その後NT DMAは新しいVBlankを要求するため、flipはV3へ遅れます。
-
-
-```
-前処理がV1を逃した場合:
-
-V0 ── prework ── V1(未使用) ── prework ── V2(cold) ── V3(NT DMA + flip)
-```
-
-これは現在のコードで実際に可能です。[Pass2入口 (line 989)](/home/akiyan/segacd-fmv-ttrc/boot/movieplay_ip.s:989)では、現在VBlank中ならそのまま進み、そうでなければ次を待ちます。
-cold240の最初のFAILは前処理遅延ではない
-`f0167` は以下でした。
-
-* `E=0x33`、Pass2到達は前回flipから約6.27ms
-* V1までは約16.7msなので、前処理は十分早い
-* cold/DMA = 240 patterns
-* H40の1 VBlank予算 = 3,400 words
-* 240 patterns = 3,840 words
-
-したがって、freshなV1を丸ごと使っても入りません。
-
-```
-V1: cold前半
-V2: cold残り
-V3: NT DMA + flip
-```
-
-これはCPU時間の推測ではなく、現在の固定word予算だけで確定します。H40で1 VBlankに入る理論上限は、
-
-```
-floor(3400 / 16) = 212 patterns
-```
-
-です。cold180は2,880 wordsなので1回に収まりますが、220、230、240はcapまで使えば必ず複数VBlankになります。
-もう一つ注意点があります。Pass2がVBlankの途中に到達した場合でも、現在は残り時間を測らず、3,400 wordsの全予算を設定します。そのため、capが212付近では「VBlank途中から全予算を使おうとする」問題も別途あり得ます。ただしcold240の`f0167`はV1前に到達しているため、この問題とは無関係です。
-結論として、先ほどの説明はさらに限定できます。
-cold240はMain CPUが何となく重くなったのではなく、現行H40 N2プレイヤーが持つ「cold転送1 VBlank = 最大212 patterns」という固定枠を超え、表示用VBlankを消費した。
-前処理によるV1取り逃しも可能ですが、最初のFAIL原因はそれではありません。
-
-
-このことから、(30fpsの場合)2VBLANKに分けてcold pattern転送を行えるか考えたい。15fpsなら4VBLANKである。一度考えを聞かせて。
 
 ## 8. つぶれた顔
 

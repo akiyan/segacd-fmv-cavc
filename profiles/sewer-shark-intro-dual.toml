@@ -1,0 +1,81 @@
+schema_version = 5
+
+[source]
+path = "assets/sewer_shark_intro_hd.mkv"
+# The 25 fps delivery repeats the underlying approximately 15 fps picture.
+# Preserve that picture cadence rather than spending updates on repeats.
+fps = "15"
+duration = "279.336000"
+sar = "1:1"
+
+[video]
+width = 320
+height = 184
+fit = "crop"
+resize_filter = "area"
+master_denoise = false
+# Remove the fixed borders of the 2560x1440 remaster, then account for
+# H40 PAR 32:35. Trim two output rows at each edge to form a 40x23 tile grid.
+master_filter = "setsar=1,crop=2224:1424:174:8,scale=320:188:flags=area,crop=320:184:0:2,setsar=1"
+raw_filter = "setsar=1,crop=2224:1424:174:8,scale=320:188:flags=area,crop=320:184:0:2,setsar=1"
+
+[output]
+directory = "tmpfs/sewer_shark_intro_hd_H40_320x184_adpcm22/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+# Existing 15 fps playback baseline; qualify this source through its HUD gate.
+cold_cap = 380
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 184]
+source_par = [32, 35]
+
+[youtube]
+analysis_title = "Sega CD FMV at 15 FPS — Sewer Shark Intro Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo — Sewer Shark Intro at 15 FPS"
+source_label = "Sewer Shark intro, VGSuite's 3DO-based HD remaster; 2560x1440/25 fps, approximately 15 fps picture cadence; 44.1 kHz stereo; borders removed, 320x184 picture"
+source_label_ja = "Sewer Sharkイントロ、VGSuiteによる3DO版のHDリマスター。2560x1440・配信25 fps／映像更新約15 fps、44.1 kHzステレオ。黒縁を除去し映像320x184に調整"
+source_url = "https://www.youtube.com/watch?v=hZwLgB4QOQM"
+
+[comparison]
+badge = "CAVC"
+title = "Sewer Shark Intro — CAVC vs Sega CD Original"
+audio_panel = "emu"
+audio_note = false
+output = "/dev/shm/segacd-fmv-cavc/artifacts/comparison-preview-sewer-shark-dual-original-disc-e32a39f9cf81/data/sewer_shark_dual.mp4"
+duration = 295.562
+tail_seconds = 5.0
+
+[comparison.panels.emu]
+label = "CAVC — Source: 3DO Remaster"
+slot = "main"
+aperture = [320, 224]
+pixel_aspect = [32, 35]
+spec = ["320×184  •  15 FPS  •  22.05 kHz mono ADPCM",
+        "H40 320×224 screen  •  Genesis Plus GX"]
+path = "/dev/shm/segacd-fmv-cavc/artifacts/record-sewer_shark_intro_hd_H40_320x184_adpcm22_rel-home-akiyan-segacd-fmv-cavc-out-sewer-shark-intro_release.cue-310-0-ffv1-flac-320x224-1-adf4f0cd1d39/data/sewer_shark_intro_hd_H40_320x184_adpcm22_rel_lossless.mkv"
+resize = "neighbor"
+# Display-only tone correction; the qualified codec stream is unchanged.
+contrast = 1.05
+gamma = 1.90
+fmv_start = 15.949267
+lead = 15.949267
+
+[comparison.panels.segacd]
+label = "Sega CD original"
+slot = "right"
+aperture = [256, 224]
+pixel_aspect = [8, 7]
+# Native H32 capture: apply NTSC dot aspect once, ignoring recorder SAR.
+# Intro film pixels occupy x=40..207, y=48..151; gameplay has a different view.
+spec = ["168×104  •  14.985 FPS",
+        "Original US disc  •  Genesis Plus GX"]
+path = "/dev/shm/segacd-fmv-cavc/artifacts/original-record-sewer-shark-us-native256-69419da94c24/data/sewer_shark_original.mkv"
+resize = "neighbor"
+fmv_start = 41.62
+lead = 0.0

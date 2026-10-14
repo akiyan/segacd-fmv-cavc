@@ -46,6 +46,42 @@ algorithm = "mosaic-gm"
 
 
 class EncodeProfileArtifactTests(unittest.TestCase):
+    def test_auto_scroll_boolean_and_environment_isolation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scroll.toml"
+            for value in ("0", "1", '\'"false"\''):
+                path.write_text(PROFILE.replace("[encoder]", "[encoder]\nauto_scroll = " + value))
+                with self.assertRaisesRegex(ValueError, "auto_scroll must be a boolean"):
+                    load_profile(path)
+            env = {}
+            for value, expected in (("false", "0"), ("true", "1")):
+                path.write_text(PROFILE.replace("[encoder]", "[encoder]\nauto_scroll = " + value))
+                apply_profile_env(load_profile(path), env)
+                self.assertEqual(env["CBRSIM_SCROLL"], expected)
+            env["CBRSIM_SCROLL"] = "0"
+            path.write_text(PROFILE)
+            apply_profile_env(load_profile(path), env)
+            self.assertEqual(env["CBRSIM_SCROLL"], "1")
+
+    def test_core_boost_profile_validation_and_environment_isolation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "boost.toml"
+            for value in ("-1", "true", "1.5", '"1"'):
+                path.write_text(PROFILE + f"core_boost_steps = {value}\n")
+                with self.assertRaisesRegex(ValueError, "non-negative integer"):
+                    load_profile(path)
+            path.write_text(PROFILE + "core_boost_steps = 1\n")
+            env = {}
+            apply_profile_env(load_profile(path), env)
+            self.assertEqual(env["CBRSIM_PAL_CORE_BOOST_STEPS"], "1")
+            path.write_text(PROFILE)
+            apply_profile_env(load_profile(path), env)
+            self.assertEqual(env["CBRSIM_PAL_CORE_BOOST_STEPS"], "0")
+            path.write_text(PROFILE.replace("mosaic-gm", "stl4")
+                            + "core_boost_steps = 1\n")
+            with self.assertRaisesRegex(ValueError, "requires mosaic-gm"):
+                load_profile(path)
+
     def test_removed_schema_v4_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old-schema.toml"
@@ -138,12 +174,14 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             {path.name for path in (root / "profiles").glob("*.toml")},
             {
                 "bad-apple.toml",
+                "full-metal-jacket-hartman.toml",
                 "lunar-ss-op.toml",
                 "machi-ed.toml",
                 "machi-op.toml",
                 "sakura-taisen-3-op.toml",
                 "sonic-jam-ed-good.toml",
                 "sonic-jam-op.toml",
+                "sonic-mania-op.toml",
                 "tears-of-steel.toml",
             },
         )

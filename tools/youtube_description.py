@@ -146,12 +146,16 @@ def main(argv: list[str] | None = None) -> int:
                         choices=sorted(URL_FIELDS), help="which video")
     parser.add_argument("--timeline-tsv", type=Path,
                         help="analysis TSV, required for analysis/playback")
+    parser.add_argument("--hud-free", action="store_true",
+                        help="describe a qualified playback capture without a HUD")
     parser.add_argument("--analysis-url")
     parser.add_argument("--playback-url")
     parser.add_argument("--timeline-url")
     parser.add_argument("--output", type=Path, help="write here instead of stdout")
     args = parser.parse_args(argv)
 
+    if args.hud_free and args.kind != "playback":
+        parser.error("--hud-free requires --kind playback")
     profile = encode_config.load_profile(args.config)
     if args.kind == "comparison":
         template_text = comparison_template(profile)
@@ -163,7 +167,9 @@ def main(argv: list[str] | None = None) -> int:
         template_text = template.read_text(encoding="utf-8")
         template_name = str(template)
 
-    values = {"build": build_version(), "emulator": EMULATOR}
+    values = {"build": build_version(), "emulator": EMULATOR,
+              "overlay_note": " No diagnostic overlay is drawn during the movie." if args.hud_free else "",
+              "overlay_note_ja": "本編に診断表示は重ねていません。" if args.hud_free else ""}
 
     if args.kind == "verification":
         values["change_note"] = encoder_change_note()
