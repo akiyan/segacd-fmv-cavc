@@ -47,6 +47,8 @@ try:
     (target/'demoted-fade-anchors.json').write_text(json.dumps(sorted(anchors))+'\n')
     # Reload the source PCM for packing; do not use the reconstructed WAV.
     import pack_stream
+    from pack_validation import install as install_pack_validation
+    install_pack_validation(pack_stream)
     sys.argv=['pack_stream','--dec-log',str(target/'decisions.pkl'),'--audio',str(job/'inputs/audio_22k05_s16_mono.wav'),'--output',str(target/'packed/MOVIE.DAT'),'--sp-extension',str(job/'inputs/sp-extension.bin'),'--verify']
     pack_stream.main()
     print(f'Native original-code reference complete: {target}',flush=True)

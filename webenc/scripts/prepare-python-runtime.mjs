@@ -50,3 +50,4 @@ execFileSync(path.join(repo,'tools/python.sh'),['--gpu','-c',
  `import sys,json;sys.path.insert(0,${JSON.stringify(path.join(repo,'tools'))});from encode_config import PROFILE_ENV_DEFAULTS;from pathlib import Path;Path(${JSON.stringify(path.join(root,'public/python-defaults.json'))}).write_text(json.dumps(PROFILE_ENV_DEFAULTS))`],{stdio:'inherit'});
 
 await copyFile(path.join(root,'harness/equivalence/timeline.py'),path.join(root,'public/python-timeline.py'));
+await copyFile(path.join(root,'harness/equivalence/pack_validation.py'),path.join(root,'public/python-pack-validation.py'));

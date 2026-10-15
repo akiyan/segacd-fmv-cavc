@@ -1,4 +1,4 @@
-"""Browser platform adapter. Encoder/palette/packer implementations are unchanged."""
+"""Original encoder/palette with narrowly scoped platform/pack validation adapters."""
 import json
 import os
 from pathlib import Path
@@ -54,6 +54,8 @@ while True:
         print(f'Fade planning retry at frame {error.anchor}',flush=True)
 Path('/work/demoted-fade-anchors.json').write_text(json.dumps(sorted(anchors))+'\n')
 import pack_stream
+from pack_validation import install as install_pack_validation
+install_pack_validation(pack_stream)
 if emit_progress:emit_progress(5,None,'Resolve and verify packed stream',force=True)
 sys.argv=['pack_stream','--dec-log','/work/decisions.pkl','--audio','/original-audio.wav','--output','/work/packed/MOVIE.DAT','--sp-extension','/work/sp-extension.bin','--verify']
 pack_stream.main()

@@ -50,7 +50,7 @@ self.onmessage=async({data})=>{
   }else manifest=await normalizeVideo(py,data.file,data.settings,runtime,log,progress);
   py.FS.writeFile('/work/sp-extension.bin',extension);
   progress(0,100);progress(1,0);
-  for(const [name,url]of [['numeric_compat.py','/python-numeric-compat.py'],['stages.py','/python-stages.py'],['replay.py','/python-replay.py'],['prebuffer_trace.py','/python-prebuffer-trace.py'],['progress.py','/python-progress.py'],['features.py','/python-features.py'],['timeline.py','/python-timeline.py']])py.FS.writeFile('/codec/tools/'+name,await(await fetch(url)).text());
+  for(const [name,url]of [['numeric_compat.py','/python-numeric-compat.py'],['stages.py','/python-stages.py'],['replay.py','/python-replay.py'],['prebuffer_trace.py','/python-prebuffer-trace.py'],['progress.py','/python-progress.py'],['features.py','/python-features.py'],['timeline.py','/python-timeline.py'],['pack_validation.py','/python-pack-validation.py']])py.FS.writeFile('/codec/tools/'+name,await(await fetch(url)).text());
   const numeric=new Uint8Array(await(await fetch('/python-numeric.npz')).arrayBuffer());
   if(await sha(numeric)!==runtime.numericSha256)throw new Error('Native colour constants failed their runtime checksum');
   py.FS.writeFile('/codec/numeric-constants.npz',numeric);

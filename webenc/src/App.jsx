@@ -20,6 +20,7 @@ import {EditorTimeline} from './EditorTimeline';
 import {EncodeSummary} from './EncodeSummary';
 import {availablePictureDimensions, selectPictureDimensions} from './picture-dimensions';
 import {automaticOutputFps, outputFrameRates} from './output-fps';
+import {encoderErrorNotice} from './encoder-error';
 
 const pythonStages = ["Read source", "Train MOSAIC-GM", "Quantize", "Plan delivery", "Encode", "Pack & verify", "Reconstruct /sim", "Create playback MP4", "Build ISO & CUE", "ZIP"];
 
@@ -522,7 +523,7 @@ export function App({ encodedPreview = null } = {}) {
     const worker = createPythonEncoderWorker();workerRef.current = worker;
     const fail = message => {
       worker.terminate();workerRef.current = null;
-      setJob(old => ({ ...old, status: "error" }));setNotice(message);appendLog(message);
+      setJob(old => ({ ...old, status: "error" }));setNotice(encoderErrorNotice(message));appendLog(message);
     };
     const followFrame = index => {
       if(source.normalized)return;

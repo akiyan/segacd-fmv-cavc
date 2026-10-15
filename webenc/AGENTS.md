@@ -135,6 +135,15 @@ cursor for an entirely boot-loaded Prg stream whose last sector contains unused
 padding; require zero timed pattern payload and exact 64-pattern rounding. It
 must not change decisions, physical schedules, packed bytes or target quality.
 
+The pack_validation adapter corrects only the optional-list speed predicate.
+Scroll controls require a shadow list to carry their position item, including
+dense or zero-update frames whose list is not faster than a bitmap. Keep the
+speed-gain requirement for FRAME_NORMAL, frozen cycle equality, required-scroll
+lists, forbidden fade lists and all physical delivery/buffer checks intact.
+Never drop scroll, lower cold cap or change decisions to bypass this check.
+Display a concise root-cause error banner; preserve the complete traceback in
+Activity log so diagnostics do not consume the editor viewport.
+
 Use managed tmpfs leases for generated media and long browser test inputs;
 comparison receipts and project-owned per-frame series use persistent logs/
 and UTF-8, LF, headered TSV. Keep browser test diagnostics under webenc/harness/.

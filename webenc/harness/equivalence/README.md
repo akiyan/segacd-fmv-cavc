@@ -1,5 +1,28 @@
 # Normalized-input byte equivalence
 
+## Mandatory scroll-list validation
+
+`pack_validation.py` corrects the speed comparison in the browser/native
+comparison adapters without editing shared repository codec files. A scroll
+control must carry its position item through the shadow-list format, even when
+the nominal bitmap path would be faster. Normal-frame lists remain optional
+and must still improve speed. Frozen costs, required/forbidden list formats,
+all stream writing and physical delivery verification remain unchanged.
+
+Run `tools/python.sh webenc/harness/equivalence/test_pack_validation.py` for the
+exact original/corrected validation predicates: dense scroll and zero-update
+scroll reproduce the rejection, slow normal lists remain rejected, and fast
+normal lists remain valid. An AST comparison requires every other statement in
+the packer's main function to stay unchanged. The same tests run in Pyodide.
+
+`scroll_pack_repro.py SOURCE.mp4` normalizes and simulates the complete source at
+320x224, 30fps, preserve-aspect with source PAR 32:35 and cold cap 210. It runs
+the original packer, captures the reported rejection, then repacks the identical
+decisions with the corrected predicate and requires full `--verify`. Media and
+decisions use a managed tmpfs lease; a persistent receipt goes under `logs/`.
+
+## Shared input preparation
+
 The comparison uses the original source and TOML profile, then performs profile
 image/audio filters offline once. Inputs are lossless RGB PNG frame sequences
 (master and raw) and 22.05 kHz mono signed-16 PCM. No WebCodecs or Canvas decoding

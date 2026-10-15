@@ -125,6 +125,11 @@ Diagnostic hashes and comparison receipts are retained under `logs/`.
 A narrowly bounded diagnostic adapter handles unused whole-sector padding when
 the entire Prg stream fits in the boot prebuffer. It changes no encoding choices
 or physical schedule; existing stream checks remain active.
+A separate pack-validation adapter distinguishes mandatory scroll lists from
+optional normal-frame list optimizations. Scroll controls retain their required
+position/list format regardless of nominal bitmap speed; optional lists must
+still be faster. Frozen costs and every delivery/buffer check remain active.
+Error banners show the concise cause, with the full traceback in Activity log.
 
 User-selected video files automatically choose matching picture dimensions,
 or the closest visible aspect ratio after H40 pixel aspect correction. Manual
