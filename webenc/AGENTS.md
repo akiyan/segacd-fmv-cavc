@@ -247,5 +247,7 @@ official Pages assets API, using a short-lived upload JWT and the existing cf
 session. Do not log credentials or put them in public artifacts. Preserve the
 reproducible dist/pages build and Cloudflare _headers. Exclude development test
 media/runners while retaining the complete Wasm runtime and Binutils sources.
+Set Speculation-Rules to the cached empty offline-speculation.json so Cloudflare
+does not inject a network-only speculation endpoint into this single-page app.
 User authorization persists: deploy webapp changes after successful validation
 without requesting confirmation for each deployment.

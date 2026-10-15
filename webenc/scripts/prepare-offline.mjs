@@ -18,6 +18,7 @@ async function collect(directory, accept = () => true) {
   }
 }
 await add('index.html');
+await add('offline-speculation.json');
 await collect('assets'); // Includes both worker bundles and the AAC fallback.
 await collect('python-runtime');
 await collect('ffmpeg-runtime', name => /\.(js|json|part)$/.test(name));

@@ -20,6 +20,7 @@ await writeFile(path.join(destination,'_headers'),`/*
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   X-Content-Type-Options: nosniff
+  Speculation-Rules: "/offline-speculation.json"
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
 /offline-worker.js
