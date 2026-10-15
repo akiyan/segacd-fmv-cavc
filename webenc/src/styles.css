@@ -1698,12 +1698,14 @@ p,
 .app-footer { flex-shrink:0; display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid var(--border); padding:5px 20px; }
 .app-footer nav { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:6px 22px; }
 .footer-copyright { flex-shrink:0; color:var(--muted); font-size:11px; line-height:18px; white-space:nowrap; }
-.offline-status { flex-shrink:0; display:flex; align-items:center; flex-wrap:wrap; gap:4px 14px; padding:4px 16px; border-bottom:1px solid var(--border); color:var(--muted); font-size:11px; line-height:18px; }
-.offline-status progress { width:150px; height:5px; accent-color:var(--blue); }
+.offline-status { min-width:0; max-width:45%; display:flex; align-items:center; gap:8px; color:var(--muted); font-size:11px; line-height:18px; }
+.offline-detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.offline-status .status-dot, .offline-status button { flex-shrink:0; }
+.offline-status progress { flex-shrink:0; width:80px; height:5px; accent-color:var(--blue); }
 .offline-status.ready { color:#94cbb6; }
 .offline-status.error { color:#efbf83; }
 .offline-status button { min-height:24px; padding:2px 8px; font-size:11px; }
-.offline-hint { color:var(--muted); }
+@media (max-width:850px) { .offline-status { max-width:100%; } }
 .app-footer a { color:var(--muted); font-size:11px; line-height:18px; text-decoration:none; }
 .app-footer a:hover { color:#8cc8fa; text-decoration:underline; }
 .app-footer a:focus-visible { outline:2px solid #79b9f4; outline-offset:3px; }

@@ -593,17 +593,14 @@ export function App({ encodedPreview = null } = {}) {
             <span className="badge">simplified ver</span>
           </div>
         </div>
-        <span className="local-note">
-          <span className="status-dot" />
-          Files stay on your device
-        </span>
+        <div className={`offline-status ${offline.status}`} role="status"
+          title={offline.status === 'ready' ? 'Encoding needs no network connection. Files stay on your device.' : offline.detail}>
+          <span className="status-dot" aria-hidden="true" />
+          <span className="offline-detail">{offline.status === 'ready' ? 'Offline ready · Files stay on your device' : offline.detail}</span>
+          {offline.status === 'loading' && <progress aria-label="Offline encoder download" max={offline.total || 1} value={offline.total ? offline.done : undefined} />}
+          {offline.status === 'error' && <button type="button" onClick={prepareOfflineEncoder}>Retry download</button>}
+        </div>
       </header>
-      <div className={`offline-status ${offline.status}`} role="status">
-        <span>{offline.detail}</span>
-        {offline.status === 'loading' && <progress aria-label="Offline encoder download" max={offline.total || 1} value={offline.total ? offline.done : undefined} />}
-        {offline.status === 'ready' && <span className="offline-hint">Encoding needs no network connection.</span>}
-        {offline.status === 'error' && <button type="button" onClick={prepareOfflineEncoder}>Retry download</button>}
-      </div>
       {notice && (
         <div role="alert" className="notice">
           <Icon as={Info} />

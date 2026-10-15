@@ -126,6 +126,9 @@ Prefix preparation log entries with [current file/total files] and show the same
 counter before the Activity log heading while loading. Derive counts from the
 actual asset list; include cache reuse and retries, and clear the heading prefix
 on completion or failure.
+Place offline readiness/download progress and retry controls in the title
+header's right-hand area; never allocate a separate status row below the header.
+Keep the no-network explanation in its tooltip to preserve vertical space.
 Use content hashes to reuse unchanged assets across releases. Dev-server mode
 is exempt; it must not claim Offline ready. Retain upstream
 source/build archives, dependency source references and licenses.
