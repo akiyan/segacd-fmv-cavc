@@ -20,6 +20,19 @@ the packer's main function to stay unchanged. The same tests run in Pyodide.
 the original packer, captures the reported rejection, then repacks the identical
 decisions with the corrected predicate and requires full `--verify`. Media and
 decisions use a managed tmpfs lease; a persistent receipt goes under `logs/`.
+Use `--pack-only MANAGED_JOB_DIRECTORY` to verify retained decisions without
+repeating palette training or encoding. `repack.mjs MANAGED_JOB_DIRECTORY` loads
+those frozen decisions into browser Python, requires full pack verification and
+compares HEADER/BODY/MOVIE against the corrected native pack. This is a packer
+regression test, not an independent browser-encoder equivalence claim.
+
+The qualified 576x400 / 30fps source contains 2,714 frames. With 320x224,
+source PAR 32:35, preserve aspect and cold cap 210, the original packer rejects
+frame 1869. The corrected native and production-browser packers both pass full
+verification on those frozen decisions and produce byte-identical
+HEADER.DAT, BODY.DAT and MOVIE.DAT. Receipts are retained under
+`logs/webenc_scroll_pack_full_repro.json` and
+`logs/webenc_scroll_pack_browser_repack.tsv`.
 
 ## Shared input preparation
 

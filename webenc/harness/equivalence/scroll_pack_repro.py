@@ -10,15 +10,51 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path[:0] = [str(ROOT/'tools'), str(Path(__file__).parent)]
-from tmpfs_workspace import activate_directory, mark_directory_complete
+from tmpfs_workspace import activate_directory, mark_directory_complete, lease_managed_path
+
+
+def verify_pack(target,source_hash):
+    os.environ.update(CBRSIM_FPS='30',CBRSIM_W='320',CBRSIM_H='224',CBRSIM_COLD_CAP='210',CBRSIM_GPU='0',CBRSIM_WORKERS='1')
+    toolchain=Path.home()/'toolchains/mars/m68k-elf/bin/m68k-elf-'
+    subprocess.run([str(toolchain)+'as','-m68000','--register-prefix-optional','--bitwise-or','-I'+str(ROOT/'boot'),str(ROOT/'boot/movieplay_sp_ext.s'),'-o',str(target/'sp-extension.o')],check=True)
+    subprocess.run([str(toolchain)+'ld','-nostdlib','--oformat','binary','-T',str(ROOT/'cfg/sp_ext.ld'),'-o',str(target/'sp-extension.bin'),str(target/'sp-extension.o')],check=True)
+    with (target/'decisions.pkl').open('rb') as file:decisions=pickle.load(file)
+    import pack_stream
+    sys.argv=['pack_stream','--dec-log',str(target/'decisions.pkl'),'--audio',str(target/'audio_22k05_s16_mono.wav'),
+              '--output',str(target/'packed/MOVIE.DAT'),'--sp-extension',str(target/'sp-extension.bin'),'--verify']
+    original_error=None
+    try:pack_stream.main()
+    except SystemExit as error:
+        original_error=str(error)
+        if 'selected shadow list is not faster' not in original_error:raise
+        print(f'ORIGINAL_PACK_REPRODUCED={original_error}',flush=True)
+    from pack_validation import install as install_pack_validation
+    install_pack_validation(pack_stream)
+    pack_stream.main()
+    receipt={'frames':len(decisions['frames']),'width':320,'height':224,'fps':30,'coldCap':210,'sourceSha256':source_hash,
+             'originalPackError':original_error,'correctedPackVerified':True,
+             'files':{name:hashlib.sha256((target/'packed'/name).read_bytes()).hexdigest() for name in ['HEADER.DAT','BODY.DAT','MOVIE.DAT']}}
+    (target/'repro-result.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    (ROOT/'logs/webenc_scroll_pack_full_repro.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    return receipt
 
 parser=argparse.ArgumentParser()
 parser.add_argument('source',type=Path)
+parser.add_argument('--pack-only',type=Path)
 args=parser.parse_args()
 source=args.source.resolve()
 source_hash=hashlib.sha256(source.read_bytes()).hexdigest()
 code_hash=hashlib.sha256(b''.join(p.name.encode()+p.read_bytes() for p in sorted((ROOT/'tools').glob('*.py')))).hexdigest()
 identity=hashlib.sha256((source_hash+code_hash+'320x224-30-pad-sar32:35-cold210').encode()).hexdigest()
+if args.pack_only:
+    lease=lease_managed_path(args.pack_only,required_bytes=256*1024**2)
+    if lease is None:raise SystemExit('Pack-only input must be a managed existing fixture directory')
+    try:
+        receipt=verify_pack(args.pack_only,source_hash)
+        mark_directory_complete(lease,reuse_token=identity,details=receipt)
+        print(json.dumps(receipt),flush=True)
+    finally:lease.release()
+    raise SystemExit(0)
 lease=activate_directory(kind='webenc-scroll-pack',key=f'{source.stem}-{identity[:12]}',required_bytes=4*1024**3,reuse_token=identity)
 target=lease.entry/'data'
 try:
@@ -61,24 +97,7 @@ try:
         except sim.FadeDeadlineInfeasible as error:
             if error.anchor in anchors:raise
             anchors.add(error.anchor)
-    with (target/'decisions.pkl').open('rb') as file:decisions=pickle.load(file)
-    import pack_stream
-    sys.argv=['pack_stream','--dec-log',str(target/'decisions.pkl'),'--audio',str(target/'audio_22k05_s16_mono.wav'),
-              '--output',str(target/'packed/MOVIE.DAT'),'--verify']
-    original_error=None
-    try:pack_stream.main()
-    except SystemExit as error:
-        original_error=str(error)
-        if 'selected shadow list is not faster' not in original_error:raise
-        print(f'ORIGINAL_PACK_REPRODUCED={original_error}',flush=True)
-    from pack_validation import install as install_pack_validation
-    install_pack_validation(pack_stream)
-    pack_stream.main()
-    receipt={'frames':frames,'width':320,'height':224,'fps':30,'coldCap':210,'sourceSha256':source_hash,
-             'originalPackError':original_error,'correctedPackVerified':True,
-             'files':{name:hashlib.sha256((target/'packed'/name).read_bytes()).hexdigest() for name in ['HEADER.DAT','BODY.DAT','MOVIE.DAT']}}
-    (target/'repro-result.json').write_text(json.dumps(receipt,indent=2)+'\n')
-    (ROOT/'logs/webenc_scroll_pack_full_repro.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    receipt=verify_pack(target,source_hash)
     mark_directory_complete(lease,reuse_token=identity,details=receipt)
     print(json.dumps(receipt),flush=True)
 finally:lease.release()
