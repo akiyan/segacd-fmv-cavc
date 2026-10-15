@@ -21,6 +21,7 @@ import {EncodeSummary} from './EncodeSummary';
 import {availablePictureDimensions, selectPictureDimensions} from './picture-dimensions';
 import {automaticOutputFps, outputFrameRates} from './output-fps';
 import {encoderErrorNotice} from './encoder-error';
+import {Licenses} from './Licenses';
 
 const pythonStages = ["Read source", "Train MOSAIC-GM", "Quantize", "Plan delivery", "Encode", "Pack & verify", "Reconstruct /sim", "Create playback MP4", "Build ISO & CUE", "ZIP"];
 
@@ -1160,10 +1161,12 @@ export function App({ encodedPreview = null } = {}) {
       <footer className="app-footer">
         <nav aria-label="Project and author links">
           <a href="https://www.akiyan.com/" target="_blank" rel="noopener noreferrer">akiyan.com</a>
-          <a href="https://github.com/akiyan/segacd-fmv-cavc" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a href="https://x.com/akiyan" target="_blank" rel="noopener noreferrer">@akiyan</a>
+          <a href="https://github.com/akiyan/segacd-fmv-cavc" target="_blank" rel="noopener noreferrer">GitHub</a>
           <a href="https://www.youtube.com/channel/UC6CTbKtzPPydO8lLwLzkF8w" target="_blank" rel="noopener noreferrer">YouTube</a>
+          <Licenses />
         </nav>
+        <span className="footer-copyright">© 2026</span>
       </footer>
     </main>
   );

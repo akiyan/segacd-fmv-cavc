@@ -92,6 +92,16 @@ WORKERFS reads the selected Blob without copying the complete source into the
 FFmpeg heap; an image pipe transfers each completed PNG directly into Pyodide.
 Cancel terminates the owning worker, including FFmpeg.
 
+The original project code is licensed under GPL-3.0-or-later; see the repository
+root `LICENSE`. Third-party code and assets retain their respective terms.
+The footer's Licenses modal loads installed-version copyright/license notices
+and component-specific source links on demand. `npm run prepare:licenses`
+regenerates `public/licenses/`; dev and build preparation run it automatically.
+The notices are not a complete-source compliance audit: FFmpeg's bundled
+dependency sources and the AAC fallback's corresponding-source/rebuild materials
+still require verification. A link to this project's GitHub repository covers
+only the sources actually present there.
+
 ## Verification scope
 
 `harness/equivalence/README.md` documents normalized-input reference checks.

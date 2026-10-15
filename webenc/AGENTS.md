@@ -223,6 +223,15 @@ single-viewport desktop layout; mobile may wrap the link row if necessary.
 Footer blog label is akiyan.com and links to https://www.akiyan.com/. The X
 link label is @akiyan and links to https://x.com/akiyan.
 
+Keep a Licenses button in the footer. Open notices in a keyboard-accessible
+modal with internal scrolling, Escape/Close dismissal and focus restoration.
+Load installed-version notices only when opened. Include project GPL-3.0-or-later
+terms, third-party copyright/license texts and component-specific source links.
+A project GitHub link does not replace sources for dependencies absent there;
+do not describe the notices UI as proof of complete GPL/LGPL compliance.
+Left-align footer items in this order: akiyan.com, @akiyan, GitHub, YouTube,
+Licenses. Display © 2026 at the right edge. Keep the label plural: Licenses.
+
 Production hosting is Cloudflare Pages at
 https://segacd-fmv-cavc-encoder.akiyan.com/. Use globally installed cf CLI for
 project, deployment, domain and DNS operations. Run npm run deploy:pages for
@@ -231,3 +240,5 @@ official Pages assets API, using a short-lived upload JWT and the existing cf
 session. Do not log credentials or put them in public artifacts. Preserve the
 reproducible dist/pages build and Cloudflare _headers. Exclude development test
 media/runners while retaining the complete Wasm runtime and Binutils sources.
+User authorization persists: deploy webapp changes after successful validation
+without requesting confirmation for each deployment.

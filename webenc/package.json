@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "test:sites": "node --test tests/sites-worker.test.mjs",
     "test:ui": "bash scripts/test-ui.sh",
-    "predev": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh && node scripts/prepare-ffmpeg-runtime.mjs",
-    "prebuild": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh && node scripts/prepare-ffmpeg-runtime.mjs",
+    "predev": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh && node scripts/prepare-ffmpeg-runtime.mjs && node scripts/prepare-licenses.mjs",
+    "prebuild": "python3 scripts/sync-profile-caps.py && node scripts/prepare-python-runtime.mjs && bash scripts/build-m68k-runtime.sh && node scripts/prepare-ffmpeg-runtime.mjs && node scripts/prepare-licenses.mjs",
     "test:playback": "node scripts/verify-playback.mjs",
     "sync:profiles": "python3 scripts/sync-profile-caps.py",
     "test:cold-cap": "node scripts/verify-cold-cap.mjs",
@@ -23,7 +23,8 @@
     "test:admission": "node scripts/verify-admission.mjs",
     "test:encode:stress": "bash scripts/test-encode-stress.sh",
     "test:audio": "node scripts/verify-preview-audio.mjs",
-    "deploy:pages": "npm run build && node scripts/deploy-pages.mjs"
+    "deploy:pages": "npm run build && node scripts/deploy-pages.mjs",
+    "prepare:licenses": "node scripts/prepare-licenses.mjs"
   },
   "dependencies": {
     "@ffmpeg/core": "0.12.10",
@@ -41,5 +42,6 @@
     "@cloudflare/deploy-helpers": "^0.20.3",
     "@playwright/test": "^1.64.0",
     "mime": "^4.1.1"
-  }
+  },
+  "license": "GPL-3.0-or-later"
 }
