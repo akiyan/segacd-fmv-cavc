@@ -116,7 +116,14 @@ FFmpeg's filesystem. Read source Blobs through WORKERFS. Decode/resample audio
 from its head, then trim/pad to the generated frame count. Show real download,
 frame and sample progress; cancellation must terminate FFmpeg with its owning
 worker. Split the Wasm runtime into checksum-verified assets below 25 MiB for
-Pages. Load it only when Generate processes ordinary media. Retain upstream
+Pages. Precache all encoding executables, Python packages/adapters, codec/player
+data, AAC fallback, app/worker bundles and license notices on page opening.
+Require verified completion and a controlling service worker before enabling
+Generate. Show real byte progress and per-file download/cache/verification/error
+messages in Activity log. After Offline ready, a fresh Worker must encode through
+MP4 and ISO/CUE ZIP without network access, including after an offline reload.
+Use content hashes to reuse unchanged assets across releases. Dev-server mode
+is exempt; it must not claim Offline ready. Retain upstream
 source/build archives, dependency source references and licenses.
 Native preprocessing byte proofs require the recorded command options,
 including -cpuflags 0 to disable CPU-specific optimized routines. Do not claim
@@ -225,7 +232,7 @@ link label is @akiyan and links to https://x.com/akiyan.
 
 Keep a Licenses button in the footer. Open notices in a keyboard-accessible
 modal with internal scrolling, Escape/Close dismissal and focus restoration.
-Load installed-version notices only when opened. Include project GPL-3.0-or-later
+Load installed-version notices only when opened. Include project MIT
 terms, third-party copyright/license texts and component-specific source links.
 A project GitHub link does not replace sources for dependencies absent there;
 do not describe the notices UI as proof of complete GPL/LGPL compliance.

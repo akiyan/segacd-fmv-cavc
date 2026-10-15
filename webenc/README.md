@@ -87,12 +87,21 @@ are available under `m68k-runtime/`. Generated libraries live in ignored paths.
 FFmpeg core 0.12.10 (FFmpeg 5.1.4) is self-hosted under `ffmpeg-runtime/`, alongside
 source archives, licenses and pinned build/dependency source references. Its
 30.7 MiB Wasm is split into four checksum-verified chunks for the Pages asset
-limit and downloaded only when Generate needs ordinary-media preprocessing.
+limit. On page opening, a service worker downloads and SHA-256-verifies the
+complete encoding runtime (about 57 MiB), including Python/packages, FFmpeg,
+AAC fallback, player sources, m68k tools and app/worker bundles. Generate remains
+disabled until **Offline ready**. Activity log shows each download, verification,
+cached asset and failure; interrupted preparation can be retried. Identical
+assets are shared across releases in a content-addressed browser cache.
+After readiness, encoding, playback MP4, ISO/CUE and ZIP creation work without
+a network connection, including after an offline page reload. Keep this page's
+site data; clearing browser storage removes the offline files. Dev mode uses
+the Vite server; use a production build on HTTPS or localhost for offline use.
 WORKERFS reads the selected Blob without copying the complete source into the
 FFmpeg heap; an image pipe transfers each completed PNG directly into Pyodide.
 Cancel terminates the owning worker, including FFmpeg.
 
-The original project code is licensed under GPL-3.0-or-later; see the repository
+The original project code is licensed under MIT; see the repository
 root `LICENSE`. Third-party code and assets retain their respective terms.
 The footer's Licenses modal loads installed-version copyright/license notices
 and component-specific source links on demand. `npm run prepare:licenses`

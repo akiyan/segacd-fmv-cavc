@@ -22,6 +22,7 @@ import {availablePictureDimensions, selectPictureDimensions} from './picture-dim
 import {automaticOutputFps, outputFrameRates} from './output-fps';
 import {encoderErrorNotice} from './encoder-error';
 import {Licenses} from './Licenses';
+import {subscribeOfflineEncoder, prepareOfflineEncoder} from './offline-runtime';
 
 const pythonStages = ["Read source", "Train MOSAIC-GM", "Quantize", "Plan delivery", "Encode", "Pack & verify", "Reconstruct /sim", "Create playback MP4", "Build ISO & CUE", "ZIP"];
 
@@ -42,6 +43,16 @@ function downloadBlob(blob, name) {
 }
 
 export function App({ encodedPreview = null } = {}) {
+  const [offline, setOffline] = useState({status: 'loading', done: 0, total: 0, detail: 'Preparing offline encoder…'});
+  const offlineLogId = useRef(0);
+  useEffect(() => subscribeOfflineEncoder(state => {
+    setOffline(state);
+    if (state.entry && state.entry.id > offlineLogId.current) {
+      offlineLogId.current = state.entry.id;
+      setLogs(previous => [...previous.slice(-199), state.entry.text]);
+    }
+  }), []);
+  const runtimeReady = offline.status === 'ready' || offline.status === 'development';
   const [source, setSource] = useState(emptySource);
   useEffect(() => {
     if (encodedPreview) setOutputMode("playback");
@@ -514,7 +525,7 @@ export function App({ encodedPreview = null } = {}) {
     updateCrop(next);
   }
   function startPythonEncode() {
-    if (busy || !source.file || source.inspecting || !sarValid || !coldCapValid) return;
+    if (!runtimeReady || busy || !source.file || source.inspecting || !sarValid || !coldCapValid) return;
     setEncodeSummary(null);
     started.current = Date.now();
     setNotice("");setPackageBlob(null);setLocalPreview(null);setLiveFrame(null);setPlaying(false);
@@ -587,6 +598,12 @@ export function App({ encodedPreview = null } = {}) {
           Files stay on your device
         </span>
       </header>
+      <div className={`offline-status ${offline.status}`} role="status">
+        <span>{offline.detail}</span>
+        {offline.status === 'loading' && <progress aria-label="Offline encoder download" max={offline.total || 1} value={offline.total ? offline.done : undefined} />}
+        {offline.status === 'ready' && <span className="offline-hint">Encoding needs no network connection.</span>}
+        {offline.status === 'error' && <button type="button" onClick={prepareOfflineEncoder}>Retry download</button>}
+      </div>
       {notice && (
         <div role="alert" className="notice">
           <Icon as={Info} />
@@ -837,6 +854,7 @@ export function App({ encodedPreview = null } = {}) {
           <button
             className="primary encode-button"
             disabled={
+              !runtimeReady ||
               busy ||
               source.inspecting ||
               !source.file ||
@@ -848,7 +866,7 @@ export function App({ encodedPreview = null } = {}) {
             onClick={startPythonEncode}
           >
             <Icon as={busy ? Stop : Play} weight="fill" />
-            {busy ? "Processing…" : source.inspecting ? "Reading video…" : "Generate CAVC"}
+            {busy ? "Processing…" : !runtimeReady ? "Preparing encoder…" : source.inspecting ? "Reading video…" : "Generate CAVC"}
           </button>
           <p className="demo-disclaimer">CAVC encode, /sim playback and bootable disc.</p>
         </aside>

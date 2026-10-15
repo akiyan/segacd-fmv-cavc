@@ -23,7 +23,7 @@ async function upstream(file, url) {
 }
 const projectLicense = await read('../LICENSE');
 await writeFile(path.join(dest, 'project.txt'), projectLicense);
-const entries = [{name: 'Sega CD Constraint-Aware Video Codec', license: 'GPL-3.0-or-later',
+const entries = [{name: 'Sega CD Constraint-Aware Video Codec', license: 'MIT',
   links: [link('Project source code', 'https://github.com/akiyan/segacd-fmv-cavc'), link('License text', '/licenses/project.txt')],
   texts: [{name: 'Project license', text: projectLicense}]}];
 

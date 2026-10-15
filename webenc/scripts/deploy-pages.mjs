@@ -22,6 +22,10 @@ await writeFile(path.join(destination,'_headers'),`/*
   X-Content-Type-Options: nosniff
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+/offline-worker.js
+  Cache-Control: no-cache
+/offline-manifest.json
+  Cache-Control: no-cache
 `);
 const files=[];
 async function collect(directory){
