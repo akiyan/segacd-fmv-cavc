@@ -1141,7 +1141,7 @@ export function App({ encodedPreview = null } = {}) {
               onClick={() => setLogOpen(!logOpen)}
             >
               <Icon as={logOpen ? CaretDown : CaretRight} size={15} />
-              <h2>Activity log</h2>
+              <h2>{offline.status === 'loading' && offline.fileCount ? `${offline.fileIndex}/${offline.fileCount} ` : ''}Activity log</h2>
             </button>
             <button
               className="quiet-button"

@@ -18,14 +18,16 @@ async function prepare() {
   const total = ASSETS.reduce((sum, asset) => sum + asset.size, 0);
   let done = 0;
   const mib = bytes => `${(bytes / 1024 ** 2).toFixed(1)} MiB`;
-  for (const asset of ASSETS) {
+  for (const [index, asset] of ASSETS.entries()) {
+    const counts = {fileIndex: index + 1, fileCount: ASSETS.length};
+    const fileLog = message => broadcast({type: 'log', ...counts, message: `[${counts.fileIndex}/${counts.fileCount}] ${message}`});
     if (await cache.match(cacheKey(asset))) {
-      broadcast({type: 'log', message: `Using saved asset: ${asset.url} (${mib(asset.size)})`});
+      fileLog(`Using saved asset: ${asset.url} (${mib(asset.size)})`);
       done += asset.size;
-      broadcast({type: 'progress', done, total, file: asset.url});
+      broadcast({type: 'progress', ...counts, done, total, file: asset.url});
       continue;
     }
-    broadcast({type: 'log', message: `Downloading ${asset.url} (${mib(asset.size)})`});
+    fileLog(`Downloading ${asset.url} (${mib(asset.size)})`);
     const response = await fetch(asset.url, {cache: 'no-store'});
     if (!response.ok) throw new Error(`Cannot prepare ${asset.url}: HTTP ${response.status}`);
     const reader = response.body.getReader(), chunks = [];
@@ -37,12 +39,12 @@ async function prepare() {
       received += value.length;
       const now = performance.now();
       if (now - lastReport >= 100 || received >= asset.size) {
-        broadcast({type: 'progress', done: done + received, total, file: asset.url});
+        broadcast({type: 'progress', ...counts, done: done + received, total, file: asset.url});
         lastReport = now;
       }
       const quarter = Math.floor(received / asset.size * 4);
       if (asset.size >= 4 * 1024 ** 2 && quarter > lastQuarter && quarter < 4) {
-        broadcast({type: 'log', message: `Downloading ${asset.url}: ${mib(received)} / ${mib(asset.size)}`});
+        fileLog(`Downloading ${asset.url}: ${mib(received)} / ${mib(asset.size)}`);
         lastQuarter = quarter;
       }
     }
@@ -54,7 +56,7 @@ async function prepare() {
     const headers = new Headers(response.headers);
     headers.delete('content-encoding'); headers.delete('content-length');
     await cache.put(cacheKey(asset), new Response(bytes, {headers}));
-    broadcast({type: 'log', message: `Verified and saved: ${asset.url} (${mib(asset.size)})`});
+    fileLog(`Verified and saved: ${asset.url} (${mib(asset.size)})`);
     done += received;
   }
 }

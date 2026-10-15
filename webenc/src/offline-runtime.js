@@ -3,7 +3,7 @@ let pending;
 let logId = 0;
 const listeners = new Set();
 const update = state => {current = state; for (const listener of listeners) listener(state);};
-const log = text => update({...current, entry: {id: ++logId, text}});
+const log = (text, counts = {}) => update({...current, ...counts, entry: {id: ++logId, text}});
 
 function activated(worker) {
   return new Promise((resolve, reject) => {
@@ -39,7 +39,7 @@ async function prepare() {
         channel.port1.close(); reject(new Error('A new release is available. Reload the page to finish offline setup.')); return;
       }
       if (data.type === 'progress') update({status: 'loading', ...data, detail: `Preparing offline encoder · ${(data.done / 1024 ** 2).toFixed(1)} / ${(data.total / 1024 ** 2).toFixed(1)} MiB`});
-      if (data.type === 'log') log(data.message);
+      if (data.type === 'log') log(data.message, {fileIndex: data.fileIndex, fileCount: data.fileCount});
       if (data.type === 'error') {channel.port1.close(); reject(new Error(data.message));}
       if (data.type === 'ready') {channel.port1.close(); resolve();}
     };

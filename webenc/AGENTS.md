@@ -122,6 +122,10 @@ Require verified completion and a controlling service worker before enabling
 Generate. Show real byte progress and per-file download/cache/verification/error
 messages in Activity log. After Offline ready, a fresh Worker must encode through
 MP4 and ISO/CUE ZIP without network access, including after an offline reload.
+Prefix preparation log entries with [current file/total files] and show the same
+counter before the Activity log heading while loading. Derive counts from the
+actual asset list; include cache reuse and retries, and clear the heading prefix
+on completion or failure.
 Use content hashes to reuse unchanged assets across releases. Dev-server mode
 is exempt; it must not claim Offline ready. Retain upstream
 source/build archives, dependency source references and licenses.
