@@ -78,7 +78,11 @@ self.addEventListener('fetch', event => {
     const cachedPage = async () => {
       const response = await (await caches.open(CACHE)).match(cacheKey(byUrl.get('/index.html')));
       if (!response) throw new Error('The offline page is not ready.');
-      return response;
+      // Cached HTML bodies can be reused across releases; replace any hosting
+      // speculation header retained in their original response metadata.
+      const headers = new Headers(response.headers);
+      headers.set('Speculation-Rules', '"/offline-speculation.json"');
+      return new Response(response.body, {headers});
     };
     event.respondWith(self.navigator.onLine === false ? cachedPage() : fetch(request).catch(cachedPage));
     return;
