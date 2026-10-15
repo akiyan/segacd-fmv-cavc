@@ -1696,7 +1696,13 @@ p,
 .codec-timeline-detail { margin:3px 0 0; font-size:9px; line-height:1.4; }
 
 .app-footer { flex-shrink:0; display:flex; align-items:center; justify-content:space-between; gap:12px; border-top:1px solid var(--border); padding:5px 20px; }
-.app-footer nav { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:6px 22px; }
+.app-footer nav { display:flex; align-items:center; justify-content:flex-start; flex-wrap:wrap; gap:6px 18px; }
+.app-footer .footer-credit { color:var(--muted); font-size:13px; line-height:18px; margin-right:10px; white-space:nowrap; }
+.app-footer .footer-icon { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; }
+@media (max-width:480px) {
+ .app-footer nav { column-gap:12px; }
+ .app-footer .footer-credit { margin-right:4px; }
+}
 .footer-copyright { flex-shrink:0; color:var(--muted); font-size:11px; line-height:18px; white-space:nowrap; }
 .offline-status { min-width:0; max-width:45%; display:flex; align-items:center; gap:8px; color:var(--muted); font-size:11px; line-height:18px; }
 .offline-detail { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }

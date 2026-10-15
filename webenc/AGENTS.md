@@ -234,8 +234,10 @@ the project GitHub repository, @akiyan on X, and the owner's YouTube channel
 UC6CTbKtzPPydO8lLwLzkF8w. Open these external links in a new tab. Preserve the
 single-viewport desktop layout; mobile may wrap the link row if necessary.
 
-Footer blog label is akiyan.com and links to https://www.akiyan.com/. The X
-link label is @akiyan and links to https://x.com/akiyan.
+Footer credit reads "by akiyan.com" as text. Follow it with a globe icon
+linking to https://www.akiyan.com/.
+Show globe, X, GitHub and YouTube as muted icons with accessible names and
+tooltips; X links to https://x.com/akiyan. Keep Licenses as text.
 
 Keep a Licenses button in the footer. Open notices in a keyboard-accessible
 modal with internal scrolling, Escape/Close dismissal and focus restoration.
@@ -243,7 +245,7 @@ Load installed-version notices only when opened. Include project MIT
 terms, third-party copyright/license texts and component-specific source links.
 A project GitHub link does not replace sources for dependencies absent there;
 do not describe the notices UI as proof of complete GPL/LGPL compliance.
-Left-align footer items in this order: akiyan.com, @akiyan, GitHub, YouTube,
+Left-align footer items in this order: by akiyan.com, globe, X, GitHub, YouTube,
 Licenses. Display © 2026 at the right edge. Keep the label plural: Licenses.
 
 Production hosting is Cloudflare Pages at

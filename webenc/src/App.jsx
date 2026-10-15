@@ -9,6 +9,10 @@ import {
   Copy,
   Info,
   DownloadSimple,
+  Globe,
+  XLogo,
+  GithubLogo,
+  YoutubeLogo,
 } from "@phosphor-icons/react";
 import { clamp, normalizeCrop, dragCrop, framing } from "./geometry";
 import { OutputPlayer } from "./OutputPlayer";
@@ -1175,10 +1179,11 @@ export function App({ encodedPreview = null } = {}) {
       </section>
       <footer className="app-footer">
         <nav aria-label="Project and author links">
-          <a href="https://www.akiyan.com/" target="_blank" rel="noopener noreferrer">akiyan.com</a>
-          <a href="https://x.com/akiyan" target="_blank" rel="noopener noreferrer">@akiyan</a>
-          <a href="https://github.com/akiyan/segacd-fmv-cavc" target="_blank" rel="noopener noreferrer">GitHub</a>
-          <a href="https://www.youtube.com/channel/UC6CTbKtzPPydO8lLwLzkF8w" target="_blank" rel="noopener noreferrer">YouTube</a>
+          <span className="footer-credit">by akiyan.com</span>
+          <a className="footer-icon" href="https://www.akiyan.com/" aria-label="akiyan.com" title="www.akiyan.com" target="_blank" rel="noopener noreferrer"><Icon as={Globe} size={20} /></a>
+          <a className="footer-icon" href="https://x.com/akiyan" aria-label="@akiyan on X" title="@akiyan on X" target="_blank" rel="noopener noreferrer"><Icon as={XLogo} size={19} /></a>
+          <a className="footer-icon" href="https://github.com/akiyan/segacd-fmv-cavc" aria-label="GitHub" title="GitHub" target="_blank" rel="noopener noreferrer"><Icon as={GithubLogo} weight="fill" size={20} /></a>
+          <a className="footer-icon" href="https://www.youtube.com/channel/UC6CTbKtzPPydO8lLwLzkF8w" aria-label="YouTube" title="YouTube" target="_blank" rel="noopener noreferrer"><Icon as={YoutubeLogo} weight="fill" size={20} /></a>
           <Licenses />
         </nav>
         <span className="footer-copyright">© 2026</span>
