@@ -82,9 +82,9 @@
      M-CODE   0xFF0000..0xFF66FF  resident IP + generated bitmap handlers
      M-STATE  0xFF6700..0xFF87FF  runtime .bss (8.25 KiB worst-case reserve)
      M-FCRAM  0xFF8800..0xFF887F  current inline fade palette
-     free      0xFF8880..0xFFB1FF
-     M-PALTAB 0xFFB200..0xFFB9FF  16 x 128B palette segments
-     M-PALIDX 0xFFBA00..0xFFBA3F  16 x 4B palette-switch entries
+     free     0xFF8880..0xFF993F  4288 bytes
+     M-PALTAB 0xFF9940..0xFFB93F  64 x 128B palette segments
+     M-PALIDX 0xFFB940..0xFFBA3F  64 x 4B palette-switch entries
      M-DIC    0xFFBA40..0xFFFA3F  512-pattern persistent dictionary
      guard    0xFFFA40..0xFFFAFF  cushion below the stack
      M-STACK  0xFFFB00..0xFFFCFF  / M-TOP 0xFFFD00.. BIOS reserve */
@@ -123,14 +123,23 @@
    区間切替は内蔵PALIDX表(切替frame番号+区間番号)が起点で、ストリーム到着に
    依存しない。容量はav_config.PALTAB_MAX_SEGと一致必須
    (check_player_ring.pyがビルド時検証)。 */
-.equ PALTAB_MAX_SEG, 16			/* Main-RAM表の容量(区間数)。16*128B=2KB */
+.equ PALTAB_MAX_SEG, 64			/* Main-RAM capacity: 64 * 128B = 8 KiB */
 .equ PALTAB_STAGE_BYTES, 0x6000
-.equ PALIDX_ENTRIES, 16			/* 15切替 + 0xFFFF frame番兵 */
-.equ PALIDX_RAM, 0x00FFBA00		/* M-PALIDX 0xFFBA00..0xFFBA3F */
+.equ PALIDX_ENTRIES, 64			/* 63 switches + 0xFFFF frame sentinel */
+.equ PALIDX_RAM, 0x00FFB940		/* M-PALIDX 0xFFB940..0xFFBA3F */
 .equ BOOT_VRAM_DIR_OFF, 0x0FC0
 .equ BOOT_VRAM_MAGIC, 0x4256524D		/* "BVRM" */
 .equ FADE_CRAM_RAM, 0x00FF8800		/* 128B copy kept after early Word-RAM return */
-.equ PALTAB_RAM, 0x00FFB200		/* 表本体 0xFFB200..0xFFBA00 */
+.equ PALTAB_RAM, 0x00FF9940		/* M-PALTAB 0xFF9940..0xFFB93F */
+.if PALTAB_RAM < FADE_CRAM_RAM+128
+	.error "PALTAB overlaps the inline fade CRAM image"
+.endif
+.if PALTAB_RAM+PALTAB_MAX_SEG*128 != PALIDX_RAM
+	.error "PALIDX must immediately follow PALTAB"
+.endif
+.if PALIDX_RAM+PALIDX_ENTRIES*4 != DIC_BUF
+	.error "DicBuf must immediately follow PALIDX"
+.endif
 /* 1VBLANKで安全に使えるDMA相当word budget。Word-RAM DMAの先頭word補修など、
    CPUによるVDP word writeはDMAの4倍でchargeし、runは残budget境界で次VBLANKへ
    分ける。 */
@@ -335,7 +344,7 @@ ip_entry:
 	   in a known-silent state before any streaming begins. */
 	bsr	init_sound_silence
 
-	/* IPイメージ内蔵のパレット表(可変長 n_seg*128B)と切替表(64B)をM-RAMへ。
+	/* IPイメージ内蔵のパレット表(可変長 n_seg*128B)と切替表(256B)をM-RAMへ。
 	   格納元は一時.startup領域で、後段のcodegenが上書きするため最初に写す。
 	   以後の参照(初期CRAM・区間切替・ループ復帰)はすべてM-PALTAB/M-PALIDX。 */
 	lea	paltab_image, a0
@@ -1066,7 +1075,7 @@ bf_flip:
 	   DEBUGフォントはP0/index15固定なので切替時作業はない。
 	   トリガはplayer内蔵のM-PALIDX表: next_switch <= frame_no の間advance
 	   (等値比較にしない=heldフレームで切替frameを跨いでも失われない)。最後に
-	   跨いだentryの区間を採用=絶対値の自己修復性を維持。表は15切替+0xFFFF番兵
+	   跨いだentryの区間を採用=絶対値の自己修復性を維持。表は63切替+0xFFFF番兵
 	   で必ず終端されるためadvanceは有界。CRAM本体はboot時に積んだMain-RAMの
 	   PALTAB表から引く(ストリーム到着タイミング非依存)。 */
 	clr.l	cram_source
@@ -1090,7 +1099,7 @@ bf_flip:
 	move.w	d0, dbg_seg			/* 絶対値で更新(増分でなく自己修復) */
 	lsl.w	#7, d0				/* *128B */
 	lea	PALTAB_RAM, a0
-	adda.w	d0, a0				/* src = 表[区間] (最大15*128=1920でadda.w可) */
+	adda.w	d0, a0				/* src = table[segment]; max 63*128=8064 fits signed word */
 	bra.s	bf_cram_source_ready
 bf_inline_cram:
 	lea	FADE_CRAM_RAM, a0		/* safe copy after early Word-RAM bank return */
@@ -2399,7 +2408,7 @@ paltab_image_end:
 palidx_image:
 	.incbin "palidx.bin"
 .if .-palidx_image != PALIDX_ENTRIES*4
-	.error "palidx.bin must be 16 entries of 4 bytes"
+	.error "palidx.bin must be PALIDX_ENTRIES entries of 4 bytes"
 .endif
 
 	.data

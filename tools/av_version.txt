@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e191/p155: Keep up to 64 segment palettes and 63 switches resident in Main
+#         RAM. PALTAB occupies 0xFF9940..0xFFB93F and PALIDX occupies
+#         0xFFB940..0xFFBA3F; the 512-pattern DicBuf retains its fixed range.
+#         The encoder merges detected ranges only above 64 segments, and
+#         the player embeds/copies the complete 256-byte switch table.
 #   e188: Require bright-tile evidence to be absent before classifying a
 #         frame as fade black. A faint title card on a black background
 #         passes the whole-frame conditions (98% dark pixels, mean at most
@@ -1359,6 +1364,6 @@
 #         still land in the previously selected bank. Every internal-register
 #         write in the writer, pcm_on and pcm_boot_init is now followed by an
 #         explicit 390-cycle delay. Cost is under 0.2% of a frame at 30 fps.
-date=20260806
-e=190
-p=154
+date=20261016
+e=191
+p=155

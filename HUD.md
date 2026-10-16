@@ -35,7 +35,7 @@ its 40-cell row width as `HUD_ROW_CELLS`, and returns it from `hud_layout()`.
 | Stored value | Logical cells | Digits | Decoded field or packing |
 |---|---:|---:|---|
 | `frame` | 0-3 | 4 | Displayed movie frame |
-| `palette_segment` | 4 | 1 | Active palette segment |
+| `palette_segment` | 4 | 1 | Low four bits of the active palette segment (segment modulo 16) |
 | `sector_slip` | 5 | 1 | Cumulative sector-delivery recovery count |
 | `control_desync` | 6 | 1 | Cumulative control-stream recovery count |
 | `audio_resync` | 7 | 1 | Cumulative audio-pointer recovery count |
@@ -66,7 +66,7 @@ TSV for sequence alignment but is untimed boot staging.
 | Field | Owner | Scope | Meaning |
 |---|---|---|---|
 | `frame` | Main | per frame | Displayed movie frame number |
-| `palette_segment` | Main | per frame | Active CRAM segment |
+| `palette_segment` | Main | per frame | Low four bits of the active CRAM segment; the encoder timeline retains the full 0..63 index |
 | `sector_slip` | Sub | cumulative nibble | Sector-delivery recoveries; interpret transitions, including wrap |
 | `control_desync` | Sub | cumulative nibble | Control parser recoveries |
 | `audio_resync` | Sub | cumulative nibble | Audio read-pointer corrections |
@@ -297,7 +297,7 @@ confidence check に使います。
 | Stored value | Logical cells | Digits | Decoded field または packing |
 |---|---:|---:|---|
 | `frame` | 0-3 | 4 | 表示中の movie frame |
-| `palette_segment` | 4 | 1 | Active palette segment |
+| `palette_segment` | 4 | 1 | 使用中のpalette segmentの下位4 bit（segment番号を16で割った余り） |
 | `sector_slip` | 5 | 1 | Cumulative sector-delivery recovery count |
 | `control_desync` | 6 | 1 | Cumulative control-stream recovery count |
 | `audio_resync` | 7 | 1 | Cumulative audio-pointer recovery count |
@@ -328,7 +328,7 @@ TSV に残しますが、untimed boot staging です。
 | Field | Owner | Scope | 意味 |
 |---|---|---|---|
 | `frame` | Main | per frame | Displayed movie frame number |
-| `palette_segment` | Main | per frame | Active CRAM segment |
+| `palette_segment` | Main | per frame | 使用中のCRAM segmentの下位4 bit。encoder timelineには0..63の完全な番号を保持 |
 | `sector_slip` | Sub | cumulative nibble | Sector-delivery recovery。Transition と wrap を読む |
 | `control_desync` | Sub | cumulative nibble | Control parser recovery |
 | `audio_resync` | Sub | cumulative nibble | Audio read-pointer correction |

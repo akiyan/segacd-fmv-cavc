@@ -465,9 +465,12 @@ if equ(sp_text, "DIC_STAGE_PATTERNS", SP) != pattern_supply.DIC_BUF_PATTERNS:
 
 
 # The fixed Main-RAM map holds in every build: PALTAB, PALIDX and DicBuf are
-# adjacent, and the dictionary ends below the stack guard.
+# adjacent, PALTAB follows the inline fade image, and the dictionary ends
+# below the stack guard.
 ip_paltab_ram = equ(ip_text, "PALTAB_RAM", IP)
 ip_palidx_ram = equ(ip_text, "PALIDX_RAM", IP)
+if ip_paltab_ram < equ(ip_text, "FADE_CRAM_RAM", IP) + 128:
+    sys.exit("check_player_ring: M-PALTAB overlaps the inline fade CRAM image")
 if equ(ip_text, "PALIDX_ENTRIES", IP) != av_config.PALIDX_ENTRIES:
     sys.exit("check_player_ring: Main PALIDX entry count differs from av_config")
 if ip_paltab_ram + av_config.PALTAB_MAX_SEG * 128 != ip_palidx_ram:
@@ -479,7 +482,7 @@ if pattern_supply.DIC_BUF_END > 0xFFFB00:
 
 # The player image embeds the pack-written palette tables. Validate the build
 # inputs the IP is about to incbin: paltab.bin is n_seg*128 bytes within the
-# fixed M-PALTAB capacity, palidx.bin is the sentinel-terminated 16-entry
+# fixed M-PALTAB capacity, palidx.bin is the sentinel-terminated 64-entry
 # switch table.
 if args.constants:
     paltab_path = args.constants.parent / "paltab.bin"

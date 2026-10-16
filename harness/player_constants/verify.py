@@ -73,7 +73,7 @@ def make_header(case: Case) -> bytes:
         ">4s8H4LBB3L6H",
         b"CAVC", frames, tcols, trows, cells,
         av_config.VRAM_PATTERN_POOL_TILES, 1,
-        cavc_routing.FRAME_SECTORS, 1,
+        cavc_routing.FRAME_SECTORS, av_config.PALTAB_MAX_SEG,
         12416, cavc_routing.routing_sector_count(frames), 194, 12416,
         1, 0, 2, 18,
         av_config.PALTAB_STAGE_KB * 1024 // 2048,
@@ -829,14 +829,23 @@ def main() -> None:
         for case in CASES:
             case_dir = matrix_dir / case.name
             case_dir.mkdir()
+            shutil.copyfile(ROOT / "boot/sec_jp.bin", case_dir / "security.bin")
+            shutil.copyfile(
+                ROOT / "boot/region_jp.inc", case_dir / "disc_region.inc")
+            run([sys.executable, str(TOOLS / "gen_debugfont.py"),
+                 "--output", str(case_dir / "dbgfont.bin")])
             header = make_header(case)
             header_path = case_dir / "HEADER.DAT"
             header_path.write_bytes(header)
-            # Minimal player-embedded palette tables: one all-black segment
-            # and an all-sentinel switch table.
-            (case_dir / "paltab.bin").write_bytes(bytes(128))
+            # Fill both tables to their hardware capacity so every build
+            # proves that the largest embedded palette image fits .startup.
+            (case_dir / "paltab.bin").write_bytes(
+                bytes(av_config.PALTAB_MAX_SEG * 128))
             (case_dir / "palidx.bin").write_bytes(
-                struct.pack(">HH", 0xFFFF, 0) * 16)
+                b"".join(struct.pack(">HH", segment * 2, segment)
+                         for segment in range(1, av_config.PALTAB_MAX_SEG))
+                + struct.pack(">HH", 0xFFFF, 0)
+                * (av_config.PALIDX_ENTRIES - av_config.PALTAB_MAX_SEG + 1))
             constants = player_constants.generate_include(
                 header_path, case_dir / "player_constants.inc")
 

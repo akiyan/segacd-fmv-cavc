@@ -12,7 +12,7 @@ import av_config
 def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
                 audio_bytes=None, audio_fd=0x345,
                 supply_counts=(0, 0, 0), pool=1400, base=1,
-                tcols=None, trows=28, cold_cap=190):
+                tcols=None, trows=28, cold_cap=190, nseg=13):
     if features is None:
         features = cavc_routing.FEATURE_COLD_RUNS
         if av_config.uses_vblank_cadence(fps):
@@ -26,7 +26,7 @@ def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
     prefix = struct.pack(
         ">4s8H4LBB3L6H",
         b"CAVC", frames, tcols, trows, cells,
-        pool, base, cavc_routing.FRAME_SECTORS, 13,
+        pool, base, cavc_routing.FRAME_SECTORS, nseg,
         12416, cavc_routing.routing_sector_count(frames), 194, 12416,
         mode, 0, 2, 14, av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(fps),
@@ -49,6 +49,15 @@ def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
 
 
 class PlayerConstantsTest(unittest.TestCase):
+    def test_palette_capacity_accepts_64_and_rejects_65(self):
+        for nseg in (1, 16, 17, 32, 64):
+            with self.subTest(nseg=nseg):
+                values = player_constants.parse_header_sector(
+                    make_header(nseg=nseg))
+                self.assertEqual(values.nseg, nseg)
+        with self.assertRaisesRegex(ValueError, "64-segment PALTAB"):
+            player_constants.parse_header_sector(make_header(nseg=65))
+
     def test_pool_may_fill_up_to_the_hud_font(self):
         # The single NT starts at 0xE000, so the pool may fill every tile below
         # the fixed font at tile 1744 (base 1 + 1743).
