@@ -31,6 +31,7 @@ import {subscribeOfflineEncoder, prepareOfflineEncoder} from './offline-runtime'
 const pythonStages = ["Read source", "Train MOSAIC-GM", "Quantize", "Plan delivery", "Encode", "Pack & verify", "Reconstruct /sim", "Create playback MP4", "Build ISO & CUE", "ZIP"];
 
 const emptySource = {name: "", url: "", width: 0, height: 0, duration: 0, inspecting: false};
+const sourceFrameLimitNotice = "Max 32,767 output frames (≈22m45s at 24fps).";
 const formatTime = (s) =>
   `${String(Math.floor((s || 0) / 60)).padStart(2, "0")}:${String(Math.floor((s || 0) % 60)).padStart(2, "0")}`;
 const pixelAspectPresets = { auto: [1, 1], square: [1, 1], h40: [32, 35], h32: [8, 7] };
@@ -640,6 +641,7 @@ export function App({ encodedPreview = null } = {}) {
               </span>
               <span className="replace">{source.file ? "Replace" : "Browse"}</span>
             </button>
+            <p className="hint source-frame-limit-hint">{sourceFrameLimitNotice}</p>
             <input
               ref={fileInput}
               type="file"
@@ -956,6 +958,7 @@ export function App({ encodedPreview = null } = {}) {
                     </span>
                   </div>
                 </div>
+                <span className="source-frame-limit">{sourceFrameLimitNotice}</span>
               </div>
               <div className="crop-toolbar">
               <div className="crop-fields">

@@ -1650,6 +1650,8 @@ p,
 .source-video-picker:hover { color:#b8daf6; background:#172331; }
 .source-video-picker:focus-visible { outline:2px solid #79b9f4; outline-offset:-4px; }
 .source-video-picker small { font-size:11px; }
+.settings section:first-child > .source-frame-limit-hint { display:block; margin-top:5px; }
+.source-frame-limit { position:absolute; left:8px; bottom:7px; z-index:3; max-width:calc(100% - 16px); padding:3px 6px; border-radius:3px; background:#10161dd9; color:#b7c3d1; font-size:10px; line-height:15px; pointer-events:none; }
 .live-sim-frame { position:relative; display:flex; align-items:center; justify-content:center; width:100%; height:100%; background:#000; }
 .live-sim-frame canvas { display:block; width:97.9591837%; height:100%; image-rendering:pixelated; }
 .live-sim-frame > span { position:absolute; right:6px; bottom:6px; padding:3px 5px; color:#cbd8e8; background:#10161dcc; font-size:10px; }
