@@ -11,15 +11,18 @@ const repo = fileURLToPath(new URL('../../../', import.meta.url));
 const lease = spawn(repo + 'tools/python.sh', [repo + 'webenc/harness/equivalence/lease.py', source], {stdio: ['pipe', 'pipe', 'inherit']});
 await new Promise((resolve, reject) => {lease.stdout.once('data', resolve); lease.once('exit', code => {if (code) reject(new Error('Fixture lease failed'));});});
 const browser = await chromium.launch({headless: true});
-const errors = [], failed = [], requests = [], downloads = [];
+const errors = [], failed = [], analyticsFailures = [], requests = [], downloads = [];
 let disconnected = false;
 try {
   const context = await browser.newContext({acceptDownloads: true});
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => dialog.dismiss());
-  context.on('requestfailed', request => {if (disconnected && request.url().startsWith('http')) failed.push({url: request.url(), error: request.failure()?.errorText});});
-  context.on('response', response => {if (disconnected && response.url().startsWith('http')) requests.push({url: response.url(), cached: response.fromServiceWorker()});});
+  const analyticsRequest = url => ['www.googletagmanager.com', 'www.google-analytics.com', 'region1.google-analytics.com'].includes(new URL(url).hostname);
+  context.on('requestfailed', request => {
+    if (disconnected && request.url().startsWith('http')) (analyticsRequest(request.url()) ? analyticsFailures : failed).push({url: request.url(), error: request.failure()?.errorText});
+  });
+  context.on('response', response => {if (disconnected && response.url().startsWith('http') && !analyticsRequest(response.url())) requests.push({url: response.url(), cached: response.fromServiceWorker()});});
   // Prove that a partial preparation cannot enable encoding and can be retried.
   await context.route('**/ffmpeg-runtime/ffmpeg-core-0.wasm.part', route => route.fulfill({status: 503, body: 'Test download interruption'}));
   await page.goto(process.env.WEBENC_URL || 'http://127.0.0.1:4175/');
@@ -62,7 +65,7 @@ try {
   expect(failed).toEqual([]);
   expect(requests.length).toBeGreaterThan(10);
   expect(requests.every(request => request.cached)).toBe(true);
-  const receipt = {gate: 'PASS', source, url: page.url(), offlineEncodes: 2, errors, failed, requests, downloads, preparation,
+  const receipt = {gate: 'PASS', source, url: page.url(), offlineEncodes: 2, errors, failed, analyticsFailures, requests, downloads, preparation,
     log: await page.getByLabel('Activity log', {exact: true}).textContent()};
   await writeFile(repo + 'logs/webenc_offline_verification.json', JSON.stringify(receipt, null, 2) + '\n');
   console.log(JSON.stringify({gate: receipt.gate, offlineEncodes: receipt.offlineEncodes, cachedResponses: requests.length, downloads}));

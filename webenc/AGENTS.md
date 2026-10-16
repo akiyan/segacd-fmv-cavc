@@ -260,3 +260,7 @@ Set Speculation-Rules to the cached empty offline-speculation.json so Cloudflare
 does not inject a network-only speculation endpoint into this single-page app.
 User authorization persists: deploy webapp changes after successful validation
 without requesting confirmation for each deployment.
+
+The page includes the supplied GA4 tag G-0PR7D6YPX6. Analytics is optional for
+app operation: do not precache external analytics scripts or gate offline
+readiness/encoding on them. Keep source media and filenames out of analytics.
