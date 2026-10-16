@@ -958,7 +958,7 @@ export function App({ encodedPreview = null } = {}) {
                     </span>
                   </div>
                 </div>
-                <span className="source-frame-limit">{sourceFrameLimitNotice}</span>
+                {!source.file && <span className="source-frame-limit">{sourceFrameLimitNotice}</span>}
               </div>
               <div className="crop-toolbar">
               <div className="crop-fields">

@@ -186,7 +186,8 @@ visible before download. Keep the accessible button name Download ZIP.
 When Source is empty, its preview area is a keyboard-accessible file picker and
 video drop target. Keep empty preview overlays contained within their panels.
 Show the 32,767-output-frame maximum (approximately 22m45s at 24fps) below the
-Source video picker and inside Source's monitor, both before and after selection.
+Source video picker before and after selection. Show the monitor notice only
+while no source file is selected.
 Keep the monitor notice compact and pointer-transparent for crop interaction.
 Sort Picture dimensions by descending pixel count, including the conditional
 288x200 option. Do not expose a palette-algorithm selector; use MOSAIC-GM.
