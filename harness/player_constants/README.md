@@ -8,6 +8,8 @@ specialized DEBUG players.
 
 For every case it requires:
 
+- the full 64-segment PALTAB and 64-entry PALIDX fit the transient IP image,
+  with the relocated Main-RAM tables below the unchanged DicBuf;
 - specialized IP and SP binaries do not grow relative to the generic build;
 - the specialized resident SP binary stays within the 5-KiB disc-system
   allocation and the boot header names its exact linked size;

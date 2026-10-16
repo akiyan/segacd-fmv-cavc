@@ -40,7 +40,7 @@ and are listed in place.
 |---|---|
 | Sub PRG-RAM | `SP-GAP` 224 B, `SCRATCH` 256 B, and `RING-ALIGN` 448 B |
 | Word RAM (each bank) | none — every complete sector is assigned; `WB-GAP` is a sector-rounding remainder, not an allocatable range |
-| Main RAM | `M-FREE` 10.38 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
+| Main RAM | `M-FREE` 4.19 KiB; the 192 B cushion below `M-STACK` is a guard, not allocatable |
 | VRAM | `0xDE80..0xDFFF` 384 B; unused Window/HScroll table rows remain reserved to those VDP structures. DEBUG shapes its HUD row with reg 18 only; reg 17 must stay 0 because Window row 24 cols 0-1 alias the HScroll table at `0xFC00`, which now carries nonzero scroll values |
 
 ## Sub PRG-RAM Map
@@ -206,9 +206,9 @@ build-time checked against the `M-STATE` base.
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player, transient boot UI, generated bitmap handlers and guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS, shadow, DEBUG HUD row, name-table stage (a persistent 4,096 B 64x32 plane band on a scroll build), scroll state (`scroll_next_h`/`scroll_next_v`/`scroll_h_dirty`), state; worst-case fixed reserve |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | current inline fade CRAM image, copied before the consumed Word RAM bank is returned |
-| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | unallocated space released by in-place `O_LOADS v2` consumption |
-| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB (player-embedded paltab.bin) |
-| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette-switch table, 15 switches + sentinel (player-embedded palidx.bin) |
+| `M-FREE` | `0xFF8880..0xFF993F` | 4.19 KiB | unallocated space (4,288 B) |
+| `M-PALTAB` | `0xFF9940..0xFFB93F` | 8.00 KiB | 64-entry PALTAB (player-embedded paltab.bin) |
+| `M-PALIDX` | `0xFFB940..0xFFBA3F` | 256 B | 64-entry palette-switch table, 63 switches + sentinel (player-embedded palidx.bin) |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
 | guard | `0xFFFA40..0xFFFAFF` | 192 B | cushion below the stack guard |
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stack and interrupt reserve |
@@ -485,7 +485,7 @@ rangeは保護役として割り当て済みであり、各mapの該当行に記
 |---|---|
 | Sub PRG-RAM | `SP-GAP` 224 B、`SCRATCH` 256 B、`RING-ALIGN` 448 B |
 | Word RAM（各bank） | なし。完全なsectorはすべて割当済み。`WB-GAP`はsector丸めの余りで、割当可能なrangeではない |
-| Main RAM | `M-FREE` 10.38 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
+| Main RAM | `M-FREE` 4.19 KiB。`M-STACK`直下の192 Bクッションはguardであり割当不可 |
 | VRAM | `0xDE80..0xDFFF` 384 B。未使用Window/HScroll table rowは各VDP structure用に予約したまま。DEBUGのHUD行はreg 18だけで形成し、reg 17は0のまま保つ。Window row 24 col 0-1は`0xFC00`のHScroll tableとaliasし、そこはいまや非ゼロのscroll値を運ぶため |
 
 ## Sub PRG-RAM map
@@ -645,9 +645,9 @@ build-time checkされます。
 | `M-CODE` | `0xFF0000..0xFF66FF` | 25.75 KiB | permanent player、transient boot UI、generated bitmap handler、guard |
 | `M-STATE` | `0xFF6700..0xFF87FF` | 8.25 KiB | BSS、shadow、DEBUG HUD row、name-table stage（scroll buildでは常駐4,096 Bの64x32 plane band）、scroll state（`scroll_next_h`/`scroll_next_v`/`scroll_h_dirty`）、state。最悪ケース固定予約 |
 | `M-FCRAM` | `0xFF8800..0xFF887F` | 128 B | 消費済みWord RAM bankを返す前にcopyする、現在のinline fade CRAM image |
-| `M-FREE` | `0xFF8880..0xFFB1FF` | 10.38 KiB | `O_LOADS v2` in-place消費により解放された未割当領域 |
-| `M-PALTAB` | `0xFFB200..0xFFB9FF` | 2.00 KiB | 16-entry PALTAB（player内蔵paltab.bin） |
-| `M-PALIDX` | `0xFFBA00..0xFFBA3F` | 64 B | 16-entry palette切替表、15切替+番兵（player内蔵palidx.bin） |
+| `M-FREE` | `0xFF8880..0xFF993F` | 4.19 KiB | 未割当領域（4,288 B） |
+| `M-PALTAB` | `0xFF9940..0xFFB93F` | 8.00 KiB | 64-entry PALTAB（player内蔵paltab.bin） |
+| `M-PALIDX` | `0xFFB940..0xFFBA3F` | 256 B | 64-entry palette切替表、63切替+番兵（player内蔵palidx.bin） |
 | `M-DIC` | `0xFFBA40..0xFFFA3F` | 16.00 KiB | 512-pattern persistent DicBuf |
 | guard | `0xFFFA40..0xFFFAFF` | 192 B | stack guard直下のクッション |
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stackとinterrupt reserve |

@@ -93,9 +93,9 @@ timed control carries one exact 128-byte CRAM image.
 
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
-| `PALTAB_MAX_SEG` | 16 | cfg / ip | Fixed palette-segment capacity; the encoder merges detected ranges down to it. |
-| PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`. |
-| `PALIDX_ENTRIES` | 16 (15 switches + sentinel) | cfg / ip | Player-embedded switch table at Main RAM `0xFFBA00..0xFFBA3F`. |
+| `PALTAB_MAX_SEG` | 64 | cfg / ip | Fixed palette-segment capacity; the encoder merges detected ranges down to it. |
+| PALTAB size | 8 KiB | ip | Main RAM `0xFF9940..0xFFB93F`. |
+| `PALIDX_ENTRIES` | 64 (63 switches + sentinel) | cfg / ip | Player-embedded switch table at Main RAM `0xFFB940..0xFFBA3F`. |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size (boot-VRAM sidecar records only). |
 | inline fade CRAM | 128 B | sim / pack / sp / ip | Full CRAM replacement carried by each selected fade control and copied to `M-FCRAM` before the Word-RAM handoff. |
 | P0/index1 | darkest usable RGB333 colour | sim / pack / ip | Opaque DEBUG HUD background. |
@@ -673,9 +673,9 @@ timed controlが正確な128-byte CRAM imageを1個持ちます。
 
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
-| `PALTAB_MAX_SEG` | 16 | cfg / ip | 固定palette segment上限。encoderは検出rangeをここまでmergeする。 |
-| PALTAB size | 2 KiB | ip | Main RAM `0xFFB200..0xFFB9FF`。 |
-| `PALIDX_ENTRIES` | 16（15切替+番兵） | cfg / ip | player内蔵切替表。Main RAM `0xFFBA00..0xFFBA3F`。 |
+| `PALTAB_MAX_SEG` | 64 | cfg / ip | 固定palette segment上限。encoderは検出rangeをここまでmergeする。 |
+| PALTAB size | 8 KiB | ip | Main RAM `0xFF9940..0xFFB93F`。 |
+| `PALIDX_ENTRIES` | 64（63切替+番兵） | cfg / ip | player内蔵切替表。Main RAM `0xFFB940..0xFFBA3F`。 |
 | `PALTAB_STAGE_KB` | 24 KiB / 12 sectors | cfg / pack | BOOT_STAGE size（boot-VRAM sidecar record専用）。 |
 | inline fade CRAM | 128 B | sim / pack / sp / ip | 選択した各fade controlが運ぶCRAM総入替。Word-RAM handoff前に`M-FCRAM`へcopyする。 |
 | P0/index1 | 使用可能な最暗RGB333色 | sim / pack / ip | 不透明DEBUG HUD background。 |

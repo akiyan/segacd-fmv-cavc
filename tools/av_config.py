@@ -227,20 +227,20 @@ PALETTE_SEGMENT_GAIN_PER_PIXEL = 0.002
 # codegen reuses .startup, so CRAM data and switch timing are fully
 # independent of stream delivery (slip/recovery safe) and no palette bytes
 # exist in HEADER.DAT or BODY.DAT.
-# Capacity = Main-RAM table size = PALTAB_MAX_SEG * 128 bytes (16 -> 2 KB at
-# PALTAB_RAM 0xFFB200..0xFFBA00). Keep this constant and the player equ equal
-# (build-checked by tools/check_player_ring.py).  The 16-segment cap is a
+# Capacity = Main-RAM table size = PALTAB_MAX_SEG * 128 bytes (64 -> 8 KiB at
+# PALTAB_RAM 0xFF9940..0xFFB940). Keep this constant and the player equ equal
+# (build-checked by tools/check_player_ring.py). The 64-segment cap is a
 # fixed Main-RAM map decision; the encoder merges detected palette ranges
 # down to it (quality trade accepted).
-PALTAB_MAX_SEG = 16
+PALTAB_MAX_SEG = 64
 # The fixed 24 KiB boot stage right after the header keeps its header-field
 # name (paltab_sec) but now carries only the optional boot-VRAM sidecar
 # records; palette data does not ride the disc.
 PALTAB_STAGE_KB = 24
-# PALIDX: 16 entries * 4 bytes: up to PALTAB_MAX_SEG-1 (frame.u16,
+# PALIDX: 64 entries * 4 bytes: up to PALTAB_MAX_SEG-1 (frame.u16,
 # segment.u16) switches followed by a 0xFFFF frame sentinel; unused entries
 # repeat the sentinel.
-PALIDX_ENTRIES = 16
+PALIDX_ENTRIES = PALTAB_MAX_SEG
 PALIDX_BYTES = PALIDX_ENTRIES * 4
 PALIDX_FRAME_SENTINEL = 0xFFFF
 BOOT_VRAM_SIDECAR_ENTRY_BYTES = 34  # slot.u16 + packed 32-byte pattern

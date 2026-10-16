@@ -116,7 +116,7 @@ format-version field.
 | 12 | 2 | pool | resident VRAM tile-pool size |
 | 14 | 2 | base | tile index of physical slot 0 |
 | 16 | 2 | frame_sectors | maximum useful sectors per routing entry, `5` |
-| 18 | 2 | n_seg | palette-segment count, at most 16 (informational; the player's embedded paltab.bin is authoritative) |
+| 18 | 2 | n_seg | palette-segment count, at most 64 (informational; the player's embedded paltab.bin is authoritative) |
 
 The next 16 bytes are `struct ">LLLL"`.
 
@@ -203,24 +203,25 @@ rejects a mismatch with the decision log.
 
 ## Player-embedded palette tables
 
-Ordinary segment-palette data does not ride the disc. The packer writes two build inputs
+Ordinary segment palettes are embedded in the disc system-area player image;
+they do not consume HEADER.DAT or BODY.DAT payload. The packer writes two build inputs
 beside the split stream and the Main-IP player image embeds both in its
 transient `.startup` section, copying them to Main RAM at entry before
 generated code reuses that area:
 
 - `paltab.bin` — all segment palettes, `n_seg * 128` bytes, copied to the
-  2 KiB PALTAB at `0xFFB200..0xFFB9FF`. The capacity is a fixed 16 segments.
+  8 KiB PALTAB at `0xFF9940..0xFFB93F`. The capacity is a fixed 64 segments.
   Each 128-byte block contains four palette lines of 16 Genesis colour words
   (`0000BBB0GGG0RRR0`). Entry 0 of each line is transparent. Of the 60 usable
   entries, the darkest colour is placed at line 0/index 1 and the brightest at
   line 0/index 15 before quantisation. Only their positions change. The
   initial CRAM image is segment 0 (frame 0 always displays segment 0), and
   loop restarts reload it.
-- `palidx.bin` — the palette-switch index PALIDX, 64 bytes: sixteen
-  `(u16 switch_frame, u16 segment)` entries covering at most 15 switches,
+- `palidx.bin` — the palette-switch index PALIDX, 256 bytes: sixty-four
+  `(u16 switch_frame, u16 segment)` entries covering at most 63 switches,
   terminated by a `0xFFFF` frame sentinel that also fills unused entries.
   Switch frames are strictly ascending and segment numbers advance one at a
-  time. The player copies the table to `0xFFBA00..0xFFBA3F` and performs each
+  time. The player copies the table to `0xFFB940..0xFFBA3F` and performs each
   CRAM total-replace when its frame counter reaches the next entry, so
   palette data and switch timing are both independent of same-frame CD
   delivery.
@@ -676,7 +677,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | 12 | 2 | pool | resident VRAM tile poolの大きさ |
 | 14 | 2 | base | physical slot 0のtile index |
 | 16 | 2 | frame_sectors | routing entry当たりの有効sector上限、`5` |
-| 18 | 2 | n_seg | palette segment数、最大16（情報提供のみ。正典はplayer内蔵のpaltab.bin） |
+| 18 | 2 | n_seg | palette segment数、最大64（情報提供のみ。正典はplayer内蔵のpaltab.bin） |
 
 次の16 byteは `struct ">LLLL"` です。
 
@@ -760,21 +761,22 @@ player constantsがpreload値、routing allocation、compact-tail offset、parit
 
 ## Player内蔵palette table
 
-通常のsegment palette dataはdiscに載せません。packerがsplit streamの隣に2つのbuild入力を
+通常のsegment paletteはdisc system areaのplayer imageに内蔵し、
+HEADER.DATやBODY.DATのpayloadを使いません。packerがsplit streamの隣に2つのbuild入力を
 書き、Main-IP player imageが両方を一時`.startup` sectionへ内蔵します。生成
 codeがその領域を再利用する前に、entry直後にMain RAMへcopyします。
 
-- `paltab.bin` — 全segment palette。`n_seg * 128` byteで、2 KiBのPALTAB
-  （`0xFFB200..0xFFB9FF`）へcopyします。上限は固定16 segmentです。各128-byte
+- `paltab.bin` — 全segment palette。`n_seg * 128` byteで、8 KiBのPALTAB
+  （`0xFF9940..0xFFB93F`）へcopyします。上限は固定64 segmentです。各128-byte
   blockは、16個のGenesis colour word（`0000BBB0GGG0RRR0`）を持つpalette line
   4本です。各lineのentry 0は透明です。使用可能な60 entryのうち、最暗色を
   line 0/index 1、最明色をline 0/index 15へ置いてから量子化します。色の集合は
   変えず、位置だけを変えます。初期CRAM imageはsegment 0で（frame 0は必ず
   segment 0を表示）、loop再開時にも再loadします。
-- `palidx.bin` — palette切替indexのPALIDX、64 byteです。16個の
-  `(u16 switch_frame, u16 segment)` entryで最大15切替を持ち、`0xFFFF` frame
+- `palidx.bin` — palette切替indexのPALIDX、256 byteです。64個の
+  `(u16 switch_frame, u16 segment)` entryで最大63切替を持ち、`0xFFFF` frame
   番兵で終端します（未使用entryも番兵で埋めます）。switch frameは厳密に昇順で、
-  segment番号は1ずつ進みます。playerは表を `0xFFBA00..0xFFBA3F` へcopyし、
+  segment番号は1ずつ進みます。playerは表を `0xFFB940..0xFFBA3F` へcopyし、
   frame counterが次のentryへ達したときにCRAM総入替を実行します。palette data
   と切替タイミングの両方が同じframeのCD deliveryに依存しません。
 

@@ -41,7 +41,7 @@ CELL = 8                 # one HUD cell = 8 px
 HUD_ROW = 0              # fixed Window row; overflow digits use row-1 sprites
 HUD_FIELD_DIGITS = (     # physical value cells; no separators
     ("frame", 4),
-    ("palette_segment", 1),
+    ("palette_segment", 1),  # low four bits; full segment 0..63 is in the timeline
     ("sector_slip", 1),
     ("control_desync", 1),
     ("audio_resync", 1),
