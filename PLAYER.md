@@ -105,7 +105,7 @@ is profile-specialized (`PLAYER_SPECIALIZE`) and the linker enforces the hard
 end at `0x07400`. Continuous-read marker qualification covers the reclaimed
 `0x07400..0x07FFF` interval before `ADP-IDX` uses its leading 2,848 bytes.
 
-The packer places the exact 940-byte hash-bound extension after the
+The packer places the exact 1,108-byte hash-bound extension after the
 8,800-byte ADPCM table in its existing five-sector padding. Sub stages that
 image at `SP-STAGE` (`0x7B000`) and runs the extension from `0x7D260` in two
 ways: its qualified first 88 bytes run from `EXT-RUN` (`0x76800`, the unused
@@ -124,11 +124,20 @@ overwrite both temporary extension locations.
 | `ISO-SCR` | `0x67000..0x76FFF` | 64 KiB scratch image during ISO discovery only |
 | `F0-STAGE` | `0x72000..0x7AFFF` | frame-0 pattern staging |
 | `SP-STAGE` | `0x7B000..` | staged SP image containing the extension source |
-| `EXT-RUN` | `0x76800..0x76BAB` | boot-only extension execution window; timed playback reuses its first sector as `WORD-PENDING3` |
+| `ROUTE-MIRROR` | `0x7B000..0x7B7FF` | 2 KiB scratch for sector-wise mirroring of tables above 16 KiB, after HEADER EOF |
+| `EXT-RUN` | `0x76800..0x76C53` | boot-only extension execution window; timed playback reuses its first sector as `WORD-PENDING3` |
 
 `ISO-SCR` and `F0-STAGE` may overlap the timed ring tail, and `F0-STAGE` may
 also overlap `APPLY`, because those timed owners are inactive in each boot
 phase. Neither overlay changes the timed map.
+
+Routing supports 1..65,535 frames and reserves only its sector-rounded
+actual length in each Word bank. Tables above 16 KiB are loaded into the
+frame-0 bank, then mirrored one sector at a time after HEADER EOF. This
+boot-only scratch does not change the 420 KiB PrgBuf or 34 KiB APPLY bounds.
+The specialized long-movie PCM frequency phase uses two bytes inside `SP-RES`;
+its adjacent-FD writes obey the PCM internal-register spacing and preserve
+the wave write cursor and source sample order. Short streams omit this state.
 
 The APPLY queue retains deliberate back-pressure headroom; its unused
 instantaneous occupancy is not a fixed allocation.
@@ -550,7 +559,7 @@ Supplyになることはありません。
 `ADP-IDX`が先頭2,848 byteを使う前に、回収した`0x07400..0x07FFF`全体を
 continuous-read markerで検証します。
 
-Packerはhashで固定した940-byte extensionを8,800-byte ADPCM table直後の既存
+Packerはhashで固定した1,108-byte extensionを8,800-byte ADPCM table直後の既存
 5-sector paddingへ配置します。Subはそのimageを`SP-STAGE`（`0x7B000`）へ
 stageし、`0x7D260`のextensionを2通りに使います。qualified済み先頭88 byteは
 `EXT-RUN`（未使用timed-ring tailの`0x76800`）で実行します。routingが8 KiB
@@ -568,11 +577,19 @@ stateを設定します。その後はframe-0 stagingが両temporary extension l
 | `ISO-SCR` | `0x67000..0x76FFF` | ISO discovery中だけの64 KiB scratch image |
 | `F0-STAGE` | `0x72000..0x7AFFF` | frame-0 pattern staging |
 | `SP-STAGE` | `0x7B000..` | extension sourceを含むstaged SP image |
-| `EXT-RUN` | `0x76800..0x76BAB` | boot-only extension実行window。timed playbackでは先頭sectorを`WORD-PENDING3`として再利用 |
+| `ROUTE-MIRROR` | `0x7B000..0x7B7FF` | HEADER EOF後に16 KiB超の表をsector単位で複写する2 KiB scratch |
+| `EXT-RUN` | `0x76800..0x76C53` | boot-only extension実行window。timed playbackでは先頭sectorを`WORD-PENDING3`として再利用 |
 
 各boot phaseではtimed ownerがinactiveなので、`ISO-SCR`と`F0-STAGE`はtimed
 ring tailと重複でき、`F0-STAGE`は`APPLY`とも重複できます。どちらのoverlayも
 timed mapを変えません。
+
+Routingは1..65,535 frameに対応し、各Word bankには実際の長さをsector丸めして
+予約します。16 KiBを超える表はframe-0 bankへloadし、HEADER EOF後にsectorごとに
+複写します。このboot専用scratchは420 KiBのPrgBufと34 KiBのAPPLYの境界を変えません。
+Specializedの長尺PCM frequency phaseは`SP-RES`内で2 byteを使います。隣接FDの
+writeはPCM internal-registerの間隔を守り、wave write cursorとsource sample順を
+維持します。短編ではこのstateを省きます。
 
 APPLY queueには意図的なback-pressure headroomがあります。瞬間的な未使用
 occupancyは固定allocationではありません。

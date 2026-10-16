@@ -16,6 +16,8 @@ from typing import Sequence
 
 import numpy as np
 
+import cavc_routing
+
 
 PATTERN_BYTES = 32
 
@@ -182,8 +184,9 @@ def word_ram_layout(
     frames = int(frames)
     cells = int(cells)
     cold_cap = int(cold_cap)
-    if not 0 < frames <= 16384:
-        raise ValueError(f"frame count must be within 1..16384, got {frames}")
+    if not 0 < frames <= cavc_routing.MAX_FRAMES:
+        raise ValueError(
+            f"frame count must be within 1..{cavc_routing.MAX_FRAMES}, got {frames}")
     if cells <= 0:
         raise ValueError(f"cell count must be positive, got {cells}")
     if cold_cap < 0:

@@ -11,6 +11,18 @@ from upgrade_planner import DemandPrediction
 
 
 class PatternSupplyEncodingTests(unittest.TestCase):
+    def test_65535_frames_use_64k_route_and_keep_existing_short_allocations(self):
+        short = supply.word_ram_layout(16384, 1120, 190)
+        long = supply.word_ram_layout(65535, 1120, 190)
+        self.assertEqual(long.routing_bytes, 65536)
+        self.assertEqual(long.routing_offset, 65536)
+        self.assertEqual(short.wr0_patterns - long.wr0_patterns, 1536)
+        self.assertEqual(short.wr1_patterns - long.wr1_patterns, 1536)
+        self.assertEqual(short.wr0_offset, long.wr0_offset)
+        self.assertEqual(short.wr1_offset, long.wr1_offset)
+        with self.assertRaises(ValueError):
+            supply.word_ram_layout(65536, 1120, 190)
+
     def test_output_load_v2_counts_records_and_only_inline_prg_payload(self):
         self.assertEqual(
             supply.output_load_bytes(prg_patterns=17, runs=5),

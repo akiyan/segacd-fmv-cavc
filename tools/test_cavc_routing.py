@@ -77,7 +77,10 @@ class RoutingTableTests(unittest.TestCase):
         self.assertEqual(routing.routing_sector_count(2048), 1)
         self.assertEqual(routing.routing_sector_count(2049), 2)
         self.assertEqual(routing.routing_sector_count(16384), 8)
-        for count in (0, 16385):
+        self.assertEqual(routing.routing_sector_count(16385), 9)
+        self.assertEqual(routing.routing_sector_count(32768), 16)
+        self.assertEqual(routing.routing_sector_count(65535), 32)
+        for count in (0, 65536):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 routing.routing_sector_count(count)
 
@@ -88,7 +91,9 @@ class RoutingTableTests(unittest.TestCase):
 
     def test_boundary_last_entry_and_padding(self) -> None:
         sentinel = routing.encode_route(4, 1)
-        for nframes, expected_sectors in ((2048, 1), (2049, 2), (16384, 8)):
+        for nframes, expected_sectors in (
+                (2048, 1), (2049, 2), (16384, 8), (32768, 16),
+                (32769, 17), (65535, 32)):
             with self.subTest(nframes=nframes):
                 table = bytearray(expected_sectors * routing.SECTOR_BYTES)
                 table[nframes - 1] = sentinel

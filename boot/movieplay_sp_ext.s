@@ -101,17 +101,19 @@ adpcm_boot_copy:
    executes in place after prebuffer; longer-route builds copy the complete
    extension to its ring-tail execution address before routing is staged.
 
-   Validate ROUTING_TMP's d7-entry packed route, then copy d5 longs to a1 in
-   both physical Word-RAM banks. On success, d6 supplies the exact prebuffer
+   Validate a0's d7-entry packed route, then copy d5 longs to a1 in
+   both physical Word-RAM banks. a0 == a1 means bank 0 already holds a long
+   route: mirror it through one ROUTING_TMP sector, restoring the bank phase
+   after every sector. Other routes retain their complete PRG stage.
+   On success, d6 supplies the exact prebuffer
    pattern count, a4 points at the contiguous ring/apply/frame state, and a5
    points at drain_k/write_ptr/f0_expand. Initialize that boot-only state here
    so the fixed-cadence resident image keeps its complete DEBUG path inside
-   4 KiB. Return d0=0 on success or d0=1 on invalid input. The two bank toggles
+   5 KiB. Return d0=0 on success or d0=1 on invalid input. The two bank toggles
    restore the caller's original bank phase. */
 .org 0x0058
 .global routing_prepare
 routing_prepare:
-	lea	ROUTING_TMP, a0
 	movea.l	a0, a2
 	movea.l	a1, a3
 	tst.b	(a0)
@@ -145,6 +147,8 @@ routing_prepare:
 	bhi	routing_invalid
 	dbra	d7, 1b
 
+	cmpa.l	a2, a3
+	beq.s	routing_mirror
 	moveq	#ROUTING_BANK_COPIES-1, d1
 2:
 	movea.l	a2, a0
@@ -159,6 +163,36 @@ routing_prepare:
 	btst	#1, (MEMMODE+1).l
 	bne.s	1b
 	dbra	d1, 2b
+	bra.s	routing_state
+
+routing_mirror:
+	/* Only HEADER EOF reaches this entry. No unpumped CD data or Main-owned
+	   bank can race these two toggles; neither PrgBuf nor APPLY is live yet. */
+	movea.l	a3, a0
+	lea	ROUTING_TMP, a1
+	move.w	#511, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	movea.l	a0, a3
+	bchg	#0, (MEMMODE+1).l
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	lea	ROUTING_TMP, a0
+	lea	-0x800(a3), a1
+	move.w	#511, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	bchg	#0, (MEMMODE+1).l
+1:
+	btst	#1, (MEMMODE+1).l
+	bne.s	1b
+	subi.w	#512, d5
+	bne.s	routing_mirror
+
+routing_state:
 
 	/* ring_head, ring_tail, apply_tail, apply_cur and frame_idx are contiguous
 	   in the resident image. drain_k, write_ptr and f0_expand form the second

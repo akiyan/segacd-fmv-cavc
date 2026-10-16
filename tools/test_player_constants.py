@@ -12,7 +12,7 @@ import av_config
 def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
                 audio_bytes=None, audio_fd=0x345,
                 supply_counts=(0, 0, 0), pool=1400, base=1,
-                tcols=None, trows=28, cold_cap=190, nseg=13):
+                tcols=None, trows=28, cold_cap=190, nseg=13, frames=2714):
     if features is None:
         features = cavc_routing.FEATURE_COLD_RUNS
         if av_config.uses_vblank_cadence(fps):
@@ -20,7 +20,6 @@ def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
     if tcols is None:
         tcols = av_config.SCREEN_COLS
     cells = tcols * trows
-    frames = 2714
     if audio_bytes is None:
         audio_bytes = {15: 1472, 24: 920, 30: 736}.get(fps, 736)
     prefix = struct.pack(
@@ -49,6 +48,24 @@ def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
 
 
 class PlayerConstantsTest(unittest.TestCase):
+    def test_u16_frame_count_reaches_65535_without_growing_the_header(self):
+        size = player_constants.HEADER_STRUCT.size
+        for frames in (16384, 16385, 32767, 32768, 32769, 65534, 65535):
+            with self.subTest(frames=frames):
+                data = make_header(
+                    frames=frames,
+                    features=(cavc_routing.FEATURE_COLD_RUNS
+                              | cavc_routing.FEATURE_VBLANK_CADENCE
+                              | cavc_routing.FEATURE_PATTERN_SUPPLY
+                              | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS))
+                constants = player_constants.parse_header_sector(data)
+                self.assertEqual(constants.frames, frames)
+                self.assertEqual(constants.routing_sec, (frames + 2047) // 2048)
+                self.assertEqual(struct.unpack_from(">H", data, 4)[0], frames)
+                self.assertEqual(size, 62)
+        with self.assertRaisesRegex(ValueError, "1..65535"):
+            make_header(frames=65536)
+
     def test_palette_capacity_accepts_64_and_rejects_65(self):
         for nseg in (1, 16, 17, 32, 64):
             with self.subTest(nseg=nseg):

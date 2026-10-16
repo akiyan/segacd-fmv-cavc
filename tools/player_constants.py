@@ -90,6 +90,9 @@ class PlayerConstants:
     adpcm_table_sectors: int
     fps_int: int
     audio_fd: int
+    audio_fd_low: int
+    audio_fd_step: int
+    audio_fd_mod: int
     audio_preload_sec: int
     body_arm_sec: int
     features: int
@@ -304,6 +307,11 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         cold_cap = cells
         wordram = pattern_supply.word_ram_layout(frames, cells, cold_cap)
 
+    audio_fd_plan = (0, 0, 0)
+    if vblank_cadence and audio_fd == av_config.rf5c164_fd(
+            audio_bytes, av_config.playback_fps_for_content(fps_int)):
+        audio_fd_plan = av_config.long_movie_audio_fd_plan(
+            audio_bytes, fps_int, frames)
     return PlayerConstants(
         signature=signature,
         frames=frames,
@@ -335,6 +343,9 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         adpcm_table_sectors=adpcm_table_sectors,
         fps_int=fps_int,
         audio_fd=audio_fd,
+        audio_fd_low=audio_fd_plan[0],
+        audio_fd_step=audio_fd_plan[1],
+        audio_fd_mod=audio_fd_plan[2],
         audio_preload_sec=audio_preload_sec,
         body_arm_sec=audio_preload_sec + f0_ctrl_sec + f0_pat_sec,
         features=features,
@@ -385,7 +396,8 @@ INCLUDE_ORDER = (
     "prebuf_pat", "routing_sec", "prebuf_sec", "ring_peak", "f0_ctrl_sec",
     "f0_pat_sec", "paltab_sec", "vsync_n", "audio_bytes",
     "audio_control_bytes", "adpcm_table_sectors", "fps_int",
-    "audio_fd", "audio_preload_sec", "body_arm_sec", "features",
+    "audio_fd", "audio_fd_low", "audio_fd_step", "audio_fd_mod",
+    "audio_preload_sec", "body_arm_sec", "features",
     "cadence_period", "vsync_alt", "pump_mask", "wave_pump_mask",
     "sec_num", "sec_mod", "sec_base", "sec_rem",
     "sec_alt_num", "sec_alt_base", "sec_alt_rem",

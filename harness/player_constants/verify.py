@@ -33,6 +33,7 @@ class Case:
     tcols: int | None = None
     trows: int = 28
     cold_cap: int = 200
+    frames: int = 600
 
 
 CASES = (
@@ -40,8 +41,10 @@ CASES = (
     Case("h40-24-supply", 24, True, cold_cap=225),
     Case("h40-30-supply", 30, True),
     Case("h40-30-centered", 30, True, 36, 25),
+    Case("h40-24-16385", 24, True, cold_cap=225, frames=16385),
+    Case("h40-24-32768", 24, True, cold_cap=225, frames=32768),
+    Case("h40-24-65535", 24, True, cold_cap=225, frames=65535),
 )
-TEST_FRAMES = 600
 
 
 def find_tool(name: str) -> Path:
@@ -58,7 +61,7 @@ def make_header(case: Case) -> bytes:
     tcols = case.tcols if case.tcols is not None else 40
     trows = case.trows
     cells = tcols * trows
-    frames = TEST_FRAMES
+    frames = case.frames
     features = cavc_routing.FEATURE_COLD_RUNS
     if av_config.uses_vblank_cadence(case.fps):
         features |= cavc_routing.FEATURE_VBLANK_CADENCE
@@ -428,8 +431,12 @@ def verify_early_nonblocking_swap(
     guarded_prefix = frame_tail[:early.start()]
     frame_zero_guard = bss_reference(
         guarded_prefix, r"\btstw\s+0 ", "frame_no")
+    # objdump prints a word immediate as signed even though the following
+    # BHS compares unsigned frame indices (e.g. 0xFFFE appears as #-2).
+    final_index = expected_frames - 1
+    signed_index = (final_index + 32768) % 65536 - 32768
     final_guard = (
-        re.search(rf"\bcmpiw\s+#{expected_frames - 1},%d0", guarded_prefix)
+        re.search(rf"\bcmpiw\s+#(?:{final_index}|{signed_index}),%d0", guarded_prefix)
         if specialized
         else bss_reference(guarded_prefix, r"\bcmpw\s+0 [^,]*,%d0", "md_final_frame")
     )
@@ -774,7 +781,7 @@ def build_case(
     verify_transfer_cleanup(objdump, ip_obj)
     verify_flip_control_flow(objdump, ip_obj)
     verify_early_nonblocking_swap(
-        objdump, ip_obj, expected_frames=TEST_FRAMES,
+        objdump, ip_obj, expected_frames=case.frames,
         specialized=specialized)
     if specialized:
         tcols = case.tcols or 40
@@ -789,7 +796,7 @@ def build_case(
             run(common[:4] + ["--defsym", "MAIN_CODEGEN=1"] + fixed + includes + [
                 str(ROOT / "boot/movieplay_ip.s"), "-o", str(release_ip_obj)])
             verify_early_nonblocking_swap(
-                objdump, release_ip_obj, expected_frames=TEST_FRAMES,
+                objdump, release_ip_obj, expected_frames=case.frames,
                 specialized=True)
 
     sp_obj = case_dir / f"sp-{tag}.o"
@@ -801,6 +808,12 @@ def build_case(
         str(linker), "-nostdlib", "--oformat", "binary",
         "-T", str(ROOT / "cfg/sp.ld"), "-o", str(sp_bin), str(sp_obj),
     ])
+    disassembly = run([str(objdump), "-d", str(sp_obj)])
+    long_loads = re.findall(
+        r"andil #65535,%d0\n[^\n]*moveb %a0@\(0,%d0:l\),%d2", disassembly)
+    expected_long = not specialized or case.frames > 32768
+    if len(long_loads) != (3 if expected_long else 0):
+        raise AssertionError(f"{sp_obj}: incorrect unsigned routing index instructions")
     if specialized:
         verify_adpcm_decode_pump(
             objdump, sp_obj, expected=case.fps < 24)

@@ -13,6 +13,12 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e192/p156: Support 1..65,535 frames with unchanged u16 header/control
+#         fields. Long routes load into Word RAM and mirror through 2 KiB
+#         boot scratch. Zero-extend route indices beyond signed-word range;
+#         retain actual-length WordBuf allocation and the four-digit HUD.
+#         Long specialized streams alternate adjacent PCM deltas against
+#         the physical NTSC clock to bound cumulative audio-buffer drift.
 #   e191/p155: Keep up to 64 segment palettes and 63 switches resident in Main
 #         RAM. PALTAB occupies 0xFF9940..0xFFB93F and PALIDX occupies
 #         0xFFB940..0xFFBA3F; the 512-pattern DicBuf retains its fixed range.
@@ -1365,5 +1371,5 @@
 #         write in the writer, pcm_on and pcm_boot_init is now followed by an
 #         explicit 390-cycle delay. Cost is under 0.2% of a frame at 30 fps.
 date=20261016
-e=191
-p=155
+e=192
+p=156
