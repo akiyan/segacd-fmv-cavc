@@ -2,6 +2,22 @@ EN / [JP](#jp)
 
 # Sega CD Constraint-Aware Video Codec — a SEGA-CD / Genesis FMV codec
 
+## [▶ Try the browser encoder](https://segacd-fmv-cavc-encoder.akiyan.com/)
+
+**Turn your video into an ISO/CUE disc image playable on real Sega CD hardware
+or in an emulator — no installation required.**
+
+The simplified browser app lets you select an MP4, WebM, or MOV, adjust the crop,
+choose the output resolution and frame rate, and encode it with CAVC. Download
+one ZIP containing the ISO, CUE, and an MP4 preview of the encoded result.
+
+Your video stays on your device; encoding runs locally in the browser. Once the
+initial download finishes and **Offline ready** appears, you can encode without
+a network connection. **Encoding can take a long time**, especially for longer
+videos.
+
+---
+
 Sega CD Constraint-Aware Video Codec is a full-motion-video codec designed for
 Sega CD hardware. It targets the Genesis VDP tile and CRAM model, continuous CD
 1x delivery, Sub-CPU PRG RAM, 1M/1M Word RAM, and the RF5C164 PCM chip. The
@@ -441,6 +457,21 @@ repository.
 <a id="jp"></a>
 
 # Sega CD Constraint-Aware Video Codec — SEGA-CD / Genesis FMV codec
+
+## [▶ ブラウザ版エンコーダーを使う](https://segacd-fmv-cavc-encoder.akiyan.com/)
+
+**動画を、SEGA-CD実機やエミュレーターで再生できるISO/CUEディスクイメージに変換できます。
+インストールは不要です。**
+
+簡易版のウェブアプリでMP4・WebM・MOVを選び、クロップ枠・出力解像度・フレームレートを
+調整してCAVCでエンコードできます。ISO・CUEと、エンコード結果を確認するためのMP4を
+1つのZIPにまとめてダウンロードできます。
+
+動画はアップロードされず、ブラウザ内で処理します。初回の必要ファイルの取得が完了し、
+**Offline ready**と表示された後は、オフラインでもエンコードできます。
+特に長い動画では、**エンコードに長い時間がかかることがあります。**
+
+---
 
 Sega CD Constraint-Aware Video CodecはSega CD hardware専用に設計した
 full-motion-video codecです。Genesis VDPのtile/CRAM model、連続CD 1x delivery、
