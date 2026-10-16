@@ -3,6 +3,7 @@ import {normalizeVideo} from './cavc-normalize';
 import {createSimMp4} from './cavc-playback';
 import {playerSources,compileExtension,compilePlayer} from './m68k-player';
 import {createCavcDisc} from './cavc-disc';
+import {validateOutputFrameCount} from './source-limits';
 const progress=(stage,value,detail='',done=0,total=0,frameIndex=null)=>{
  if(stage===0&&detail==='Normalize source frames'&&done>0)frameIndex=done-1;
  self.postMessage({type:'progress',stage,progress:value,indeterminate:value==null,detail,done,total,frameIndex,overall:(stage+(value??0)/100)/10*100});
@@ -37,6 +38,7 @@ self.onmessage=async({data})=>{
    const inputs=unzipSync(new Uint8Array(await data.file.arrayBuffer()));
    manifest=JSON.parse(strFromU8(inputs['manifest.json']));
    if(manifest.schema!==1||!manifest.normalizationComplete)throw new Error('Unsupported normalized input schema');
+   validateOutputFrameCount(manifest.frames);
    if(manifest.encoderSha256!==runtime.encoderSha256)throw new Error('Normalized input and runtime encoder fingerprints differ. Regenerate the comparison data.');
    if(await sha(inputs['sp-extension.bin'])!==await sha(extension))throw new Error('Normalized input uses a different Sub extension. Regenerate it for this player version.');
    let n=0;

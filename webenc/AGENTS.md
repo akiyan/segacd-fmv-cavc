@@ -185,10 +185,12 @@ visible before download. Keep the accessible button name Download ZIP.
 
 When Source is empty, its preview area is a keyboard-accessible file picker and
 video drop target. Keep empty preview overlays contained within their panels.
-Show the 32,767-output-frame maximum (approximately 22m45s at 24fps) below the
+Show the 16,384-output-frame maximum (approximately 11m23s at 24fps) below the
 Source video picker before and after selection. Show the monitor notice only
 while no source file is selected.
 Keep the monitor notice compact and pointer-transparent for crop interaction.
+Use source-limits.js for both UI text and ordinary/normalized input validation;
+the maximum must match cavc_routing.MAX_FRAMES (the player's routing capacity).
 Sort Picture dimensions by descending pixel count, including the conditional
 288x200 option. Do not expose a palette-algorithm selector; use MOSAIC-GM.
 

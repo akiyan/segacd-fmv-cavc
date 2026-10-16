@@ -2,6 +2,7 @@ import {Input,BlobSource,ALL_FORMATS} from 'mediabunny';
 import {videoFrameTimes,frameInterval} from './frame-range';
 import {loadFFmpeg,pngStream,outputDevice} from './ffmpeg-runtime';
 import {videoFilter,pcmWave} from './normalization-plan';
+import {validateOutputFrameCount} from './source-limits';
 
 export async function normalizeVideo(py,file,settings,runtime,log,progress) {
  const input=new Input({source:new BlobSource(file),formats:ALL_FORMATS});
@@ -15,7 +16,7 @@ export async function normalizeVideo(py,file,settings,runtime,log,progress) {
   const first=interval.start,duration=interval.end-first;
   const {width,height,fps}=settings.video;
   const plannedFrames=Math.ceil(duration*fps-1e-7);
-  if(plannedFrames<1||plannedFrames>32767)throw new Error('The CAVC stream supports up to 32767 output frames.');
+  validateOutputFrameCount(plannedFrames);
   const loaded=await loadFFmpeg(progress,log);core=loaded.core;
   const version=loaded.version;
   // WORKERFS reads the selected Blob without copying the complete input into
