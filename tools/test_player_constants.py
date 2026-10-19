@@ -24,10 +24,10 @@ def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
         audio_bytes = {15: 1472, 24: 920, 30: 736}.get(fps, 736)
     prefix = struct.pack(
         ">4s8H4LBB3L6H",
-        b"CAVC", frames, tcols, trows, cells,
+        b"CAVC", frames & 0xFFFF, tcols, trows, cells,
         pool, base, cavc_routing.FRAME_SECTORS, nseg,
         12416, cavc_routing.routing_sector_count(frames), 194, 12416,
-        mode, 0, 2, 14, av_config.PALTAB_STAGE_KB * 1024 // 2048,
+        mode, frames >> 16, 2, 14, av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(fps),
         audio_bytes, fps, audio_fd, 30, features,
     )
@@ -63,8 +63,8 @@ class PlayerConstantsTest(unittest.TestCase):
                 self.assertEqual(constants.routing_sec, (frames + 2047) // 2048)
                 self.assertEqual(struct.unpack_from(">H", data, 4)[0], frames)
                 self.assertEqual(size, 62)
-        with self.assertRaisesRegex(ValueError, "1..65535"):
-            make_header(frames=65536)
+        with self.assertRaisesRegex(ValueError, "1..83520"):
+            make_header(frames=83521)
 
     def test_palette_capacity_accepts_64_and_rejects_65(self):
         for nseg in (1, 16, 17, 32, 64):

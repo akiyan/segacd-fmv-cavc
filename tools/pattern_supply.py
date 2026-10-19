@@ -227,6 +227,8 @@ def word_ram_layout(
         SECTOR_BYTES // PATTERN_BYTES)
     wr1_patterns = (status_offset - wr1_offset) // SECTOR_BYTES * (
         SECTOR_BYTES // PATTERN_BYTES)
+    if frames > cavc_routing.WORDBUF_MAX_FRAMES:
+        wr0_patterns = wr1_patterns = 0
     wr0_end = wr0_offset + wr0_patterns * PATTERN_BYTES
     wr1_end = wr1_offset + wr1_patterns * PATTERN_BYTES
 
@@ -707,6 +709,8 @@ def plan_frame_budgets(
     if wr1_patterns is None:
         wr1_patterns = wr0_patterns
     wr_capacities = (int(wr0_patterns), int(wr1_patterns))
+    if len(exact_bytes) > cavc_routing.WORDBUF_MAX_FRAMES:
+        wr_capacities = (0, 0)
     if any(capacity < 0 for capacity in wr_capacities):
         raise ValueError("WordBuf capacities must be non-negative")
 
@@ -894,6 +898,8 @@ def _frozen_sources(
                 raise ValueError(
                     f"non-cold update has a preload source at frame "
                     f"{frame}, update {update}")
+            if len(per) > cavc_routing.WORDBUF_MAX_FRAMES and source == SOURCE_WR:
+                raise ValueError("WordBuf is disabled above 65535 frames")
             if frame == 0 and source != SOURCE_PRG:
                 raise ValueError("frame zero cannot consume a boot preload")
         sources.append(frame_sources)
@@ -923,6 +929,8 @@ def plan_supply(
     if wr1_patterns is None:
         wr1_patterns = wr0_patterns
     wr_capacities = (int(wr0_patterns), int(wr1_patterns))
+    if frame_count > cavc_routing.WORDBUF_MAX_FRAMES:
+        wr_capacities = (0, 0)
     if any(capacity < 0 for capacity in wr_capacities):
         raise ValueError("WordBuf capacities must be non-negative")
     if prefetch_per is None:

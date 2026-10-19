@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 
 import av_config
+import cavc_routing
 import ima_adpcm
 import pack_stream
 import pattern_supply
@@ -24,10 +25,10 @@ import sp_extension
 from harness.player_constants.verify import find_tool, run
 
 
-def fixture_log(segments: int, fps: int, frames: int | None = None) -> dict:
+def fixture_log(segments: int, fps: int, frames: int | None = None, *, unique_frame0: bool = False) -> dict:
     frames = segments * 4 if frames is None else frames
-    if not segments <= frames <= 65535:
-        raise ValueError("fixture needs segments <= frames <= 65535")
+    if not segments <= frames <= cavc_routing.MAX_FRAMES:
+        raise ValueError("fixture needs segments <= frames <= 83520")
     palettes = []
     for segment in range(segments):
         palette = np.full((4, 15, 3), 3, np.uint8)
@@ -43,11 +44,27 @@ def fixture_log(segments: int, fps: int, frames: int | None = None) -> dict:
     tail_key = np.column_stack((packed_tail >> 4, packed_tail & 15)).tobytes()
     updates = [[] for _ in range(frames)]
     updates[0] = [(cell, cell % 4, bytes([2]) * 64) for cell in range(40 * 28)]
+    if unique_frame0:
+        updates[0] = [(cell, cell % 4, bytes.fromhex(
+            f"{0x1000 + cell:04x}" + "22" * 30)) for cell in range(40 * 28)]
+        updates[0] = [(cell, line, np.column_stack((
+            np.frombuffer(key, np.uint8) >> 4,
+            np.frombuffer(key, np.uint8) & 15)).tobytes())
+            for cell, line, key in updates[0]]
     updates[-1] = [(0, 0, tail_key)]
+    starts = [segment * frames // segments for segment in range(segments)]
+    if frames >= 65536 and segments >= 3:
+        if frames == 65536:
+            starts[-1] = 65535
+        else:
+            starts[-2:] = [65535, 65536]
+        starts.sort()
+    frame_seg = np.searchsorted(starts, np.arange(frames), side="right") - 1
     rate, pcm, control = av_config.audio_frame_layout(fps)
     return {
+        "fixture_unique_frame0": unique_frame0,
         "frames": updates,
-        "frame_seg": np.arange(frames, dtype=np.int64) * segments // frames,
+        "frame_seg": frame_seg,
         "seg_pals": palettes,
         "geom": (40, 28, 40 * 28, 8),
         "fps": fps,
@@ -71,6 +88,8 @@ def fixture_log(segments: int, fps: int, frames: int | None = None) -> dict:
 
 def pack_fixture(directory: Path, log: dict, extension: bytes) -> None:
     directory.mkdir(parents=True, exist_ok=True)
+    if log.get("fixture_unique_frame0"):
+        (directory / "unique-frame0.flag").write_text("1120 distinct patterns\n")
     pack_stream.configure_from_log(log)
     pack_stream.require_canonical_p0_debug_colours(log)
     per, prefetch, orders, loads, updates, _pal, patterns, tearing = (
@@ -106,8 +125,10 @@ def pack_fixture(directory: Path, log: dict, extension: bytes) -> None:
     assert len(index) == av_config.PALIDX_BYTES
     cursor = segment = 0
     for frame, expected in enumerate(log["frame_seg"]):
-        while struct.unpack_from(">H", index, cursor)[0] <= frame:
-            segment = struct.unpack_from(">H", index, cursor + 2)[0]
+        while cavc_routing.palette_switch_value(
+                *struct.unpack_from(">HH", index, cursor))[0] <= frame:
+            segment = cavc_routing.palette_switch_value(
+                *struct.unpack_from(">HH", index, cursor))[1]
             cursor += 4
         assert segment == expected
         assert table[segment * 128:(segment + 1) * 128] == (
@@ -116,7 +137,8 @@ def pack_fixture(directory: Path, log: dict, extension: bytes) -> None:
 
 
 def build(directory: Path, fps: int, segments: int, generic: bool,
-          frames: int | None = None, stream_from: Path | None = None) -> Path:
+          frames: int | None = None, stream_from: Path | None = None,
+          unique_frame0: bool = False) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     assembler, linker, objcopy, objdump = (
         find_tool("m68k-elf-" + name) for name in ("as", "ld", "objcopy", "objdump"))
@@ -130,8 +152,10 @@ def build(directory: Path, fps: int, segments: int, generic: bool,
          str(directory / "movieplay_sp_ext.o")])
     sp_extension.generate(extension, directory / "sp_extension.inc")
     if stream_from is None:
-        pack_fixture(directory, fixture_log(segments, fps, frames), extension.read_bytes())
+        pack_fixture(directory, fixture_log(segments, fps, frames, unique_frame0=unique_frame0), extension.read_bytes())
     else:
+        if (stream_from / "unique-frame0.flag").exists():
+            shutil.copyfile(stream_from / "unique-frame0.flag", directory / "unique-frame0.flag")
         for name in ("HEADER.DAT", "BODY.DAT", "MOVIE.DAT", "paltab.bin", "palidx.bin"):
             shutil.copyfile(stream_from / name, directory / name)
         header = (directory / "HEADER.DAT").read_bytes()
@@ -187,10 +211,11 @@ if __name__ == "__main__":
     parser.add_argument("--fps", type=int, choices=(15, 24, 30), required=True)
     parser.add_argument("--segments", type=int, default=64)
     parser.add_argument("--generic", action="store_true")
+    parser.add_argument("--unique-frame0", action="store_true")
     parser.add_argument("--frames", type=int)
     parser.add_argument("--stream-from", type=Path)
     args = parser.parse_args()
     if not 1 <= args.segments <= av_config.PALTAB_MAX_SEG:
         parser.error("segments must fit the configured palette capacity")
     print(build(args.output.resolve(), args.fps, args.segments, args.generic,
-                args.frames, args.stream_from))
+                args.frames, args.stream_from, args.unique_frame0))

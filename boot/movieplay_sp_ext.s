@@ -118,7 +118,7 @@ routing_prepare:
 	movea.l	a1, a3
 	tst.b	(a0)
 	bne	routing_invalid
-	subq.w	#1, d7
+	subq.l	#1, d7
 1:
 	moveq	#0, d0
 	move.b	(a0)+, d0
@@ -145,7 +145,8 @@ routing_prepare:
 	sub.w	d0, d2
 	cmp.w	d2, d3
 	bhi	routing_invalid
-	dbra	d7, 1b
+	subq.l	#1, d7
+	bpl	1b
 
 	cmpa.l	a2, a3
 	beq.s	routing_mirror
@@ -203,7 +204,7 @@ routing_state:
 	move.l	d6, (a4)+
 	move.l	#APPLY_BASE, (a4)+
 	move.l	#APPLY_BASE, (a4)+
-	move.w	#1, (a4)
+	move.l	#1, (a4)
 	clr.w	(a5)
 	move.w	#1, 4(a5)
 

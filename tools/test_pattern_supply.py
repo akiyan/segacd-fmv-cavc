@@ -21,7 +21,7 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         self.assertEqual(short.wr0_offset, long.wr0_offset)
         self.assertEqual(short.wr1_offset, long.wr1_offset)
         with self.assertRaises(ValueError):
-            supply.word_ram_layout(65536, 1120, 190)
+            supply.word_ram_layout(83521, 1120, 190)
 
     def test_output_load_v2_counts_records_and_only_inline_prg_payload(self):
         self.assertEqual(

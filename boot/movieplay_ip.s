@@ -170,7 +170,6 @@
 .endif
 .endif
 
-.ifdef PLAYER_SPECIALIZED
 	.include "player_constants.inc"
 .equ CTRL_SCR_OFF, PC_CTRL_SCR_OFFSET
 .equ STATUS_OFF, PC_STATUS_OFFSET
@@ -180,14 +179,6 @@
 .equ WR1_END, PC_WR1_END
 .equ PACE_FIXED_ARM_TICKS, PC_VSYNC_N*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS
 .equ PACE_ALT_ARM_TICKS, PC_VSYNC_ALT*PACE_VBLANK_TICKS-PACE_ARM_BIAS_TICKS
-.else
-.equ CTRL_SCR_OFF, 0x0D800
-.equ STATUS_OFF, 0x0D700
-.equ WR0_OFF, 0x08C20
-.equ WR0_END, 0x0D420
-.equ WR1_OFF, 0x08C20
-.equ WR1_END, 0x0D420
-.endif
 
 /* Generic builds must retain the runtime period-2 path. Specialized builds
    omit its recovery helper completely unless this profile uses `(2, 3)`. */
@@ -251,6 +242,19 @@
 .else
 	move.l	\runtime, \dest
 .endif
+.endm
+
+.macro PC_CMP_L runtime, constant, dest
+.ifdef PLAYER_SPECIALIZED
+	cmpi.l	#\constant, \dest
+.else
+	cmp.l	\runtime, \dest
+.endif
+.endm
+
+.macro PAL_COMPARE
+	bsr	palette_next_frame
+	cmp.l	d2, d1
 .endm
 
 .macro PC_CMP_W runtime, constant, dest
@@ -415,9 +419,12 @@ ip_entry:
 	   実行時変数を確定する。表示modeはH40固定。 */
 	lea	(PROBE_BANK+STATUS_OFF+0x80), a0
 	.ifndef PLAYER_SPECIALIZED
+	moveq	#0, d0
+	move.b	37(a0), d0
+	swap	d0
 	move.w	4(a0), d0
-	subq.w	#1, d0
-	move.w	d0, md_final_frame
+	subq.l	#1, d0
+	move.l	d0, md_final_frame
 	move.w	6(a0), md_tcols
 	move.w	8(a0), md_trows
 	move.w	10(a0), d0			/* cells; supported grids are multiples of 8 */
@@ -547,7 +554,7 @@ ip_entry:
 	/* Frame -1 is a player-only black state. DEBUG publishes frame=FFFF on it,
 	   so capture OCR can find the exact frame=0000 playback boundary. */
 	bsr	show_frame_minus_one
-	clr.w	frame_no
+	clr.l	frame_no
 	clr.w	started
 	clr.w	swap_request_pending		/* .bss is not cleared; no startup request is pending */
 	clr.w	vsync_acc			/* v4: ペーシングカウンタ初期化(.bssはMD上でクリアされない) */
@@ -585,12 +592,12 @@ play_loop:
 1:
 	move.w	#1, started
 	bsr	build_frame
-	tst.w	frame_no			/* one CMD_STREAM edge starts video time + PCM */
+	tst.l	frame_no			/* one CMD_STREAM edge starts video time + PCM */
 	bne.s	1f
 	bsr	start_playback
 1:
 
-	addq.w	#1, frame_no
+	addq.l	#1, frame_no
 	bra	play_loop
 
 /* 映画終端: 最終フレームを表示したまま15秒(900vblank)待ち、先頭からループ再生 */
@@ -606,7 +613,7 @@ movie_end_md:
 	   表示しない)。frame -1は黒画面なので新VBLANK頭で総入替すれば安全。 */
 	bsr	wait_vb_start
 	bsr	load_movie_palette
-	clr.w	frame_no
+	clr.l	frame_no
 	clr.w	started
 	clr.w	swap_request_pending
 	clr.w	dbg_seg
@@ -697,6 +704,20 @@ init_main_codegen:
 /* Build and flip one frame. The Sub has already expanded every physical run
    into a VDP-ready 22-byte O_LOADS v2 record, so Main performs no staging pass.
    The same Word-RAM cursor first drives name updates, then the VBlank DMA pass. */
+palette_next_frame:
+	moveq	#0, d2
+	move.w	(a0), d2
+	tst.w	2(a0)
+	beq.s	1f
+	btst	#7, 2(a0)
+	beq.s	2f
+	bset	#16, d2
+2:
+	rts
+1:
+	moveq	#-1, d2			/* unchanged (FFFF,0000) terminator */
+	rts
+
 build_frame:
 	movem.l	d0-d7/a0-a3, -(sp)
 .ifdef DEBUG
@@ -907,8 +928,8 @@ bf_dma:
 	tst.w	frame_type
 	bne.s	7f
 	movea.l	palidx_ptr, a0
-	move.w	frame_no, d1
-	cmp.w	(a0), d1
+	move.l	frame_no, d1
+	PAL_COMPARE
 	blo.s	8f
 7:
 	addi.w	#64*CPU_VDP_WORD_COST, d0
@@ -1044,7 +1065,7 @@ bf_flip:
 	move.w	d0, dma_elapsed_ticks
 1:
 	move.w	vsync_acc, frame_vblank_waits	/* exclude display pacing from vblank_spill */
-	tst.w	frame_no			/* frame 0 is an untimed boot construction */
+	tst.l	frame_no			/* frame 0 is an untimed boot construction */
 	bne.s	1f
 	clr.w	frame_vblank_waits		/* its VBlank count is not playback load */
 1:
@@ -1064,10 +1085,10 @@ bf_flip:
 .ifndef DEBUG
 	move.w	(PROBE_BANK+STATUS_OFF+0x00).l, release_slip_count
 	.endif
-	tst.w	frame_no
+	tst.l	frame_no
 	beq.s	9f
-	move.w	frame_no, d0
-	PC_CMP_W md_final_frame, PC_FRAMES-1, d0
+	move.l	frame_no, d0
+	PC_CMP_L md_final_frame, PC_FRAMES-1, d0
 	bhs.s	9f
 	bsr	swap_begin
 9:
@@ -1087,13 +1108,14 @@ bf_flip:
 	bne	bf_inline_cram
 7:
 	movea.l	palidx_ptr, a0
-	move.w	frame_no, d1
-	cmp.w	(a0), d1
+	move.l	frame_no, d1
+	PAL_COMPARE
 	blo	bf_publish_frame			/* next_switch > frame_no: 切替なし */
 1:
-	move.w	2(a0), d0			/* PALTAB区間番号 */
+	move.w	2(a0), d0			/* PALTAB segment; bit 15 is frame bit 16 */
+	andi.w	#63, d0
 	addq.l	#4, a0
-	cmp.w	(a0), d1
+	PAL_COMPARE
 	bhs.s	1b				/* 複数跨ぎは最後のentryを採用 */
 	move.l	a0, palidx_ptr
 	move.w	d0, dbg_seg			/* 絶対値で更新(増分でなく自己修復) */
@@ -1580,7 +1602,7 @@ commit_frame:
    Trashes d0-d2. */
 pace_periodic_commit:
 	move.w	(GA_STOPWATCH).l, d0
-	tst.w	frame_no
+	tst.l	frame_no
 	beq.s	4f
 	moveq	#0, d1
 	move.w	d0, d1
@@ -1608,7 +1630,7 @@ pace_periodic_commit:
 	move.w	#0x00FF, pace_cadence_debt
 4:
 	move.w	d0, pace_flip_tick
-	tst.w	frame_no
+	tst.l	frame_no
 	beq.s	9f				/* frame0 -> frame1 remains the short step */
 	eori.w	#1, pace_phase
 	tst.w	pace_phase
@@ -2103,7 +2125,7 @@ show_frame_minus_one:
 	move.w	d0, (VDP_DATA).l
 	dbra	d1, 1b
 	.ifdef DEBUG
-	move.w	#-1, frame_no
+	move.l	#-1, frame_no
 	bsr	prepare_dbg
 	bsr	hud_dma_flip
 	.endif
@@ -2144,7 +2166,7 @@ prepare_dbg:
 .endif
 	lea	dbg_row, a0
 	/* frame number, 4 digits */
-	move.w	frame_no, d4
+	move.w	frame_no+2, d4
 	DBG_PUT4
 	/* palette segment, low nibble */
 	move.w	dbg_seg, d4
@@ -2458,7 +2480,7 @@ hud_sprites:
 .endif
 .ifndef PLAYER_SPECIALIZED
 md_final_frame:
-	.space 2
+	.space 4
 md_vsync_n:
 	.space 2				/* v4: 1コマの表示VBLANK数(15fps=4, 30fps=2) */
 md_cadence_period:
@@ -2499,7 +2521,7 @@ md_prg_buf_cap_patterns:
 	.space 2				/* fps-scaled normal PrgBuf ceiling for DEBUG J */
 	.endif
 frame_no:
-	.space 2
+	.space 4
 started:
 	.space 2
 swap_request_pending:

@@ -23,8 +23,8 @@
 .equ BIOS_CDC_ACK,  0x008D
 .equ BIOS_ROM_READN,0x0020
 
-.ifdef PLAYER_SPECIALIZED
 	.include "player_constants.inc"
+.ifdef PLAYER_SPECIALIZED
 .if PC_AUDIO_FD_MOD > 0
 .equ INCLUDE_AUDIO_FD_DITHER, 1
 .endif
@@ -81,6 +81,14 @@
 .endif
 .endm
 
+.macro PC_CMP_L runtime, constant, dest
+.ifdef PLAYER_SPECIALIZED
+	cmpi.l	#\constant, \dest
+.else
+	cmp.l	\runtime, \dest
+.endif
+.endm
+
 .macro PC_CMP_W runtime, constant, dest
 .ifdef PLAYER_SPECIALIZED
 	cmpi.w	#\constant, \dest
@@ -90,17 +98,15 @@
 .endm
 
 /* Brief indexed addressing sign-extends a .w index. Keep short specialized
-   streams byte-identical here; long/generic streams zero-extend all 16 bits. */
+   streams keep their word index; long/generic callers load all 32 counter bits. */
 .macro ROUTING_LOAD dest
 .ifdef PLAYER_SPECIALIZED
 .if PC_FRAMES <= 32768
 	move.b	(a0,d0.w), \dest
 .else
-	andi.l	#0x0000FFFF, d0
 	move.b	(a0,d0.l), \dest
 .endif
 .else
-	andi.l	#0x0000FFFF, d0
 	move.b	(a0,d0.l), \dest
 .endif
 .endm
@@ -147,12 +153,8 @@
 .equ DIC_BUF_END, 0x00FFFA40
 
 /* --- CAVC BODY-arm/routing contract (checked by tools/check_player_ring.py) --- */
-.ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
-.else
-.equ ROUTING_BYTES,         65536
-.endif
-.equ ROUTING_MAX_FRAMES,    65535
+.equ ROUTING_MAX_FRAMES,    83520
 .equ ROUTING_SECTOR_BYTES,  2048
 .equ ROUTING_SECTOR_SHIFT_A,8
 .equ ROUTING_SECTOR_SHIFT_B,3
@@ -179,11 +181,7 @@
 .equ SHADOW_UPDATE_COUNT_MASK, 0x1FFF
 .equ INLINE_CRAM_BYTES, 128
 .equ SCROLL_PLANE_CELLS, 2048
-.ifdef PLAYER_SPECIALIZED
 .equ ROUTING_COPY_LONGS,    PC_ROUTING_COPY_LONGS
-.else
-.equ ROUTING_COPY_LONGS,    16384
-.endif
 .equ ROUTING_BANK_COPIES,   2
 /* Small streams retain their complete PRG staging. Long streams load bank 0
    directly, then mirror it after HEADER EOF through one PRG scratch sector. */
@@ -305,7 +303,6 @@
 .endif
 
 /* --- Word-RAM compact tail (same offsets in both physical banks) --- */
-.ifdef PLAYER_SPECIALIZED
 .equ CTRL_SCR,    SUB_BANK_1M+PC_CTRL_SCR_OFFSET
 .equ PAD_SCR,     SUB_BANK_1M+PC_PAD_SCR_OFFSET
 .equ WORD_BUF0,   SUB_BANK_1M+PC_WR0_OFFSET
@@ -316,18 +313,6 @@
 .equ WORD_BUF1_CAP,PC_WR1_CAPACITY
 .equ ROUTING,     SUB_BANK_1M+PC_ROUTING_OFFSET
 .equ O_STATUS,    SUB_BANK_1M+PC_STATUS_OFFSET
-.else
-.equ CTRL_SCR,    0x000CD800
-.equ PAD_SCR,     0x000CF800
-.equ WORD_BUF0,   0x000C8C20
-.equ WORD_BUF1,   0x000C8C20
-.equ WORD_BUF0_END,0x000CD420
-.equ WORD_BUF1_END,0x000CD420
-.equ WORD_BUF0_CAP,(WORD_BUF0_END-WORD_BUF0)/32
-.equ WORD_BUF1_CAP,(WORD_BUF1_END-WORD_BUF1)/32
-.equ ROUTING,     0x000D0000
-.equ O_STATUS,    SUB_BANK_1M+0xD700
-.endif
 .equ ADPCM_TABLE_BYTES, 8800
 .equ ADPCM_TABLE_SECTORS, 5
 .if SP_EXTENSION_LOAD_BASE != ROUTING_TMP+ADPCM_TABLE_BYTES
@@ -506,7 +491,7 @@ stream_start:
 	clr.l	desync_count			/* desync_count + adjacent resync_count */
 	clr.w	(COMSTAT1).l
 	clr.w	(COMSTAT2).l
-	clr.w	drain_frame
+	clr.l	drain_frame
 .ifdef INCLUDE_WORDBUF_RING
 	clr.w	word_pending_count
 .endif
@@ -547,14 +532,17 @@ stream_start:
 .else
 	lea	PAD_SCR, a0
 	moveq	#0, d1
+	move.b	37(a0), d1
+	swap	d1
 	move.w	4(a0), d1
+	tst.l	d1
 	beq	bad_header
-	cmpi.w	#ROUTING_MAX_FRAMES, d1		/* u16 count; last displayed frame <= 0xFFFE */
+	cmpi.l	#ROUTING_MAX_FRAMES, d1		/* count includes the header high byte */
 	bhi	bad_header
-	move.w	d1, h_frames
+	move.l	d1, h_frames
 	addi.l	#ROUTING_SECTOR_BYTES-1, d1
 	lsr.l	#ROUTING_SECTOR_SHIFT_A, d1
-	lsr.l	#ROUTING_SECTOR_SHIFT_B, d1	/* exact ceil(frames/2048), including 65535 */
+	lsr.l	#ROUTING_SECTOR_SHIFT_B, d1	/* exact ceil(frames/2048), including the high count bit */
 	cmp.l	24(a0), d1			/* long compare also rejects a nonzero high half */
 	bne	bad_header
 	move.w	d1, h_routing_sec
@@ -843,7 +831,7 @@ pb_done:
 	lea	ROUTING_TMP, a0
 .endif
 	lea	ROUTING, a1
-	PC_MOVE_W h_frames, PC_FRAMES, d7
+	PC_MOVE_L h_frames, PC_FRAMES, d7
 .ifdef PLAYER_SPECIALIZED
 	move.w	#ROUTING_COPY_LONGS, d5
 .else
@@ -912,7 +900,7 @@ arm_audio_lp:
 	PC_MOVE_W h_prebuf_pat+2, PC_PREBUF_PAT, d0
 	move.w	d0, ring_level
 .endif
-	move.w	#1, drain_frame
+	move.l	#1, drain_frame
 	move.l	#RING_BASE, ring_head
 
 frame0_handoff:
@@ -940,7 +928,7 @@ timed_suffix_start:
 	bra	timed_suffix_armed
 .endif
 .else
-	cmpi.w	#2, h_frames
+	cmpi.l	#2, h_frames
 	blo	timed_suffix_armed
 .endif
 .ifndef PLAYER_SPECIALIZED
@@ -966,12 +954,12 @@ arm_frame1:
 	   drain_frame directly. Both cases prove that ROM_READN is flowing. */
 	tst.w	drain_k
 	bne.s	2f
-	cmpi.w	#2, drain_frame
+	cmpi.l	#2, drain_frame
 	blo.s	1f
 2:
 	bsr	pcm_on
 1:
-	cmpi.w	#2, drain_frame
+	cmpi.l	#2, drain_frame
 	blo	arm_frame1
 	bra.s	startup_ready
 timed_suffix_armed:
@@ -1007,8 +995,8 @@ f0h2:
 .endif
 .equ ISO_HOLD_DUMP, 0			/* 0=クリーン静止(全画面=実フレームN) 1=内部状態ダンプ */
 stream_loop:
-	move.w	frame_idx, d0			/* 全フレーム処理済み=映画終端 */
-	PC_CMP_W h_frames, PC_FRAMES, d0
+	move.l	frame_idx, d0			/* 全フレーム処理済み=映画終端 */
+	PC_CMP_L h_frames, PC_FRAMES, d0
 	bhs	movie_end
 	bsr	process_frame
 3:
@@ -1036,7 +1024,7 @@ stream_loop:
 5:
 	move.w	#0, (COMSTAT0).l
 .if ISO_HOLD_N
-	cmp.w	#ISO_HOLD_N+1, frame_idx	/* frame N 処理済み=表示中 */
+	cmp.l	#ISO_HOLD_N+1, frame_idx	/* frame N 処理済み=表示中 */
 	bne	stream_loop
 .if ISO_HOLD_DUMP
 	/* ISO診断: ring_head(現pop位置)から576パターンをダンプした擬似フレームを1回出して静止 */
@@ -1067,7 +1055,7 @@ dump_ring_head:
 	movem.l	d0-d7/a0-a6, -(sp)
 	lea	dsv_vals, a3
 	moveq	#0, d0
-	move.w	frame_idx, d0
+	move.l	frame_idx, d0
 	move.l	d0, (a3)			/* [0]=frame_idx(=desyncしたコマ) */
 	moveq	#0, d0
 	move.w	(CTRL_SCR+2).l, d0
@@ -1077,7 +1065,7 @@ dump_ring_head:
 	move.w	slip_count, d0
 	move.l	d0, 12(a3)			/* [3]=slip_count(CDCスリップ=グリッチ検出数) */
 	moveq	#0, d0
-	move.w	drain_frame, d0
+	move.l	drain_frame, d0
 	swap	d0
 	move.w	desync_count, d0
 	move.l	d0, 16(a3)			/* [4]=drain_frame|desync_count */
@@ -1380,8 +1368,8 @@ dls_loop:
 pump1_core:
 p1_top:
 	moveq	#0, d0
-	move.w	drain_frame, d0
-	PC_CMP_W h_frames, PC_FRAMES, d0
+	move.l	drain_frame, d0
+	PC_CMP_L h_frames, PC_FRAMES, d0
 	bhs	p1_ret				/* ストリーム終端: 読まずに戻る */
 	tst.w	drain_k
 	bne	p1_read				/* コマ途中: cur_fsec は計算済み */
@@ -1471,7 +1459,7 @@ p1_top:
 	move.w	d6, lead
 	tst.w	cur_fsec			/* fsec==0(total=0かつ先行中)= ディスク上0セクタ */
 	bne.s	p1_read
-	addq.w	#1, drain_frame			/* 前進のみ、read無し(データは先行配送済み) */
+	addq.l	#1, drain_frame			/* 前進のみ、read無し(データは先行配送済み) */
 	clr.w	drain_k
 	bra	p1_top
 p1_read:
@@ -1508,7 +1496,7 @@ p1_drain:
 	bra	p1_adv				/* k >= total: pad セクタ(捨て) */
 .ifdef INCLUDE_WORDBUF_RING
 p1_word:
-	move.w	drain_frame, d0
+	move.l	drain_frame, d0
 	andi.w	#1, d0
 	cmp.w	word_owned_bank, d0
 	bne.s	p1_word_pending
@@ -1541,7 +1529,7 @@ p1_word_pending:
 	move.w	word_pending_count, d0
 	bne.s	1f
 	movea.l	#WORD_PENDING0, a1
-	move.w	drain_frame, word_pending_frame
+	move.w	drain_frame+2, word_pending_frame
 	bra.s	4f
 1:
 	cmpi.w	#1, d0
@@ -1609,15 +1597,15 @@ p1_adv:
 	cmp.w	cur_fsec, d3			/* v4: fsec(=max(total,rate) レートマッチ)セクタで1コマ完了 */
 	blo.s	p1_ret
 	clr.w	drain_k
-	addq.w	#1, drain_frame
+	addq.l	#1, drain_frame
 p1_ret:
 .ifdef DEBUG_SUB_POLL_GAP
 	/* X packs the reader position relative to the next frame to expand:
 	   high byte = complete frame slots ahead, low byte = sector index in the
 	   current slot. Retain the largest lexicographic position this frame. */
 	moveq	#0, d0
-	move.w	drain_frame, d0
-	sub.w	frame_idx, d0
+	move.l	drain_frame, d0
+	sub.l	frame_idx, d0
 	bpl.s	1f
 	moveq	#0, d0
 1:
@@ -1712,12 +1700,12 @@ pump_poll_core:
 	move.w	d0, (poll_max_gap).w
 9:
 .endif
-	move.w	drain_frame, d0
+	move.l	drain_frame, d0
 	beq	pp_done				/* v2: frame0展開中は drain_frame=0。ここで pump すると
 						   routing[0]=0 によりframe1の実セクタをpad扱いで捨て、
 						   CD位置とdrain_k/frameが N セクタ desync → frame1が化ける。
 						   streaming state(drain_frame>=1)確立まで pump しない。 */
-	PC_CMP_W h_frames, PC_FRAMES, d0
+	PC_CMP_L h_frames, PC_FRAMES, d0
 	bcc	pp_done				/* ストリーム終端 */
 	/* Guard only the destination of the next physical sector.  The old pair
 	   of unconditional guards stopped control and padding whenever PrgBuf was
@@ -1812,8 +1800,8 @@ pp_done:
    Reject only a sector whose frame already began expanding. */
 word_accept_guard:
 	moveq	#0, d0
-	move.w	drain_frame, d0
-	cmp.w	frame_idx, d0
+	move.l	drain_frame, d0
+	cmp.l	frame_idx, d0
 	blo.s	wag_no			/* too late: that frame already began expanding */
 	move.w	d0, d1
 	andi.w	#1, d1
@@ -1931,8 +1919,8 @@ process_frame:
 	lsr.l	#5, d0
 	move.w	d0, (O_PRGPEAK).l
 	moveq	#0, d0
-	move.w	drain_frame, d0
-	sub.w	frame_idx, d0
+	move.l	drain_frame, d0
+	sub.l	frame_idx, d0
 	bpl.s	8f
 	moveq	#0, d0
 8:
@@ -1956,8 +1944,8 @@ process_frame:
 .endif
 .endif
 pf_pump:
-	move.w	frame_idx, d0			/* pump1_core may trash d0; reload each pass */
-	cmp.w	drain_frame, d0
+	move.l	frame_idx, d0			/* pump1_core may trash d0; reload each pass */
+	cmp.l	drain_frame, d0
 	blo.s	pf_ready			/* drain_frame > frame_idx: full frame already drained */
 	bhi.s	pf_body_blocked			/* BODY is still draining an older frame */
 		/* Same frame: control must be complete. A ring stream also drains the
@@ -1992,13 +1980,13 @@ pf_need_pump:
 	bsr	pump1_core			/* non-preserving blocking sector pump */
 	bra.s	pf_pump
 pf_ready:
-	addq.w	#1, frame_idx
+	addq.l	#1, frame_idx
 	bsr	fetch_control			/* apply循環 → CTRL_SCR 線形化 */
 	/* 同期チェック: control先頭の frame_seq(CTRL_SCR+2) が 期待値(frame_idx-1) と一致するか。
 	   ズレ=desync(CDCセクタ落ち等)。破棄して前コマ維持(0更新)し、診断カウントを出す。
 	   持続desyncは前コマ静止に化ける(=青赤崩壊より軽い)。 */
 	move.w	(CTRL_SCR+2).l, d0		/* 実 frame_seq */
-	move.w	frame_idx, d1
+	move.w	frame_idx+2, d1
 	subq.w	#1, d1				/* 期待 seq */
 	cmp.w	d1, d0
 	bne.s	pf_desync
@@ -2338,7 +2326,7 @@ ef_source_preload:
 	bne.s	ef_source_dic
 	/* frame_idx points one past the descriptor being expanded. Each parity has
 	   its own Sub-owned read cursor; a complete run never crosses its end. */
-	move.w	frame_idx, d1
+	move.w	frame_idx+2, d1
 	subq.w	#1, d1
 	andi.w	#1, d1
 	lsl.w	#2, d1
@@ -3024,12 +3012,12 @@ apply_tail:
 apply_cur:
 	.long	0
 frame_idx:
-	.word	0
+	.long	0
 drain_frame:
-	.word	0
+	.long	0
 .ifndef PLAYER_SPECIALIZED
 h_frames:
-	.space 2
+	.space 4
 h_pool:
 	.space 2				/* header pool slots; descriptor destination bound */
 h_cells:

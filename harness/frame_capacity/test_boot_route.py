@@ -29,7 +29,7 @@ class BootRouteTests(unittest.TestCase):
         entries = [cavc_routing.encode_route(total - ctrl, ctrl, word)
                    for total in range(6) for ctrl in range(min(total, 3) + 1)
                    for word in range(min(total - ctrl, 4) + 1)]
-        for frames in (16384, 16385, 32767, 32768, 32769, 65534, 65535):
+        for frames in (16384, 16385, 32767, 32768, 32769, 65534, 65535, 65536, 65537, 83520):
             with self.subTest(frames=frames):
                 route = bytes([0] + [entries[i % len(entries)] for i in range(1, frames)])
                 route = route.ljust((frames + 2047) // 2048 * 2048, b"\0")
@@ -39,9 +39,9 @@ class BootRouteTests(unittest.TestCase):
                     self.assertEqual(bank[:offset], bytes([fill]) * offset)
                     self.assertEqual(bank[offset:], route)
                     for frame in range(frames):
-                        # A zero-extended long index addresses the same route
-                        # at every frame, including the signed-word boundary.
-                        self.assertEqual(bank[offset + (frame & 0xffff)], route[frame])
+                        # A complete long index addresses every route, including
+                        # the signed-word and low-word wrap boundaries.
+                        self.assertEqual(bank[offset + frame], route[frame])
 
     def test_existing_packed_routes_are_identical_in_both_banks(self):
         checked = 0

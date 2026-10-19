@@ -13,6 +13,11 @@
 # The title version string = <date>.e<e>.p<p>, e.g. 20260710.e2.p2
 #
 # History:
+#   e193/p157: Support 1..83,520 frames in the full 320x224 aperture. Keep
+#         one-byte routes and fixed header/control/PALIDX sizes; store frame
+#         bit 16 in the header high byte and PALIDX segment bit 15. Use full
+#         Main/Sub counters, retain the four-digit HUD, and disable every
+#         WordBuf preload/refill/quality credit above 65,535 frames.
 #   e192/p156: Support 1..65,535 frames with unchanged u16 header/control
 #         fields. Long routes load into Word RAM and mirror through 2 KiB
 #         boot scratch. Zero-extend route indices beyond signed-word range;
@@ -1370,6 +1375,6 @@
 #         still land in the previously selected bank. Every internal-register
 #         write in the writer, pcm_on and pcm_boot_init is now followed by an
 #         explicit 390-cycle delay. Cost is under 0.2% of a frame at 30 fps.
-date=20261016
-e=192
-p=156
+date=20261019
+e=193
+p=157

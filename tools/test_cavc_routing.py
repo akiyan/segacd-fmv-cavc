@@ -80,7 +80,7 @@ class RoutingTableTests(unittest.TestCase):
         self.assertEqual(routing.routing_sector_count(16385), 9)
         self.assertEqual(routing.routing_sector_count(32768), 16)
         self.assertEqual(routing.routing_sector_count(65535), 32)
-        for count in (0, 65536):
+        for count in (0, 83521):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 routing.routing_sector_count(count)
 

@@ -131,10 +131,14 @@ overwrite both temporary extension locations.
 also overlap `APPLY`, because those timed owners are inactive in each boot
 phase. Neither overlay changes the timed map.
 
-Routing supports 1..65,535 frames and reserves only its sector-rounded
+Routing supports 1..83,520 frames and reserves only its sector-rounded
 actual length in each Word bank. Tables above 16 KiB are loaded into the
 frame-0 bank, then mirrored one sector at a time after HEADER EOF. This
 boot-only scratch does not change the 420 KiB PrgBuf or 34 KiB APPLY bounds.
+At 65,536 frames and above, WordBuf0/1 are disabled. A full 320x224 frame-0
+output uses 35,872 bytes including alignment; the 82 KiB maximum route and
+10,496-byte fixed tail leave 736 bytes after that output. Main/Sub frame
+counters are 32-bit; the HUD displays their low 16 bits.
 The specialized long-movie PCM frequency phase uses two bytes inside `SP-RES`;
 its adjacent-FD writes obey the PCM internal-register spacing and preserve
 the wave write cursor and source sample order. Short streams omit this state.
@@ -584,9 +588,12 @@ stateを設定します。その後はframe-0 stagingが両temporary extension l
 ring tailと重複でき、`F0-STAGE`は`APPLY`とも重複できます。どちらのoverlayも
 timed mapを変えません。
 
-Routingは1..65,535 frameに対応し、各Word bankには実際の長さをsector丸めして
+Routingは1..83,520 frameに対応し、各Word bankには実際の長さをsector丸めして
 予約します。16 KiBを超える表はframe-0 bankへloadし、HEADER EOF後にsectorごとに
 複写します。このboot専用scratchは420 KiBのPrgBufと34 KiBのAPPLYの境界を変えません。
+65,536 frame以上ではWordBuf0/1を無効化します。320x224のframe-0出力は整列込みで
+35,872 byteです。最大82 KiBのrouteと10,496-byteの固定tailを確保しても736 byteが
+残ります。Main/Subのframe counterは32-bit、HUDはその下位16 bitを表示します。
 Specializedの長尺PCM frequency phaseは`SP-RES`内で2 byteを使います。隣接FDの
 writeはPCM internal-registerの間隔を守り、wave write cursorとsource sample順を
 維持します。短編ではこのstateを省きます。

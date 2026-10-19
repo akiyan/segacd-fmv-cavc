@@ -32,6 +32,7 @@ TOOLS_DIR = Path(__file__).resolve().parents[2] / "tools"
 sys.path.insert(0, str(TOOLS_DIR))
 
 import av_config  # noqa: E402
+import cavc_routing  # noqa: E402
 import ima_adpcm  # noqa: E402
 import player_constants  # noqa: E402
 
@@ -233,6 +234,7 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     body = (pack_dir / "BODY.DAT").read_bytes()
     magic, nfr, cols, rows, cells, pool = struct.unpack_from(
         ">4sHHHHH", header)
+    nfr |= header[37] << 16
     if magic != b"CAVC":
         die(f"expected CAVC, got {magic!r}")
     if cols * rows != cells:
@@ -266,8 +268,9 @@ def read_pack(pack_dir: Path) -> tuple[list[FrameRow], dict]:
     if palidx_path.exists():
         palidx = palidx_path.read_bytes()
         for entry in range(len(palidx) // 4):
-            frame, seg = struct.unpack_from(">HH", palidx, entry * 4)
-            if frame == 0xFFFF:
+            frame, seg = cavc_routing.palette_switch_value(
+                *struct.unpack_from(">HH", palidx, entry * 4))
+            if frame == 0xFFFFFFFF:
                 break
             palidx_switches[frame] = seg + 1
 

@@ -101,6 +101,8 @@ Each source has a strict TOML profile.
   with aspect-aware pad/crop conversion.
 - **Frame rate:** the source's native rate; 24 fps uses a qualified repeating
   two/three-VBlank cadence at 24000/1001 fps.
+- **Movie length:** up to 83,520 frames. WordBuf0/1 are disabled at
+  65,536 frames and above; routing stays one byte per frame.
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM.
 - **Cold cap:** a required per-source profile value, changed and qualified
   through that profile.
@@ -545,6 +547,8 @@ sourceごとにstrict TOML profileを使います。
   aspect-awareなpad/crop。
 - **Frame rate:** source native rate。24 fpsは認定済みの2/3 VBlank反復cadenceを
   使い、実効24000/1001 fpsで再生。
+- **Movie length:** 最大83,520 frame。65,536 frame以上ではWordBuf0/1を
+  無効化し、routingはframe当たり1 byteを維持。
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。

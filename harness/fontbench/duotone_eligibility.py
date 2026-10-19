@@ -66,6 +66,7 @@ def main() -> None:
 
     (magic, frames, cols, rows, cells, pool, base, _fsec,
      _nseg) = struct.unpack_from(">4s8H", header)
+    frames |= header[37] << 16
     if magic != b"CAVC":
         raise SystemExit(f"expected CAVC, got {magic!r}")
     prebuf_patterns, routing_sectors, prebuf_sectors, _ring_peak = (

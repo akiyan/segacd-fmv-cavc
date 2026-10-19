@@ -6,9 +6,13 @@ import csv
 import gzip
 import re
 import struct
+import sys
 from pathlib import Path
 
 import numpy as np
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+import cavc_routing
 
 
 WRITE = re.compile(
@@ -17,15 +21,17 @@ WRITE = re.compile(
 
 def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
     header = (directory / "HEADER.DAT").read_bytes()
-    frames = struct.unpack_from(">H", header, 4)[0]
+    frames = cavc_routing.frame_count_from_header(header)
     table = (directory / "paltab.bin").read_bytes()
     segments = len(table) // 128
     index = (directory / "palidx.bin").read_bytes()
     frame_segments = []
     cursor = active = 0
     for frame in range(frames):
-        while struct.unpack_from(">H", index, cursor)[0] <= frame:
-            active = struct.unpack_from(">H", index, cursor + 2)[0]
+        while cavc_routing.palette_switch_value(
+                *struct.unpack_from(">HH", index, cursor))[0] <= frame:
+            active = cavc_routing.palette_switch_value(
+                *struct.unpack_from(">HH", index, cursor))[1]
             cursor += 4
         assert 0 <= active < segments
         frame_segments.append(active)
@@ -42,6 +48,11 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
     counter_faults = []
     expected_lines = np.arange(40 * 28) % 4
     expected_patterns = np.full((40 * 28, 32), 0x22, np.uint8)
+    unique_frame0 = (directory / "unique-frame0.flag").exists()
+    if unique_frame0:
+        indices = np.arange(40 * 28) + 0x1000
+        expected_patterns[:, 0] = indices >> 8
+        expected_patterns[:, 1] = indices & 255
 
     def finish_frame():
         nonlocal pending
@@ -59,7 +70,7 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
             32, 64)[:28, :40].reshape(-1)
         assert np.array_equal((entries >> 13) & 3, expected_lines), ("palette lines", frame)
         patterns = np.frombuffer(vram, np.uint8).reshape(2048, 32)[entries & 0x7FF]
-        expected_patterns[0, :2] = (1, 255) if frame == frames - 1 else (0x22, 0x22)
+        expected_patterns[0, :2] = (1, 255) if frame == frames - 1 else ((0x10, 0) if unique_frame0 else (0x22, 0x22))
         assert np.array_equal(patterns, expected_patterns), ("patterns", frame)
         rows.append((len(rows) // frames, frame, segment, digits[4], *digits[5:8]))
         pending = None
@@ -93,9 +104,11 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
                 hud = []
             if len(hud) == 40:
                 frame = int("".join(f"{digit:x}" for digit in hud[:4]), 16)
-                if frame != 0xFFFF:
+                expected = len(rows) % frames
+                if frame != 0xFFFF or expected == 0xFFFF:
+                    assert frame == (expected & 0xFFFF), ("HUD frame", frame, expected)
                     assert pending is None
-                    pending = (frame, hud)
+                    pending = (expected, hud)
                 hud = []
     finish_frame()
     complete_loops = len(rows) // frames

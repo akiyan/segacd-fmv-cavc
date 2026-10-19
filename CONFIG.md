@@ -67,7 +67,7 @@ memory.
 | `WordBuf0` | build-derived | sp / ip / sim / pack | Boot-preloaded sequence in the even-frame physical bank; its start follows that parity's exact `32*Prg + 22*run` `O_LOADS v2` peak. |
 | `WordBuf1` | build-derived | sp / ip / sim / pack | Different boot-preloaded sequence in the odd-frame bank; its start follows that parity's independently computed peak. |
 | `DicBuf` | 512 patterns, 16 KiB | ip / sim / pack | Persistent Main-RAM dictionary, reusable by 9-bit index (top bit in the run source field). |
-| routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 65,535 frames; at most 64 KiB per bank. |
+| routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 83,520 frames; at most 82 KiB per bank. WordBuf is disabled above 65,535 frames. |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | Circular control-block queue. |
 | frame-0 pattern stage | 36 KiB | sp | Boot-only PRG area `0x72000..0x7B000`. |
 | boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | Temporary Word-RAM image at bank `+0x0000..+0x6000`; Main consumes it before frame 0 reuses the range. |
@@ -651,7 +651,7 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 | `WordBuf0` | buildから導出 | sp / ip / sim / pack | 偶数frame physical bankのboot preload sequence。開始位置はそのparityの正確な`32*Prg + 22*run` `O_LOADS v2`ピーク直後。 |
 | `WordBuf1` | buildから導出 | sp / ip / sim / pack | 奇数frame bankの異なるboot preload sequence。開始位置は独立計算したそのparityピーク直後。 |
 | `DicBuf` | 512 patterns、16 KiB | ip / sim / pack | 9-bit index（最上位bitはrun source field）で再利用するpersistent Main-RAM dictionary。 |
-| routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大65,535 frame、bank当たり最大64 KiB。 |
+| routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大83,520 frame、bank当たり最大82 KiB。65,535 frame超ではWordBufを無効化。 |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | control blockのcircular queue。 |
 | frame-0 pattern stage | 36 KiB | sp | boot専用PRG領域 `0x72000..0x7B000`。 |
 | boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | bank `+0x0000..+0x6000` のtemporary Word-RAM image。Mainが消費した後にframe 0が同じrangeを再利用する。 |

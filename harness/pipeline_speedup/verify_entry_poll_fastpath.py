@@ -134,7 +134,7 @@ def parse_entries(block: bytes, seq: int, cells: int) -> tuple[int, ...]:
         raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(block):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(block)}")
-    if packed_seq != seq:
+    if packed_seq != (seq & 0xFFFF):
         raise AssertionError(f"frame {seq}: packed sequence is {packed_seq}")
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: {n_upd} updates exceed {cells} cells")
@@ -185,6 +185,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, nfr, _cols, _rows, cells = struct.unpack_from(
         ">4sHHHH", header
     )
+    nfr |= header[37] << 16
     if magic != b"CAVC":
         raise AssertionError(f"expected split CAVC, got {magic!r}")
 
