@@ -147,9 +147,13 @@ host device access before treating sandbox-only CUDA failure as a broken driver.
 ## Recording and publication
 
 A plain record request ends with the requested recording. Analysis, HUD OCR,
-HUD/mixed timelines, Gists, and uploads are separate outputs; generate them
-when requested or needed by the selected publication/diagnostic workflow.
-Already authorized publication does not need a second approval after checks.
+HUD/mixed timelines, and uploads are separate outputs; generate them when
+requested or needed by the selected publication/diagnostic workflow. Gist
+publication is always opt-in and requires an explicit request for that
+destination. Showing a timeline or uploading a video to YouTube does not imply
+a Gist upload. Local results and YouTube descriptions must work without Gist
+credentials or a public timeline URL. Already authorized publication does not
+need a second approval after checks.
 
 Use emulator-synchronized A/V and explicit native 320x224 FFV1/FLAC capture.
 Keep startup and tail unless trimming is requested. Reuse the exact disc only

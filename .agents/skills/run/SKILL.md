@@ -39,9 +39,9 @@ blindly restart all upstream work or lower quality to hide a model failure.
 For a timeline, use `render_analysis.py PROFILE --tsv-only` and `timeline`.
 Generate a full analysis MP4, HUD image or mixed image only when requested.
 Publication follows the recording/stream evidence contract, and already given
-upload permission survives intermediate gate checks. Optional Gist publication
-requires that output to be requested; it is not an unavoidable side effect of
-showing a timeline.
+upload permission survives intermediate gate checks. Gist publication is
+optional and requires an explicit request for that destination; showing a
+timeline or uploading a video to YouTube does not request a Gist upload.
 
 Complete when every requested output exists and requested uploads return URLs.
 Report those artifacts and the checks actually performed. Keep any remaining

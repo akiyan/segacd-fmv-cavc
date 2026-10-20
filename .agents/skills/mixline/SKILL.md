@@ -22,6 +22,8 @@ HUD order and visible gate status. Show the local image and receipt. Read
 [rendering.md](references/rendering.md) only when changing the compositor or
 investigating its row/header contract; source renderers own their geometry.
 
-When public publication is requested, use
-`.agents/skills/timeline/scripts/publish_gist.py` and return the Gist receipt/URL.
-A local comparison request does not itself authorize external writes.
+Gist publication is optional. Use
+`.agents/skills/timeline/scripts/publish_gist.py` only when the user explicitly
+requests Gist as the destination, and return its receipt/URL. Local rendering
+needs no GitHub credentials. Showing a comparison or uploading a video to
+YouTube does not request a Gist upload.

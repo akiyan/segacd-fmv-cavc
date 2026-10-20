@@ -65,7 +65,8 @@ tools/python.sh harness/parallel_run/snapshot.py \
 
 Use `--through hud` for the complete local sim, verified DEBUG disc, lossless
 recording, and HUD-gate path. Public Gists, visual timeline review, and uploads
-remain interactive `$run` stages rather than unattended harness work.
+are separate requested outputs outside this harness. Gist publication is
+optional and requires an explicit request for that destination.
 
 Every invocation writes one plain-text log per profile and a UTF-8 TSV summary
 under `logs/parallel-run/`. A qualification run must also compare the

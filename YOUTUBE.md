@@ -51,6 +51,13 @@ end of the English section.
 Always include the source repository URL
 `https://github.com/akiyan/segacd-fmv-cavc`.
 
+Publishing a timeline image is optional and separate from uploading a video.
+Gist is one possible destination, used only when explicitly requested; neither
+a GitHub account nor Gist credentials are required for description generation
+or YouTube upload. Omit `--timeline-url` to leave out the entire timeline-link
+line. When an image is already published, the option accepts its URL on any
+host; it never uploads the image.
+
 Where the master came from is cited from the profile, never typed into a
 description:
 
@@ -105,7 +112,7 @@ with `harness/youtube_description/check_upload_text.py`, which enforces the
 mechanical rules in this document. The limit is 5,000 characters; target 4,800
 or fewer. When it is too long, shorten explanatory prose. Never drop the CRAM
 switch count, the specs, the layout reading guide, the encoder-technique
-section, the project link, or the current timeline links.
+section, the project link, or any explicitly supplied timeline link.
 
 ## Descriptions come from templates
 
@@ -116,8 +123,10 @@ values are substituted:
 ```sh
 tools/python.sh tools/youtube_description.py --config profiles/PROFILE.toml \
   --kind analysis --timeline-tsv logs/RUN_timeline.tsv \
-  --timeline-url GIST --playback-url URL --output DESCRIPTION.txt
+  --playback-url URL --output DESCRIPTION.txt
 ```
+
+Add `--timeline-url URL` only to include an already published timeline.
 
 Every number the renderer substitutes is read from the encode that produced
 the video: grid and cell count from the profile, CRAM switches from the sim
@@ -274,6 +283,13 @@ titleにversionが入らないため、説明文末尾の行がその動画のbu
 sourceのrepository URL `https://github.com/akiyan/segacd-fmv-cavc` は常に
 含めます。
 
+タイムライン画像の公開は任意で、動画のアップロードとは別です。
+Gistは公開先の選択肢の一つで、明示的に依頼された場合だけ使います。説明文の生成や
+YouTubeへのアップロードに、GitHubアカウントやGist認証情報は必要ありません。
+`--timeline-url` を省略すると、タイムラインへのリンク行全体を出力しません。
+既に公開済みの画像がある場合は、任意のホストのURLを指定できます。
+このオプション自体が画像をアップロードすることはありません。
+
 masterの出典はprofileから引きます。説明文へ直接書き込むことはしません:
 
 ```toml
@@ -322,7 +338,7 @@ source_license_url = "https://creativecommons.org/licenses/by/3.0/"
 `harness/youtube_description/check_upload_text.py` で検査します。この文書の
 機械的に判定できる規則はそこで強制されます。上限は5,000文字、運用目標は
 4,800文字以下です。長すぎるときは説明の散文を短くします。CRAM切り替え回数、
-spec、layoutの読み方、encoder技術の節、project link、現行のtimeline linkは
+spec、layoutの読み方、encoder技術の節、project link、明示的に指定されたtimeline linkは
 削ってはいけません。
 
 ## 説明文はtemplateから生成する
@@ -334,8 +350,10 @@ spec、layoutの読み方、encoder技術の節、project link、現行のtimeli
 ```sh
 tools/python.sh tools/youtube_description.py --config profiles/PROFILE.toml \
   --kind analysis --timeline-tsv logs/RUN_timeline.tsv \
-  --timeline-url GIST --playback-url URL --output DESCRIPTION.txt
+  --playback-url URL --output DESCRIPTION.txt
 ```
+
+公開済みのタイムラインへのリンクを載せる場合だけ `--timeline-url URL` を追加します。
 
 差し込まれる数値はすべて、その動画を作ったencodeから読みます。gridとcell数は
 profile、CRAM切り替えはsimのdecisions、配送レートは解析TSV、buildは

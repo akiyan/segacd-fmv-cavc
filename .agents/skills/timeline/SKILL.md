@@ -26,8 +26,11 @@ interpreting detailed rows. The canonical renderer and analysis_style.py own
 geometry/colours; do not rebuild them with a one-off plot. Prg is physical
 occupancy; the quality budget is not a buffer meter.
 
-Only for requested publication, use `scripts/publish_gist.py PNG --description
-TEXT` and retain its receipt. A show-timeline request alone does not publish
-source imagery. For authorized video-description updates use
-`scripts/sync_youtube_description.py`; read YOUTUBE.md for metadata placement.
-`--local-only` prepares a description without editing a live video.
+Gist publication is optional. Use `scripts/publish_gist.py PNG --description
+TEXT` only when the user explicitly requests Gist as the destination; retain
+its receipt. Showing a timeline or uploading a video to YouTube does not
+request a Gist upload. Local rendering needs no GitHub credentials. Read
+YOUTUBE.md for optional links to already published images on any host.
+`scripts/sync_youtube_description.py` is a separate helper for explicitly
+requested updates from an existing Gist receipt; `--local-only` avoids editing
+a live video.

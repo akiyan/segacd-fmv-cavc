@@ -377,7 +377,10 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 
 Independent invocations use the same cross-process locks, so separate sessions
 need no shared job list. Use `--sequential` for an A/B timing or determinism
-baseline. Public timeline, Gist, and upload stages remain interactive.
+baseline. Timeline rendering and publication are separate requested stages.
+Gist publication is optional and requires an explicit request for that
+destination, including when uploading a video to YouTube. Local timelines and
+YouTube descriptions work without Gist credentials or a public timeline URL.
 
 ## Disc images for distribution
 
@@ -838,7 +841,10 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 
 独立したinvocationも同じprocess間lockを使うため、別session間でjob listを共有する必要は
 ありません。A/B timingまたはdeterminism baselineには `--sequential` を使います。
-public timeline、Gist、upload stageは対話的に実行します。
+タイムラインの描画と公開は、それぞれ依頼に応じて行います。
+Gistへの公開は任意で、YouTubeへ動画をアップロードする場合も、公開先として
+Gistを明示的に依頼されたときだけ行います。ローカルのタイムラインとYouTubeの
+説明文は、Gist認証情報や公開タイムラインURLがなくても利用できます。
 
 ## 配布用disc image
 

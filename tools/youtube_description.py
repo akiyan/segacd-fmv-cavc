@@ -33,7 +33,7 @@ VERSION_FILE = Path(__file__).resolve().parent / "av_version.txt"
 CD_1X_BYTES = 153600
 EMULATOR = "Genesis Plus GX"
 
-# Placeholders each kind needs from the caller rather than from the encode.
+# URL placeholders supplied by the caller rather than read from the encode.
 URL_FIELDS = {
     "analysis": ("timeline_url", "playback_url"),
     "playback": ("analysis_url",),
@@ -148,7 +148,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="analysis TSV, required for analysis/playback")
     parser.add_argument("--analysis-url")
     parser.add_argument("--playback-url")
-    parser.add_argument("--timeline-url")
+    parser.add_argument("--timeline-url",
+                        help="optional published timeline URL (any host); "
+                             "omit the link when absent; does not upload")
     parser.add_argument("--output", type=Path, help="write here instead of stdout")
     args = parser.parse_args(argv)
 
@@ -212,6 +214,13 @@ def main(argv: list[str] | None = None) -> int:
     for field in URL_FIELDS[args.kind]:
         value = getattr(args, field.replace("_url", "") + "_url")
         if not value:
+            if field == "timeline_url":
+                # Optional links occupy their own template line. Remove the
+                # whole line so an unpublished image leaves no empty label.
+                template_text = "".join(
+                    line for line in template_text.splitlines(keepends=True)
+                    if "{timeline_url}" not in line)
+                continue
             raise SystemExit(f"--{field.replace('_', '-')} is required for "
                              f"--kind {args.kind}")
         values[field] = value
