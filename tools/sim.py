@@ -4816,7 +4816,16 @@ def main(demoted_fade_anchors=frozenset()):
 
     ring_plan = None
     ring_enabled = False
-    if PATTERN_SUPPLY_ON:
+    if PATTERN_SUPPLY_ON and n > cavc_routing.WORDBUF_MAX_FRAMES:
+        peak_prg = np.asarray(prg_loads, np.int64).copy()
+        peak_prg[0] -= int(boot_sidecar_requests)
+        wr0_peak, wr1_peak = pattern_supply.output_load_peaks(
+            peak_prg, transfer_runs_log)
+        wordram_layout = pattern_supply.word_ram_layout(
+            n, C_CELLS, MAX_COLD,
+            wr0_load_bytes=wr0_peak.bytes, wr1_load_bytes=wr1_peak.bytes)
+        print("WordBuf: disabled above 65535 frames", flush=True)
+    if PATTERN_SUPPLY_ON and n <= cavc_routing.WORDBUF_MAX_FRAMES:
         current_supply = pattern_supply.SupplyPlan(
             sources=tuple(
                 tuple(int(source) for source in frame)

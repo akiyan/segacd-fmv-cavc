@@ -306,7 +306,7 @@ for source, token, description in (
         (sp_text, "startup_ready:", "post-first-slot startup release"),
         (sp_text, "bsr\tpcm_on", "first-sector playback-start PCM edge"),
         (ip_text, "bsr\tshow_frame_minus_one", "frame -1 display"),
-        (ip_text, "move.w\t#-1, frame_no", "frame=FFFF HUD sentinel"),
+        (ip_text, "move.l\t#-1, frame_no", "frame=FFFF HUD sentinel"),
         (ip_text, "bsr\tstart_playback", "post-frame-0 command clear"),
 ):
     if token not in source:
@@ -554,7 +554,7 @@ if routing_tmp + cavc_routing.SECTOR_BYTES > extension_values.load_base:
 for token in (
         ".if PC_ROUTING_BYTES > 16384",
         ".equ ROUTING_DIRECT_WORD, 1",
-        "andi.l\t#0x0000FFFF, d0",
+        "move.l\tdrain_frame, d0",
         "move.b\t(a0,d0.l), ",
 ):
     if token not in sp_text:
@@ -798,7 +798,7 @@ if pc("FEATURES") & cavc_routing.FEATURE_WORDBUF_RING:
              "Wr0 Sub-owned read cursor initialization"),
             (sp_text, "move.l\t#WORD_BUF1, word_read_ptr1",
              "Wr1 Sub-owned read cursor initialization"),
-            (sp_text, "cmp.w\tframe_idx, d0\n\tblo.s\twag_no",
+            (sp_text, "cmp.l\tframe_idx, d0\n\tblo.s\twag_no",
              "expanded-frame Word refill cutoff (early arrival accepted)"),
             (sp_text, "cmp.w\tword_owned_bank, d1",
              "physical Word-RAM ownership guard"),
@@ -840,7 +840,7 @@ if pc("FEATURES") & cavc_routing.FEATURE_WORDBUF_RING:
     for pattern, description in (
             (
                 r"movea\.l\s+#WORD_PENDING0,\s*a1\s+"
-                r"move\.w\s+drain_frame,\s*word_pending_frame\s+"
+                r"move\.w\s+drain_frame\+2,\s*word_pending_frame\s+"
                 r"bra\.s\s+4f",
                 "first pending Word sector -> WORD_PENDING0",
             ),

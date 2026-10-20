@@ -16,13 +16,13 @@ FEATURE_BOOT_VRAM_SIDECAR = 0x0080
 FEATURE_WORDBUF_RING = 0x0100
 FEATURE_SCROLL = 0x0200
 SECTOR_BYTES = 2048
-ROUTE_BYTES = 64 * 1024
+ROUTE_BYTES = 82 * 1024
 # Compatibility name for callers that describe the allocation as a table.
 TABLE_BYTES = ROUTE_BYTES
 ENTRY_BYTES = 1
-# 0xFFFF remains the palette-switch sentinel and the player-only frame -1.
-# The header's existing u16 stores the count, not the last frame index.
-MAX_FRAMES = min(ROUTE_BYTES // ENTRY_BYTES, 0xFFFF)
+# The low count word remains at header offset 4; offset 37 holds its high byte.
+MAX_FRAMES = 83520
+WORDBUF_MAX_FRAMES = 65535
 MAX_TABLE_SECTORS = ROUTE_BYTES // SECTOR_BYTES
 FRAME_SECTORS = 5
 CTRL_MASK = 0x07
@@ -58,6 +58,25 @@ def _index(value: object, name: str) -> int:
         return operator.index(value)
     except TypeError as exc:
         raise ValueError(f"{name} must be an integer, got {value!r}") from exc
+
+
+def frame_count_from_header(header: bytes) -> int:
+    """Read the count without changing any fixed-header field offsets."""
+    return (header[37] << 16) | int.from_bytes(header[4:6], "big")
+
+
+def palette_switch_words(frame: int, segment: int) -> tuple[int, int]:
+    """Store frame bit 16 in the otherwise unused segment-word bit 15."""
+    if not 0 <= frame < MAX_FRAMES or not 1 <= segment < 64:
+        raise ValueError(f"invalid palette switch: frame={frame} segment={segment}")
+    return frame & 0xFFFF, segment | ((frame >> 16) << 15)
+
+
+def palette_switch_value(low: int, segment_word: int) -> tuple[int, int]:
+    """Decode a switch or the unchanged (0xFFFF, 0) terminator."""
+    if (low, segment_word) == (0xFFFF, 0):
+        return 0xFFFFFFFF, 0
+    return low | ((segment_word & 0x8000) << 1), segment_word & 0x3F
 
 
 def encode_route(
@@ -170,6 +189,8 @@ def validate_route_table(
     for frame, entry in enumerate(raw[:count]):
         try:
             decode_route(entry)
+            if count > WORDBUF_MAX_FRAMES and decode_word_sectors(entry):
+                raise ValueError("WordBuf is disabled above 65535 frames")
         except ValueError as exc:
             raise ValueError(f"invalid routing entry at frame {frame}: {exc}") from exc
     if any(raw[count:]):

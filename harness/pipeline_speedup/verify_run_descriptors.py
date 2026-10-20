@@ -184,7 +184,7 @@ def parse_control(
         raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(raw):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(raw)}")
-    if packed_seq != seq:
+    if packed_seq != (seq & 0xFFFF):
         raise AssertionError(f"frame {seq}: packed sequence is {packed_seq}")
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells}")
@@ -265,6 +265,7 @@ def read_stream(header_path: Path, body_path: Path) -> Stream:
     magic, nfr, cols, rows, cells, pool, base = struct.unpack_from(
         ">4sHHHHHH", header
     )
+    nfr |= header[37] << 16
     if magic != b"CAVC":
         raise AssertionError(f"expected split CAVC, got {magic!r}")
     if cols * rows != cells:

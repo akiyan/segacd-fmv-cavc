@@ -159,7 +159,7 @@ def verify_block(
         raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total_len != len(block):
         raise AssertionError(f"frame {seq}: total_len {total_len} != {len(block)}")
-    if frame_seq != seq:
+    if frame_seq != (seq & 0xFFFF):
         raise AssertionError(f"frame {seq}: frame_seq is {frame_seq}")
     if n_upd > cells:
         raise AssertionError(f"frame {seq}: n_upd {n_upd} exceeds {cells} cells")
@@ -299,6 +299,7 @@ def main() -> None:
     magic, nfr, _cols, _rows, cells, pool = struct.unpack_from(
         ">4sHHHHH", data, 0
     )
+    nfr |= header[37] << 16
     if magic != b"CAVC":
         raise SystemExit(f"expected CAVC, got {magic!r}")
     prebuf_pat = struct.unpack_from(">L", data, 20)[0]

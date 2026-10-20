@@ -23,6 +23,19 @@ def group(frame: int, capture: int) -> analyze.FrameGroup:
 
 
 class MovieAnchorTest(unittest.TestCase):
+    def test_long_movie_hud_wrap_is_not_a_new_loop(self) -> None:
+        for count in (65536, 65537, 65540, 83520):
+            with self.subTest(count=count):
+                frames = [0xFFFF] + list(range(count))
+                frames += [0xFFFF, 0, 1, 2, 3]
+                raw = [group(frame & 0xFFFF, index) for index, frame in enumerate(frames)]
+                selected = analyze.select_movie_groups(
+                    raw, anchor_run=4, max_step=4, expected_frames=count)
+                first = [row.values["frame"] for row in selected if row.loop == 0]
+                self.assertEqual(first, list(range(count)))
+                second = [row.values["frame"] for row in selected if row.loop == 1]
+                self.assertEqual(second, [0, 1, 2, 3])
+
     def test_frame_minus_one_sentinel_wins_over_earlier_plausible_zero(self) -> None:
         raw = [
             group(0, 0), group(1, 1), group(2, 2), group(3, 3),

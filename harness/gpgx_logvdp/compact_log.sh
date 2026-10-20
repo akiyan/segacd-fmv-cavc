@@ -10,6 +10,7 @@ fi
 
 INPUT_LOG="$1"
 FULL_LOG="$2"
+STREAM_MARKER="${INPUT_LOG}.stream.json"
 [ -s "$INPUT_LOG" ] || {
   echo "LOGVDP input log is missing or empty: $INPUT_LOG" >&2
   exit 1
@@ -19,19 +20,27 @@ mkdir -p "$(dirname "$FULL_LOG")"
 COMPACT_TMP="$(mktemp "${INPUT_LOG}.compact.XXXXXX")"
 FULL_TMP="$(mktemp "${FULL_LOG}.new.XXXXXX")"
 cleanup() {
+  if [ -f "$STREAM_MARKER" ] && [ -s "$FULL_TMP" ] && [ ! -f "${INPUT_LOG}.stream.gz" ]; then
+    mv -f -- "$FULL_TMP" "${INPUT_LOG}.stream.gz"
+  fi
   rm -f -- "$COMPACT_TMP" "$FULL_TMP"
 }
 trap cleanup EXIT
 
 # -1 keeps post-run handling cheap. LOGVDP data is repetitive enough that the
 # fastest level still removes most of its size.
-gzip -1 -c "$INPUT_LOG" > "$FULL_TMP"
+if [ -f "$STREAM_MARKER" ]; then
+  "$(dirname "$0")/../../tools/python.sh" "$(dirname "$0")/stream_log.py" "$INPUT_LOG" --finish
+  mv -- "${INPUT_LOG}.stream.gz" "$FULL_TMP"
+else
+  gzip -1 -c "$INPUT_LOG" > "$FULL_TMP"
+fi
 gzip -t "$FULL_TMP"
 
 FULL_BASENAME="$(basename "$FULL_LOG")"
 {
   printf '# Full GPGX LOGVDP trace: %s\n' "$FULL_BASENAME"
-  awk '
+  gzip -cd "$FULL_TMP" | awk '
     function is_dma_trace(line) {
       return line ~ /DMA type/ ||
              line ~ /CPU frozen for/ ||
@@ -77,15 +86,18 @@ FULL_BASENAME="$(basename "$FULL_LOG")"
       printf "# LOGVDP compacted: dropped_trace_lines=%d dropped_blank_lines=%d\n",
              dropped, blank
     }
-  ' "$INPUT_LOG"
+  '
 } > "$COMPACT_TMP"
 
-RAW_BYTES="$(wc -c < "$INPUT_LOG" | tr -d '[:space:]')"
+RAW_BYTES="$(stat -c %s "$INPUT_LOG")"
 FULL_BYTES="$(wc -c < "$FULL_TMP" | tr -d '[:space:]')"
 COMPACT_BYTES="$(wc -c < "$COMPACT_TMP" | tr -d '[:space:]')"
 
 mv -f "$FULL_TMP" "$FULL_LOG"
 mv -f "$COMPACT_TMP" "$INPUT_LOG"
+if [ -f "$STREAM_MARKER" ]; then
+  rm -f -- "${INPUT_LOG}.stream.gz" "${INPUT_LOG}.stream.stop"
+fi
 trap - EXIT
 
 echo "GPGX LOGVDP log: raw=${RAW_BYTES}B compact=${COMPACT_BYTES}B gzip=${FULL_BYTES}B"

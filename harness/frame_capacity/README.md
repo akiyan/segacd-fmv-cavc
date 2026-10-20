@@ -1,9 +1,17 @@
 # Frame capacity qualification
 
-The player supports 1..65,535 frames with the existing unsigned 16-bit count,
-control sequence, palette-switch index and four-digit DEBUG HUD. Movie indices
-end at `FFFE`; `FFFF` remains the pre-roll and palette-table sentinel. Header
-and control-prefix sizes do not grow.
+The player supports 1..83,520 frames in the full 320x224 aperture. The low
+count word stays at header offset 4 and its high byte uses offset 37. Control
+sequence values and the DEBUG HUD retain their low 16 bits; Main/Sub keep full
+32-bit counters. Palette-switch frame bit 16 uses segment-word bit 15, with
+`(0xFFFF, 0)` as the unchanged explicit terminator. Header (62 bytes), control
+prefix, and PALIDX (256 bytes) do not grow.
+
+Routing stays one byte per frame. Above 65,535 frames, WordBuf0/1 preloads,
+refills, source selection, and quality credit are disabled. At the maximum,
+each bank reserves 82 KiB for routing and 10,496 bytes for the fixed tail;
+a full 1,120-pattern frame-0 output uses 35,872 aligned bytes and leaves
+736 bytes. PrgBuf, APPLY, and DicBuf retain their allocations.
 
 ## Memory and boot proof
 
@@ -16,7 +24,7 @@ their complete timed allocations. Specialized tables up to 16 KiB keep the
 complete PRG stage.
 
 `test_packing.py` requires byte-identical HEADER, BODY, MOVIE, PALTAB and PALIDX
-for the same short decisions under the 16K and 65,535 limits. The canonical
+for the same short decisions under the 16K and 83,520 limits. The canonical
 Word-RAM layout tests check that increasing the actual table from 16 to 64 KiB
 removes exactly 48 KiB from each WordBuf when output peaks are held fixed.
 
@@ -27,8 +35,9 @@ tools/python.sh harness/pcm_write_pacing/check_pacing.py
 ```
 
 The build matrix covers 15/24/30fps, centered output, 16,385/32,768/65,535
-frames, and generic/specialized builds. Disassembly checks require all three
-long/generic route loads to zero-extend the index; short specialized loads
+frames, 65,536/65,537/83,520 boundaries, and generic/specialized builds.
+Disassembly checks require all three long/generic route loads to use the full
+32-bit counter; short specialized loads
 retain the word-index instructions. The generic runtime reference is not a
 substitute for standard specialized playback qualification.
 
@@ -106,3 +115,53 @@ The source clock relationship and the core's final audio update can be inspected
 in the pinned Genesis Plus GX source, `core/system.c` (`audio_set_rate`),
 `core/cd_hw/scd.c` and `core/cd_hw/pcm.c` at commit
 `46652c7fd74bd64a99f624b0bd53a768de0ff672`.
+
+## Full-length source encode
+
+`make_source.py` creates an actual 83,520-frame, 24fps, 58-minute H.264 source
+in the managed tmpfs workspace. Its full 320x224 raster uses losslessly encoded
+flat grey background, silent audio, and a small white marker at the index boundaries
+and final two frames. It probes the decoded frame count before writing the
+normal encoder profile. The test uses the original encoder at full geometry
+and cadence, with cold cap 210; it does not shorten or retime the movie.
+
+```sh
+tools/python.sh harness/frame_capacity/make_source.py \
+  --profile tmp/frame83520/long83520.toml
+tools/python.sh --gpu tools/sim.py tmp/frame83520/long83520.toml
+make disc CONFIG=tmp/frame83520/long83520.toml DEBUG=1
+```
+
+`test_extended.py` checks complete-header parsing at every boundary, unchanged
+field offsets, full-aperture memory bounds, one-byte routes, palette switches
+at 65,535 and 65,536, and rejection of WordBuf use/credit in long movies.
+The HUD tools reconstruct wrapped frame numbers using the expected movie
+length; pass `--frames 83520` to `read_hud_trace.py` for a maximum-length trace.
+
+The synthetic packed fixture additionally supports `--unique-frame0`: all
+1,120 visible cells have distinct cold patterns. Long fixtures place palette
+switches at frames 65,535 and 65,536 when both exist. These tests exercise the
+largest boot output, every displayed cell, all 64 palettes, DicBuf entry 511,
+final-frame display, and the following loop without expensive image analysis.
+They are playback/data tests and do not substitute for the full source encode.
+
+## Extended playback qualification
+
+The full-raster distinct-pattern fixtures pass all-cell/pattern, palette,
+sequence, recovery-counter, and loop-restart checks on the pinned GPGX core:
+
+| fps | Movie frames | Verified displayed frames | Next-loop frames |
+|---|---:|---:|---:|
+| 24 | 83,520 | 84,319 | 799 |
+| 30 | 65,537 | 66,717 | 1,180 |
+| 15 | 65,536 | 66,197 | 661 |
+
+Sector slip, control desync, and audio resync remain zero in every row. The
+30fps fixture switches palettes at both 65,535 and 65,536; the 15fps fixture
+switches at its final frame 65,535. Native and Wasm release player builds are
+byte-identical for the 83,520- and 65,537-frame contracts.
+
+A player-only regression on the existing 210-frame, 15fps synthetic WordBuf
+ring stream completes two full loops with unchanged BODY bytes and zero
+slip/desync/resync. Only the boot extension image and unused PALIDX terminator
+padding are refreshed to match the player contract; no source encode occurs.

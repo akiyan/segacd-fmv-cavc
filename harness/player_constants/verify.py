@@ -44,6 +44,9 @@ CASES = (
     Case("h40-24-16385", 24, True, cold_cap=225, frames=16385),
     Case("h40-24-32768", 24, True, cold_cap=225, frames=32768),
     Case("h40-24-65535", 24, True, cold_cap=225, frames=65535),
+    Case("h40-15-65536", 15, True, cold_cap=360, frames=65536),
+    Case("h40-30-65537", 30, True, frames=65537),
+    Case("h40-24-83520", 24, True, cold_cap=225, frames=83520),
 )
 
 
@@ -74,11 +77,11 @@ def make_header(case: Case) -> bytes:
         audio, av_config.playback_fps_for_content(case.fps))
     prefix = struct.pack(
         ">4s8H4LBB3L6H",
-        b"CAVC", frames, tcols, trows, cells,
+        b"CAVC", frames & 65535, tcols, trows, cells,
         av_config.VRAM_PATTERN_POOL_TILES, 1,
         cavc_routing.FRAME_SECTORS, av_config.PALTAB_MAX_SEG,
         12416, cavc_routing.routing_sector_count(frames), 194, 12416,
-        1, 0, 2, 18,
+        1, frames >> 16, 2, 18,
         av_config.PALTAB_STAGE_KB * 1024 // 2048,
         av_config.vsync_n_for_fps(case.fps), audio, case.fps,
         audio_fd, 30, features,
@@ -430,15 +433,15 @@ def verify_early_nonblocking_swap(
     early = early_calls[0]
     guarded_prefix = frame_tail[:early.start()]
     frame_zero_guard = bss_reference(
-        guarded_prefix, r"\btstw\s+0 ", "frame_no")
+        guarded_prefix, r"\btstl\s+0 ", "frame_no")
     # objdump prints a word immediate as signed even though the following
     # BHS compares unsigned frame indices (e.g. 0xFFFE appears as #-2).
     final_index = expected_frames - 1
-    signed_index = (final_index + 32768) % 65536 - 32768
+    signed_index = final_index
     final_guard = (
-        re.search(rf"\bcmpiw\s+#(?:{final_index}|{signed_index}),%d0", guarded_prefix)
+        re.search(rf"\bcmpil\s+#(?:{final_index}|{signed_index}),%d0", guarded_prefix)
         if specialized
-        else bss_reference(guarded_prefix, r"\bcmpw\s+0 [^,]*,%d0", "md_final_frame")
+        else bss_reference(guarded_prefix, r"\bcmpl\s+0 [^,]*,%d0", "md_final_frame")
     )
     if not frame_zero_guard or not final_guard:
         raise AssertionError(
@@ -473,6 +476,7 @@ def verify_early_nonblocking_swap(
         "nt_dma_flip",
         "hud_dma_flip",
         "commit_frame",
+        "palette_next_frame",  # reads only the persistent Main-RAM PALIDX cursor
     }
     calls = set(re.findall(
         r"\bbsr\w*\s+[^\n]*<([^>]+)>", after_early))
@@ -657,7 +661,7 @@ def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
             f"{obj}: start_playback reintroduces a second startup handshake")
 
     frame_minus_one = function_block("show_frame_minus_one")
-    if not re.search(r"\bmovew\s+#-1,", frame_minus_one):
+    if not re.search(r"\bmovel\s+#-1,", frame_minus_one):
         raise AssertionError(f"{obj}: frame -1 does not publish frame=FFFF")
     for callee in ("prepare_dbg", "hud_dma_flip", "wait_vblank"):
         if not re.search(
@@ -810,7 +814,7 @@ def build_case(
     ])
     disassembly = run([str(objdump), "-d", str(sp_obj)])
     long_loads = re.findall(
-        r"andil #65535,%d0\n[^\n]*moveb %a0@\(0,%d0:l\),%d2", disassembly)
+        r"moveb %a0@\(0,%d0:l\),%d2", disassembly)
     expected_long = not specialized or case.frames > 32768
     if len(long_loads) != (3 if expected_long else 0):
         raise AssertionError(f"{sp_obj}: incorrect unsigned routing index instructions")

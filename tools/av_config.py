@@ -238,9 +238,9 @@ PALTAB_MAX_SEG = 64
 # name (paltab_sec) but now carries only the optional boot-VRAM sidecar
 # records; palette data does not ride the disc.
 PALTAB_STAGE_KB = 24
-# PALIDX: 64 entries * 4 bytes: up to PALTAB_MAX_SEG-1 (frame.u16,
-# segment.u16) switches followed by a 0xFFFF frame sentinel; unused entries
-# repeat the sentinel.
+# PALIDX: 64 entries * 4 bytes: up to PALTAB_MAX_SEG-1 (frame-low.u16,
+# segment-word.u16) switches. Segment bit 15 holds frame bit 16; bits 0..5
+# hold the segment. The (0xFFFF, 0) pair terminates and fills unused entries.
 PALIDX_ENTRIES = PALTAB_MAX_SEG
 PALIDX_BYTES = PALIDX_ENTRIES * 4
 PALIDX_FRAME_SENTINEL = 0xFFFF

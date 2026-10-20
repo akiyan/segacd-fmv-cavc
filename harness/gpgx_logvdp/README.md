@@ -100,6 +100,20 @@ with `gzip -1` and removes only the known non-DMA `LOGVDP` chatter from the
 plain RetroArch log. It retains any unrecognized core error. Do not treat host
 wall-clock slowdown from log output as a change to emulated cycle accounting.
 
+For a long run, `stream_log.py INPUT_LOG --pid WRITER_PID` can archive a growing
+regular log as independent gzip members and release only the archived file
+pages. It keeps the writer's inode, append offsets, and a live tail intact.
+The original uncompressed pages are removed; the complete compressed bytes
+remain available. Apply this optional operation only with explicit approval
+for modifying that run's log. The ordinary compactor detects its sidecar,
+requests the remaining tail, and verifies the gzip before publishing the
+normal full and compact logs. A JSON receipt records the uncompressed byte
+count and SHA-256. The helper does not modify emulator state or timing.
+
+Run `tools/python.sh harness/gpgx_logvdp/test_stream_log.py` to verify complete
+byte recovery, writes through an already-open append handle, retained shutdown
+messages, and preservation of unexpected errors using a disposable fixture.
+
 Inspect the standard DMA trace directly:
 
 ```sh

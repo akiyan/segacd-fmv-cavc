@@ -1674,6 +1674,9 @@ def write_stream(
         b"".join(supply_plan.wr0_refill_patterns),
         b"".join(supply_plan.wr1_refill_patterns),
     )
+    if nfr > cavc_routing.WORDBUF_MAX_FRAMES and (
+            wr0_blob or wr1_blob or any(word_refill) or np.any(word_stage_sec)):
+        raise SystemExit("pack: WordBuf is disabled above 65535 frames")
     dic_blob = b"".join(supply_plan.dic_patterns)
     wr0_sec = -(-len(wr0_blob) // SECTOR)
     wr1_sec = -(-len(wr1_blob) // SECTOR)
@@ -1768,9 +1771,9 @@ def write_stream(
     palette_table = b"".join(
         pals_to_bytes_128(p) for p in segment_entry_palettes(log))
     # PALIDX: player-embedded palette-switch table. frame_seg is forward-only,
-    # so each (frame.u16, segment.u16) entry advances to a strictly later
-    # frame. The player advances while next_switch <= frame_no; the 0xFFFF
-    # frame sentinel terminates the table.
+    # so each four-byte entry advances to a strictly later frame. Segment-word
+    # bit 15 holds frame bit 16. The unchanged (0xFFFF, 0) pair terminates
+    # the table; a nonzero segment permits a real switch at frame 65535.
     switches = [
         (i, int(frame_seg[i]))
         for i in range(1, nfr)
@@ -1786,7 +1789,7 @@ def write_stream(
             "pack: frame_seg is not a forward-only segment progression")
     palidx = bytearray()
     for frame, seg in switches:
-        palidx += struct.pack(">HH", frame, seg)
+        palidx += struct.pack(">HH", *cavc_routing.palette_switch_words(frame, seg))
     while len(palidx) < av_config.PALIDX_BYTES:
         palidx += struct.pack(">HH", av_config.PALIDX_FRAME_SENTINEL, 0)
     sidecar_patterns = supply_plan.prg_patterns[f0_inline:nl0]
@@ -1865,11 +1868,11 @@ def write_stream(
     if any(word_stage_sec):
         features |= FEATURE_WORDBUF_RING
     features |= scroll_feature_bits(log, nfr)
-    header = struct.pack(">4sHHHHHHHH", MAGIC, nfr, TCOLS, TROWS, C_CELLS,
+    header = struct.pack(">4sHHHHHHHH", MAGIC, nfr & 0xFFFF, TCOLS, TROWS, C_CELLS,
                          POOL, BASE, FRAME_SECTORS, len(log["seg_pals"]))
     header += struct.pack(">LLLL", Bpat, routing_sec, prebuf_sec, ring_peak)
     header += bytes([_mode])                          # offset 36: display mode (H40)
-    header += b"\0"                                   # offset 37: pad
+    header += bytes([nfr >> 16])                       # offset 37: frame-count high byte
     header += struct.pack(">LL", f0_ctrl_sec, f0_pat_sec)  # offset 38,42: frame0ブロック
     header += struct.pack(">L", paltab_sec)          # offset 46: boot-stage sectors
     # Offset 52 is the decoded RF5C164 sample count. CAVC always derives

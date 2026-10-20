@@ -8,6 +8,10 @@ and how boot-only memory is assigned to frames with concentrated exact demand.
 
 ## Names
 
+WordBuf0/1 have zero capacity for movies of 65,536 frames or more. Their
+boot preloads, timed refills, source selections, and quality credits are all
+disabled; PrgBuf and DicBuf retain their allocations.
+
 | Public name | Analysis | Memory | Capacity | Lifetime |
 |---|---|---|---:|---|
 | `PrgBuf` | `Prg` | Sub-CPU PRG-RAM | 11,968 / 12,448 / 12,608 patterns at 15 / 24 / 30 fps (374 / 389 / 394 KiB) | Streamed circular buffer refilled from `BODY.DAT`. |
@@ -311,6 +315,9 @@ encoder内のoffline画質予算の違い、boot専用memoryを正確な需要�
 割り当てる方法を定義します。
 
 ## 名前
+
+65,536 frame以上の動画ではWordBuf0/1の容量をzeroにします。Boot preload、timed
+refill、source選択、quality creditをすべて無効化し、PrgBufとDicBufの割当は維持します。
 
 | 公開名 | 解析表示 | Memory | 容量 | Lifetime |
 |---|---|---|---:|---|

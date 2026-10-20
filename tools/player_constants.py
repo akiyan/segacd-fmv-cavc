@@ -141,12 +141,11 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
     (
         _magic, frames, tcols, trows, cells, pool, base,
         frame_sectors, nseg, prebuf_pat, routing_sec, prebuf_sec, ring_peak,
-        mode, pad, f0_ctrl_sec, f0_pat_sec, paltab_sec, vsync_n,
+        mode, frames_high, f0_ctrl_sec, f0_pat_sec, paltab_sec, vsync_n,
         audio_bytes, fps_int, audio_fd, audio_preload_sec, features,
     ) = values
 
-    if pad != 0:
-        raise ValueError(f"HEADER.DAT offset 37 must be zero, got {pad}")
+    frames |= frames_high << 16
     if (prebuf_pat * 32) % SECTOR:
         raise ValueError(
             f"prebuffer {prebuf_pat} patterns is not a whole number of CD "
@@ -231,6 +230,9 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         raise ValueError("rolling-plane scroll requires shadow update lists")
     if scroll_enabled and not pattern_supply_enabled:
         raise ValueError("rolling-plane scroll requires pattern supply")
+    if (frames > cavc_routing.WORDBUF_MAX_FRAMES
+            and features & cavc_routing.FEATURE_WORDBUF_RING):
+        raise ValueError("WordBuf ring is disabled above 65535 frames")
     if audio_bytes & 1:
         raise ValueError(f"ADPCM decoded audio_bytes must be even, got {audio_bytes}")
     audio_control_bytes = ima_adpcm.encoded_bytes(audio_bytes)
@@ -306,6 +308,9 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         # WordBuf layout uses the full grid only as a conservative size input.
         cold_cap = cells
         wordram = pattern_supply.word_ram_layout(frames, cells, cold_cap)
+
+    if frames > cavc_routing.WORDBUF_MAX_FRAMES and (wr0_patterns or wr1_patterns):
+        raise ValueError("WordBuf preloads are disabled above 65535 frames")
 
     audio_fd_plan = (0, 0, 0)
     if vblank_cadence and audio_fd == av_config.rf5c164_fd(

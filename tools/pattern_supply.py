@@ -227,6 +227,8 @@ def word_ram_layout(
         SECTOR_BYTES // PATTERN_BYTES)
     wr1_patterns = (status_offset - wr1_offset) // SECTOR_BYTES * (
         SECTOR_BYTES // PATTERN_BYTES)
+    if frames > cavc_routing.WORDBUF_MAX_FRAMES:
+        wr0_patterns = wr1_patterns = 0
     wr0_end = wr0_offset + wr0_patterns * PATTERN_BYTES
     wr1_end = wr1_offset + wr1_patterns * PATTERN_BYTES
 
@@ -432,13 +434,14 @@ def split_word_ring_runs(
     A VDP DMA source is linear, so one WordBuf descriptor cannot cross the
     generated parity-specific ring end. Splitting preserves destination order
     and exposes the extra control/O_LOADS record to every byte/work model
-    before the stream is written.
+    before the stream is written. A disabled, zero-capacity bank accepts only
+    non-WordBuf runs and keeps its cursor at zero.
     """
     capacity = int(capacity)
     cursor = int(cursor)
-    if capacity <= 0:
-        raise ValueError("WordBuf ring capacity must be positive")
-    if not 0 <= cursor < capacity:
+    if capacity < 0:
+        raise ValueError("WordBuf ring capacity must be nonnegative")
+    if not (cursor == 0 if capacity == 0 else 0 <= cursor < capacity):
         raise ValueError(
             f"WordBuf ring cursor {cursor} is outside capacity {capacity}")
     split: list[tuple[int, int, int, int]] = []
@@ -452,6 +455,8 @@ def split_word_ring_runs(
         if source != SOURCE_WR:
             split.append((slot, remaining, source, dic_index))
             continue
+        if capacity == 0:
+            raise ValueError("WordBuf run requires positive ring capacity")
         while remaining:
             count = min(remaining, capacity - cursor)
             split.append((slot, count, source, 0))
@@ -707,6 +712,8 @@ def plan_frame_budgets(
     if wr1_patterns is None:
         wr1_patterns = wr0_patterns
     wr_capacities = (int(wr0_patterns), int(wr1_patterns))
+    if len(exact_bytes) > cavc_routing.WORDBUF_MAX_FRAMES:
+        wr_capacities = (0, 0)
     if any(capacity < 0 for capacity in wr_capacities):
         raise ValueError("WordBuf capacities must be non-negative")
 
@@ -894,6 +901,8 @@ def _frozen_sources(
                 raise ValueError(
                     f"non-cold update has a preload source at frame "
                     f"{frame}, update {update}")
+            if len(per) > cavc_routing.WORDBUF_MAX_FRAMES and source == SOURCE_WR:
+                raise ValueError("WordBuf is disabled above 65535 frames")
             if frame == 0 and source != SOURCE_PRG:
                 raise ValueError("frame zero cannot consume a boot preload")
         sources.append(frame_sources)
@@ -923,6 +932,8 @@ def plan_supply(
     if wr1_patterns is None:
         wr1_patterns = wr0_patterns
     wr_capacities = (int(wr0_patterns), int(wr1_patterns))
+    if frame_count > cavc_routing.WORDBUF_MAX_FRAMES:
+        wr_capacities = (0, 0)
     if any(capacity < 0 for capacity in wr_capacities):
         raise ValueError("WordBuf capacities must be non-negative")
     if prefetch_per is None:

@@ -152,7 +152,7 @@ def parse_control(raw: bytes, seq: int, cells: int, audio_bytes: int) -> Control
         raw_count & SHADOW_FRAME_TYPE_MASK) >> SHADOW_FRAME_TYPE_SHIFT
     if total != len(raw) or total & 1:
         raise AssertionError(f"frame {seq}: invalid total_len {total}/{len(raw)}")
-    if packed_seq != seq or n_upd > cells:
+    if packed_seq != (seq & 0xFFFF) or n_upd > cells:
         raise AssertionError(
             f"frame {seq}: packed seq/count is {packed_seq}/{n_upd}, cells={cells}")
     if frame_type == SHADOW_FRAME_TYPE_RESERVED:
@@ -523,6 +523,7 @@ def main() -> None:
         magic, frames, cols, rows, cells, pool, base, _frame_sectors,
         nseg,
     ) = struct.unpack_from(">4s8H", header)
+    frames |= header[37] << 16
     if magic != b"CAVC" or cols * rows != cells:
         raise SystemExit(
             f"expected CAVC, got {magic!r} {cols}x{rows}/{cells}")

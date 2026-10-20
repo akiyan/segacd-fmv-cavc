@@ -114,7 +114,7 @@ format-version field.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"CAVC"` |
-| 4 | 2 | frames | unsigned total frame count (`nfr`), 1..65,535; last display index <= 65,534 |
+| 4 | 2 | frames | low 16 bits of total frame count (`nfr`), 1..83,520; high byte at offset 37 |
 | 6 | 2 | tcols | tile-grid columns |
 | 8 | 2 | trows | tile-grid rows |
 | 10 | 2 | cells | `tcols * trows` |
@@ -137,7 +137,7 @@ The remaining fields are:
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 36 | 1 | display_mode | display mode; `1` (H40) is the only defined value, and the player rejects any other |
-| 37 | 1 | pad | zero |
+| 37 | 1 | frames_high | frame-count bits 16..23; zero through 65,535 frames |
 | 38 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sectors |
 | 42 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sectors |
 | 46 | 4 | paltab_sec | BOOT_STAGE sectors |
@@ -223,8 +223,10 @@ generated code reuses that area:
   initial CRAM image is segment 0 (frame 0 always displays segment 0), and
   loop restarts reload it.
 - `palidx.bin` — the palette-switch index PALIDX, 256 bytes: sixty-four
-  `(u16 switch_frame, u16 segment)` entries covering at most 63 switches,
-  terminated by a `0xFFFF` frame sentinel that also fills unused entries.
+  `(u16 switch_frame_low, u16 segment_word)` entries covering at most 63 switches.
+  Segment-word bit 15 stores frame bit 16; bits 0..5 store the segment.
+  The pair `(0xFFFF, 0)` terminates the table and fills unused entries; a
+  switch at frame 65,535 has a nonzero segment word and is not a terminator.
   Switch frames are strictly ascending and segment numbers advance one at a
   time. The player copies the table to `0xFFB940..0xFFBA3F` and performs each
   CRAM total-replace when its frame counter reaches the next entry, so
@@ -363,10 +365,12 @@ requires
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` and
 `routing_sec = ceil(nfr / 2048)`. Frame 0's entry and unused tail bytes are
 zero. The resident copy uses exactly `routing_sec` sectors and supports at most
-65,535 frames. The maximum table is 64 KiB per bank. The frame count and
-control sequence remain unsigned 16-bit fields; header and control-prefix
-lengths are unchanged. The palette-switch sentinel remains `0xFFFF`, above
-every displayed frame index.
+83,520 frames. The maximum table is 82 KiB per bank. At 65,536 frames and
+above, both WordBuf capacities and all WordBuf routes are zero. The total
+frame count combines offset 37 with the low word at offset 4; control sequence
+values retain only the low 16 bits. Header and control-prefix lengths are
+unchanged. Main/Sub counters retain the complete frame number. Palette switches
+use frame bit 16 in their segment word and the explicit `(0xFFFF, 0)` terminator.
 
 Control and payload are continuous streams split at sector boundaries. One
 control sector may finish multiple future blocks, and payload normally
@@ -681,7 +685,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"CAVC"` |
-| 4 | 2 | frames | 符号なし総frame数（`nfr`）、1..65,535。最終表示indexは最大65,534 |
+| 4 | 2 | frames | 総frame数（`nfr`、1..83,520）の下位16 bit。上位byteはoffset 37 |
 | 6 | 2 | tcols | tile gridの列数 |
 | 8 | 2 | trows | tile gridの行数 |
 | 10 | 2 | cells | `tcols * trows` |
@@ -704,7 +708,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 36 | 1 | display_mode | display mode。定義値は `1`（H40）のみで、playerは他の値を拒否する |
-| 37 | 1 | pad | zero |
+| 37 | 1 | frames_high | frame数のbit 16..23。65,535 frame以下はzero |
 | 38 | 4 | f0_ctrl_sec | BODY-arm FRAME 0 control sector数 |
 | 42 | 4 | f0_pat_sec | BODY-arm FRAME 0 pattern sector数 |
 | 46 | 4 | paltab_sec | BOOT_STAGE sector数 |
@@ -785,8 +789,10 @@ codeがその領域を再利用する前に、entry直後にMain RAMへcopyし�
   変えず、位置だけを変えます。初期CRAM imageはsegment 0で（frame 0は必ず
   segment 0を表示）、loop再開時にも再loadします。
 - `palidx.bin` — palette切替indexのPALIDX、256 byteです。64個の
-  `(u16 switch_frame, u16 segment)` entryで最大63切替を持ち、`0xFFFF` frame
-  番兵で終端します（未使用entryも番兵で埋めます）。switch frameは厳密に昇順で、
+  `(u16 switch_frame_low, u16 segment_word)` entryで最大63切替を持ちます。
+  segment wordのbit 15にframeのbit 16、bit 0..5にsegment番号を入れます。
+  `(0xFFFF, 0)` の組が終端で、未使用entryも同じ組で埋めます。frame 65,535の
+  切替はsegment wordが非zeroなので終端と区別できます。switch frameは厳密に昇順で、
   segment番号は1ずつ進みます。playerは表を `0xFFB940..0xFFBA3F` へcopyし、
   frame counterが次のentryへ達したときにCRAM総入替を実行します。palette data
   と切替タイミングの両方が同じframeのCD deliveryに依存しません。
@@ -913,10 +919,12 @@ WordBuf-ring featureを持たないstreamは常に `n_word_sec = 0` をencodeし
 playerは
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` と
 `routing_sec = ceil(nfr / 2048)` を要求します。frame 0のentryと末尾の未使用byteは
-zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大65,535 frameに
-対応します。表の最大容量はbank当たり64 KiBです。frame数とcontrol sequenceは
-符号なし16-bit欄を維持し、headerとcontrol prefixの長さも維持します。パレット切替の
-終端`0xFFFF`は全表示frame indexより大きいままです。
+zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大83,520 frameに
+対応します。表はbank当たり最大82 KiBです。65,536 frame以上では両WordBufの容量と
+WordBuf向けrouteをすべてzeroにします。総frame数はoffset 37とoffset 4の下位wordを
+組み合わせ、control sequenceには下位16 bitだけを記録します。headerとcontrol prefixの
+長さは維持します。Main/Sub counterは完全なframe番号を保持します。パレット切替は
+segment wordにframeのbit 16を入れ、`(0xFFFF, 0)` の組を明示的な終端にします。
 
 controlとpayloadはsector境界で分割した連続streamです。1個のcontrol sectorが複数の
 将来blockを完成させることがあり、payloadは通常、後のframeで使うpatternを先読み

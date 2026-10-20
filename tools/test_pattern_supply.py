@@ -21,7 +21,7 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         self.assertEqual(short.wr0_offset, long.wr0_offset)
         self.assertEqual(short.wr1_offset, long.wr1_offset)
         with self.assertRaises(ValueError):
-            supply.word_ram_layout(65536, 1120, 190)
+            supply.word_ram_layout(83521, 1120, 190)
 
     def test_output_load_v2_counts_records_and_only_inline_prg_payload(self):
         self.assertEqual(
@@ -221,6 +221,37 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             ((7, 45, supply.SOURCE_WR, 0),),
         )
         self.assertEqual(cursor, 0)
+
+    def test_disabled_wordbuf_preserves_prg_and_dictionary_runs(self):
+        runs = ((7, 2, supply.SOURCE_PRG, -1),
+                (10, 3, supply.SOURCE_DIC, 256))
+        self.assertEqual(
+            supply.split_word_ring_runs(runs, capacity=0, cursor=0),
+            (runs, 0))
+
+    def test_disabled_wordbuf_accepts_empty_frame(self):
+        self.assertEqual(
+            supply.split_word_ring_runs((), capacity=0, cursor=0),
+            ((), 0))
+
+    def test_disabled_wordbuf_rejects_word_source(self):
+        with self.assertRaisesRegex(ValueError, 'positive ring capacity'):
+            supply.split_word_ring_runs(
+                ((7, 1, supply.SOURCE_WR, 0),), capacity=0, cursor=0)
+
+    def test_disabled_wordbuf_rejects_nonzero_cursor(self):
+        for cursor in (-1, 1):
+            with self.subTest(cursor=cursor), self.assertRaises(ValueError):
+                supply.split_word_ring_runs((), capacity=0, cursor=cursor)
+
+    def test_disabled_wordbuf_still_rejects_invalid_run_count(self):
+        with self.assertRaisesRegex(ValueError, 'invalid source run count'):
+            supply.split_word_ring_runs(
+                ((7, 0, supply.SOURCE_PRG, -1),), capacity=0, cursor=0)
+
+    def test_negative_wordbuf_capacity_is_invalid(self):
+        with self.assertRaises(ValueError):
+            supply.split_word_ring_runs((), capacity=-1, cursor=0)
 
 
 class PatternSupplyPlannerTests(unittest.TestCase):

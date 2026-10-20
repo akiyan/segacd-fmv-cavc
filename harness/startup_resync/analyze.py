@@ -265,6 +265,9 @@ def find_movie_anchor(
         index for index in plausible
         if index > 0
         and groups[index - 1].values["frame"] == read_frameno.FRAME_MINUS_ONE
+        and not (index > 1 and 1 <= (
+            read_frameno.FRAME_MINUS_ONE - groups[index - 2].values["frame"]
+        ) <= max_step)
     ]
     anchor = sentinel_anchored[0] if sentinel_anchored else (
         plausible[0] if plausible else None
@@ -279,15 +282,35 @@ def find_movie_anchor(
 
 
 def select_movie_groups(
-    groups: list[FrameGroup], anchor_run: int, max_step: int
+    groups: list[FrameGroup], anchor_run: int, max_step: int,
+    expected_frames: int | None = None,
 ) -> list[FrameGroup]:
     anchor, _sentinel = find_movie_anchor(groups, anchor_run, max_step)
 
     selected: list[FrameGroup] = []
     loop = 0
     previous = -1
+    restart_pending = False
     for group in groups[anchor:]:
         frame = group.values["frame"]
+        if expected_frames is not None and expected_frames > 65535 and previous >= 0:
+            # HUD stays four hex digits. Recover its high bit from continuity;
+            # a completed movie resets the epoch on its next startup/loop.
+            candidate = (previous & ~0xFFFF) | frame
+            if candidate < previous - 32768:
+                candidate += 65536
+            if frame == read_frameno.FRAME_MINUS_ONE and candidate >= expected_frames:
+                restart_pending = True
+                continue
+            if restart_pending and frame <= max_step:
+                restart_pending = False
+            elif candidate < expected_frames and 0 <= candidate - previous <= max_step:
+                frame = candidate
+            elif frame <= max_step and previous >= expected_frames - 1 - max_step:
+                frame = group.values["frame"]
+            else:
+                continue
+            group = replace(group, values={**group.values, "frame": frame})
         if not selected:
             pass
         elif frame == previous:
@@ -1118,7 +1141,8 @@ def main() -> int:
     )
     anchor, sentinel_anchor = find_movie_anchor(
         raw_groups, args.anchor_run, args.max_frame_step)
-    groups = select_movie_groups(raw_groups, args.anchor_run, args.max_frame_step)
+    groups = select_movie_groups(
+        raw_groups, args.anchor_run, args.max_frame_step, args.expected_frames)
     anchor_method = (
         "frame=FFFF player-only sentinel" if sentinel_anchor
         else "plausible frame=0000 sequence"
