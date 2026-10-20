@@ -47,6 +47,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tsv", type=Path, required=True)
     parser.add_argument("--interval", type=float, default=5)
+    parser.add_argument("--watch-filesystem", type=Path, action="append", default=[],
+                        help="also sample usage of this existing path's filesystem")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -55,6 +57,10 @@ def main():
     roots = {"workspace": workspace_root(), "scratch": scratch_root()}
     for path in roots.values():
         path.mkdir(parents=True, exist_ok=True)
+    for index, path in enumerate(args.watch_filesystem, 1):
+        if not path.exists():
+            parser.error(f"filesystem watch path does not exist: {path}")
+        roots[f"watched_{index}"] = path.resolve()
     args.tsv.parent.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     peak = 0
@@ -62,7 +68,7 @@ def main():
         writer = csv.writer(stream, delimiter="\t", lineterminator="\n")
         writer.writerow(["elapsed_seconds", "tree_rss_bytes", "system_shmem_bytes",
                          "system_mem_available_bytes", "system_swap_used_bytes",
-                         "workspace_fs_used_bytes", "scratch_fs_used_bytes"])
+                         *(f"{name}_fs_used_bytes" for name in roots)])
         process = subprocess.Popen(command, start_new_session=True)
         try:
             while True:
