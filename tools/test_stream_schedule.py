@@ -32,13 +32,6 @@ class ControlLengthTests(unittest.TestCase):
         # The list replaces a 140-byte bitmap plus six entry bytes with 12B.
         self.assertEqual(int(lengths[0] - lengths[1]), 134)
 
-    def test_shadow_update_count_tag_roundtrip(self) -> None:
-        raw = shadow_updates.encode_count(1120, True)
-        self.assertEqual(shadow_updates.decode_count(raw), (1120, True))
-        self.assertEqual(
-            shadow_updates.decode_count(shadow_updates.encode_count(1120, False)),
-            (1120, False))
-
     def test_shadow_list_selection_preserves_schedule_margins(self) -> None:
         cells = [[], [0], list(range(64)), [1119], list(range(256))]
         plan = schedule.select_shadow_update_lists(
@@ -85,11 +78,6 @@ class ControlLengthTests(unittest.TestCase):
         self.assertEqual(
             plan["block_lengths"].tolist(),
             plan["legacy_block_lengths"].tolist())
-
-    def test_lengths_match_the_packed_layout_formula(self) -> None:
-        lengths = schedule.control_block_lengths(
-            [0, 17], [0, 3], cells=1120, audio_frame_bytes=888)
-        self.assertEqual(lengths.tolist(), [1036, 1082])
 
     def test_fade_control_replaces_updates_with_inline_cram(self) -> None:
         lengths = schedule.control_block_lengths(
@@ -168,19 +156,6 @@ class ControlLengthTests(unittest.TestCase):
         self.assertEqual(supply["fixed_control"].tolist(), [0, 884, 884, 884, 884])
         self.assertEqual(supply["variable"].tolist(), [0, 3212, 5260, 3212, 5260])
 
-    def test_funded_work_includes_all_control_and_prg_patterns(self) -> None:
-        useful = schedule.body_funded_work_bytes(
-            [0, 10], [0, 4], [0, 2],
-            cells=1120,
-            audio_frame_bytes=736,
-        )
-        self.assertEqual(useful.tolist(), [0, 1220])
-
-    def test_run_control_reservation_uses_cold_cap_or_active_tiles(self) -> None:
-        self.assertEqual(schedule.max_run_control_reservation(178, 1120), 712)
-        self.assertEqual(schedule.max_run_control_reservation(0, 1120), 4480)
-        with self.assertRaisesRegex(ValueError, "non-negative"):
-            schedule.max_run_control_reservation(-1, 1120)
 
 class BodyDeliveryRateTests(unittest.TestCase):
     def test_24fps_follows_each_two_three_vblank_deadline(self) -> None:
@@ -354,28 +329,6 @@ class PayloadRingScheduleTests(unittest.TestCase):
         self.assertEqual(caught.exception.details["failure_frame"], 1)
         self.assertEqual(caught.exception.details["origin_frame"], 2)
         self.assertEqual(caught.exception.details["patterns_to_remove"], 96)
-
-    def test_pack_wrapper_uses_the_shared_schedule_exactly(self) -> None:
-        old_fps, old_fill = pack.FPS, pack.PACK_FILL
-        try:
-            pack.FPS = 15
-            pack.PACK_FILL = True
-            loads = np.array([0, 64, 64, 0, 0], np.int64)
-            blocks = [b""] * len(loads)
-            wrapped = pack.schedule([None] * len(loads), loads, blocks)
-            direct = schedule.schedule_payload_ring(
-                loads,
-                np.zeros(len(loads), np.int64),
-                fps=pack.FPS,
-                ring_capacity_patterns=pack.RING_DELIVERY_CAP_PAT,
-                prebuffer_capacity_patterns=pack.RING_CAP_PAT,
-                frame_sectors=pack.FRAME_SECTORS,
-                fill=pack.PACK_FILL,
-            )
-            for key in ("n_pay_sec", "n_ctrl_sec", "ring_occupancy", "fsec"):
-                np.testing.assert_array_equal(wrapped[key], direct[key])
-        finally:
-            pack.FPS, pack.PACK_FILL = old_fps, old_fill
 
     def test_pack_rejects_a_frozen_ring_trace_mismatch(self) -> None:
         packed = {

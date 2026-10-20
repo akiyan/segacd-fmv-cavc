@@ -1,11 +1,11 @@
 # FFmpeg preprocessing qualification
 
-Run against a Vite development server with `WEBENC_URL` and a managed tmpfs
+Run against a Vite development server with `WEBENC_URL` and a managed workspace
 fixture directory in `WEBENC_TEST_OUTPUT`:
 
 ```sh
 WEBENC_URL=http://127.0.0.1:4175 \
-WEBENC_TEST_OUTPUT=/dev/shm/segacd-fmv-cavc/artifacts/FIXTURE/data \
+WEBENC_TEST_OUTPUT=/path/to/fixture/data \
 WEBENC_TEST_LONG=1 node webenc/harness/ffmpeg/verify.mjs
 ```
 

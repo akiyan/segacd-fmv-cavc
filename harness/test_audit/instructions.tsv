@@ -1,0 +1,18 @@
+path	before_lines	after_lines	change
+AGENTS.md	697	201	Context router; preserve physical invariants; scope expensive work/publication; value-based tests and explicit runtime roots.
+.agents/skills/sim/SKILL.md	392	52	Remove rigid universal pipeline, duplicated codec constants, automatic reports/uploads and stale cache identity; keep source/quality and artifact contracts.
+.agents/skills/record/SKILL.md	404	55	Separate recording from diagnostics/publication; technical qualification is conditional reference; explicit roots.
+.agents/skills/compilation/SKILL.md	155	44	Remove duplicate mandatory approval and local credential path; preserve exact transcode and evidence requirements.
+.agents/skills/release/SKILL.md	173	48	Do not block ISO-only work on full DEBUG recording; keep conditional byte-identical release qualification.
+.agents/skills/run/SKILL.md	424	49	Replace unconditional eight-stage itinerary with requested-output routing, durable resume and explicit storage.
+.agents/skills/timeline/SKILL.md	166	33	Narrow trigger; conditional Gist/description write; renderer details progressively loaded.
+.agents/skills/hudline/SKILL.md	168	31	Remove automatic mixline/extra publication; retain matching evidence and detailed reference.
+.agents/skills/mixline/SKILL.md	88	27	Separate local combination/publication and move renderer contract to optional reference.
+.agents/skills/analysis/SKILL.md	73	24	Add proper metadata; remove mandatory commit and re-encode; owner-specific small preview.
+.agents/skills/comparison/SKILL.md	159	31	Replace stale SendUserFile/media paths and broad full-video routine with reviewable local preview.
+.agents/skills/comps/SKILL.md	141	19	Eliminate copied constants/formula/manual and automatic experiment/report escalation.
+.agents/skills/priorities/SKILL.md	135	18	Replace duplicated implementation and broad benchmark recipe with code-derived focused guidance.
+.agents/skills/new/SKILL.md	51	19	Remove strongest-practical generic test escalation while honoring existing commit/push authorization.
+.agents/skills/finish/SKILL.md	194	40	Keep destructive containment guards; remove unconditional dirty/conflict stops and overbroad tests.
+.agents/skills/cdr/SKILL.md	79	30	Narrow trigger to explicit burning; retain real medium guards without redundant permission.
+.agents/skills/regions/SKILL.md	138	31	Remove personal profile defaults, unconditional push/publication and stale-artifact globs.

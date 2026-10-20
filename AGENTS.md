@@ -1,697 +1,201 @@
-# Project Guidance
+# Project guidance
 
-This repository is now a SEGA-CD FMV Encoder project. Do not steer new work
-back toward the old game-specific port unless the user explicitly asks for it.
+This is the Sega CD Constraint-Aware Video Codec. The active path is
+`tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s`. Keep work on this
+encoder/player unless the user explicitly asks for another project.
 
-## Explanation Style
+## Scope, completion, and long jobs
 
-- Avoid math jargon and dense technical terms when a plain explanation is
-  enough.
-- Prefer everyday wording first.
-- If a technical term is necessary, define it immediately in simple language.
-- The priority is that the explanation is understandable, not that it uses the
-  most formal vocabulary.
+- Follow the requested outcome and existing authorization. A skill is a scoped
+  procedure, not permission to add unrelated stages. Read only the skills and
+  references needed for the current task.
+- Reuse completed, matching artifacts. Building an ISO, recording, rendering a
+  timeline, or investigating a failure does not itself authorize a fresh encode.
+  A request not to re-encode remains binding until the user changes it.
+- Before expensive work, identify the input, required output, expected duration,
+  and completion evidence. After a failure, inspect its logs and reuse valid
+  upstream results. Do not repeatedly restart an unchanged long experiment.
+- For routine long-source memory qualification, use the actual 16,384-frame
+  source in `harness/runtime_storage/README.md`. It must run all encoder stages;
+  a short clip is not a substitute. Maximum-index tests use synthetic packed
+  fixtures unless a full-capacity source encode is explicitly needed.
+- Keep long jobs observable: retain their command, process/service identity,
+  current log, and exit status. Report fresh progress and meaningful changes;
+  when continuous reports are requested, continue through completion. A stale
+  receipt, missing process, or last progress line is not proof of success.
+- Use existing resource/stem locks and artifact leases. Stop only task-owned
+  processes. Do not bypass coordination or evict another live job's files.
+- User-facing explanations should use plain language. If an ambiguous term
+  would change format, memory ownership, buffering, cycle analysis, or branch,
+  ask one short question naming the object, operation, and memory domain first.
 
-## Result Reporting
+## Terms that must stay distinct
 
-Starvation and Miss are designed-in outcomes of a fixed CD 1x budget, not
-defects. Reporting them by default turns every ordinary encode into a false
-alarm.
-
-- Do not report the starved-frame count or percentage in a routine result. It
-  counts any frame that left even one cell unserved, so a demanding source
-  reads as 98% while looking correct. Keep allowing starvation rather than
-  shrinking the raster to suppress it.
-- Report Miss volume only when the work is codec tuning - comparing encoder
-  settings, thresholds, priorities, or a quality regression. Then give the
-  per-frame Miss distribution beside the request volume, because Miss alone
-  says nothing without knowing how much was asked for.
-- Both remain in the analysis overlay, the timeline image, and the TSV. They
-  stay available for anyone who looks; they just do not lead a delivery report.
-
-## Chat Media Links
-
-- In Codex chat responses, never use inline embedding syntax for video or
-  audio, including Markdown image syntax such as `![...](...)`.
-- Present local media artifacts and uploaded video or audio as ordinary
-  clickable Markdown links only. This applies even when the client supports
-  inline playback, because embedded media can make the Codex app unstable.
-
-## Terminology and Intent Checks
-
-This project has several similarly named objects whose substitution changes the
-entire design. Be deliberately strict about checking the user's terminology
-before beginning broad investigation, benchmarking, or implementation.
-
-- If a statement combines terms in a way that looks inconsistent with the
-  current format, hardware ownership, or the preceding discussion, treat it as
-  a possible wording slip. Do not silently reinterpret it or investigate every
-  possible meaning.
-- First restate the intended **object, operation, and memory domain** in one
-  short question. For example: "Do you mean keeping the routing table, rather
-  than PrgBuf pattern payload, resident in Word RAM?"
-- This confirmation is required whenever the ambiguity would change the file
-  format, memory map, bank ownership, buffering model, cycle analysis, or work
-  branch. Ask even when one interpretation seems likely.
-- After the user corrects a term, discard conclusions based on the mistaken
-  interpretation and re-evaluate from the corrected object.
-
-Keep these distinctions explicit:
-
-- **routing table**: per-delivery-slot sector counts used to sort BODY sectors;
-  it is not pattern data.
-- **PrgBuf** (`Prg` in analysis): the streamed PRG-RAM circular buffer holding
-  prefetched 32-byte cold patterns. Internal `RING_*` constants describe its
-  ring-buffer implementation.
-- **WordBuf0 / WordBuf1** (`Wr0` / `Wr1`): distinct boot-preloaded pattern
-  sequences in the two physical 1M Word-RAM banks, selected by frame parity;
-  they are not duplicate caches.
-- **DicBuf** (`Dic`): a 512-entry boot-preloaded pattern dictionary copied once
-  to Main RAM. Entries are addressed by index and may be reused without being
-  consumed.
-- **APPLY ring**: the PRG-RAM circular queue holding continuous control blocks.
-- **resident pattern**: currently a pattern retained in the VRAM tile pool. A
-  boot-preloaded WordBuf pattern is a physical source, not another VRAM-resident
-  cache level.
-- **whole-movie quality budget**: encoder-only spending accounting. It is not a
-  physical buffer and has no analysis meter. The old name “Tank” is retired.
-- **Buf category**: an encoder funding class for an exact cold load using saved
-  quality allowance or a boot-preload credit. It is not a physical `Buf` meter.
-- **Word RAM output bank**: the 1M/1M frame handoff area exchanged between Sub
-  and Main CPUs; it is not automatically shared by both CPUs at once.
-
-## Language Policy
-
-- Use English by default for repository files, documentation, code comments,
-  and general project text.
-- Use Japanese for commit messages, GitHub issues, and pull request comments.
-
-## Commit Attribution (all agents — Claude, Codex, etc.)
-
-- Do NOT add `Co-Authored-By: Claude ...`, `Co-Authored-By:` any AI, or
-  `Claude-Session:` / `Codex-Session:` trailers to commit messages. The public
-  repo's Contributors must not list an AI assistant.
-- Author and committer are the human owner only (`akiyan`); never an
-  `@anthropic.com`/AI address.
-- This repo is public and its history was rewritten once to strip such trailers.
-  Every agent working here must follow this so it does not reappear.
-
-## YouTube Upload Style
-
-Titles, descriptions, privacy, and category for every codec video follow
-[`YOUTUBE.md`](YOUTUBE.md). Treat that document as the only source of truth for
-upload metadata; do not restate its rules here or inside a skill.
-
-## Documentation Policy
-
-- Keep public documentation in [`README.md`](README.md).
-- Keep agent and maintenance instructions in `AGENTS.md`.
-- Write every public Markdown document located at the repository root in
-  English first, followed by a complete Japanese version below it. Keep the
-  two language sections structurally equivalent and update both together.
-- Describe only the current system in public root documentation. Do not use
-  chronology-dependent narratives such as "previously", "formerly", "the old
-  implementation", or "this was changed to". State the active behavior
-  directly. [`REMOVED.md`](REMOVED.md) is the only exception: it preserves
-  timeless implementation and reimplementation notes for features that are
-  absent from the active system, without release chronology or historical
-  storytelling.
-- Keep Markdown self-contained. Do not link to or name GitHub issues from
-  Markdown files; describe the current behavior or plan directly instead.
-- Do not add new scattered Markdown documents for project notes at the repo root.
-- **Harness / diagnostic docs are allowed under `harness/`.** When a debugging
-  effort needs its own tooling and notes (detectors, repro scripts, findings),
-  put both the scripts and their [`README.md`](README.md) under `harness/<topic>/`. This is
-  the sanctioned place for build-your-own-detector work; keep each topic's doc
-  next to its code so the harness stays reproducible.
-- These dedicated reference docs are sanctioned and must be kept current:
-  - [`MOVIE.md`](MOVIE.md) - the `HEADER.DAT` + `BODY.DAT` on-disc stream
-    format. Keep in sync with
-    `tools/pack_stream.py` and the `boot/movieplay_*.s` player.
-  - [`CONFIG.md`](CONFIG.md) - the tunable settings, throttles and buffers
-    (PrgBuf, boot preloads, quality budget, cold cap, audio sync, CD pump, DMA
-    budget, encoder knobs, per-source env). Keep in
-    sync with `tools/av_config.py`, `tools/sim.py`, `tools/pack_stream.py` and the
-    `boot/movieplay_*.s` player.
-  - [`HUD.md`](HUD.md) - the on-hardware values-only DEBUG HUD reference. Keep
-    its field order, widths, timing units, rendering path, and OCR workflow in
-    sync with `boot/movieplay_ip.s`, `tools/read_frameno.py`, and the HUD
-    harnesses.
-  - [`PLAYER.md`](PLAYER.md) - the live Main/Sub player memory maps with named
-    ranges, unallocated space, the startup sequence, and the per-frame
-    CPU handoff. Keep
-    its addresses and limits in sync with `tools/av_config.py`,
-    `tools/check_player_ring.py`, and `boot/movieplay_*.s`.
-  - [`REMOVED.md`](REMOVED.md) - the archive for removed feature designs,
-    dependencies, and implementation notes needed for a possible clean
-    reimplementation. It is not a description of the active pipeline.
-  - [`ENCODE.md`](ENCODE.md) - the current simulation-encoding flow and a
-    versioned full-encode timing example. Keep its short stage names aligned
-    with the timers and comments in `tools/sim.py`.
-  - [`YOUTUBE.md`](YOUTUBE.md) - the title, description, privacy, and category
-    rules for every codec video upload. Keep its analysis-layout terms in sync
-    with `tools/layout_preview.py` and `tools/analysis_style.py`, and its
-    version rules in sync with `tools/av_version.txt`.
-  - [`PROMPTS.md`](PROMPTS.md) - verbatim record of representative human
-    prompts sent during development, with English translations. The Japanese
-    text is authoritative and must never be edited; fix the English text only
-    when it mistranslates the Japanese.
-- Keep the analysis-overlay specification beside its implementation:
-  `tools/layout_preview.py` owns layout and reading rules,
-  `tools/analysis_style.py` owns category semantics and colours, and
-  `tools/render_analysis.py` owns real-data, TSV, and mux timing. Do not create
-  a separate `ANALYSIS.md`.
-- Claude skill files under `.claude/skills/**/SKILL.md` are allowed and should
-  remain in place.
-- Do not reintroduce game-specific extraction notes or copyrighted sample
-  metadata.
-
-## Delimited Log Format
-
-- Use TSV for every project-owned delimited log, diagnostic table, and
-  machine-readable row series. Write UTF-8, a header row, tab separators, LF
-  line endings, and the `.tsv` extension.
-- Do not create `.csv` files or comma-delimited internal logs. Python may use
-  the standard `csv` module as an implementation detail only when
-  `delimiter="\t"` is explicit.
-- Name CLI options and documentation after the format (`--tsv`, `--hud-tsv`),
-  not `--csv`. CSV is allowed only when an external system explicitly requires
-  that interchange format; keep such conversion at the external boundary.
-
-## Canonical Path
-
-This project is the **Sega CD Constraint-Aware Video Codec**. Generic file
-names keep implementation details independent from the public codec name. The
-current encoder/player path is:
-
-```text
-tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s
-```
-
-The on-disc stream is split into static boot state in `HEADER.DAT` and an
-untimed audio/frame-0 arm followed by timed frame-1+ slots in `BODY.DAT`.
-On-disc data compatibility across layout changes (including between specialized
-and generic player builds) is not maintained: update every consumer of the
-shared format together.
-The packer also writes a concatenated `MOVIE.DAT` compatibility container for
-offline tools; the player does not read it.
-
-Resolution, aspect, and frame rate are **per-source encoder settings**
-within Sega CD limits, not fixed presets:
-
-- Resolution and aspect inside the fixed H40 320x224 aperture, with the tile
-  grid sized to the per-frame DMA budget. H40 is the only display mode; see
-  [`REMOVED.md`](REMOVED.md) for what an H32 reimplementation would need.
-- Frame rate = the source's native rate.
-- Audio = checkpointed 22.05 kHz mono IMA ADPCM, decoded directly by the Sub
-  CPU through full lookup tables installed once in Sub PRG-RAM. It is the only
-  audio format in the on-disc CAVC layout. Physical
-  hardware and additional modes/cadences are broader compatibility checks
-  rather than implementation blockers (see [ADPCM.md](ADPCM.md)). Z80 offload
-  remains shelved because BUSREQ-based feeding contends with Main CPU video
-  work.
-
-The old `OP.STR` / RLE and `PROBE.BIN` bring-up paths have been removed.
-`make disc CONFIG=profiles/PROFILE.toml` builds the `HEADER.DAT` + `BODY.DAT`
-disc played by `boot/movieplay_*.s`. The TOML filename is the artifact identity:
-packed stream files live under `out/PROFILE/`, transient build, disc-staging,
-and direct-emulator scratch files live under `tmp/PROFILE/`, and the bootable
-pair is `out/PROFILE.iso` + `out/PROFILE.cue`.
-
-## Output Paths (tmpfs and logs/)
-
-All generated media and image artifacts are disposable and live directly in
-the project-managed tmpfs workspace at `/dev/shm/segacd-fmv-cavc`: native
-lossless emulator captures, analysis/straight-sim/preview/compilation MP4s,
-recording sidecars, verification stills, and timeline/hudline/mixline PNGs.
-Disposable sim directories live there too. Tools print the actual path that
-downstream stages must use. The repository has no media-output directory and
-must not create one. Inactive oldest tmpfs entries are evicted when the next
-run needs room, while active leases are never removed. The pipeline retains a
-recording lease through its HUD stage so the lossless input cannot disappear
-between recording and analysis.
-
-Keep analysis data persistently under git-ignored `logs/`: every per-frame
-timeline/HUD TSV, plus its HUD gate JSON, image layout JSON, and Gist receipt.
-A persistent receipt can outlive its evicted tmpfs image; re-render from the
-TSV rather than treating the receipt as proof that the image still exists.
-Timeline and HUD TSV filenames include both encoder and player versions. Use
-one stem per encode:
-
-Completed sim directories are reused automatically only when source bytes,
-effective encoder/TOML settings, and the output-affecting encoder-code
-fingerprint match. The tmpfs entry name spells out source, mode, geometry, fps,
-fit, cold cap, and short source/settings/encoder fingerprints. Profile
-filenames and TOML formatting do not split otherwise identical encodes.
-Interrupted entries have no completion marker and are reset on the next run.
-Use `CBRSIM_FORCE_REENCODE=1` only for an explicitly requested clean encode.
-
-```
-stem = <input-basename>_<display-mode>_<resolution>_<audio-format>
-       e.g. OP1_ps2_H40_320x144_adpcm22
-```
-
-| Artifact | Path |
+| Object | Meaning |
 |---|---|
-| Analysis-frame video (from `sim`) | printed direct tmpfs path ending in `<stem>_analysis.mp4` |
-| Per-frame analysis data (same values as the overlay) | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv` |
-| Per-frame playback HUD data and gate | `logs/<datetime>_<profile>_<sha10>_eNN_pNN_hud.tsv` and matching `_gate.json` |
-| Image layout and Gist metadata | `logs/<image-stem>_<image-sha10>_<kind>.json` |
-| Straight sim output, video+audio, no overlay (`export_sim_video.py`) | printed direct tmpfs path ending in `<stem>_sim.mp4` |
-| Sim inputs, stats, and decision data | deterministic direct tmpfs `.../sim-.../data/` path; analysis creates `preview/` and `catmap/` there on demand |
-| Lossless emulator capture (`record`) | printed direct tmpfs path ending in `<stem>_emu_lossless.mkv` |
-| Verification preview (`record`, opt-in `--preview` only) | printed direct tmpfs path ending in `<stem>_emu_preview.mp4` |
-| Upload compilation (`compilation`) | printed direct tmpfs path ending in `<stem>_emu.mp4` |
+| routing table | One byte per delivery slot recording sector counts; no pattern payload. |
+| PrgBuf (`Prg`) | Streamed PRG-RAM circular buffer of prefetched 32-byte cold patterns. `RING_*` describes its implementation. |
+| WordBuf0 / WordBuf1 (`Wr0` / `Wr1`) | Distinct boot-preloaded pattern sequences in the two physical 1M Word-RAM banks, selected by parity. |
+| DicBuf (`Dic`) | 512-entry boot-preloaded Main-RAM dictionary, reusable by index without consumption. |
+| APPLY ring | PRG-RAM queue of continuous control blocks. |
+| resident pattern | A pattern currently retained in the VRAM tile pool. |
+| whole-movie quality budget | Encoder spending accounting, not physical memory. Do not call it Tank. |
+| Buf category | Funding class for an exact cold load, not a buffer meter. |
+| Word RAM output bank | Sub/Main frame handoff area, not simultaneously owned by both CPUs. |
 
-- `<input-basename>`: the source file name without extension.
-- `<display-mode>`: always `H40`, kept so an artifact path stays self-describing.
-- `<resolution>`: the Sega CD output resolution in pixels, `WxH` (e.g. `320x144`).
-- `<audio-format>`: always `adpcm22` (see [ADPCM.md](ADPCM.md)).
+After a terminology correction, discard conclusions based on the wrong object.
 
-## Hardware Facts
+## Validation by value
 
-- Keep CD reads continuous where possible. Reissuing `CDC_STOP + ROM_READN`
-  costs too much bandwidth.
-- 1M/1M Word RAM bank swaps are cheap enough for frame-granular buffering.
-- RF5C164 wave RAM writes use the odd byte window and correct PCM bank select.
-  While the chip is sounding, external wave-memory writes must be 16 or more
-  source clock cycles apart (official PCM manual 4-5; Sub CPU and PCM share
-  12.5 MHz, so 16 CPU cycles). Faster strobes are dropped or corrupted by the
-  real chip — continuous hiss during streaming — while emulators and the
-  EverDrive FPGA accept them, so only hardware exposes the violation. Writes
-  with sounding suspended are unrestricted; internal-register writes while
-  sounding need 384 or more cycles between accesses.
-- Keep three Sub-program domains separate: the SP source inside the disc system
-  area, the BIOS-loaded resident destination in Sub PRG-RAM, and boot-only
-  scratch in Sub PRG-RAM. The BIOS can load a multi-sector SP. The active
-  layout places the source at `0x6000`, reserves 5 KiB at resident PRG
-  `0x6000..0x73FF`, and places the 64 KiB ISO scratch in the inactive
-  timed-ring tail `0x67000..0x76FFF`.
-- Do not infer generic live scratch from an address gap. Marker tests qualify
-  continuous-read stability at `0x7400..0x7FFF` and rewritten scratch at
-  `0x08000..0x097FF`; the active map assigns most of those ranges to ADPCM,
-  PCM, and pending-sector state. `0x09800..0x0BFFF` is BIOS-touched during
-  continuous reads. Prefer checked high PRG allocations for routing and
-  queues.
-- Long CDC drain gaps can silently drop sectors. Streaming code must keep
-  pumping while Main CPU work is happening.
-- In Sub-CPU wait loops, service an already-arrived or already-cleared
-  `CMD_SWAP` before another opportunistic sector pump. Continue pumping while
-  Main is genuinely idle; once the handshake is pending, future-data work must
-  not consume the current fixed-cadence display deadline.
-- `total_len` fields in apply/control blocks must stay even.
+For each retained or proposed test, identify the realistic bug it would catch.
+Compare that protection with runtime, flakiness, and maintenance cost. Do not
+preserve test counts or coverage percentages for their own sake.
 
-### CD 1x deadline invariant
+- Prefer externally visible results and independent data/reader checks.
+- Remove implementation copies, mock self-checks, library/type guarantees,
+  duplicate cases, and incidental private-shape assertions. Consolidate shared
+  fixtures while preserving genuinely different failure modes.
+- A Python copy of assembly is not evidence that the assembled player is right.
+  Use actual disassembly or trace/capture evidence for that claim.
+- Run the checks appropriate to the change once. Repeat after a relevant fix or
+  new concern, not as a ritual. Cosmetic edits do not need new unit tests.
+- Investigate failed checks before changing them. Test cleanup is not permission
+  to hide a production failure. State any intentionally dropped guarantee.
+- `harness/test_audit/README.md` lists test ownership, costs, and entrypoints.
+  Expensive recordings, browser encodes, hardware checks, and maximum-length
+  fixtures are explicit qualification tiers, not the default quick suite.
 
-- Treat the timed BODY read as an absolute 75-sector/s physical service clock
-  at every point in playback. CD 1x is not a whole-movie average budget.
-- Keep the player-only frame -1 outside that clock. With no simulated frame -1,
-  the timed BODY suffix must remain stopped until the visible frame-0 flip;
-  pumping future sectors during frame -1 creates unmodeled producer lead even
-  when the displayed sentinel itself is correct.
-- Do not advance PCM through the first timed `ROM_READN` startup interval.
-  Launch the suffix only after the frame-0 flip, use the first frame-1 control
-  sector as the proof that 75-sector/s service is flowing, start PCM there,
-  and finish that physical slot before releasing Main. The remaining slot and
-  VBlank phase establish the first movie interval; CD startup latency is not
-  an audio packet and must not become A/V lead.
-- Every cumulative sector prefix must fit the CD 1x time elapsed by that exact
-  display deadline, including only startup lead that the model explicitly
-  proves. A routing-table slot limit is a format capacity, not proof that the
-  slot can be delivered by its deadline.
-- Never accept a heavy slot that creates positive rate lead on the assumption
-  that a later light slot, omitted pad, or a zero final average will repay it.
-  Later work can repair byte accounting; it cannot return display time that
-  has already elapsed. Exact finite-buffer schedules therefore require zero
-  rate lead at every prefix, not merely at the end.
-- Prove three conditions separately for any delivery change: on-disc route
-  capacity, cumulative physical delivery by every deadline, and finite
-  producer/consumer-buffer bounds. Fix a violated construction condition
-  before considering a larger APPLY ring, a smaller PrgBuf, or another buffer
-  trade that would only absorb the invalid lead.
+## Encoder and player invariants
 
-### VDP DMA rules (measured)
+The display aperture is H40 320x224; source aspect/rate and inner raster are
+per-source settings. The DMA budget limits changes per frame, not canvas size.
+Use HAR-aware fit/pad unless cropping is requested or fixed black bars are
+confirmed. Audio is checkpointed 22.05 kHz mono IMA ADPCM.
 
-- Enable DMA first: VDP reg 1 bit 4 (M1, e.g. `0x8174`). The BIOS default
-  leaves it off and DMA requests are then silently ignored (symptom: only
-  CPU-written words appear, everything else stays blank).
-- The DMA length registers (`0x93/0x94`) count down to zero during a transfer;
-  rewrite them before **every** DMA. Reassert autoinc (`0x8F02`) too.
-- Poll DMA completion (status bit 1) before touching VDP registers again.
-- Issue DMAs inside VBlank only, and split large transfers across VBlanks with
-  a word budget (`VBLANK_DMA_WORDS`); a transfer spilling into active display
-  corrupts on strict emulators/hardware.
-- **DMA from Word RAM: `src+2`, full length, normal destination, then CPU-write
-  the destination's FIRST word after the DMA.** Verified against the GPGX
-  source (`vdp_ctrl.c`): the first word the VDP receives is stale bus data and
-  the last source word is discarded — the emulator models this as `dst += 2;
-  length -= 1`, i.e. **the destination's first word is never written by the
-  DMA**. So: program source = `src+2` (delivers `A[1..L-1]` to `dst[1..L-1]`),
-  then repair `dst[0] = A[0]` with one CPU write per transfer. Without the
-  repair, fresh tiles keep one stale VRAM word each (dark 4px dashes scattered
-  on updated tiles; settled frames look clean). The variant "CPU first word +
-  DMA `src+2 -> dst+2` with `len-1`" is WRONG here: every word lands one early
-  (vertical striping). Every pattern run uses DMA, including one- and two-tile
-  runs. Split each run at the remaining VBlank budget boundary and apply this
-  first-word repair to every Word-RAM DMA chunk.
-- DMA from Main RAM needs no correction. Trigger writes: first control word,
-  then the second word containing CD5 (`0x80`); keep the pre-DMA register
-  writes (`0x93-0x97`) before the control words.
+Keep target quality fixed during regression work: raster, cadence, cold cap,
+filters, and palette policy. A lower workload that stops a failure is a
+workaround, not a repaired model. Starvation is an intended CD-1x outcome.
+Do not report starved-frame percentages routinely. Report Miss distributions
+alongside request volume only for codec tuning or quality comparisons.
 
-## Debugging Method (hardware/emulator investigations)
+- CD 1x is an absolute 75-sector/s service clock at **every cumulative prefix**.
+  A later light slot cannot repay an already missed display deadline. Prove
+  route capacity, each physical deadline, and finite buffer bounds separately.
+  Fix an invalid schedule before spending PrgBuf/APPLY capacity to absorb it.
+- Keep player frame -1 outside the timed suffix. Start that read after the
+  visible frame-0 flip; first frame-1 control proves service before PCM starts.
+  CD startup latency must not become audio lead.
+- Keep CDC reads continuous. Pump while Main is working/idle, but service an
+  arrived or cleared CMD_SWAP before optional future-data work. Long drain gaps
+  can silently drop sectors. All apply/control total lengths stay even.
+- Separate disc SP source, BIOS-loaded resident PRG, and boot-only scratch.
+  Never infer safe scratch from an address gap; use the checked PLAYER map.
+- Word-RAM DMA uses `src+2`, full length, normal destination, then CPU repair of
+  the destination's **first** word for every chunk. Main-RAM DMA needs no repair.
+  Enable DMA, rewrite length/autoincrement for every transfer, poll completion,
+  and keep chunks within the VBlank word budget.
+- Sounding RF5C164 wave writes need at least 16 Sub CPU cycles; register writes
+  need 384. An emulator accepting faster writes is not hardware proof.
+- When changing a shared stream layout, update every writer/reader together.
+  Guard counts against corrupt data; zero/end and remaining-length bounds must
+  not turn into runaway reads. On-disc backward compatibility is not maintained.
 
-When playback breaks, do not guess from one symptom. Prove each layer
-innocent in order, with byte-level or frame-level evidence:
+For failures, locate the first divergence across data, model, assembly, and
+playback. Compare exact stream states, built instructions, and matching captures
+as needed. Keep correctness, non-regression, and measured benefit separate.
+Read waiting counters with cadence, slip/desync/resync, and buffer levels; a
+higher wait count alone is neither failure nor improvement. A graph near zero
+is not an exact signed balance. If tuning cannot make hardware reproduce the
+sim, question the model before reducing quality again.
 
-1. **Data layer**: replay the exact writer/reader logic in a small Python
-   replica against the real `HEADER.DAT` + `BODY.DAT` pair (all frames, not samples). If the
-   format walks cleanly, the data and format are innocent.
-2. **Logic layer**: when changing stream layout or allocation, prove display
-   equivalence in Python first (old vs new must produce identical
-   cell->pattern states for every frame) before touching assembly.
-3. **Assembly layer**: disassemble the built binary
-   (`m68k-elf-objdump -m 68000 -b binary -D`) and read the changed region.
-   Confirm the instructions match intent before blaming hardware.
-4. **Regression check**: rebuild yesterday's artifact from a `git worktree`
-   of the old commit and `cmp` it byte-for-byte with today's. `IDENTICAL`
-   means the regression is not in the code you changed.
-5. **Bisect in time**: use the `ISO_HOLD_N` freeze diagnostic to hold the
-   player at frame N and screenshot. Binary-search N to find the first bad
-   frame instead of staring at post-collapse garbage.
-6. **Environment last, but verify it**: boot the BIOS with no START presses
-   to confirm the emulator itself is healthy; check core/BIOS mtimes.
+## Runtime paths and environments
 
-Emulator pitfalls learned the hard way:
-
-- Uncapped headless RetroArch can run many times faster than realtime. Never
-  map screenshot wall-clock time to frame numbers; a shot at "12 seconds" can
-  be far past the section you meant to check. Use `ISO_HOLD_N` for exact
-  diagnostic frames, or an input Replay plus `--max-frames` for an exact
-  recording window.
-- A crashed RetroArch commonly leaves the log ending at `SET_GEOMETRY`.
-  A healthy run returns zero and reaches `Content ran for a total of` plus
-  `Unloading core`; some RetroArch builds additionally print `Average monitor
-  Hz`, but 1.22.2 does not do so consistently. A natural `--max-frames` exit
-  also requires a readable Matroska trailer and packet plus decoded-frame counts
-  equal to the requested limit. Check the appropriate ending before trusting
-  black/garbage screenshots (exit code 139 usually means runaway reads past
-  mapped regions).
-- Every consumer of a shared data format must be updated together: a
-  diagnostic path that still writes the old layout (e.g. `dump_ring_head`)
-  will corrupt a new-format reader and can crash the whole emulator.
-- Guard stream readers against corrupt counts (clamp to remaining, treat 0
-  as end). On compact formats, corruption otherwise turns into unbounded
-  runaway reads instead of one glitched frame.
-
-## HQ Deliverable Encode (final mp4)
-
-`record` owns the native lossless capture; `compilation` owns the upload
-transcode. Keep the complete recording, including the Mega-CD startup. Do not
-leave a non-square SAR for YouTube to rescale: bake the mode's pixel aspect into
-a high-resolution square-pixel raster with nearest-neighbour scaling:
+Select storage explicitly for substantial jobs:
 
 ```sh
-tools/python.sh tools/tmpfs_workspace.py run-file \
-  --output <stem>_emu.mp4 --kind compilation-mp4 --required-gb 8 \
-  --input "$LOSSLESS" -- \
-  ffmpeg -i "$LOSSLESS" \
-    -vf "scale=2048:1568:flags=neighbor,setsar=1" \
-    -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
-    -c:a aac -b:a 192k -movflags +faststart '{output}'
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/sim.py profiles/PROFILE.toml
 ```
 
-The final line printed by `run-file` is the direct tmpfs MP4 path. Use that
-path for verification and upload.
+`tools/runtime.sh` accepts the same three storage options followed by `--` and
+any command, including `make` and shell harnesses. Default workspace is
+`tmp/workspace` under this checkout; scratch defaults to its `scratch/` child
+(or an explicit TMPDIR). `/dev/shm` is opt-in. Disk-backed arrays on tmpfs still
+consume RAM. Artifact leases/eviction cover managed entries only. Use the
+printed artifact paths, not guessed locations. Build staging and ISO outputs
+remain `tmp/PROFILE/` and `out/PROFILE{,_release}.{iso,cue}`.
 
-- H40 320x224 PAR 32:35 becomes a 2048x1568 SAR 1:1 aperture. A practical-size
-  exact integer replication is impossible, so nearest-neighbour assigns each
-  source column to 6 or 7 output columns without colour blending. Vertical
-  replication is an exact 7x.
-- The nearest-neighbour enlargement preserves source colour samples, but the
-  H.264 mezzanine and YouTube delivery are re-encoded and are not end-to-end
-  lossless. Use CRF 10 to give YouTube a clean high-resolution input.
-- Do not add `-ss`, `-t`, an fps filter, or `-r` to the standard upload path.
-- Upload the full-quality tmpfs artifact before it is evicted. Do not downscale
-  the deliverable itself to fit a file-transfer size limit; render a separate
-  `896x576` crf20 preview when a small copy is needed.
+Keep TSV logs and JSON receipts in git-ignored `logs/`. Delimited project data
+uses UTF-8, a header, tabs, LF, and `.tsv`; use `--tsv` names. Media and temporary
+arrays belong to the selected workspace/scratch. Completed sim reuse checks
+source bytes, effective settings, and the public encoder version; interrupted
+outputs have no completion marker. Bump the encoder version for output-affecting
+changes; individual source-file hashes do not define this identity. Force
+re-encode only when requested.
 
-## Debugging Method — additions
+Use `tools/python.sh` with the pinned CPU environment, `--gpu` with its separate
+CUDA environment. Bootstrap via `tools/bootstrap_python.sh`; no silent system
+Python/NumPy fallback. A live CUDA parent requires spawned loader processes.
+Read `CONFIG.md` for CPU/GPU/EMU tokens and shared resource roots. Separate
+workspaces sharing one GPU need the same explicit `SEGACD_RESOURCE_ROOT`.
 
-- **Identify the owner before optimizing work.** State the object, operation,
-  CPU, and memory domain. Main-CPU run/locality work does not remove a
-  Sub-CPU pump, audio, copy, or handoff bottleneck, and player optimization
-  does not repair an encoder schedule that exceeds a physical deadline.
-- **Keep target quality fixed while testing a regression.** Resolution, fps,
-  cold cap, filters, palette policy, and other target-quality settings stay
-  fixed. Encoder decisions and concrete sim results may change when the model
-  is corrected. Lowering workload until a failure disappears measures a
-  workaround, not the original regression. If a previously qualified quality
-  point now fails, treat it as a regression; once failure is reproduced at or
-  below that baseline, stop lowering the cold cap. Resume upper-bound tuning
-  only after the cause is corrected at the original quality point.
-- **Separate correctness, non-regression, and measured benefit.** A change can
-  be valid and playback-safe without addressing the observed failure. Prefer a
-  player-only A/B on the same packed stream, and report those three conclusions
-  independently. Do not automatically stack the next optimization stage, spend
-  PrgBuf/APPLY capacity, or enlarge resident code merely because the preceding
-  change was theoretically faster; require an observable benefit or a separate
-  correctness need.
-- **Interpret waiting in context, not as severity.** A faster Sub path can
-  reach the next sector wait earlier and therefore increase
-  `cd_wait_count`; that alone is neither improvement nor regression. Keep it
-  diagnostic-only and read it with `sector_slip`, `control_desync`,
-  `audio_resync`, visible playback, cadence, `prgbuf_jitter_peak_kib`,
-  `adpcm_decode_units`, and `sub_wait_scanlines`.
-- **A graph near zero is not proof of zero.** Fixed whole-movie scales can hide
-  a small positive balance. Add an exact signed diagnostic when zero,
-  underflow, wraparound, or debt matters, and preserve its per-frame minimum
-  rather than inferring it from a circular pointer distance.
-- **Use HUD fields to falsify hypotheses, then follow transitions.** Add the
-  smallest measurement that can disprove the current explanation. Correlation
-  at one low-water interval is not causation; align encoder decisions, live
-  balances, queue guards, displayed-frame cadence, and cumulative recovery
-  transitions on one frame axis before naming the cause. Instrumentation must
-  remain observational rather than steering playback. When added HUD work or
-  a unified layout increases runtime cost, requalify the instrumented standard
-  build on representative fast and slow cadences before relying on its data.
-- **Derive resources from cadence, then qualify each cadence.** Control size,
-  PCM work, routing lifetime, PrgBuf ceiling, jitter, and resident-code margin
-  differ with fps. Use one fps-derived source of truth rather than a 15fps or
-  30fps exception, and run representative full-playback checks for both slow
-  and fast cadences after shared player or scheduler changes.
-- **Treat failures near the first frames as startup-sequence failures until
-  proven otherwise.** The boot/header drain, frame-0 expansion, PrgBuf
-  prebuffer, Word-RAM handoff, continuous `BODY.DAT` read start, first routing
-  entry, and PCM start make this window different from steady playback. Before
-  changing a steady-state knob such as cold cap, compare the first bad HUD
-  frame with the first timed pattern load and inspect those handoffs in order.
-  If `sector_slip`, `cd_wait_count`, `control_desync`, or another fault begins
-  before timed cold loads begin, do not attribute it to cold cap; diagnose the
-  startup path first.
-- **Transient vs persistent artifacts**: if an `ISO_HOLD_N` freeze of frame N
-  is clean but live playback of the same frame shows artifacts, the corruption
-  is stochastic per run (timing/phase dependent), not deterministic data
-  corruption. Diff consecutive 60fps captures of one 15fps game frame: if the
-  artifact is identical across them, the tile content was wrong for that whole
-  game frame (upstream of scanout).
-- **Quantify artifacts with a detector, then A/B builds**: eyeballing dithered
-  frames misleads. Write a small detector (e.g. dark isolated horizontal
-  dashes = pixels much darker than both vertical neighbors on a bright field)
-  and run it over recordings of each build generation. 3.2/frame vs a 0.4
-  false-positive floor identified the Word-RAM DMA first-word bug in one pass.
-- **Legacy 192-line captures and window screenshots are not pixel-exact**:
-  window screenshots are non-integer scaled, so pixel-perfect comparisons
-  against decoded ground truth fail on dithered content (a 1px sampling shift
-  flips half the dither pixels). Use the current native 320x224 FFV1
-  recording or emulator-side dumps for pixel-level checks, and treat cell-mean
-  correlation as alignment-tolerant but detail-blind.
-- **The sim is a MODEL of the hardware — when the two disagree, suspect the sim,
-  not just the encoder tuning.** The hardware's job is to reproduce the sim
-  faithfully (the sim's Miss/residual is expected and fine; extra garbage or a
-  freeze on top of it is a divergence). When the hardware cannot reproduce the
-  sim *no matter how you tune*, STOP and question whether the sim mis-models the
-  hardware's real limit — do not keep shaving the encoder to fit a symptom.
-  Precedents: the CRAM emulation had a sim-side bug; an older 22.05 kHz ADPCM
-  player exceeded the 68000 streaming margin, while the later optimized Sub
-  path had to be re-qualified rather than inheriting that conclusion; Z80
-  offload introduced Main-bus contention (see `ADPCM.md`); and the streaming
-  Prg ring: the old sim quality reservoir was set at 440 then 400 KB while the
-  physical ring was about 420 KB, i.e. it assumed effectively the *entire* ring
-  was usable for time shifting. Real CD-delivery jitter makes the usable ring smaller, so a
-  schedule the pack calls feasible (`under`=0, `ring_min`≈1–2 KB) still underruns
-  live. The fix was a sim-side correction — keep the quality and schedule
-  ceilings a jitter margin below the physical ring so the sim only decides
-  loads the hardware can actually deliver —
-  not a per-frame cold cap papering over it. Keep `pack_stream.py`'s
-  `RING_CAP_KB` tied to the player's real `RING_SIZE` minus that margin. Shape
-  useful payload to the CD-1x allowance (replace rate padding while space is
-  available), and require every exact finite-buffer route to keep rate lead at
-  zero. A later light frame cannot repay display time already lost to a heavy
-  slot.
+The encoder/storage harness targets POSIX systems. Emulator/Xvfb and burner
+harnesses have Linux dependencies; do not claim native Windows support. Check
+host device access before treating sandbox-only CUDA failure as a broken driver.
 
-## Recording Rules
+## Recording and publication
 
-- Use emulator-synchronized A/V output for verification.
-- After every full DEBUG recording, render the complete first-loop HUD TSV with
-  `.agents/skills/hudline/scripts/render_hudline.py`, inspect and show the PNG,
-  and publish it to a public Gist. Require the matching `/timeline` from the
-  exact sim decision log, then immediately render, inspect, show, and publicly
-  publish `/mixline`. Generate and publish the timeline first when it is
-  absent. Preserve all three images, their layout JSON files, and Gist receipts
-  next to the recording. The HUD result has a binary `gate` (`PASS` or `FAIL`)
-  and a separate `alert` (`NONE`, `WARNING`, or `FAIL`). `NONE` and `WARNING`
-  keep the gate at `PASS`; only alert `FAIL` makes the gate `FAIL`.
-  `cd_wait_count` is diagnostic only and never changes either result; report
-  its minimum, mean, median, and maximum together with the same
-  `adpcm_decode_units` statistics.
-  Publish failed gates and their mixlines too as diagnostic evidence, but do
-  not proceed to analysis/playback uploads when `gate` is `FAIL`.
-- Extract visual-check stills with `tools/extract_verification_frames.sh`. It
-  creates a never-reused directory and a source-hashed manifest for each
-  invocation, then builds the montage from that invocation's explicit frame
-  list. Never montage a shared check directory with `*.png`; loose stills from
-  an older recording or transcode can silently contaminate the result.
-- Do not verify playback by replacing audio with an offline source.
-- Real/emulator recordings use a `DEBUG=1` disc by default, including the Plane A HUD. Build
-  release only when the user explicitly requests it. `tools/record_movie.sh` enforces this;
-  its `--release-build` option is the explicit release override.
-- Prefer:
+A plain record request ends with the requested recording. Analysis, HUD OCR,
+HUD/mixed timelines, Gists, and uploads are separate outputs; generate them
+when requested or needed by the selected publication/diagnostic workflow.
+Already authorized publication does not need a second approval after checks.
 
-```sh
-tools/record_movie.sh --config profiles/PROFILE.toml \
-  --seconds 180 --tag STEM_emu
-```
+Use emulator-synchronized A/V and explicit native 320x224 FFV1/FLAC capture.
+Keep startup and tail unless trimming is requested. Reuse the exact disc only
+when its identity/mode is known; DEBUG is the recording default and HUD-free
+requests select release. Replays belong to the exact disc/core/settings.
+A normal capture checks counts, media, logs and representative frames. Requalify
+same-Replay realtime/offline equivalence when the recording path changes or is
+suspect, not on every capture. Follow `record` for commands and `release` for
+HUD-free publication evidence. Never fabricate or transplant a gate JSON.
 
-- The high-level recorder defaults to FFV1/FLAC and writes its bounded
-  pixel-lossless MKV, Replay, and emulator logs into one leased tmpfs
-  directory. The lossy H.264 verification preview is opt-in via `--preview`
-  and is not produced normally; verify with stills extracted from the MKV. It uses the qualified fixed-Replay offline path by default: the
-  same DEBUG disc, Mega-CD startup, CD player, START transition, movie and tail,
-  with audio sync, rate control and video vsync disabled so the fixed
-  emulator-frame run can proceed uncapped.
-- `--offline-record` is an explicit spelling of that default.
-  `--realtime-lossless` selects the paced FFV1/FLAC fallback for qualification
-  or diagnosis. Explicit `--preset realtime` instead selects paced H.264 4:2:0
-  and must not be used as a `compilation` input.
-- If the default has no `--input-replay`, `record_movie.sh` first records one
-  in the same leased tmpfs directory, 120 emulator frames longer than the main run.
-  A supplied Replay must also extend beyond `--max-frames`; Replay EOF is a
-  hard failure because RetroArch may otherwise repeat a cached end frame.
-  Replays belong to the exact disc, core and configuration that created them;
-  regenerate after any of those change.
-- Requalify after changing RetroArch, the core, offline harness/recording code,
-  or recorder settings, and whenever a result is suspect. Play the same Replay
-  once with `--realtime-lossless --preset ffv1-flac` and once with the offline
-  default. Run `tools/compare_recordings.py` on the two bounded MKVs and require
-  exact decoded-frame hashes, PCM SHA-256/sample count, packet PTS/DTS/durations
-  and stream metadata. Repeat the offline run and compare it too. The
-  Replay-generation run is not the realtime baseline. Routine recordings use
-  frame/packet counts, audio-stream presence, logs, and visual samples without
-  rerunning all three qualification captures; waveform thresholds are not a
-  recording gate.
-- The default keeps the Mega-CD startup. Use trimming only when the user
-  explicitly asks for a movie-only clip.
-- Run RetroArch/Xvfb through `tools/run_headless.sh`; it acquires an EMU token,
-  allocates a private X display and RetroArch system directory, and cleans up
-  only its own processes.
-- If a run is black, silent, or has no duration, treat it as failed and rerun
-  after checking `retroarch_<tag>.log` and `xvfb_<tag>.log` in the selected
-  tmpfs recording directory printed by `record_movie.sh`.
+Use `extract_verification_frames.sh` and its fresh manifest; do not mix stale
+stills via shared globs. Do not replace recorded audio with source audio or
+claim sound quality without listening. Publication transcode settings belong
+to `compilation`; metadata belongs solely to `YOUTUBE.md`. Link video/audio in
+chat as ordinary clickable Markdown links, never inline embeds.
 
-## Shared-Machine Resource Tokens and Profile Isolation
+## Repository text and Git
 
-Independent profiles may run concurrently. Do not use process-name scans as a
-scheduler; the project tools coordinate their heavy stages through Linux
-`flock` tokens in `tools/resource_tokens.py`:
+- English for code, comments and general repository text; Japanese for commits,
+  GitHub issues and PR comments. Author and committer are the human owner
+  `akiyan`; no AI Co-Authored-By or session trailers.
+- Keep unrelated changes intact. Branch from the requested base; push/merge and
+  publication scope follow the user's authorization. Do not force-push main.
+- Public root Markdown is English first, followed by a complete structurally
+  matching Japanese version. Describe current behavior, not chronology. Only
+  REMOVED.md holds absent-feature implementation notes.
+- Keep public docs self-contained; do not name/link issues from Markdown.
+  No scattered root notes. Diagnostic scripts and their README belong under
+  `harness/<topic>/`; maintenance instructions belong here or scoped skills.
+- `.claude/skills` aliases `.agents/skills`; edit the canonical copy once.
+- Keep PROMPTS.md Japanese originals verbatim; fix translations only for errors.
 
-- **CPU**: `SEGACD_CPU_TOKENS`, defaulting to affinity CPUs minus two.
-  `CBRSIM_WORKERS` is both the worker count and the exact CPU-token request.
-  Sim holds these tokens only for Extract, Palette, and Quantize; analysis
-  rendering and record-preview transcoding also honor them.
-- **GPU**: `SEGACD_GPU_TOKENS`, default 1. GPU palette/quantization and NVENC
-  muxing acquire it only while using the device.
-- **EMU**: `SEGACD_EMU_TOKENS`, default 2. Every `run_headless.sh` invocation
-  acquires one. The two-instance default is qualified by same-Replay
-  FFV1/FLAC comparisons across two concurrent profiles, with exact decoded
-  video, PCM, timestamps, packet durations, and metadata.
-- **output stem**: one exclusive lock covers a complete profile pipeline. A
-  second process targeting the same `<stem>` fails immediately rather than
-  sharing packed files, tmpfs artifacts, or recording paths.
+Read and update the owner of changed behavior:
 
-Every interactive `$run` must use `tools/parallel_run.py` for its local
-sim-through-HUD pipeline, including a run with only one profile. This retains
-the stem lock and sim tmpfs lease across stage boundaries even when unrelated
-Codex sessions start runs without coordinating with each other. It divides CPU
-workers across jobs, isolates failures, and writes per-profile logs plus a TSV
-summary. `--jobs 1` is the single-profile form; `--sequential` retains a
-reproducible comparison mode. Direct stage commands are for standalone skills
-and diagnosis, not the normal `$run` path.
+| Reference | Owns |
+|---|---|
+| README.md | Public setup and usage |
+| MOVIE.md | HEADER/BODY format, matching packer and player |
+| CONFIG.md | Knobs, runtime paths, buffers and limits |
+| PLAYER.md | Memory map, boot and Main/Sub handoff |
+| HUD.md | Fields, rendering and OCR |
+| ENCODE.md | Stage flow and measured timing |
+| ADPCM.md | Audio/hardware constraints |
+| YOUTUBE.md | Upload metadata and version rules |
+| tools/layout_preview.py | Analysis layout and reading rules |
+| tools/analysis_style.py | Category semantics and colours |
+| tools/render_analysis.py | Real-data/TSV/mux timing |
 
-Xvfb normally allocates a free display with `-displayfd`; `--display :N` is an
-explicit diagnostic override and fails if that display is already active.
-RetroArch's system directory and generated configs are private to one run.
-tmpfs eviction, reservations, lease changes, and public alias replacement are
-serialized and atomic.
-
-Never bypass these locks for a normal run, never kill another session's
-processes, and only stop processes started by the current session.
-
-### Project Python environments
-
-Do not run project tools with the system `python3` or inherit distribution
-site-packages. The repository pins `uv`, CPython and every Python package:
-
-- `tools/bootstrap_python.sh --cpu` creates the CPU environment in `.venv`.
-  Use `tools/python.sh` for pack, tests, builds, recording checks and CPU tools.
-- `tools/bootstrap_python.sh --gpu` creates the separate CUDA environment in
-  `.venv-gpu`. Use
-  `tools/python.sh --gpu` for GPU sim/render.
-- The launcher must fail when its selected environment is absent. Never add a
-  silent fallback to `/usr/bin/python`, a distro NumPy/Pillow, or an older venv.
-- `.python-version`, `.python-version-gpu`, `pyproject.toml` and `uv.lock` are
-  the reproducible source of truth. The environments themselves remain
-  git-ignored.
-- The YouTube credential environment is intentionally separate and is not part
-  of the codec tool lock.
-
-### NVIDIA/CUDA in the Codex sandbox
-
-The normal Codex workspace sandbox can hide `/dev/nvidia*` even when the host
-driver and GPU are healthy. Inside that sandbox, `nvidia-smi` then reports that
-it cannot communicate with the driver and CuPy reports `cudaErrorNoDevice`.
-Do not treat those sandbox-only symptoms as proof that the NVIDIA driver is
-broken, and do not reinstall the driver or reboot the workstation on that
-evidence alone.
-
-- Check `nvidia-smi` and a small CuPy allocation outside the sandbox first.
-- Run GPU `tools/sim.py` and `tools/render_analysis.py` outside the sandbox so
-  they can access the NVIDIA device nodes.
-- Use `tools/python.sh --gpu`, which selects the isolated `.venv-gpu` containing
-  managed CPython 3.13.14 + NumPy 2.3.5 + Pillow 12.1.1 + CuPy 14.1.1. This
-  exact environment completed a full 2,535-frame Lunar sim. The CPU
-  `.venv` remains on managed CPython 3.14.4. The former
-  `cbrsim-gpu-stable` venv inherited system NumPy/Pillow and is rollback-only.
-  The still older `cbrsim-gpu` venv's NumPy 2.5.1 corrupted long runs (segfaults
-  and NumPy `SystemError`) even though short CUDA allocations passed. The sim
-  rejects that exact unsafe combination before doing work.
-- The GPU sim initializes CUDA before its CPU frame-loader pool. Those workers
-  must use multiprocessing `spawn`, never `fork`: forking the live CUDA parent
-  can segfault the parent interpreter part-way through precomputation.
-  CPU-only sim runs may keep the cheaper `fork` path. GPU runs default to the
-  verified four feeder processes; `CBRSIM_WORKERS` remains a diagnostic override.
-- If `/sbin/ub-device-create --verbose` says the `/dev/nvidia*` nodes already
-  exist with correct permissions outside the sandbox, the host device setup is
-  healthy; the missing nodes seen inside the sandbox are an isolation artifact.
-- Reboot only when the outside-sandbox checks also fail and host kernel logs or
-  device state support it.
-
-### Analysis renderer multiprocessing in the Codex sandbox
-
-`tools/render_analysis.py` creates a multiprocessing pool. The normal Codex
-workspace sandbox can reject the pool's local IPC socket with
-`PermissionError: Operation not permitted` even though rendering is healthy.
-Run real-frame and full analysis renders outside the sandbox; do not replace a
-failed pool render with a single-process result and call the multiprocessing
-path verified. On Linux the renderer explicitly uses the proven `fork` context
-because Python 3.14's new `forkserver` default can reset its worker connection
-after the large read-only analysis tables have loaded.
+Do not create ANALYSIS.md or duplicate these specifications in skill prompts.

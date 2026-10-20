@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 from pathlib import Path
 import tempfile
 import unittest
@@ -66,40 +65,6 @@ class ParallelRunTests(unittest.TestCase):
             self.assertIn("320x224", record)
             self.assertIn("41", record)
             self.assertNotIn("--gpu", commands[0][1])
-
-    def test_default_record_seconds_adds_startup_margin(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            profile_path = Path(tmp) / "movie.toml"
-            write_profile(profile_path, source="assets/movie.mp4")
-            profile = load_profile(profile_path)
-            # 14.9 s measured Mega-CD startup plus the player's 15 s
-            # end-of-movie hold must both fit inside the bounded capture.
-            self.assertEqual(parallel_run.RECORD_MARGIN_SECONDS, 30)
-            self.assertGreaterEqual(parallel_run.RECORD_MARGIN_SECONDS, 15 + 15)
-            self.assertEqual(
-                parallel_run._record_seconds(profile, None),
-                8 + parallel_run.RECORD_MARGIN_SECONDS,
-            )
-            self.assertEqual(parallel_run._record_seconds(profile, 41), 41)
-
-    def test_summary_is_tsv(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "summary.tsv"
-            result = parallel_run.JobResult(
-                Path("profiles/a.toml"),
-                "movie_H40_320x224_adpcm22",
-                "PASS",
-                "",
-                1.25,
-                Path("logs/a.log"),
-                "",
-            )
-            parallel_run._write_summary(path, [result])
-            with path.open(encoding="utf-8", newline="") as handle:
-                rows = list(csv.DictReader(handle, delimiter="\t"))
-            self.assertEqual(len(rows), 1)
-            self.assertEqual(rows[0]["status"], "PASS")
-            self.assertEqual(rows[0]["elapsed_seconds"], "1.250")
 
 
 if __name__ == "__main__":

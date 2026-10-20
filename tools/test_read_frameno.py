@@ -63,17 +63,6 @@ class FrameMinusOneTest(unittest.TestCase):
             (36, 0),
         )
 
-    def test_standard_layout_uses_descriptive_unpacked_fields(self) -> None:
-        self.assertIn("vblank_spill", read_frameno.HUD_FIELDS)
-        self.assertIn("transfer_ticks", read_frameno.HUD_FIELDS)
-        self.assertIn("apply_backpressure", read_frameno.HUD_FIELDS)
-        self.assertIn("reader_ahead_frames", read_frameno.HUD_FIELDS)
-        self.assertIn("pattern_dma_ready_vcounter", read_frameno.HUD_FIELDS)
-        self.assertIn(
-            "name_table_dma_ready_vcounter", read_frameno.HUD_FIELDS)
-        self.assertNotIn(
-            "vblank_spill_transfer_ticks", read_frameno.HUD_FIELDS)
-
     def test_packed_cells_are_unpacked_losslessly(self) -> None:
         layout = read_frameno.HUD_LAYOUT
         width, height = read_frameno.hud_layout_dimensions(layout)
@@ -117,9 +106,6 @@ class FrameMinusOneTest(unittest.TestCase):
         self.assertEqual(hud["apply_backpressure"][0], 1)
         self.assertEqual(hud["reader_ahead_frames"][0], 0xC)
         self.assertEqual(hud["reader_slot_sector"][0], 0x5)
-
-    def test_default_layout_is_the_single_native_layout(self) -> None:
-        self.assertIs(read_frameno.hud_layout(), read_frameno.HUD_LAYOUT)
 
 
 if __name__ == "__main__":

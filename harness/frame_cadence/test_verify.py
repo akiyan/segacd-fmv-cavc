@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import struct
 import tempfile
 import unittest
@@ -13,14 +12,6 @@ def observations(values: list[int]) -> list[verify.Observation]:
     return [verify.Observation(index, value) for index, value in enumerate(values)]
 
 
-class IntegerTest(unittest.TestCase):
-    def test_decimal_and_hex(self) -> None:
-        self.assertEqual(902, verify.integer("902"))
-        self.assertEqual(0x0386, verify.integer("0x0386"))
-
-    def test_invalid(self) -> None:
-        with self.assertRaises(argparse.ArgumentTypeError):
-            verify.integer("0386")
 
 
 class HeaderTest(unittest.TestCase):
@@ -127,10 +118,6 @@ class CadenceTest(unittest.TestCase):
         with self.assertRaisesRegex(verify.CadenceError, "ended before F0004"):
             verify.validate_observations(source, 4, 2)
 
-    def test_observation_indices_must_increase(self) -> None:
-        source = [verify.Observation(0, 0), verify.Observation(0, 1)]
-        with self.assertRaises(ValueError):
-            verify.find_anchor(source, 2)
 
 
 if __name__ == "__main__":

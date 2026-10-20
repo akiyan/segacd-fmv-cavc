@@ -3,7 +3,8 @@ import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 const bundle=await build({entryPoints:['src/delivery-plan.js'],bundle:true,write:false,format:'esm',platform:'node'});
 const {rateDeltas,controlLengths,planPayload}=await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].contents).toString('base64')}`);
-const cases=JSON.parse(await readFile('/dev/shm/segacd-fmv-cavc/webenc-kernel-test/schedule.json'));
+import {kernelRoot} from './test-paths.mjs';
+const cases=JSON.parse(await readFile(`${kernelRoot}/schedule.json`));
 let accepted=0,rejected=0;
 for(const c of cases){
  assert.deepEqual(rateDeltas(c.loads.length,c.fps),c.rates,`CD cadence ${c.fps}`);

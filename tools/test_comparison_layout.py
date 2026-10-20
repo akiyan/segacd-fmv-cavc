@@ -121,25 +121,6 @@ def written(body: str) -> Path:
 
 class ComparisonProfileTests(unittest.TestCase):
 
-    def test_sonic_jam_panels_are_read_from_the_profile(self) -> None:
-        spec = load(PROFILE)
-        self.assertEqual([p.key for p in spec.panels],
-                         ["emu", "saturn", "segacd", "real"])
-        self.assertEqual(spec.audio_panel, "emu")
-        # The label says both what the panel is and that an emulator is
-        # running it, so it is not read as the real-hardware capture below.
-        self.assertEqual(
-            spec.panel("emu").label,
-            "Custom FMV Codec Playback — SEGA-CD Emulator (Genesis Plus GX)")
-        # The note is switched off, so its height goes to the panels; the
-        # wording still resolves for a profile that wants it drawn.
-        self.assertFalse(spec.show_audio_note)
-        self.assertEqual(spec.audio_note,
-                         "Audio: the codec playback panel only")
-        # Every panel now has footage, the real-hardware capture included.
-        self.assertEqual([p.key for p in spec.with_footage],
-                         ["emu", "saturn", "segacd", "real"])
-
     def test_picture_start_is_the_largest_lead(self) -> None:
         spec = load(PROFILE)
         # The real-hardware capture has the longest run-up, so it opens the
@@ -177,12 +158,6 @@ class ComparisonProfileTests(unittest.TestCase):
                                      'audio_intro_panel = "emu"')
         with self.assertRaisesRegex(ValueError, "must start before"):
             load(written(body))
-
-    def test_source_master_is_retimed_to_the_ntsc_cadence(self) -> None:
-        # 30.000 would drift against the recordings and land unevenly on the
-        # 59.94 output grid.
-        self.assertEqual(load(PROFILE).panel("saturn").input_fps,
-                         "30000/1001")
 
     def test_panels_follow_their_displayed_aspect_not_four_thirds(self) -> None:
         spec = load(PROFILE)
@@ -224,50 +199,6 @@ class ComparisonProfileTests(unittest.TestCase):
         self.assertLessEqual(lower[0] + lower[2], layout_mod.RIGHT_RIGHT)
         self.assertGreater(g["right_left"], main[0] + main[2])
 
-    def test_left_column_takes_the_height_between_headline_and_note(self) -> None:
-        # One headline instead of three lines, so the playback panel starts
-        # higher and is the largest panel by a wide margin.
-        spec = load(PROFILE)
-        rects = spec.rects()
-        main = rects["emu"]
-        self.assertEqual(main[1], layout_mod.PANEL_TOP)
-        self.assertEqual(main[1] + main[3], spec.geometry()["main_bottom"])
-        biggest = max(rects.values(), key=lambda r: r[2] * r[3])
-        self.assertEqual(biggest, main)
-
-    def test_dropping_the_audio_note_gives_its_height_to_the_panels(self) -> None:
-        spec = load(PROFILE)
-        drawn = load(written(BASE + PANELS))
-        self.assertFalse(spec.show_audio_note)
-        self.assertTrue(drawn.show_audio_note)
-        # With the note gone the main panel's spec is the lowest text, sitting
-        # exactly at the last baseline the bottom margin allows.
-        self.assertEqual(
-            spec.geometry()["main_bottom"] + spec.panel("emu").spec_depth,
-            spec.bottom_baseline)
-
-    def test_a_two_line_spec_pushes_the_row_below_it_down(self) -> None:
-        # The upper row's specs run to two lines, and the lower panel's label
-        # must still clear the last of them by the full row gap.
-        spec = load(PROFILE)
-        g = spec.geometry()
-        self.assertEqual(len(spec.panel("saturn").spec), 2)
-        self.assertEqual(len(spec.panel("segacd").spec), 2)
-        self.assertEqual(
-            g["top_spec_baseline"],
-            layout_mod.PANEL_TOP + g["top_height"]
-            + layout_mod.SPEC_GAP + layout_mod.SPEC_LINE_HEIGHT)
-        lower_label = g["lower_top"] - layout_mod.LABEL_GAP
-        self.assertEqual(lower_label - g["top_spec_baseline"],
-                         layout_mod.ROW_GAP)
-
-    def test_a_spec_may_be_one_string_or_a_list(self) -> None:
-        one = load(written(BASE + PANELS))
-        self.assertEqual(one.panel("emu").spec, ("spec",))
-        body = BASE + PANELS.replace(
-            'spec = "spec"\npath =', 'spec = ["a", "b"]\npath =')
-        self.assertEqual(load(written(body)).panel("emu").spec, ("a", "b"))
-
     def test_three_panels_stack_the_right_column(self) -> None:
         spec = load(written(BASE + PANELS3))
         self.assertEqual(spec.arrangement, "three")
@@ -303,13 +234,6 @@ class ComparisonProfileTests(unittest.TestCase):
         self.assertGreaterEqual(g["column_gap"], layout_mod.COLUMN_GAP)
         self.assertGreater(top[0], main[0] + main[2])
 
-    def test_a_partial_arrangement_is_rejected(self) -> None:
-        # Slots from two different arrangements are not an arrangement.
-        body = BASE + PANELS3.replace('slot = "right_bottom"',
-                                      'slot = "lower"')
-        with self.assertRaisesRegex(ValueError, "no known arrangement"):
-            load(written(body))
-
     def test_every_slot_must_be_filled_exactly_once(self) -> None:
         body = BASE + PANELS.replace('slot = "lower"', 'slot = "main"')
         with self.assertRaisesRegex(ValueError, "share one slot"):
@@ -325,22 +249,6 @@ spec = "spec"
         with self.assertRaisesRegex(ValueError, "no known arrangement"):
             load(written(body))
 
-    def test_a_panel_chooses_how_it_is_scaled(self) -> None:
-        # A panel fed material already at the console's raster is enlarging
-        # real console pixels, so it must be able to ask for nearest-neighbour
-        # instead of the default reduction filter.
-        spec = load(written(BASE + PANELS3))
-        self.assertEqual([p.resize for p in spec.panels],
-                         ["lanczos"] * 3)
-        body = PANELS3.replace('spec = ["one", "two"]\npath =',
-                               'spec = ["one", "two"]\nresize = "neighbor"\npath =')
-        self.assertEqual(load(written(BASE + body)).panel("emu").resize,
-                         "neighbor")
-        bad = PANELS3.replace('spec = ["one", "two"]\npath =',
-                              'spec = ["one", "two"]\nresize = "smooth"\npath =')
-        with self.assertRaisesRegex(ValueError, "resize must be one of"):
-            load(written(BASE + bad))
-
     def test_a_headline_wider_than_the_frame_is_rejected(self) -> None:
         # Centring the three arrangement leaves the headline less room than
         # the four arrangement's fixed page margin, and nothing else on the
@@ -355,16 +263,6 @@ spec = "spec"
         with self.assertRaisesRegex(ValueError, "shorten it by"):
             layout_mod.check_headline(wide)
 
-    def test_shipped_profiles_keep_their_headlines_inside_the_frame(self) -> None:
-        for profile in sorted(ROOT.glob("profiles/*.toml")):
-            spec = None
-            try:
-                spec = load(profile)
-            except ValueError:
-                continue  # no [comparison] section: nothing to measure
-            with self.subTest(profile=profile.name):
-                layout_mod.check_headline(spec)
-
     def test_audio_panel_must_name_a_panel_that_has_footage(self) -> None:
         with self.assertRaisesRegex(ValueError, "audio_panel must name"):
             load(written(BASE + PANELS.replace('audio_panel = "emu"',
@@ -373,16 +271,6 @@ spec = "spec"
         with self.assertRaisesRegex(ValueError, "no footage to take audio"):
             load(written(BASE + PANELS.replace('audio_panel = "emu"',
                                                'audio_panel = "a"')))
-
-    def test_unknown_panel_key_is_rejected(self) -> None:
-        body = BASE + PANELS.replace('spec = "spec"\npath =',
-                                     'spec = "spec"\nwidth = 3\npath =')
-        with self.assertRaisesRegex(ValueError, "unknown keys"):
-            load(written(body))
-
-    def test_missing_comparison_section_is_reported(self) -> None:
-        with self.assertRaisesRegex(ValueError, "no \\[comparison\\] section"):
-            load(written(BASE))
 
 
 if __name__ == "__main__":

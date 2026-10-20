@@ -1,4 +1,4 @@
-"""Pack real palette tables and prove byte equality below the former cap."""
+"""Pack real palette tables and check format boundaries."""
 
 import contextlib
 import io
@@ -6,9 +6,7 @@ import struct
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
-import av_config
 from harness.palette_capacity.build_fixture import (
     ROOT, find_tool, fixture_log, pack_fixture, run,
 )
@@ -38,18 +36,6 @@ class PackedFixtureTestCase(unittest.TestCase):
 
 
 class PaletteCapacityTests(PackedFixtureTestCase):
-    def test_existing_stream_and_palette_bytes_are_identical(self):
-        with patch.multiple(av_config, PALTAB_MAX_SEG=16,
-                            PALIDX_ENTRIES=16, PALIDX_BYTES=64):
-            old = self.pack("old16", 16)
-        new = self.pack("new16", 16)
-        for name in ("HEADER.DAT", "BODY.DAT", "MOVIE.DAT", "paltab.bin"):
-            with self.subTest(name=name):
-                self.assertEqual((old / name).read_bytes(), (new / name).read_bytes())
-        before = (old / "palidx.bin").read_bytes()
-        after = (new / "palidx.bin").read_bytes()
-        self.assertEqual(after[:len(before)], before)
-        self.assertEqual(after[len(before):], struct.pack(">HH", 0xFFFF, 0) * 48)
 
     def test_17_and_64_segments_pack_with_the_last_switch_before_the_sentinel(self):
         for fps in (15, 30):

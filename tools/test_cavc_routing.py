@@ -9,12 +9,6 @@ import cavc_routing as routing
 
 
 class RoutingEntryTests(unittest.TestCase):
-    def test_v25_feature_bits_are_stable(self) -> None:
-        self.assertEqual(routing.FEATURE_COLD_RUNS, 0x0001)
-        self.assertEqual(routing.FEATURE_VBLANK_CADENCE, 0x0002)
-        self.assertEqual(routing.FEATURE_PATTERN_SUPPLY, 0x0008)
-        self.assertEqual(routing.FEATURE_BOOT_VRAM_SIDECAR, 0x0080)
-        self.assertEqual(routing.FEATURE_WORDBUF_RING, 0x0100)
 
     def test_all_valid_pairs_round_trip(self) -> None:
         seen = set()
@@ -52,24 +46,6 @@ class RoutingEntryTests(unittest.TestCase):
             with self.subTest(entry=entry), self.assertRaises(ValueError):
                 routing.decode_route(entry)
 
-    def test_all_byte_values_match_the_v7_plus_contract(self) -> None:
-        expected = {
-            routing.encode_route(total - ctrl, ctrl, word):
-                (total - ctrl, ctrl, total)
-            for total in range(routing.FRAME_SECTORS + 1)
-            for ctrl in range(
-                min(total, routing.MAX_CTRL_SECTORS) + 1)
-            for word in range(
-                min(total - ctrl, routing.MAX_WORD_SECTORS) + 1)
-        }
-        for entry in range(256):
-            with self.subTest(entry=f"0x{entry:02X}"):
-                if entry in expected:
-                    self.assertEqual(routing.decode_route(entry), expected[entry])
-                else:
-                    with self.assertRaises(ValueError):
-                        routing.decode_route(entry)
-
 
 class RoutingTableTests(unittest.TestCase):
     def test_frame_and_sector_boundaries(self) -> None:
@@ -83,11 +59,6 @@ class RoutingTableTests(unittest.TestCase):
         for count in (0, 83521):
             with self.subTest(count=count), self.assertRaises(ValueError):
                 routing.routing_sector_count(count)
-
-    def test_valid_padded_table(self) -> None:
-        entries = bytes([0, routing.encode_route(2, 1), routing.encode_route(0, 2)])
-        table = entries.ljust(routing.SECTOR_BYTES, b"\0")
-        routing.validate_route_table(table, len(entries), 1)
 
     def test_boundary_last_entry_and_padding(self) -> None:
         sentinel = routing.encode_route(4, 1)

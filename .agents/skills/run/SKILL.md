@@ -1,424 +1,49 @@
 ---
 name: run
-description: >-
-  Orchestrate the complete SEGA-CD FMV delivery pipeline for one or more source
-  videos: inspect geometry, create a strict H40 profile, simulate and verify
-  the packed stream, make a DEBUG lossless emulator recording, require its
-  complete HUD gate to be upload-capable, then render/upload the analysis and create/upload
-  the boot-preserving square-pixel compilation. Use when the user invokes
-  "$run", says "same as usual", or asks for /sim, /record, and /compilation as
-  one end-to-end job, including parallel profile batches.
+description: "Coordinate encoding, playback recording and publication when the user explicitly requests an end-to-end delivery or invokes /run. Do not trigger on a vague request to run a command or inspect an existing artifact."
 ---
 
-# run: Complete FMV Pipeline
+# Complete delivery
 
-Take each source from inspection through both YouTube uploads. Independent
-profiles may overlap through the local HUD gate; publication remains
-source-specific and proceeds only after that source passes its gates.
+Resolve the requested outputs first. `/run SOURCE` means the normal analysis
+and playback delivery; explicit omissions such as no HUD, no analysis, timeline
+only, no upload, or no re-encode override that default. Do not expand those
+omissions back through a child skill. Git operations are not implied.
 
-Expected invocation:
+Keep one source/profile/stem and an artifact record containing resolved paths,
+versions, commands, logs and stage results. Read `sim` for a new encode,
+`record` for a requested capture, `release` for HUD-free playback, and
+`compilation` for publication, only when reaching that stage. Read YOUTUBE.md
+when preparing upload metadata.
 
-```text
-$run SOURCE [work title, platform, year, and other label details]
-```
-
-The codec is H40-only, so the invocation takes no display-mode argument. Every
-run uses the H40 320x224 raster.
-
-## Scope
-
-Include all of the following unless the user explicitly excludes a stage:
-
-1. Source inspection and a checked-in-style strict TOML profile
-2. Full simulation, persistent TSV, and detailed timeline PNG/Gist
-3. Packed-stream verification
-4. DEBUG disc build, synchronized native lossless emulator capture, and upload-capable HUD gate
-5. Complete-recording HUD timeline PNG, inline review, and public Gist
-6. Matching codec/HUD mixed timeline PNG, inline review, and public Gist
-7. Analysis render, metadata, CRAM switch count, verification, and upload
-8. Square-pixel playback compilation, CRAM switch count, verification, and upload
-
-Treat both uploads as part of `$run`, not as optional follow-up work. Upload
-analysis and playback videos as unlisted, category 20.
-
-Do not sync repositories, create or switch branches, commit, merge, or push.
-Git operations are outside this skill.
-
-## Load the Governing Instructions
-
-Before acting, read these files completely:
-
-1. `AGENTS.md`
-2. `.agents/skills/sim/SKILL.md`
-3. `.agents/skills/record/SKILL.md`
-4. `.agents/skills/compilation/SKILL.md`
-5. `.agents/skills/timeline/SKILL.md`
-6. `.agents/skills/hudline/SKILL.md`
-7. `.agents/skills/mixline/SKILL.md`
-
-Use those files as the detailed source of truth. This skill defines their
-ordering, handoffs, gates, and completion criteria; it does not replace their
-stage-specific rules.
-
-## Establish the Run Identity
-
-Resolve and retain one run record containing:
-
-- absolute source path;
-- full native raster;
-- work title and source label;
-- source platform and year when known;
-- source raster, SAR/DAR, frame rate, duration, and audio presence;
-- confirmed black-bar crop, if any;
-- TOML profile path;
-- artifact stem and sim output directory;
-- encoder/player version from `tools/av_version.txt`.
-
-Discover missing values from the source, nearby profiles, and user context when
-the answer is unambiguous. Ask only when a missing title or source identity
-would make public metadata materially wrong.
-
-Use one profile and one stem throughout sim, pack, record, and compilation.
-Retain every printed direct tmpfs artifact path in the run record.
-Never hand-copy different geometry or timing into a later stage.
-
-## Enforce Resource Tokens and CUDA Safety
-
-Use the CPU/GPU/EMU tokens and output-stem lock from `AGENTS.md`; do not
-schedule by process-name scans. Run the local sim-through-HUD pipeline through
-`tools/parallel_run.py --through hud` for every `$run`, including one profile.
-It keeps one stem lock and tmpfs lease across sim, verified disc build,
-recording, and HUD extraction. Separate Codex sessions do not need to know
-about each other: their processes share the same cross-process tokens and
-locks. Never bypass the orchestrator for a normal `$run` or kill another
-session's process.
-
-Use the locked GPU Python environment without a system or legacy fallback:
+For the standard DEBUG pipeline, the existing orchestrator retains the stem
+lock and artifact lease across stages:
 
 ```sh
-tools/python.sh --gpu -c 'import sys; print(sys.executable)'
+tools/python.sh --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/parallel_run.py --jobs 1 --through hud profiles/PROFILE.toml
 ```
 
-Verify `nvidia-smi` and a small CuPy allocation outside a restricted sandbox
-before diagnosing CUDA. A sandbox-only `cudaErrorNoDevice` or missing
-`/dev/nvidia*` is not a driver failure. Do not reinstall drivers or reboot on
-that evidence. Use CPU only as a deliberate fallback after confirming the host
-GPU is genuinely unavailable or when the user requests it.
+Choose `--through` from the actual requested scope. For multiple requested
+profiles, pass them together with appropriate `--jobs`; shared resource locks
+coordinate independent processes. For a reduced/custom workflow use the
+individual tools and retain their locks/leases across handoffs. Do not run a
+larger pipeline solely to fit this command template.
 
-## Stage 1: Inspect and Profile the Source
+Inspect source geometry and current profile once. Reuse authenticated completed
+sim artifacts and matching existing recordings. Failed/absent decisions are
+not a completed encode. Inspect a failure and resume the affected stage; do not
+blindly restart all upstream work or lower quality to hide a model failure.
 
-Follow `sim` source inspection exactly:
+For a timeline, use `render_analysis.py PROFILE --tsv-only` and `timeline`.
+Generate a full analysis MP4, HUD image or mixed image only when requested.
+Publication follows the recording/stream evidence contract, and already given
+upload permission survives intermediate gate checks. Optional Gist publication
+requires that output to be requested; it is not an unavoidable side effect of
+showing a timeline.
 
-- inspect at least one ordinary content frame;
-- use `ffprobe` for exact raster, SAR/DAR, frame rate, duration, and audio;
-- run crop detection in at least three separated content sections;
-- crop only fixed edge-to-edge black bars confirmed by both samples and visual inspection;
-- keep the source frame rate, including first-time 24 fps material;
-- use the full H40 320x224 raster;
-- preserve the displayed aspect with the HAR 32:35-aware fit/pad conversion;
-- allow starvation instead of shrinking the raster.
-
-Create or update one strict `schema_version = 5` profile under `profiles/`. Put
-the exact full duration, source timing and aspect, output raster, output path,
-required qualified `cold_cap`, optional timed `raw_prefetch`, and palette
-algorithm in the profile. ADPCM22, the 1,743-tile VRAM pool, GPU, Bayer
-dithering, segmented palettes, Near, boot VRAM prefetch, Prg/Wr0/Wr1/Dic
-pattern supply, forward fill, and startup-audio policy are fixed pipeline
-behavior and must not be repeated as TOML keys. Use the filename-derived
-profile identity and canonical tmpfs/log artifact paths from `AGENTS.md`.
-
-Do not bump `tools/av_version.txt` merely for a new source profile. Apply the
-version policy in `AGENTS.md` if output-affecting encoder or player code changes.
-
-## Start the Protected Local Pipeline
-
-After every profile is finalized, start Stages 2 through 4 with exactly one
-orchestrator invocation. Use it even when this `$run` has only one profile:
-
-```sh
-tools/python.sh tools/parallel_run.py --jobs 1 --through hud \
-  profiles/PROFILE.toml
-```
-
-For profiles intentionally handled by the same `$run`, pass them together and
-set `--jobs` to the desired profile concurrency:
-
-```sh
-tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
-  profiles/PROFILE_A.toml profiles/PROFILE_B.toml
-```
-
-Do not invoke `sim.py`, `make disc`, or `record_movie.sh` as separate normal
-`$run` steps. The single outer process must retain the stem lock and sim tmpfs
-lease across their stage boundaries. The commands shown in Stages 2 through 4
-describe what the orchestrator owns and are diagnostic references, not an
-alternative normal entry path.
-
-Require a `PASS` row for the profile in the generated summary TSV. A failed
-profile stops only its own downstream stages; unrelated profiles and
-independent sessions continue or wait for shared resource tokens.
-
-## Stage 2: Simulate and Publish Numeric Evidence
-
-The protected pipeline runs `tools/sim.py` with the profile and preferred GPU
-Python. Require a normal completion and record:
-
-- frame count and effective source fps;
-- configured cold cap, realized timed maximum cold, number of frames at that
-  maximum, and the first/last matching frame numbers;
-- average useful BODY delivery rate (`body_useful_bps`), kept separate from
-  the encoder's `codec_work_bps` diagnostic;
-- starved-frame count and percentage;
-- resolved output raster/grid and audio settings.
-
-Starvation is reportable, not automatically a failure. Reject an incomplete
-run or missing decision data. Band divides useful bytes by each slot's actual
-physical CD read time, so it must stay at or below CD 1x (150 KiB/s); pad is
-shown as unused bandwidth.
-
-After the protected pipeline returns, run the bundled cold-delivery reporter.
-It reads the frozen physical transfer trace, excludes boot-loaded frame 0, and
-prevents the configured cap from being mistaken for the realized maximum:
-
-```sh
-tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  /dev/shm/segacd-fmv-cavc/artifacts/SIM_ENTRY/data/decisions.pkl
-```
-
-Write the persistent TSV immediately with the zero-frame analysis-data mode,
-run the `timeline` skill, inspect the PNG, publish it to a public Gist, and show
-it to the user. Do not render, mux, verify, or upload the full 1920x1080
-analysis MP4 yet. The emulator recording must first receive gate `PASS` from
-the complete HUD result; alert may be `NONE` or `WARNING`.
-
-## Stage 3: Pack, Prove, and Build the DEBUG Disc
-
-Require the protected pipeline's disc stage to build against the same profile.
-The child command it owns is:
-
-```sh
-make disc CONFIG=profiles/PROFILE.toml DEBUG=1
-```
-
-The Make target removes every previous packed stream file first, runs the
-packer's full verification against the profile-authenticated current decisions,
-and only then builds the specialized player and ISO. Require it to walk the
-complete stream successfully and confirm simulation/packed preview agreement,
-delivery/ring result, frame ordering, and audio ordering. Retry a transient
-host-process failure with diagnostic output; do not waive a failed proof or
-reuse files left by an older format.
-
-## Stage 4: Record and Verify Playback
-
-The protected pipeline invokes `record` with the same profile and the exact
-DEBUG disc just proved in Stage 3. Its `--no-build` refers only to that exact
-current disc so the recorder does not repeat the already-completed verified
-pack. Keep the Window-row/SAT HUD and retain the full Mega-CD startup. Choose a
-launch-to-tail duration at least 30 seconds longer than the source when using
-the default `original/jp_mcd2_9212.bin`, so its measured 14.9 second startup
-before the visible frame-0 flip plus an ending margin covering the player's
-15-second end-of-movie hold are both retained.
-`record` uses the
-qualified fixed-Replay offline FFV1/FLAC path by default. Use:
-
-- `ffv1-flac`;
-- `--record-size 320x224`;
-- automatic private X-display allocation;
-- the direct tmpfs lossless MKV path printed by the recorder (a lossy
-  preview exists only when `--preview` was explicitly requested).
-
-Record emulator-synchronized A/V. "Offline" means unpaced emulation, not an
-offline audio replacement. Never replace the recorded audio with the source
-and never trim the normal compilation input.
-
-Before accepting the recording, verify:
-
-- native raster, about 60000/1001 fps, audio, and bounded duration with `ffprobe`;
-- exact raw packet/decoded-frame counts, media-to-wall speed, and normal
-  RetroArch/core shutdown logs;
-- a non-empty recorded audio stream with valid codec, sample-rate, channel,
-  and packet metadata;
-- startup screens, later movie playback, visible DEBUG HUD, progression, and tail;
-- representative lossless frames against the sim when timing or fps behavior is new or suspect.
-- one complete HUD loop with `harness/startup_resync/analyze.py --gate-json`;
-  pass the encode profile as the required second positional argument and
-  require every expected movie frame. Every cadence requires
-  `sector_slip`, `control_desync`, and `audio_resync` to remain zero.
-  `vblank_spill` above its cadence-derived limit raises alert `WARNING`
-  without failing the gate. `cd_wait_count` is diagnostic only and never
-  changes gate status. Always report `cd_wait_count` and
-  `adpcm_decode_units` minimum, mean, median, and maximum. The generated gate
-  derives the `prgbuf_jitter_peak_kib` limit from the fps-specific normal
-  PrgBuf ceiling and the physical ring.
-  Preserve the encoder/player-versioned HUD TSV body and matching
-  upload-capable `_gate.json` under `logs/`. Use their direct paths; no
-  compatibility symlink is created.
-  Fixed-cadence `transfer_vblanks` above the cadence interval also raises
-  alert `WARNING` without failing the gate. OCR uses the single 43-cell
-  diagnostic layout, wrapping after 40 cells into a three-cell second row.
-
-Use `tools/extract_verification_frames.sh` for representative recording stills. Pass named
-timestamps and a `$(dirname "$LOSSLESS")/record_check` base; inspect only the new directory
-and its manifest/montage. Never build a montage from a shared `*.png` glob or loose stills
-left by a previous capture.
-
-Immediately after the HUD TSV and gate JSON exist, invoke the `hudline` skill
-with those exact sidecars and the same profile. Inspect and show its complete
-first-loop PNG, publish it to a public Gist, and preserve the content-keyed
-layout and Gist receipts under `logs/`; the image is a direct tmpfs artifact.
-Do this for alert `NONE`,
-`WARNING`, and `FAIL`; gate `FAIL` is still published as diagnostic evidence
-but stops Stage 5.
-`hudline` shares `/timeline`'s frame x-coordinate contract so a future
-`/mixline` can combine both without resampling.
-
-Immediately after the hudline PNG and receipts exist, invoke the `mixline`
-skill with the matching Stage 2 timeline and this hudline. Inspect and show the
-combined image, publish it to a public Gist, and preserve its layout and Gist
-receipts. Do this for every alert so a failed recording still has aligned
-codec/HUD evidence. Gate `FAIL` stops Stage 5 only after the
-hudline and mixline evidence has been published.
-
-Do not apply waveform-threshold gates to routine recordings; legitimate source
-transients and lossy-preview ringing make them content-dependent. State that
-human listening occurred only if it actually occurred. Call this an emulator
-recording, not a physical hardware recording.
-
-Use full HUD OCR only for requested diagnostics or to investigate a failure.
-Never use HUD OCR to choose a publication head cue or a description timestamp.
-
-Do not enter Stage 5 when the HUD result is missing or gate is `FAIL`, or when the
-matching hudline or mixline image/Gist receipt is absent. Never waive or edit
-the sidecars.
-
-## Stage 5: Render and Upload the Analysis
-
-Only after Stage 4 produced a matching gate `PASS` JSON, with alert `NONE` or
-`WARNING`, render the full
-canonical 1920x1080 analysis with `tools/render_analysis.py`. Verify its video,
-audio, duration, and selected frames. Confirm the source aspect, content,
-category/miss panels, and layout are visually credible.
-
-The full render writes another persistent TSV. Immediately run the `timeline`
-skill for that TSV, publish the PNG to a public Gist, show it to the user, and
-put the Gist URL in the YouTube description.
-
-Run the cold-delivery reporter again with that final TSV. It must confirm that
-the analysis `status_cold` maximum equals the physical transfer trace:
-
-```sh
-tools/python.sh .agents/skills/run/scripts/report_cold.py \
-  /dev/shm/segacd-fmv-cavc/artifacts/SIM_ENTRY/data/decisions.pkl \
-  --analysis-tsv logs/RUN_timeline.tsv
-```
-
-Regenerate `mixline` against this final analysis timeline and the already
-accepted hudline, then inspect, publish, and show the final combined image.
-This keeps the published mixed evidence tied to the exact TSV used by the
-analysis upload rather than the pre-recording TSV.
-
-Read the CRAM palette switch count with `tools/cram_switches.py` and state it in
-the spec section of both language halves. Do not generate YouTube chapters or
-description timestamp links. Build the title and
-English-then-Japanese description from [`YOUTUBE.md`](../../../YOUTUBE.md),
-including the repository URL, which like every URL appears only in the English
-section, and never adding source bitrate or angle brackets. Use **Sega CD Constraint-Aware Video Codec** as the
-public codec name; never expose the binary magic as a codec or format name.
-Save the exact description to a UTF-8 text file and
-measure it before upload. YouTube's description limit is 5,000 characters:
-target 4,800 or fewer and hard-fail above 5,000. If it is too long, shorten
-explanatory prose without removing the CRAM switch count, required specs/layout/
-technique sections, the project link, or the current timeline links.
-
-```sh
-tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
-```
-
-Upload the newly rebuilt analysis as unlisted, category 20. Use `--force` only
-for a re-upload and retain the returned URL.
-
-After the analysis upload succeeds, report the five descriptive gate maxima,
-the diagnostic `cd_wait_count` maximum, and the `cd_wait_count` /
-`adpcm_decode_units` minimum, mean, median, and maximum.
-Continue to the already-authorized playback compilation/upload. Do not request
-another approval merely because the gate ran.
-
-## Stage 6: Compile and Upload Playback
-
-Pass only the latest verified native lossless MKV with its matching
-upload-capable
-HUD gate JSON to `compilation`. Bake the
-validated H40 pixel aspect into 2048x1568 square pixels using nearest-neighbor
-scaling, H.264 CRF 10 slow, yuv420p, AAC 192 kbps, and faststart. Do not add
-`-ss`, `-t`, an fps filter, or `-r`.
-
-Keep the recording whole: do not trim it, and do not convert any HUD or gate
-timestamp into a description timestamp.
-
-Verify the final MP4 has:
-
-- the complete Mega-CD startup and tail;
-- 2048x1568 raster, SAR 1:1, and DAR 64:49;
-- the recording's frame rate and nearly identical duration;
-- video, audio, and undistorted movie content.
-
-Extract startup/movie/tail stills with `tools/extract_verification_frames.sh`, using
-`$(dirname "$COMPILATION_MP4")/compilation_check` as the base. Inspect only that invocation's printed
-`CHECK_DIR`; do not mix files from an older compilation.
-
-Build the current bilingual metadata according to `AGENTS.md`, including the
-same CRAM palette switch count as the analysis upload and no chapters. Use
-**Sega CD Constraint-Aware Video Codec** as the public codec
-name and never use the binary magic as a codec or format name. Save and measure
-the exact UTF-8 description before upload using
-the same 5,000-character hard gate as Stage 5 (target 4,800 or fewer). Never
-send an over-limit description and wait for YouTube to reject it. Upload as
-unlisted, category 20. Use `--force` only for a re-upload and retain the
-returned URL.
-
-## Failure and Resume Policy
-
-Stop downstream work for a source whenever its stage fails, without cancelling
-unrelated profile jobs. Preserve logs and evidence, identify the failing layer,
-fix it when the requested scope permits, and rerun the failed stage plus every
-downstream stage whose inputs changed.
-
-An absent or `FAIL` descriptive schema-16 HUD gate is a Stage 4 failure. Alert `WARNING`
-remains upload-capable and must be reported. Do not create or upload either
-public MP4 until a complete loop returns gate `PASS`.
-
-For new frame rates such as 24 fps, do not hide a player, recorder, or encoder
-defect by changing fps, shrinking the raster, loosening checks blindly, or
-substituting offline audio. Prove whether an anomaly is in the source, sim,
-pack, playback, or harness, and resume only after the exact case passes.
-
-On an interrupted run, inspect timestamps, profile hashes, reports, and logs.
-Reuse an artifact only when source bytes, effective profile settings, and the
-encoder `e` version match and it has already passed the relevant gate.
-Individual code-file hashes are deliberately not an identity input;
-output-affecting changes must bump the encoder version. Rebuild every public
-upload artifact from current inputs, as required by `AGENTS.md`.
-Resume Stages 2 through 4 by rerunning the same `parallel_run.py --through hud`
-invocation; authenticated sim reuse avoids unnecessary re-encoding while the
-outer lock and tmpfs lease remain continuous.
-
-## Completion Report
-
-Report one compact result block per source with:
-
-- profile and artifact stem;
-- configured cold cap, realized timed maximum cold, number of matching frames,
-  and first/last matching frame numbers (frame 0 excluded);
-- analysis URL, output path, average rate, and starvation result;
-- pack verification result;
-- lossless recording path, duration, raster/fps, and audio metrics;
-- hudline path, five descriptive gate maxima, diagnostic `cd_wait_count`
-  maximum, `cd_wait_count` / `adpcm_decode_units`
-  minimum/mean/median/maximum, and public Gist/raw image URLs;
-- timeline and final mixline paths plus their public Gist/raw image URLs;
-- whether startup was retained and whether human listening was performed;
-- playback compilation URL and path, duration, raster/SAR/DAR, and audio presence;
-- any diagnosed anomaly, workaround, or remaining limitation.
-
-Do not call a source complete until both uploads succeeded and all preceding
-verification gates passed.
+Complete when every requested output exists and requested uploads return URLs.
+Report those artifacts and the checks actually performed. Keep any remaining
+failure explicit; do not lead with starvation percentages or routine internal
+counter dumps. Preserve incomplete artifacts/logs for diagnosis.

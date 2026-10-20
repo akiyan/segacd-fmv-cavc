@@ -98,8 +98,8 @@
 .equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4A00
 .equ DIC_STAGE_OFF,      0x6000		/* copied before frame-0 output reuses this area */
 
-/* Exact 68000 words emitted by init_main_codegen.  Keep synchronized with
-   harness/main_codegen/verify_handlers.py. */
+/* Exact 68000 words emitted by init_main_codegen. Validate emitter changes
+   against the built player and its generated Main-RAM handlers. */
 .equ CG_OP_MOVE_ENTRY_D3,      0x3618	/* move.w (a0)+,d3 */
 .equ CG_OP_STRIP_COLD_D6_D3,   0xC646	/* and.w d6,d3 */
 .equ CG_ENTRY_MASK_LONG,       0x67FF67FF

@@ -16,7 +16,7 @@ stream.
 
 Usage:
   tools/python.sh harness/cold_cap_model/extract_frames.py \
-      out/sonic-jam-op-h40 --tsv /tmp/frames_175.tsv
+      out/sonic-jam-op-h40 --tsv logs/cold-cap-frames.tsv
 """
 
 from __future__ import annotations

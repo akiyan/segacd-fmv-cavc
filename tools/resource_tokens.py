@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cross-process resource tokens and profile-stem exclusion.
 
-The locks are ordinary Linux ``flock`` locks.  Python callers use
+The locks are ordinary Unix ``flock`` locks. Python callers use
 ``acquire_tokens`` / ``acquire_stem`` and shell callers use the ``run`` /
 ``run-stem`` subcommands.  Locks disappear automatically when their owning
 process exits, including abnormal exits.
@@ -19,9 +19,9 @@ import re
 import subprocess
 import time
 from typing import Iterable
+from runtime_paths import workspace_root
 
 
-DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-cavc/resources")
 HELD_STEMS_ENV = "SEGACD_HELD_STEM_LOCKS"
 
 
@@ -35,7 +35,7 @@ class ResourceBusyError(ResourceTokenError):
 
 def resource_root() -> Path:
     root = Path(os.environ.get(
-        "SEGACD_RESOURCE_ROOT", str(DEFAULT_ROOT))).expanduser().resolve()
+        "SEGACD_RESOURCE_ROOT", str(workspace_root() / "resources"))).expanduser().resolve()
     root.mkdir(parents=True, exist_ok=True)
     return root
 

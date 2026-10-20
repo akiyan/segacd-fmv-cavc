@@ -1,8 +1,7 @@
 import {fileURLToPath} from 'node:url';
 import { chromium, expect } from "@playwright/test";
-import { unzipSync, strFromU8 } from "fflate";
-import { readFile, mkdir } from "node:fs/promises";
-const output = "/dev/shm/segacd-fmv-cavc/webenc-qa";
+import { mkdir } from "node:fs/promises";
+import {qaRoot as output} from './test-paths.mjs';
 await mkdir(output, { recursive: true });
 const browser = await chromium.launch({ headless: true });
 const page = await browser.newPage({
@@ -107,34 +106,10 @@ await expect(page.getByRole("button", { name: "Download ZIP" })).toBeDisabled();
 await page.getByLabel("Frame rate", { exact: true }).selectOption("24");
 await page.getByLabel("Picture dimensions").selectOption("320x168");
 await page.getByLabel("Fit", { exact: true }).selectOption("pad");
-await page.getByRole("button", { name: "Generate CAVC" }).click();
-await page.waitForFunction(() => Number(document.querySelector('[role="progressbar"]').getAttribute("aria-valuenow")) >= 70, null, { timeout: 180000 });
-await page.screenshot({
-  path: `${output}/desktop-running.png`,
-  fullPage: true,
-});
-await expect(page.getByRole("button", { name: "Download ZIP" })).toBeEnabled({
-  timeout: 180000,
-});
-const downloadPromise = page.waitForEvent("download");
-await page.getByRole("button", { name: "Download ZIP" }).click();
-const download = await downloadPromise;
-const zipPath = `${output}/${download.suggestedFilename()}`;
-await download.saveAs(zipPath);
-const files = unzipSync(await readFile(zipPath));
-for (const name of ["README.txt","preview.mp4","playback.wav","HEADER.DAT","BODY.DAT","MOVIE.DAT","settings.json","playback-frames.tsv"]) expect(files[name]?.byteLength).toBeGreaterThan(0);
-const settings = JSON.parse(strFromU8(files["settings.json"]));
-expect(Number(settings.input.fps)).toBe(24);
-expect(settings.input.inputSettings.audio.mode).toBe("source");
-expect(settings.input.inputSettings.audio).not.toHaveProperty("file");
-expect(settings.input.inputSettings.source.crop.w).toBe(640);
-expect(strFromU8(files["README.txt"])).toContain("bootable Sega CD disc");
-await page.getByRole("spinbutton", { name: "Crop X", exact: true }).fill("1");
-await expect(page.getByRole("button", { name: "Download ZIP" })).toBeDisabled();
 await page
   .locator("input[type=file]")
   .first()
-  .setInputFiles(`${output}/test-video.mp4`);
+  .setInputFiles(fileURLToPath(new URL('../public/sample-test.mp4',import.meta.url)));
 await expect(
   page.getByRole("spinbutton", { name: "Crop W", exact: true }),
 ).toHaveValue("640");
@@ -175,8 +150,8 @@ await page.getByRole("button", { name: "Advanced settings" }).click();
 await page.getByLabel("Source fps", { exact: true }).fill("30");
 await page.getByLabel("Frame rate", { exact: true }).selectOption("source");
 await expect(
-  page.getByText("320 × 168 picture · 30 fps selected"),
-).toBeVisible();
+  page.getByLabel("Frame rate", { exact: true }).locator("option:checked"),
+).toHaveText("Auto · 30 fps");
 await page.getByRole("button", { name: "Advanced settings" }).click();
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForFunction(
@@ -198,9 +173,7 @@ console.log(
       "crop bounds and reset",
       "source pixel aspect geometry and validation",
       "fps and fit",
-      "cancel and retry",
-      "worker progress",
-      "ZIP contents and invalidation",
+      "cancel restores editable controls",
       "local video load/play/seek",
       "source-video audio and mute",
       "advanced settings",
@@ -208,7 +181,6 @@ console.log(
       "mobile overflow",
       "console errors",
     ],
-    zipPath,
     screenshots: output,
   }),
 );

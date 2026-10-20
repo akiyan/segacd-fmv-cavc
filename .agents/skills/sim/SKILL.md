@@ -1,392 +1,52 @@
 ---
 name: sim
-description: >-
-  Project skill for encoding an arbitrary video source with the delta stream
-  codec in tools/sim.py and producing the standard full-length analysis video.
-  Applies the four rules automatically: keep source fps, use resolution up to
-  the DMA limit, preserve source pixels while removing only confirmed black
-  bars, and allow starvation. Then run simulation, compose the analysis video,
-  and optionally upload. Use for requests like "make an analysis video for this
-  mp4", "make one for Sakura", or "/sim SOURCE.mp4". Implementation:
-  tools/sim.py for codec simulation, tools/layout_preview.py for the canonical
-  analysis layout and dummy preview, and tools/render_analysis.py for full MP4
-  rendering with real data.
+description: "Encode a requested source/profile with the CAVC encoder. Use for /sim or an explicit encode/analysis request; do not invoke for an ISO rebuild, playback-only task, or a general codec question."
 ---
 
-# /sim: Source Video -> Delta Codec -> Analysis Video
+# Source encoding
 
-Encode any video with the Sega CD delta stream codec and produce the usual
-1920x1080 analysis video.
+Use one profile and retain the printed sim path, command, log and completion
+status. `CONFIG.md` owns profile settings; `ENCODE.md` owns stage behavior.
 
-The analysis frame contains:
-
-- left: Sega CD output
-- right column: Source, category map, whole-clip category totals, and
-  60 fps audio waveform/spectrum
-- bottom: status bar and palette state
-
-Argument: source MP4 path, optionally plus display name or upload instruction.
-
-## Four Rules: Automatic Policy
-
-1. **Keep the source fps**: use the native source fps. Do not lower it.
-   Examples: 29.97 -> 30, 23.976 -> 24, 15 -> 15.
-2. **Use the maximum valid display raster**: use H40 320x224 (40x28,
-   1120 cells) unless a source-specific hardware constraint requires less. The
-   DMA budget limits how many changed tiles can be delivered in one frame; it
-   does not limit the canvas or total cell count. Preserve the source display
-   aspect with the HAR-aware fit/pad conversion.
-3. **Preserve source pixels**: `tools/video_geometry.py` uses HAR-aware
-   full-frame `pad` by default. Use `crop` only when inspection confirms that
-   the discarded outer margins are black bars, not picture content.
-4. **Allow starvation**: it is OK if CD supply is not enough and starvation
-   appears. Keep the maximum valid display raster. Do not force starvation to
-   0% by shrinking the canvas.
-
-Other fixed defaults:
-
-- All features on: GPU, the full 1,743-tile VRAM pool, `DITHER`, `SEGPAL`,
-  `NEAR`, boot VRAM prefetch, whole-movie quality planning, and the unified
-  Prg/Wr0/Wr1/Dic pattern supply at every supported cadence. Remove a source's
-  existing dither with an edge-preserving `video.master_filter` before the
-  fixed output dither; verify candidate filters on source gradients and edges.
-- Audio = `adpcm22`. It is the only audio format the on-disc stream carries;
-  there is no alternate encoder audio path to select.
-- PrgBuf and offline quality-budget ceilings come from `tools/av_config.py`.
-  WordBuf0, WordBuf1, and DicBuf capacities come from
-  `tools/pattern_supply.py`; none are normal per-source overrides.
-- BODY supply follows SEGA-CD 1x's exact integer sector cadence. Before each
-  frame makes image decisions, the shared-sector planner rounds the exact
-  control bytes finalized through the preceding frame and returns every unused
-  cumulative sector to the current Prg deadline. The current frame also gets a
-  strict control-byte ceiling. Its exact run bytes are committed in-frame and
-  affect the next frame before that frame starts. Sim and pack independently
-  verify every cumulative control/payload deadline; there is no post-encode
-  sector reclaim or retry. This is not a per-source bitrate setting.
-- Every CRAM segment switch reserves a full name-table refresh in both future
-  demand traces before earlier optional image updates may spend that quality
-  allowance. Its name-table bytes are a hard floor that balanced shortage may
-  not dilute. Palette bytes themselves remain boot-preloaded.
-- Starting at each CRAM switch, inspect
-  `encoder.cram_quality_priority_search_frames` frames and select at most one
-  frame with the largest positive protected-demand shortage. Lower only that
-  frame's reserve by the predicted shortage; do not clear the complete future
-  reserve or relax physical sector, cold, PrgBuf, or jitter limits. Zero
-  disables this priority.
-- GPU encoding is on by default. CPU is the fallback.
-- Start sim/render with the locked GPU environment. Do not fall back to a
-  system Python or an older venv:
+1. Inspect source raster, SAR/DAR, cadence, duration, audio and a content frame.
+   Default to H40 320x224 and HAR 32:35-aware fit/pad. Crop detection is needed
+   only when removing bars; confirm fixed black margins across separated scenes.
+   Keep native cadence and the requested quality settings.
+2. Read the profile and explain material changes before expensive work. Validate
+   with `tools/encode_config.py`. Use exact intended duration; do not silently
+   substitute a short diagnostic clip. Do not add fixed pipeline features as
+   profile knobs.
+3. Use the pinned environment and explicit storage for long runs:
 
 ```sh
-tools/python.sh --gpu -c 'import sys; print(sys.executable)'
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/sim.py profiles/PROFILE.toml
 ```
 
-The encoder can fall back when CuPy is missing, but do not use that silent path
-for normal work. A deliberate CPU run uses
-`CBRSIM_GPU=0 tools/python.sh tools/sim.py ...`. CPU and GPU outputs should
-match bit for bit. See `[[gpu-quant-acceleration]]` for details.
+CPU mode is available deliberately via `CBRSIM_GPU=0`; do not treat sandbox GPU
+invisibility as a host driver failure. Resource/stem locks coordinate jobs.
+Reuse authenticated completed artifacts. Never manually clean them or force a
+fresh encode unless requested. An incomplete result is not usable pack input;
+inspect the failure before deciding whether a restart is necessary.
 
-## Procedure
+Completion means the encoder exited successfully and produced its completed
+artifact/decision data. Keep physical-prefix or final packing failures visible;
+reducing cold cap does not repair an invalid schedule. Do not routinely report
+starved-frame percentages. For tuning, compare request and Miss distributions
+at the same quality target.
 
-### 1. Inspect the Source
+## Optional requested outputs
 
-```sh
-ffprobe -v error -select_streams v:0 -show_entries \
-  stream=width,height,r_frame_rate,display_aspect_ratio,sample_aspect_ratio \
-  -of default=nw=1 SRC
-ffprobe -v error -show_entries format=duration -of default=nw=1:nk=1 SRC
+- Timeline only: `tools/python.sh tools/render_analysis.py PROFILE --tsv-only`,
+  then the `timeline` skill. This does not render a full analysis video.
+- Analysis video: `tools/python.sh --gpu tools/render_analysis.py PROFILE`.
+  Inspect representative frames and media metadata. Layout/colours are owned
+  by `layout_preview.py` and `analysis_style.py`, not this prompt.
+- Audio panels/mux use `stats.npz:audio_playback_file`, the modeled RF5C164 output;
+  never choose the first audio filename alphabetically.
+- Upload only within the requested scope, using `YOUTUBE.md`. An encode-only
+  request ends with the sim artifacts; it does not imply recording or upload.
 
-# Black-bar detection. Sample at least three separated content sections; avoid
-# fades and title cards. Replace the timestamps with positions inside SRC.
-for t in 15 60 120; do
-  ffmpeg -hide_banner -ss "$t" -t 10 -i SRC \
-    -vf cropdetect=24:2:0 -an -f null - 2>&1 \
-    | rg -o 'crop=[0-9:]+' | sort | uniq -c | sort -rn | head
-done
-```
-
-Rules:
-
-- Always inspect at least one content frame. A filename can lie about what is
-  inside.
-- `fps = round(r_frame_rate)`.
-- Treat a margin as a black bar only when the same crop rectangle dominates at
-  three or more separated content sections and a visual check confirms that
-  the margin is fixed, edge-to-edge black rather than picture content. A dark
-  or black-and-white scene is not evidence of a black bar.
-- If the samples disagree, include fades, or are otherwise ambiguous, do not
-  crop. Preserve the complete source instead.
-- Crop only the confirmed fixed black margins. Never crop active picture just
-  to fill the 320x224 raster; fit/pad the remaining active picture with
-  HAR 32:35.
-- Read the exact full duration from `ffprobe` and put it in
-  `source.duration` in the TOML profile. Do not rely on `sim.py`'s diagnostic
-  default for a full-length encode.
-
-### 2. Choose Resolution / Tile Grid
-
-- Use the full valid H40 raster: 320x224 (40x28, 1120 cells).
-- Let `A` be the displayed aspect of the source after applying its SAR. If the
-  file has no reliable SAR, set `source.sar` explicitly in the TOML profile.
-- Fit the complete source into that raster using HAR 32:35.
-  This normally leaves no border or only a small border. Do not reduce the
-  grid merely because fewer tiles can change in one frame; the encoder's
-  priority and starvation behavior handle the update budget.
-- Sonic Jam-like sources must use the declared display aspect; do not infer
-  4:3 from a 576x400 coded raster without an SAR override.
-
-### 3. Run Simulation
-
-This can take about 10-13 minutes for 2700-3100 frames.
-
-Create one strict `schema_version = 5` profile under `profiles/` for each
-source. Use the schema in `CONFIG.md`; the checked-in
-`profiles/bad-apple.toml` is a complete example. The profile must name the
-source, native fps, exact duration, full output raster, HAR-aware `fit`, the
-selected
-output directory, required qualified `cold_cap`, optional timed `raw_prefetch`,
-and palette algorithm. Do not add fixed GPU, VRAM, dither, segmented-palette,
-Near, boot-prefetch, forward-fill, or startup-audio keys.
-
-Before every `/sim`, perform these steps in this exact order:
-
-1. **Read the complete TOML profile, then explain the relevant settings to the
-   user in commentary before starting.** Do not paste the TOML verbatim. In
-   plain language, show the values that are commonly tuned for codec/visual
-   comparisons and clearly call out every value changed for this run. Omit
-   stable source identity/timing fields such as `path`, `fps`, `duration`, and
-   `sar` unless they changed from the preceding comparison. Include unchanged
-   settings only when they materially affect how the current result should be
-   interpreted. This explanation is the user's preflight record of the run.
-2. Validate the profile with `tools/encode_config.py`. Treat
-   `[output].directory` as the human-readable requested identity; the tool
-   prints the deterministic direct tmpfs path used for bytes.
-3. Confirm the profile's output stem and let the built-in stem/resource locks
-   coordinate it with other jobs.
-4. Do not manually clean the simulation output directory. Let `sim.py` inspect
-   its authenticated completed-artifact cache. It reuses only when source
-   bytes, effective encoder/TOML settings, and the encoder `e` version match;
-   profile filenames, TOML formatting, output paths, and individual code-file
-   hashes are not part of the encode identity. Output-affecting changes must
-   bump `tools/av_version.txt`. An interrupted artifact has no completion
-   marker and is reset automatically.
-5. Run the sim and report whether it printed `sim artifact cache: hit` or
-   started a clean seed pass. Use `CBRSIM_FORCE_REENCODE=1` only when the user
-   explicitly asks for a fresh encode or cache validation itself is the test.
-
-The profile should normally keep `output.reuse = false`. That legacy setting
-controls decoded-input reuse inside an in-progress encode; automatic reuse of
-a fully completed, authenticated sim artifact is independent of it.
-
-```sh
-tools/python.sh --gpu tools/sim.py profiles/<source>-<mode>.toml
-```
-
-TOML values replace inherited per-source `CBRSIM_*` values. `sim.py` freezes
-the resolved settings and profile SHA-256 in `decisions.pkl`; do not hand-copy
-the geometry or fps to the packer later. Existing `CBRSIM_*` variables are an
-internal compatibility layer and remain useful only for one-off experiments
-that intentionally have no profile.
-
-After completion:
-
-- Confirm the fps-derived Prg geometry printed by sim: normal prebuffer /
-  runtime-only jitter headroom / scheduled delivery is 374/40/374 KiB at
-  15fps, 389/25/389 KiB at 24fps, or 394/20/394 KiB at 30fps. The physical
-  ring is 420 KiB and player pump back-pressure is 416 KiB.
-- Confirm that the construction log identifies the one-pass shared-sector
-  prefix ledger, and that the final line reports exact Prg/control totals plus
-  a non-negative minimum cumulative spare-sector count. Final sim and pack
-  scheduling are invariant checks on that frozen prefix proof. A failure there
-  is a pipeline bug; do not lower the cold cap or repeat the encode with a
-  session-local adjustment.
-- Check the completion line: `starved_frames=N (X%)`.
-- Report both the configured cold cap and the realized timed maximum cold.
-  Read the authoritative physical transfer trace from
-  `decisions.pkl["pattern_transfers"]["tiles"]`, exclude frame 0 because it is
-  boot-loaded and exempt from the timed cap, then report the maximum, how many
-  frames reach it, and the first/last matching frame numbers. When a complete
-  analysis TSV already exists, `status_cold` must give the same timed maximum;
-  treat a mismatch as a pipeline bug.
-- Check `body_useful_bps`, the mean useful BODY delivery rate shown by Band.
-  It is weighted by total physical BODY read time, and each slot must remain at
-  or below CD 1x (150 KiB/s). `codec_work_bps` is a separate
-  quality-allocation diagnostic.
-- Starvation is allowed, but report it.
-- Output appears at the direct tmpfs sim path printed by `sim.py`:
-  - `stats.npz`
-  - both the packer input `audio_22k05_s16_mono.wav` and the
-    analysis/straight-video playback model
-    `audio_playback_adpcm22_rf5c.wav`
-
-`stats.npz:audio_playback_file` is authoritative for waveform and
-mux selection. It contains the shared packer-reference continuous IMA decode
-after RF5C164 sign-magnitude conversion. Never select the first `audio_*.wav`
-by filename order; that would silently restore the clean source audio.
-
-### 4. Render the Analysis Video
-
-Use `tools/render_analysis.py` directly.
-
-When this skill is orchestrated by `$run`, do not perform the full render at
-this point. Run the zero-frame data mode to write the persistent TSV, invoke
-the `timeline` skill, publish/show its PNG, then return control to `$run` for
-pack and DEBUG recording. `$run` may return here for the full analysis render
-only after that exact stream's complete HUD recording gate passes. A standalone
-`/sim` request remains allowed to render immediately because it does not claim
-an end-to-end playback-qualified deliverable.
-
-The canonical layout source is `tools/layout_preview.py`. Run it alone to
-generate a dummy one-second preview at `tmp/layout_preview.png`. If the layout
-must change, change it there first. `render_analysis.py` uses the same drawing
-function on real data.
-
-```sh
-CBRSIM_SRCLABEL="Source (<source name>, <platform/year>)" \
-ANALYSIS_OUT=<stem>_analysis.mp4 \
-tools/python.sh --gpu tools/render_analysis.py profiles/<source>-<mode>.toml
-```
-
-When only the persistent timeline TSV is needed, run
-`tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml
---tsv-only`; this skips all analysis-frame rendering and MP4 muxing.
-
-Every invocation first writes the complete per-content-frame numeric sidecar to a
-unique persistent file below `logs/`. Its filename includes local date/time,
-the profile name, the first 10 profile-SHA characters, encoder version, player
-version, and the `timeline` kind:
-`<datetime>_<profile>_<sha10>_eNN_pNN_timeline.tsv`.
-No latest-run symlink is created. `ANALYSIS_TSV`, when explicitly set, is a
-real output file rather than an alias. Use the printed `logs/` file for maxima,
-totals, and frame-to-frame comparisons instead of OCR. The full render then
-generates content PNGs and independent 60 fps audio-panel PNGs in parallel
-(`nproc-2`). FFmpeg holds the content panels to their next content timestamp
-and overlays a new waveform/spectrum pair at every exact 1/60-second output
-timestamp. Disposable PNG/MP4 bytes live directly in the managed tmpfs
-workspace; use the printed real path.
-
-Frame-range check only:
-
-```sh
-tools/python.sh tools/render_analysis.py profiles/<source>-<mode>.toml <A> <B>
-```
-
-For `$run`'s pre-recording TSV handoff, use `0 0`; this writes all numeric data
-without constructing the analysis MP4. The later full render writes a new TSV,
-so invoke `timeline` and publish its Gist again for that final analysis upload.
-
-Important rendering notes:
-
-- W/H, tile count, display aspect, resolution text, fps, and average useful
-  BODY kbps are auto-derived from simulation output: `stats.npz`,
-  `buffer_remaining.npz`, decisions, and raw images.
-- `render_analysis.py` replays the decisions and creates `preview/` and
-  `catmap/` PNGs only when analysis output is requested.
-- Only the source label is passed with `CBRSIM_SRCLABEL`.
-- Layout details are implemented in `layout_preview.py`:
-  - right column: Source / Category / whole-clip category totals / Audio
-  - Miss in Category is a filled red hole
-  - legend: `Raw / Same / Near / Flbk / Miss` on row 1 and
-    `Prg / Wrd / Dic` on row 2; the displayed Wrd count is Wr0 + Wr1
-  - a movie with adopted hardware scroll adds `Scrl` after Dic (green
-    chevron swatch, no category-map border: cells carried by the active
-    scroll) plus the right-aligned scroll indicator (green chevrons +
-    axis:position speed/f while active, dim `SCROLL ---` between windows);
-    a movie without scroll shows neither
-  - each legend item shows one displayed-cell count (Wr shows the combined
-    count while the underlying Wr0/Wr1 data remains separate)
-  - Same uses the original light/dark checker legend swatch but no
-    category-map tile border
-  - Raw uses a thin black/white dashed border in both legend and category map
-  - Dic/Prg/Wr use a thin colour-and-black dashed border; both Wr banks
-    use the Wr1 cyan display colour
-  - signed waveform covering one exact 60 fps analysis-video interval, paired
-    with the spectrum centred on that interval; both change at every analysis
-    output frame, and the `Audio` subheading shows the sim audio specification
-  - status uses Req / Cold / Band / R2V / Run / Prg / Wrd / Pre
-  - Pre is the number of future patterns actually written to VRAM in the frame;
-    a prefetched pattern used later is displayed as Same
-  - Band is physical-slot useful BODY data split left-to-right into Raw
-    payload, Prg charge, and control, excluding all pad and HEADER, divided by
-    that slot's actual CD read time (0 to 150 KiB/s)
-  - four-row timeline: Req, Prg/Wrd remaining, physical cold runs, and Band;
-    Raw is the bottom Band segment, followed by Prg and control
-  - R2V is the timed total of pattern, DMA-repair, name-table/HUD, and
-    palette VDP-memory words, scaled to the exact observed timed maximum
-  - heading metadata plus small top-right Time / Frame, baseline-aligned
-  - palette used-color blocks have no outline
-- The main Sega CD output is centered exactly like hardware. Do not scale low
-  resolution content to fill the panel. It is centered inside a 320x224
-  screen and then displayed as a 4:3 panel.
-- Source and Category panels should fit with letterboxing when needed.
-- Extract and inspect a few frames:
-  - Does it match `tmp/layout_preview.png` visually?
-  - Is a 16:9 source not distorted?
-  - Are Miss cells rendered as filled red holes?
-  - Is the content correct?
-  - Use `ffprobe` to verify resolution, duration, and audio.
-
-### 5. Upload If Requested
-
-Under `$run`, this section is forbidden until the matching DEBUG recording has
-a complete HUD result with gate `PASS`. Alert may be `NONE` or `WARNING`.
-Standalone `/sim` uploads are unaffected.
-
-```sh
-PY=~/.config/youtube/venv/bin/python
-[ -x "$PY" ] || { echo "bootstrap the separate YouTube environment from README.md" >&2; exit 1; }
-"$PY" ~/.claude/skills/youtube/youtube.py upload "$ANALYSIS_MP4" \
-  --title "SEGA-CD FMV of <work> - <specs> YYYYMMDD.eNN.pNN" \
-  --desc "<specs, four-rule choices, starvation rate>" \
-  --tags "SEGA-CD,SegaCD,FMV,homebrew,codec" \
-  --category 20 --privacy unlisted
-```
-
-Titles follow `YOUTUBE.md`: `SEGA-CD FMV of <work> -
-<specs> <ver>`, where `<specs>` is the descriptive spec suffix (mode,
-resolution/grid) and `<ver>` is the build version `YYYYMMDD.eN.pM` read from
-`tools/av_version.txt`. Descriptive, never a sequence version such as
-`vNNN`. Write the exact UTF-8 description to
-`$(dirname "$ANALYSIS_MP4")/<stem>_analysis_description.txt`, target 4,800
-characters or fewer, and hard-fail before upload when its Python character
-count exceeds YouTube's 5,000-character limit:
-
-```sh
-ANALYSIS_DESCRIPTION="$(dirname "$ANALYSIS_MP4")/<stem>_analysis_description.txt"
-export ANALYSIS_DESCRIPTION
-tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["ANALYSIS_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
-```
-
-State the encode's CRAM palette switch count from `tools/cram_switches.py
-<sim_out>` in the spec section of both language halves, and add no YouTube
-chapters or description timestamp links.
-Shorten optional explanatory prose first; preserve that switch count, the
-specs/layout/technique sections, the project link, and current timeline
-links. URLs appear only once, in the English section. Upload as unlisted, category 20. See
-`[[youtube-upload-convention]]`.
-
-Use **Sega CD Constraint-Aware Video Codec** as the public codec name in both
-language sections. Never use the binary magic as a codec or format name.
-
-## Cautions
-
-- Sim and render acquire shared CPU/GPU tokens only around their heavy parallel
-  stages. `CBRSIM_WORKERS` controls both worker width and CPU-token demand.
-  Different stems may overlap; a duplicate media `<stem>` fails immediately.
-- For a multi-profile local run, use `tools/parallel_run.py`. Do not hand-start
-  commands that bypass its pipeline-wide stem lock or tmpfs lease handoff.
-- Never kill another session's process. Kill only jobs you started.
-- Keep every profile on its deterministic managed tmpfs sim path. Do not use a
-  shared `tmp/sim` for player decision output.
-- The analysis specification lives beside its implementation:
-  - `tools/layout_preview.py`: canonical layout
-  - `tools/analysis_style.py`: category semantics and colours
-  - `tools/render_analysis.py`: render real data using that layout
-- Change the layout in `layout_preview.py`; `render_analysis.py` imports it.
-- Keep `tools/sim.py` as the simulation core.
-- Never set `CBRSIM_REUSE=1` manually for `/sim`. Completed-artifact reuse is
-  automatic and authenticated; use `CBRSIM_FORCE_REENCODE=1` for an explicitly
-  requested clean run.
-- `render_analysis.py` is heavy for 3000-frame PIL rendering. It uses the
-  granted CPU-token count. For long videos, run in the background or delegate
-  to a forked context to avoid filling the main conversation context.
+Report actual frame count, raster/cadence, elapsed time and requested artifact
+links. Explain limitations separately from completed results.

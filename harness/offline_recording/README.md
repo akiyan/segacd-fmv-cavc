@@ -50,11 +50,12 @@ tools/record_movie.sh \
 ```
 
 The command prints direct `REPLAY=...` and `LOSSLESS=...` paths in the managed
-tmpfs workspace. Reuse that exact replay for the realtime baseline and repeat
+workspace. Select it with `tools/runtime.sh --workspace-root DIR --scratch-root
+DIR -- tools/record_movie.sh ...`. Reuse that exact replay for the realtime baseline and repeat
 offline capture, and use the two printed lossless paths for comparison:
 
 ```sh
-REPLAY=/dev/shm/segacd-fmv-cavc/.../offline_record_input.replay
+REPLAY=/path/to/printed/offline_record_input.replay
 
 tools/record_movie.sh \
   --disc out/ps2-sakura-op.cue --no-build \

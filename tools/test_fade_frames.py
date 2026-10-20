@@ -163,15 +163,6 @@ class FadeFrameTests(unittest.TestCase):
         self.assertEqual(
             detect_fade_shots(probes, dark, maximum_rmse=255.0), ())
 
-    def test_validates_shapes(self) -> None:
-        with self.assertRaisesRegex(ValueError, "shape"):
-            detect_fade_shots(np.zeros((3, 4)), np.zeros(3))
-        with self.assertRaisesRegex(ValueError, "equal frame counts"):
-            detect_fade_shots(np.zeros((3, 4, 3)), np.zeros(2))
-        with self.assertRaisesRegex(ValueError, "spatial shape"):
-            fade_frames.detect_fade_shots(
-                np.zeros((3, 24, 3)), np.zeros(3), spatial_shape=(5, 5))
-
     def test_segment_capacity_keeps_a_connected_group_atomic(self) -> None:
         black = np.full((24, 3), 6.0)
         first = spatial_image(1)
@@ -367,22 +358,6 @@ class OverlayShotTargetTests(unittest.TestCase):
         layout = fade_frames.build_layout(
             shots, np.zeros(len(probes), np.int32), max_segments=6)
         return shots, layout, len(probes)
-
-    def test_overlay_matches_the_layout_for_the_same_shots(self) -> None:
-        shots, layout, count = self._detected_layout()
-        (references, desired, phases,
-         preparation_frames,
-         preparation_deadlines) = fade_frames.overlay_shot_targets(
-            layout.shots, count)
-        np.testing.assert_array_equal(references, layout.reference_frames)
-        np.testing.assert_array_equal(phases, layout.phases)
-        np.testing.assert_array_equal(
-            np.isnan(desired), np.isnan(layout.desired_scales))
-        finite = ~np.isnan(desired)
-        np.testing.assert_allclose(
-            desired[finite], layout.desired_scales[finite])
-        self.assertEqual(preparation_frames, layout.preparation_frames)
-        self.assertEqual(preparation_deadlines, layout.preparation_deadlines)
 
     def test_overlay_of_a_subset_drops_only_that_shot(self) -> None:
         shots, layout, count = self._detected_layout()

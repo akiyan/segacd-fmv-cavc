@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import wave
 import numpy as np
-root=Path(os.environ.get('WEBENC_TEST_OUTPUT','/dev/shm/segacd-fmv-cavc/webenc-qa'))
+from test_paths import QA_ROOT as root
 settings=json.loads((root/'settings.json').read_text())['input']
 video=root/'preview.mp4'
 info=json.loads(subprocess.check_output(['ffprobe','-v','error','-show_streams','-show_format','-of','json',str(video)]))

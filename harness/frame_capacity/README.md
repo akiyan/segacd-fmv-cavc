@@ -15,18 +15,15 @@ a full 1,120-pattern frame-0 output uses 35,872 aligned bytes and leaves
 
 ## Memory and boot proof
 
-`test_boot_route.py` models every entry and both physical Word-RAM banks,
-including 16K/32K boundaries and the final index. It also checks current packed
-HEADER files. Long routes load into the frame-0 bank; after HEADER EOF, the
-boot extension mirrors one sector at a time through PRG `0x7B000..0x7B7FF`.
-Two bank toggles restore ownership after every sector. PrgBuf and APPLY retain
-their complete timed allocations. Specialized tables up to 16 KiB keep the
-complete PRG stage.
+The full-frame fixture and LOGVDP trace check actual bank handoff and the final
+frame index. `test_extended.py` checks the packed header and maximum output
+capacity without encoding a long source. Long routes load into the frame-0
+bank; the boot extension mirrors sectors through PRG `0x7B000..0x7B7FF`.
+The player build/disassembly matrix checks full-width route addressing.
 
-`test_packing.py` requires byte-identical HEADER, BODY, MOVIE, PALTAB and PALIDX
-for the same short decisions under the 16K and 83,520 limits. The canonical
-Word-RAM layout tests check that increasing the actual table from 16 to 64 KiB
-removes exactly 48 KiB from each WordBuf when output peaks are held fixed.
+Use the 16,384-frame source and frozen-parent comparison in
+`harness/runtime_storage/README.md` for routine encoder memory qualification.
+Do not infer assembly correctness from a Python bytearray copy model.
 
 ```sh
 tools/python.sh -m unittest discover -s harness/frame_capacity -p 'test_*.py'
@@ -118,8 +115,9 @@ in the pinned Genesis Plus GX source, `core/system.c` (`audio_set_rate`),
 
 ## Full-length source encode
 
-`make_source.py` creates an actual 83,520-frame, 24fps, 58-minute H.264 source
-in the managed tmpfs workspace. Its full 320x224 raster uses losslessly encoded
+`make_source.py --frames 16384` creates an actual 16,384-frame, 24fps H.264
+source in the selected workspace. Full-capacity sources require an explicit
+`--frames 83520` request. Its full 320x224 raster uses losslessly encoded
 flat grey background, silent audio, and a small white marker at the index boundaries
 and final two frames. It probes the decoded frame count before writing the
 normal encoder profile. The test uses the original encoder at full geometry
@@ -127,9 +125,9 @@ and cadence, with cold cap 210; it does not shorten or retime the movie.
 
 ```sh
 tools/python.sh harness/frame_capacity/make_source.py \
-  --profile tmp/frame83520/long83520.toml
-tools/python.sh --gpu tools/sim.py tmp/frame83520/long83520.toml
-make disc CONFIG=tmp/frame83520/long83520.toml DEBUG=1
+  --frames 16384 --profile tmp/frame16384/long16384.toml
+tools/python.sh --gpu tools/sim.py tmp/frame16384/long16384.toml
+make disc CONFIG=tmp/frame16384/long16384.toml DEBUG=1
 ```
 
 `test_extended.py` checks complete-header parsing at every boundary, unchanged

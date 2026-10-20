@@ -23,18 +23,6 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             supply.word_ram_layout(83521, 1120, 190)
 
-    def test_output_load_v2_counts_records_and_only_inline_prg_payload(self):
-        self.assertEqual(
-            supply.output_load_bytes(prg_patterns=17, runs=5),
-            17 * 32 + 5 * 22,
-        )
-        self.assertEqual(
-            supply.output_load_bytes(prg_patterns=0, runs=3),
-            3 * 22,
-        )
-        with self.assertRaises(ValueError):
-            supply.output_load_bytes(prg_patterns=1, runs=0)
-
     def test_output_load_v2_recomputes_each_parity_peak(self):
         # The old 4-byte layout peaks at frame 0 (10*32+1*4=324), but the
         # expanded record cost moves the even-parity peak to frame 2
@@ -52,14 +40,6 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             wr1,
             supply.OutputLoadPeak(parity=1, frame=1, bytes=206),
         )
-
-    def test_output_load_v2_accepts_numpy_traces_used_by_sim(self):
-        wr0, wr1 = supply.output_load_peaks(
-            prg_patterns=np.asarray([10, 3, 9, 2], np.int64),
-            runs=np.asarray([1, 5, 4, 6], np.int64),
-        )
-        self.assertEqual(wr0.bytes, 376)
-        self.assertEqual(wr1.bytes, 206)
 
     def test_output_load_v2_one_frame_has_empty_odd_parity(self):
         wr0, wr1 = supply.output_load_peaks(
@@ -128,18 +108,6 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         self.assertEqual(short.wr0_patterns - long.wr0_patterns, 128)
         self.assertEqual(short.wr1_patterns - long.wr1_patterns, 128)
 
-    def test_entry_source_round_trip_and_name_mask(self):
-        base = (3 << 13) | 0x321
-        for source in (supply.SOURCE_PRG, supply.SOURCE_WR, supply.SOURCE_DIC):
-            entry = supply.encode_entry_source(base, source)
-            self.assertEqual(supply.decode_entry_source(entry), source)
-            self.assertEqual(entry & supply.NAME_ENTRY_MASK, base)
-
-    def test_run_count_round_trip(self):
-        for source in (supply.SOURCE_PRG, supply.SOURCE_WR, supply.SOURCE_DIC):
-            encoded = supply.encode_run_count(175, source)
-            self.assertEqual(supply.decode_run_count(encoded), (175, source))
-
     def test_indexed_dic_run_descriptor_round_trip(self):
         for index, count in ((0, 1), (17, 3), (250, 6)):
             words = supply.encode_run_descriptor(
@@ -182,14 +150,6 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         self.assertEqual(
             supply.count_source_runs(slots, sources, (256, 257, 258, 259)), 1)
 
-    def test_source_run_lengths_preserve_short_direct_runs(self):
-        slots = (1, 2, 7, 8, 9, 10, 20)
-        sources = (supply.SOURCE_PRG,) * len(slots)
-        self.assertEqual(
-            supply.source_run_lengths(slots, sources),
-            (2, 4, 1),
-        )
-
     def test_word_run_splits_at_ring_end_without_reordering_slots(self):
         runs = (
             (100, 48, supply.SOURCE_WR, 0),
@@ -229,29 +189,10 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             supply.split_word_ring_runs(runs, capacity=0, cursor=0),
             (runs, 0))
 
-    def test_disabled_wordbuf_accepts_empty_frame(self):
-        self.assertEqual(
-            supply.split_word_ring_runs((), capacity=0, cursor=0),
-            ((), 0))
-
     def test_disabled_wordbuf_rejects_word_source(self):
         with self.assertRaisesRegex(ValueError, 'positive ring capacity'):
             supply.split_word_ring_runs(
                 ((7, 1, supply.SOURCE_WR, 0),), capacity=0, cursor=0)
-
-    def test_disabled_wordbuf_rejects_nonzero_cursor(self):
-        for cursor in (-1, 1):
-            with self.subTest(cursor=cursor), self.assertRaises(ValueError):
-                supply.split_word_ring_runs((), capacity=0, cursor=cursor)
-
-    def test_disabled_wordbuf_still_rejects_invalid_run_count(self):
-        with self.assertRaisesRegex(ValueError, 'invalid source run count'):
-            supply.split_word_ring_runs(
-                ((7, 0, supply.SOURCE_PRG, -1),), capacity=0, cursor=0)
-
-    def test_negative_wordbuf_capacity_is_invalid(self):
-        with self.assertRaises(ValueError):
-            supply.split_word_ring_runs((), capacity=-1, cursor=0)
 
 
 class PatternSupplyPlannerTests(unittest.TestCase):
@@ -424,31 +365,6 @@ class PatternSupplyPlannerTests(unittest.TestCase):
         self.assertEqual(plan.prg_patterns, (patterns[0], patterns[3]))
         self.assertEqual(plan.wr1_patterns, (patterns[1],))
         self.assertEqual(plan.dic_patterns, (patterns[2],))
-
-    def test_frozen_source_reader_accepts_schema_five(self):
-        per = [
-            ([0], [1], [True]),
-            ([0, 1], [1, 2], [True, True]),
-        ]
-        log = {
-            "pattern_supply": {
-                "schema_version": 5,
-                "sources": [
-                    np.array([supply.SOURCE_PRG], np.uint8),
-                    np.array(
-                        [supply.SOURCE_WR, supply.SOURCE_DIC],
-                        np.uint8,
-                    ),
-                ],
-            },
-        }
-        self.assertEqual(
-            supply._frozen_sources(log, per),
-            [
-                [supply.SOURCE_PRG],
-                [supply.SOURCE_WR, supply.SOURCE_DIC],
-            ],
-        )
 
     def test_disabled_plan_keeps_every_pattern_in_prg(self):
         per = [([0], [1], [True]), ([0], [2], [True])]

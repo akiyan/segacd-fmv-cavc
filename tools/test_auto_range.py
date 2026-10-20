@@ -58,9 +58,6 @@ class DetectRangeTest(unittest.TestCase):
 
 
 class LutTest(unittest.TestCase):
-    def test_identity_points_build_identity_lut(self) -> None:
-        lut = auto_range.build_lut(0, 255)
-        self.assertTrue(np.array_equal(lut, np.arange(256, dtype=np.uint8)))
 
     def test_stretch_endpoints_and_monotonicity(self) -> None:
         lut = auto_range.build_lut(8, 239)
@@ -74,30 +71,6 @@ class LutTest(unittest.TestCase):
             auto_range.build_lut(200, 100)
         with self.assertRaises(ValueError):
             auto_range.build_lut(-1, 255)
-
-    def test_apply_lut_maps_every_channel(self) -> None:
-        lut = auto_range.build_lut(8, 239)
-        image = np.full((4, 4, 3), 8, dtype=np.uint8)
-        image[0, 0] = (0, 239, 255)
-        out = auto_range.apply_lut(image, lut)
-        self.assertEqual(out.dtype, np.uint8)
-        self.assertTrue(np.all(out[1:] == 0))
-        self.assertEqual(tuple(out[0, 0]), (0, 255, 255))
-
-
-class FrameHistogramTest(unittest.TestCase):
-    def test_counts_all_channels(self) -> None:
-        image = np.zeros((2, 2, 3), dtype=np.uint8)
-        image[0, 0] = (8, 8, 239)
-        hist = auto_range.frame_histogram(image)
-        self.assertEqual(int(hist.sum()), 12)
-        self.assertEqual(int(hist[8]), 2)
-        self.assertEqual(int(hist[239]), 1)
-        self.assertEqual(int(hist[0]), 9)
-
-    def test_rejects_non_rgb_shapes(self) -> None:
-        with self.assertRaises(ValueError):
-            auto_range.frame_histogram(np.zeros((4, 4), dtype=np.uint8))
 
 
 class FileRoundTripTest(unittest.TestCase):

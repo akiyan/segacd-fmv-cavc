@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from harness.pipeline_speedup.verify_main_fastpaths import (  # noqa: E402
+from harness.pipeline_speedup.stream_reader import (  # noqa: E402
     bitmap_cells,
     read_stream,
 )

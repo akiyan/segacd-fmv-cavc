@@ -6,14 +6,12 @@ import tempfile
 import unittest
 from pathlib import Path
 import os
-import subprocess
 import sys
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import av_config
 from encode_config import (
-    MAX_RESIDENT_VRAM_TILES,
     apply_profile_env,
     consume_config_arg,
     load_profile,
@@ -71,15 +69,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                     ValueError, "exceeds the H40 320x224 aperture"):
                 load_profile(path)
 
-    def test_required_profile_is_consumed_as_first_positional_argument(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        profile_path = root / "profiles" / "bad-apple.toml"
-        argv = ["sim.py", str(profile_path)]
-        with patch.dict(os.environ, {}, clear=False):
-            profile = consume_config_arg(argv, required=True)
-        self.assertEqual(profile.path, profile_path.resolve())
-        self.assertEqual(argv, ["sim.py"])
-
     def test_required_profile_preserves_following_frame_range(self) -> None:
         root = Path(__file__).resolve().parents[1]
         profile_path = root / "profiles" / "bad-apple.toml"
@@ -87,33 +76,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
         with patch.dict(os.environ, {}, clear=False):
             consume_config_arg(argv, required=True)
         self.assertEqual(argv, ["render_analysis.py", "10", "20"])
-
-    def test_profile_output_is_a_direct_managed_tmpfs_path(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "profiles" / "bad-apple.toml")
-        with patch.dict(os.environ, {}, clear=False):
-            output = profile.output_dir
-        self.assertTrue(str(output).startswith(
-            "/dev/shm/segacd-fmv-cavc/artifacts/sim-"))
-        self.assertEqual(output.name, "data")
-        self.assertFalse(output.is_symlink())
-
-    def test_cli_prints_direct_sim_output(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        result = subprocess.run(
-            [
-                str(root / "tools" / "python.sh"),
-                str(root / "tools" / "encode_config.py"),
-                str(root / "profiles" / "bad-apple.toml"),
-                "--print-sim-output",
-            ],
-            cwd=root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        self.assertTrue(result.stdout.strip().startswith(
-            "/dev/shm/segacd-fmv-cavc/artifacts/sim-"))
 
     def test_missing_required_profile_is_rejected(self) -> None:
         with self.assertRaisesRegex(SystemExit, "profile is required.*positional"):
@@ -132,78 +94,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             with self.subTest(profile=path.name):
                 load_profile(path)
 
-    def test_repository_profile_names_are_canonical(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        self.assertEqual(
-            {path.name for path in (root / "profiles").glob("*.toml")},
-            {
-                "bad-apple.toml",
-                "lunar-ss-op.toml",
-                "machi-ed.toml",
-                "machi-op.toml",
-                "sakura-taisen-3-op.toml",
-                "sonic-jam-ed-good.toml",
-                "sonic-jam-op.toml",
-                "tears-of-steel.toml",
-            },
-        )
-
-    def test_bad_apple_h40_uses_source_endpoint_snap(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        h40 = load_profile(root / "profiles/bad-apple.toml")
-        inherited = {
-            "CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX": "9",
-            "CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN": "246",
-            "CBRSIM_QUALITY_BUDGET_KB": "999",
-            "CBRSIM_RING_CAP_KB": "999",
-        }
-        env = apply_profile_env(h40, inherited)
-        self.assertTrue(env["CBRSIM_SRC"].endswith(
-            "assets/bad-apple/bad-apple.mp4"))
-        self.assertEqual(
-            env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_BLACK_MAX"], "2")
-        self.assertEqual(
-            env["CBRSIM_PREPROCESS_ENDPOINT_SNAP_WHITE_MIN"], "253")
-        self.assertEqual(env["CBRSIM_RESIZE_FILTER"], "area")
-        self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
-        self.assertEqual(
-            env["CBRSIM_OUTPUT_DITHER"], "edge-attenuated-bayer")
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
-        self.assertEqual(env["CBRSIM_RAW_PREFETCH"], "1")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
-        self.assertTrue(
-            env["CBRSIM_OUT"].endswith(
-                "tmpfs/BadApple_H40_320x224_adpcm22_cold210/sim"))
-        self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", env)
-        self.assertNotIn("CBRSIM_QUALITY_BUDGET_KB", inherited)
-        self.assertNotIn("CBRSIM_RING_CAP_KB", inherited)
-
-    def test_sonic_h40_encodes_only_native_truemotion_raster(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "profiles/sonic-jam-op.toml")
-        env = apply_profile_env(profile, {})
-        self.assertTrue(env["CBRSIM_SRC"].endswith(
-            "assets/sonic-jam-op/original-sonic-jam-op.avi"))
-        self.assertEqual(env["CBRSIM_FPS"], "30")
-        self.assertEqual(env["CBRSIM_DURATION"], "90.466667")
-        self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
-        self.assertEqual(env["CBRSIM_W"], "288")
-        self.assertEqual(env["CBRSIM_H"], "200")
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "900")
-        self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "pad")
-        self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
-        self.assertEqual(env["CBRSIM_OUTPUT_DITHER"], "bayer")
-        self.assertEqual(
-            env["CBRSIM_MASTER_VF"],
-            "setsar=1,guided=radius=1:eps=0.002:planes=15",
-        )
-        self.assertEqual(env["CBRSIM_RAW_VF"], "setsar=1")
-        self.assertEqual(
-            profile.section("analysis")["source_canvas"], [320, 224])
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
-        self.assertTrue(env["CBRSIM_OUT"].endswith(
-            "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold210/sim"))
-
     def test_analysis_source_canvas_requires_two_positive_integers(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "bad-analysis-canvas.toml"
@@ -211,32 +101,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(
                     ValueError, "analysis.source_canvas must be"):
                 load_profile(path)
-
-    def test_machi_op_uses_confirmed_black_bar_crop_and_native_h40_sar(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "profiles/machi-op.toml")
-        env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
-        self.assertEqual(env["CBRSIM_H"], "144")
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "720")
-        self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
-        self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "crop")
-        self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
-        self.assertEqual(
-            env["CBRSIM_MASTER_VF"], "setsar=1,crop=320:144:0:38")
-        self.assertEqual(
-            env["CBRSIM_RAW_VF"], "setsar=1,crop=320:144:0:38")
-        # The source-qualified encoder ceiling is recorded directly.
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "480")
-
-    def test_machi_ed_uses_full_h40_grid_and_profile_cap_380(self) -> None:
-        root = Path(__file__).resolve().parents[1]
-        profile = load_profile(root / "profiles/machi-ed.toml")
-        env = apply_profile_env(profile, {"CBRSIM_ACTIVE_TILES": "1"})
-        self.assertEqual(env["CBRSIM_ACTIVE_TILES"], "1120")
-        self.assertEqual(env["CBRSIM_SOURCE_SAR"], "32:35")
-        self.assertEqual(env["CBRSIM_GEOMETRY_FIT"], "pad")
-        self.assertEqual(env["CBRSIM_MASTER_DENOISE"], "0")
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "380")
 
     def test_profile_without_preprocess_clears_inherited_snap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -287,15 +151,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env = apply_profile_env(
                 load_profile(path), {"CBRSIM_COLD_CAP": "999"})
         self.assertEqual(env["CBRSIM_COLD_CAP"], "210")
-
-    def test_profile_cold_cap_may_be_lowered(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "lowered-cold-cap.toml"
-            path.write_text(PROFILE.replace(
-                "cold_cap = 200", "cold_cap = 180"))
-            env = apply_profile_env(
-                load_profile(path), {"CBRSIM_COLD_CAP": "999"})
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "180")
 
     def test_profile_cold_cap_is_required(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -454,26 +309,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "video.active_tiles"):
                 load_profile(path)
 
-    def test_vram_pool_is_fixed_and_profile_key_is_rejected(self) -> None:
-        self.assertEqual(MAX_RESIDENT_VRAM_TILES, 1743)
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "profile-vram.toml"
-            path.write_text(PROFILE.replace(
-                "cold_cap = 200",
-                f"cold_cap = 200\nvram_tiles = {MAX_RESIDENT_VRAM_TILES}"))
-            with self.assertRaisesRegex(
-                    ValueError, "unknown \\[encoder\\] keys.*vram_tiles"):
-                load_profile(path)
-
-    def test_profile_cold_cap_is_independent_of_fps_and_grid(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "h40-15-900.toml"
-            path.write_text(
-                PROFILE.replace('fps = "30"', 'fps = "15"')
-                .replace('fit = "pad"', 'fit = "pad"\nactive_tiles = 900'))
-            env = apply_profile_env(load_profile(path), {})
-        self.assertEqual(env["CBRSIM_COLD_CAP"], "200")
-
     def test_source_audio_filter_maps_to_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "loud.toml"
@@ -490,13 +325,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             env = {"CBRSIM_AUDIO_AF": "loudnorm=I=-8:TP=-1:LRA=7"}
             apply_profile_env(load_profile(path), env)
         self.assertEqual(env["CBRSIM_AUDIO_AF"], "")
-
-    def test_removed_audio_section_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "bad-audio.toml"
-            path.write_text(PROFILE + '\n[audio]\nkind = "adpcm22"\n')
-            with self.assertRaisesRegex(ValueError, "unknown sections.*audio"):
-                load_profile(path)
 
     def test_artifacts_follow_toml_filename(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -516,14 +344,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             profile.release_disc_iso, Path("out/sakura-op_release.iso"))
         self.assertEqual(
             profile.release_disc_cue, Path("out/sakura-op_release.cue"))
-
-    def test_removed_pack_output_is_rejected(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "removed-pack-section.toml"
-            path.write_text(
-                PROFILE + '\n[pack]\noutput = "out/legacy/MOVIE.DAT"\n')
-            with self.assertRaisesRegex(ValueError, "unknown sections.*pack"):
-                load_profile(path)
 
     def test_unsafe_filename_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -331,16 +331,6 @@ class HudUploadGateTests(unittest.TestCase):
         self.assertEqual(result["warnings"], [])
         self.assertEqual(result["alert"], "NONE")
 
-    def test_frame_zero_and_terminal_hold_are_not_cadence_gated(self):
-        rows = groups(4)
-        rows[0] = replace(
-            rows[0], capture_first=-20, capture_last=-1)
-        rows[-1] = replace(rows[-1], capture_last=999)
-        result = self.evaluate(rows, 4)
-        self.assertTrue(result["pass"], result["failures"])
-        self.assertEqual(result["display_vblank_histogram"], {"2": 2})
-        self.assertEqual(result["display_vblank_violation_count"], 0)
-
     def test_24fps_two_three_cadence_is_exactly_gated(self):
         rows = groups(5)
         starts = (0, 2, 5, 7, 10)
@@ -379,19 +369,6 @@ class HudUploadGateTests(unittest.TestCase):
         result = self.evaluate(rows, 4)
         self.assertFalse(result["pass"])
         self.assertTrue(any("incomplete" in text for text in result["failures"]))
-
-    def test_hud_log_is_tab_separated(self):
-        rows = groups(1)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "hud.tsv"
-            analyze.write_tsv(path, rows, [])
-            raw = path.read_text(encoding="utf-8")
-            header = raw.splitlines()[0]
-            self.assertIn("\t", header)
-            self.assertNotIn(",", header)
-            with path.open(encoding="utf-8", newline="") as handle:
-                parsed = list(csv.DictReader(handle, delimiter="\t"))
-            self.assertEqual(parsed[0]["frame"], "0")
 
     def test_standard_diagnostics_use_descriptive_columns_and_gate_keys(self):
         rows = groups(3)

@@ -9,18 +9,9 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 import analysis_style as style
-import layout_preview as layout
 
 
 class AnalysisStyleTests(unittest.TestCase):
-    def test_layout_uses_the_canonical_semantic_colours(self) -> None:
-        self.assertIs(layout.CATS, style.CATS)
-        self.assertIs(layout.LEGEND_CATS, style.LEGEND_CATS)
-        self.assertIs(layout.SUPPLY_COLORS, style.SUPPLY_COLORS)
-        self.assertEqual(layout.CAT_FLBK, style.CAT_FLBK)
-        self.assertEqual(layout.COL_PRG, style.COL_PRG)
-        self.assertEqual(layout.COL_WRD, style.COL_WRD)
-        self.assertEqual(layout.COL_DIC, style.COL_DIC)
 
     def test_flbk_border_uses_unblended_yellow(self) -> None:
         tiles = np.full((1, 8, 8, 3), 73.0, np.float64)

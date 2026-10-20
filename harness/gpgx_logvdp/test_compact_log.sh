@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-WORK_DIR="$(mktemp -d /tmp/gpgx-logvdp-test.XXXXXX)"
+WORK_DIR="$(mktemp -d "${TMPDIR:-$ROOT/tmp}/gpgx-logvdp-test.XXXXXX")"
 cleanup() {
   rm -rf -- "$WORK_DIR"
 }

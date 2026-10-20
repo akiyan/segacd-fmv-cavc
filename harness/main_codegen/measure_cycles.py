@@ -17,7 +17,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from harness.pipeline_speedup.verify_main_fastpaths import read_stream  # noqa: E402
+from harness.pipeline_speedup.stream_reader import read_stream  # noqa: E402
 
 
 DEFAULT_MAIN_CLOCK_HZ = 7_670_454

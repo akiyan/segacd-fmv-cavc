@@ -5,7 +5,8 @@ import numpy as np
 from quantize_md_video import rgb888_to_rgb333, rgb333_to_rgb888, pack_tiles_4bpp
 from quantize_global4_tiles import tile_blocks, palette_lut, rgb333_keys
 from ima_adpcm import State, encode_chunk, decode_chunk, pcm16_to_sign_magnitude, sign_magnitude_to_pcm16
-root=Path('/dev/shm/segacd-fmv-cavc/webenc-kernel-test');root.mkdir(parents=True,exist_ok=True)
+from test_paths import KERNEL_ROOT as root
+root.mkdir(parents=True,exist_ok=True)
 rng=np.random.default_rng(5812)
 records=[]
 for n in range(24):

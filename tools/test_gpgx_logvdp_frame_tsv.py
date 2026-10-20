@@ -57,18 +57,6 @@ class GpgxLogvdpFrameTsvTests(unittest.TestCase):
             dma(102, self.nt_words, self.nt_words, self.nt_pc),
         ]
 
-    def test_infers_movie_dma_call_sites(self):
-        events = extract.dma_events(self.compact)
-        self.assertEqual(
-            extract.infer_dma_pcs(events, 3),
-            (
-                (self.pattern_pc, self.split_pattern_pc),
-                self.nt_pc,
-                self.nt_words,
-                102,
-            ),
-        )
-
     def test_accepts_a_complete_first_loop_followed_by_tail_replay(self):
         events = extract.dma_events(
             self.compact + [

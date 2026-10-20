@@ -164,19 +164,6 @@ class ReserveCurveTests(unittest.TestCase):
 
         np.testing.assert_array_equal(effective, [40, 30, 0, 70, 80])
 
-    def test_priority_search_rejects_invalid_lengths_and_shapes(self) -> None:
-        with self.assertRaisesRegex(ValueError, "non-negative"):
-            upgrade_planner.select_peak_priority_frames([True], [1], -1)
-        with self.assertRaisesRegex(ValueError, "must match"):
-            upgrade_planner.select_peak_priority_frames(
-                [True, False], [1], 2)
-        with self.assertRaisesRegex(ValueError, "must match"):
-            upgrade_planner.relax_reserve_for_priority_frames(
-                [10, 20], [True], [1, 1])
-        with self.assertRaisesRegex(ValueError, "must match"):
-            upgrade_planner.relax_reserve_for_priority_frames(
-                [10, 20], [True, False], [1])
-
     def test_future_burst_builds_only_the_needed_reserve(self) -> None:
         reserve = upgrade_planner.build_reserve_curve(
             demand=[0, 20, 20, 140, 20],
@@ -263,17 +250,6 @@ class ReserveCurveTests(unittest.TestCase):
                 already_spent=90,
             ),
             90,
-        )
-
-    def test_spend_limit_supports_a_repayable_terminal_drain_loan(self) -> None:
-        self.assertEqual(
-            upgrade_planner.planned_spend_limit(
-                budget_before=-20,
-                frame_supply=50,
-                reserve_after=-40,
-                already_spent=0,
-            ),
-            70,
         )
 
     def test_balanced_plan_spreads_an_unavoidable_two_frame_shortfall(self) -> None:

@@ -59,12 +59,14 @@
 #   BIOS_IMAGE  BIOS image for BIOS_REGION (default: jp_mcd2_9212.bin for jp,
 #               us_scd1_9210.bin for us)
 #   SYSTEM_DIR  RetroArch system dir holding the selected BIOS (default:
-#               <repo>/tmp/retroarch-system). The BIOS is immutable, so every
+#               $CAVC_SCRATCH_ROOT/retroarch-system, or <repo>/tmp without the
+#               runtime wrapper). The BIOS is immutable, so every
 #               run shares this one read-only directory. Keep the path short:
 #               Genesis Plus GX builds its BIOS filenames in a 256-byte buffer
 #               and silently truncates a longer path, which then fails as
 #               "Failed to load content".
-#   OUTDIR       capture output dir (default: <repo>/tmp/<disc-stem>/record)
+#   OUTDIR       capture output dir (default: $CAVC_SCRATCH_ROOT/<disc-stem>/record,
+#                or <repo>/tmp/<disc-stem>/record without the runtime wrapper)
 #
 # Outputs: $OUTDIR/<tag>_NN.png, $OUTDIR/<tag>_sheet.jpg, compact RetroArch
 # logs, the complete managed-core LOGVDP trace as gzip, and Xvfb logs.
@@ -210,11 +212,11 @@ case "$BIOS_REGION" in
     ;;
 esac
 BIOS_IMAGE="${BIOS_IMAGE:-$DEFAULT_BIOS_IMAGE}"
-OUTDIR="${OUTDIR:-$ROOT/tmp/$DISC_STEM/record}"
+OUTDIR="${OUTDIR:-${CAVC_SCRATCH_ROOT:-$ROOT/tmp}/$DISC_STEM/record}"
 mkdir -p "$OUTDIR"
 RA_LOG="$OUTDIR/retroarch_${TAG}.log"
 GPGX_FULL_LOG="$OUTDIR/gpgx_logvdp_${TAG}.log.gz"
-SYSTEM_DIR="${SYSTEM_DIR:-$ROOT/tmp/retroarch-system}"
+SYSTEM_DIR="${SYSTEM_DIR:-${CAVC_SCRATCH_ROOT:-$ROOT/tmp}/retroarch-system}"
 
 # Genesis Plus GX composes every optional BIOS/ROM filename into a 256-byte
 # buffer rooted at the RetroArch system directory. A longer path is silently

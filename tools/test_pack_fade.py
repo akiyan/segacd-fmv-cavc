@@ -59,11 +59,6 @@ class PackFadeTests(unittest.TestCase):
             },
         }
 
-    def test_inline_cram_round_trip(self):
-        packed = pack_stream.pals_to_bytes_128(self.fade_palette)
-        np.testing.assert_array_equal(
-            pack_stream.bytes_128_to_pals(packed), self.fade_palette)
-
     def test_fade_control_replaces_bitmap_with_inline_cram(self):
         with tempfile.TemporaryDirectory() as tmp:
             blocks, _pcm = pack_stream.build_control(

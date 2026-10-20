@@ -7,12 +7,22 @@ ENV_DIR="$ROOT/.venv"
 VERSION_FILE="$ROOT/.python-version"
 BOOTSTRAP_MODE=--cpu
 
-if [ "${1:-}" = "--gpu" ]; then
-  ENV_DIR="$ROOT/.venv-gpu"
-  VERSION_FILE="$ROOT/.python-version-gpu"
-  BOOTSTRAP_MODE=--gpu
-  shift
-fi
+RUNTIME_ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --gpu)
+      ENV_DIR="$ROOT/.venv-gpu"
+      VERSION_FILE="$ROOT/.python-version-gpu"
+      BOOTSTRAP_MODE=--gpu
+      shift ;;
+    --workspace-root|--scratch-root|--array-storage)
+      if [ "$#" -lt 2 ]; then echo "$1 requires a value" >&2; exit 2; fi
+      RUNTIME_ARGS+=("$1" "$2")
+      shift 2 ;;
+    --help-runtime) exec "$ROOT/tools/runtime.sh" --help ;;
+    *) break ;;
+  esac
+done
 
 PYTHON="$ENV_DIR/bin/python"
 if [ ! -x "$PYTHON" ]; then
@@ -41,4 +51,4 @@ if [ -n "${PYTHONPATH:-}" ]; then
 fi
 export PYTHONPATH="$PROJECT_PYTHONPATH"
 
-exec "$PYTHON" "$@"
+exec "$ROOT/tools/runtime.sh" "${RUNTIME_ARGS[@]}" -- "$PYTHON" "$@"

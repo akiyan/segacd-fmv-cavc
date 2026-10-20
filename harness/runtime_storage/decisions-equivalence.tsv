@@ -1,0 +1,9 @@
+artifact	comparison	result
+decisions.pkl	all fields/frames	IDENTICAL
+stats.npz	all numeric fields	IDENTICAL
+buffer_remaining.npz	all numeric fields	IDENTICAL
+seg_palettes.npz	all numeric fields	IDENTICAL
+miss_masks.npy	2b4ada58b1a819d3df4635f9544a9277bd302ee1850d6dfe5538a6944e1b06df	IDENTICAL
+palettes.bin	abf2e673a2e87f050ee19182d49e64e380341217ca8cf07ff6bf582ce903a32e	IDENTICAL
+audio_22k05_s16_mono.wav	de271fdb861287187170413ce756cbec024157ebbc982810acd3b6ba89acff3e	IDENTICAL
+audio_playback_adpcm22_rf5c.wav	734113cf3dc295c9f7f960eb507e9e355280714e9f69d6c022415912f277e2b7	IDENTICAL

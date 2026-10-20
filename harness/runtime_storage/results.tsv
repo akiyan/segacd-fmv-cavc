@@ -1,0 +1,14 @@
+metric	unit	parent_8cc7bea	candidate_disk
+source_frames	frames	16384	16384
+source_raster	pixels	320x224	320x224
+source_fps	fps	24	24
+array_storage	mode	memory	disk
+wall_time	seconds	1887.24	1893.98
+max_rss_gnu_time	KiB	7489680	4839972
+cgroup_memory_peak	bytes	7764705280	7676428288
+cgroup_swap_peak	bytes	0	0
+process_swaps_gnu_time	events	0	0
+sampled_tree_rss_peak	bytes	not measured	4291547136
+sample_interval	seconds	not measured	5
+encode_exit_status	status	0	0
+scratch_files_after_exit	array files	not applicable	0

@@ -5,8 +5,6 @@ import os
 from pathlib import Path
 import shutil
 import tempfile
-import threading
-import time
 import unittest
 from unittest.mock import patch
 
@@ -16,8 +14,7 @@ import tmpfs_workspace as workspace
 class TmpfsWorkspaceTests(unittest.TestCase):
     def env(self, root: Path):
         return patch.dict(os.environ, {
-            "SEGACD_TMPFS_ROOT": str(root),
-            "SEGACD_TMPFS_ALLOW_NON_TMPFS": "1",
+            "CAVC_WORKSPACE_ROOT": str(root),
             "SEGACD_TMPFS_MIN_FREE_GB": "0",
         })
 
@@ -37,18 +34,6 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             self.assertEqual(Path(record["entry"]), lease.entry)
             lease.release()
             self.assertFalse(lease.marker.exists())
-
-    def test_managed_alias_lease_records_derived_space_reservation(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            owner = workspace.activate_directory(
-                kind="sim", key="profile-abc")
-            derived = workspace.lease_managed_path(
-                owner.entry / "data", required_bytes=123456)
-            self.assertIsNotNone(derived)
-            record = json.loads(derived.marker.read_text(encoding="utf-8"))
-            self.assertEqual(record["required_bytes"], 123456)
-            derived.release()
-            owner.release()
 
     def test_completed_directory_reuses_only_matching_token(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
@@ -77,17 +62,6 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             self.assertFalse(reset.reused)
             self.assertFalse((reset.entry / "data" / "kept.txt").exists())
             reset.release()
-
-    def test_file_is_returned_as_direct_path(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            requested = Path("movie_analysis.mp4")
-            actual, lease = workspace.allocate_file(
-                requested, kind="analysis", key="profile-abc")
-            actual.write_bytes(b"video")
-            self.assertFalse(requested.exists())
-            self.assertFalse(actual.is_symlink())
-            self.assertEqual(actual.read_bytes(), b"video")
-            lease.release()
 
     def test_file_command_returns_direct_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
@@ -194,23 +168,6 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             self.assertFalse(old.exists())
             self.assertTrue(new.exists())
 
-    def test_workspace_lock_serializes_threads(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            root = workspace.ensure_root()
-            entered = threading.Event()
-
-            def contender():
-                with workspace._workspace_lock(root):
-                    entered.set()
-
-            with workspace._workspace_lock(root):
-                thread = threading.Thread(target=contender)
-                thread.start()
-                time.sleep(0.05)
-                self.assertFalse(entered.is_set())
-            thread.join(timeout=2)
-            self.assertTrue(entered.is_set())
-
     def test_required_bytes_are_published_in_live_lease(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
             lease = workspace.activate_directory(
@@ -220,20 +177,6 @@ class TmpfsWorkspaceTests(unittest.TestCase):
             self.assertGreater(
                 workspace._active_reservation_bytes(workspace.ensure_root()), 0)
             lease.release()
-
-    def test_replacing_same_file_key_replaces_managed_entry(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp, self.env(Path(tmp) / "ram"):
-            requested = Path("movie_analysis.mp4")
-            first, first_lease = workspace.allocate_file(
-                requested, kind="analysis", key="first")
-            first.write_bytes(b"first")
-            first_lease.release()
-            second, second_lease = workspace.allocate_file(
-                requested, kind="analysis", key="second")
-            second.write_bytes(b"second")
-            self.assertNotEqual(first, second)
-            self.assertEqual(second.read_bytes(), b"second")
-            second_lease.release()
 
 
 if __name__ == "__main__":

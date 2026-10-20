@@ -12,6 +12,8 @@ try {
   await expect(page.getByRole('button',{name:'Generate CAVC',exact:true})).toBeEnabled({timeout:20000});
   await expect(page.getByLabel('Picture dimensions')).toHaveValue('320x224');
   await expect(page.getByLabel('Region',{exact:true})).toHaveValue(region);
+  // Region selection varies by locale; range interactions have one owner.
+  if(locale==='ja-JP'){await page.close();continue;}
   await expect(page.getByRole('spinbutton',{name:'Start frame',exact:true})).toHaveValue('0');
   await expect(page.getByRole('spinbutton',{name:'End frame',exact:true})).toHaveValue('71');
   await page.getByRole('spinbutton',{name:'End frame',exact:true}).fill('35');

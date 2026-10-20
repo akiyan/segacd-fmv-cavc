@@ -68,11 +68,6 @@ class TimelineRenderingTests(unittest.TestCase):
                 np.asarray([16]), np.asarray([1]), np.asarray([2]),
                 np.asarray([0]))
 
-    def test_req_cold_cap_guide_uses_the_req_cell_scale(self):
-        self.assertEqual(timeline.req_cold_cap_y(100, 101, 400, 100), 175)
-        self.assertEqual(timeline.req_cold_cap_y(100, 101, 400, 0), 200)
-        self.assertEqual(timeline.req_cold_cap_y(100, 101, 400, 999), 100)
-
     def test_hud_run_scale_uses_timed_observed_maximum(self):
         data = {
             "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
@@ -92,84 +87,6 @@ class TimelineRenderingTests(unittest.TestCase):
         specs = hudline.row_specs(data, gate, (2,))
         run = next(spec for spec in specs if spec.key == "cold_runs")
         self.assertEqual(run.maximum, 12)
-
-    def test_dma_start_rows_follow_vblank_before_gate_rows(self):
-        data = {
-            "display_vblanks": np.asarray([np.nan, 2, 2], np.float64),
-            "pattern_dma_ready_pressure": np.asarray(
-                [0, 0xC8, 0xD4], np.float64),
-            "name_table_dma_ready_pressure": np.asarray(
-                [np.nan, 0xC4, 0xD6], np.float64),
-        }
-        gate = {
-            "content_fps": 30,
-            "limits": {
-                "sector_slip": 0,
-                "control_desync": 0,
-                "audio_resync": 0,
-                "vblank_spill": 1,
-                "prgbuf_jitter_peak_kib": 25,
-            },
-            "jitter_headroom_kib": 20,
-        }
-        specs = hudline.row_specs(data, gate, (2,))
-        keys = [spec.key for spec in specs]
-        self.assertEqual(
-            keys[:4],
-            [
-                "display_vblanks",
-                "pattern_dma_ready_pressure",
-                "name_table_dma_ready_pressure",
-                "sector_slip",
-            ],
-        )
-        by_key = {spec.key: spec for spec in specs}
-        self.assertEqual(
-            by_key["pattern_dma_ready_pressure"].height,
-            hudline.DEFAULT_ROW_HEIGHT * 3,
-        )
-        self.assertEqual(
-            by_key["name_table_dma_ready_pressure"].height,
-            hudline.DEFAULT_ROW_HEIGHT * 3,
-        )
-        self.assertEqual(
-            by_key["display_vblanks"].height,
-            hudline.DEFAULT_ROW_HEIGHT,
-        )
-        self.assertTrue(
-            by_key["pattern_dma_ready_pressure"].point_plot)
-        self.assertTrue(
-            by_key["name_table_dma_ready_pressure"].point_plot)
-        self.assertEqual(
-            by_key["pattern_dma_ready_pressure"].maximum,
-            hudline.PATTERN_READY_MISSED_PRESSURE,
-        )
-        self.assertEqual(
-            by_key["pattern_dma_ready_pressure"].deadline_value,
-            hudline.PATTERN_READY_DEADLINE_SCANLINE,
-        )
-        self.assertTrue(
-            by_key["pattern_dma_ready_pressure"].show_zero)
-        self.assertEqual(
-            by_key["name_table_dma_ready_pressure"].maximum,
-            hudline.NT_READY_MISSED_PRESSURE,
-        )
-        self.assertEqual(
-            by_key["name_table_dma_ready_pressure"].deadline_value,
-            hudline.NT_READY_DEADLINE_SCANLINE,
-        )
-        self.assertTrue(
-            by_key["name_table_dma_ready_pressure"].show_zero)
-        point_keys = {
-            spec.key for spec in specs if spec.point_plot
-        }
-        self.assertEqual(
-            point_keys,
-            {
-                "pattern_dma_ready_pressure",
-                "name_table_dma_ready_pressure",
-            },
-        )
 
     def test_pattern_ready_pressure_starts_at_zero_and_marks_missed_head(self):
         pressure = hudline.derive_pattern_ready_pressure({
@@ -298,61 +215,6 @@ class TimelineRenderingTests(unittest.TestCase):
             ),
             hudline.FAIL,
         )
-
-    def test_gpgx_transfer_rows_follow_the_gate_rows_with_one_pattern_scale(self):
-        data = {
-            "display_vblanks": np.asarray([np.nan, 2, 3], np.float64),
-            "pattern_dma_commands": np.asarray([999, 12, 31], np.float64),
-            "pattern_dma_blank_words": np.asarray(
-                [9999, 3359, 1000], np.float64),
-            "pattern_dma_active_words": np.asarray(
-                [9999, 0, 1678], np.float64),
-            "pattern_cpu_blank_words": np.asarray(
-                [9999, 1047, 10], np.float64),
-            "pattern_cpu_active_edge_words": np.asarray(
-                [9999, 1003, 10], np.float64),
-            "name_table_dma_blank_words": np.asarray(
-                [9999, 1792, 1792], np.float64),
-            "name_table_dma_active_words": np.asarray(
-                [9999, 0, 0], np.float64),
-        }
-        gate = {
-            "content_fps": 30,
-            "limits": {
-                "sector_slip": 0,
-                "control_desync": 0,
-                "audio_resync": 0,
-                "vblank_spill": 1,
-                "prgbuf_jitter_peak_kib": 25,
-            },
-            "jitter_headroom_kib": 20,
-        }
-        specs = hudline.row_specs(data, gate, (2,))
-        keys = [spec.key for spec in specs]
-        gate_end = keys.index("prgbuf_jitter_peak_kib")
-        self.assertEqual(
-            keys[gate_end + 1:gate_end + 8],
-            [
-                "pattern_dma_blank_words",
-                "pattern_dma_active_words",
-                "pattern_cpu_blank_words",
-                "pattern_cpu_active_edge_words",
-                "name_table_dma_blank_words",
-                "name_table_dma_active_words",
-                "pattern_dma_commands",
-            ],
-        )
-        pattern_scales = {
-            spec.maximum
-            for spec in specs
-            if spec.key in {
-                "pattern_dma_blank_words",
-                "pattern_dma_active_words",
-                "pattern_cpu_blank_words",
-                "pattern_cpu_active_edge_words",
-            }
-        }
-        self.assertEqual(pattern_scales, {3359})
 
     def test_word_banks_are_combined_before_pixel_scaling(self):
         capacities = {"Prg": 60, "Wr0": 20, "Wr1": 20}

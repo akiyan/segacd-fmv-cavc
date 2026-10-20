@@ -1,33 +1,4 @@
-# Single name-table verification
-
-This harness replays every control block from real packed `HEADER.DAT` and
-`BODY.DAT` pairs. It compares two independent VRAM models:
-
-- the removed two-table path, which copied the complete logical grid into the
-  inactive table and switched Plane A;
-- the current one-table path, which expands the grid into a zero-gapped
-  64-entry-pitch Main-RAM band and DMAs only the words from the first encoded
-  cell through the last encoded cell.
-
-Both models start from BIOS-cleared VRAM. The proof compares all 1,792 words of
-the displayed table after every movie frame, including the centered borders and
-the unused cells between encoded rows.
-
-Run four representative same-stream cases, one per cadence, mixing preserved
-baseline pairs with freshly packed ones:
-
-```sh
-tools/python.sh harness/single_name_table/verify.py \
-  --case h40-15 tmp/issue102-baseline/machi-op/HEADER.DAT tmp/issue102-baseline/machi-op/BODY.DAT \
-  --case h40-15-full out/machi-ed/HEADER.DAT out/machi-ed/BODY.DAT \
-  --case h40-24 out/lunar/HEADER.DAT out/lunar/BODY.DAT \
-  --case h40-30 tmp/issue102-baseline/sonic-jam-op/HEADER.DAT tmp/issue102-baseline/sonic-jam-op/BODY.DAT
-```
-
-The output reports the exact physical band length for each case. For example,
-a 40x19 grid uses `18 * 64 + 40 = 1,192` words; the full-height 40x28 grid uses
-`27 * 64 + 40 = 1,768` words; Sonic's statically trimmed 36x25 grid uses
-`24 * 64 + 36 = 1,572` words.
+# Single name-table playback diagnostics
 
 ## Lossless-recording tearing detector
 
@@ -43,7 +14,7 @@ preview.
 
 ```sh
 tools/python.sh harness/single_name_table/detect_tearing.py \
-  /dev/shm/segacd-fmv-cavc/PROFILE_emu_lossless.mkv \
+  /path/to/printed/PROFILE_emu_lossless.mkv \
   logs/<run>_hud.tsv \
   --gpgx-vdp-tsv logs/<run>_gpgx_vdp.tsv \
   --output logs/<run>_single_nt_tearing.tsv
@@ -74,7 +45,7 @@ tools/python.sh harness/single_name_table/compare_aggregates.py \
   --candidate-gate logs/CANDIDATE_hud_gate.json \
   --main-sim-log logs/parallel-run/MAIN/PROFILE.log \
   --candidate-sim-log logs/parallel-run/CANDIDATE/PROFILE.log \
-  --candidate-sim-report /dev/shm/segacd-fmv-cavc/.../report.txt \
+  --candidate-sim-report /path/to/completed-sim/data/report.txt \
   --output logs/PROFILE_main_vs_candidate_aggregates.tsv
 ```
 

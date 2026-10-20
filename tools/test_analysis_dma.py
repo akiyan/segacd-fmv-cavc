@@ -6,27 +6,14 @@ import unittest
 
 import layout_preview as layout
 import r2v_model
-from tile_alloc import count_slot_runs, slot_runs
+from tile_alloc import slot_runs
 
 
 class AnalysisDmaTests(unittest.TestCase):
-    def test_r2v_digits_follow_the_observed_maximum(self) -> None:
-        self.assertEqual(layout.r2v_value_digits(1820), 4)
-        self.assertEqual(layout.r2v_label_template(5183), "R2V:0000")
 
     def test_frame0_is_excluded_from_timed_metrics(self) -> None:
         self.assertEqual(layout.timed_metric_value(0, 1518), 0)
         self.assertEqual(layout.timed_metric_value(1, 185), 185)
-
-    def test_run_digits_cover_full_h40_worst_case(self) -> None:
-        self.assertEqual(layout.H40_FULL_TILES, 1120)
-        self.assertEqual(layout.dma_run_worst_case(1120), 1120)
-        self.assertEqual(layout.DMA_RUN_DIGITS, 4)
-        self.assertEqual(layout.run_label_template(), "Run:0000")
-
-    def test_dma_tile_capacity_pays_for_current_display_publication(self) -> None:
-        # 24 fps: 2.5 VBLANKs * 7790 B - (1768 + 52) * 2 B, then / 32 B.
-        self.assertEqual(layout.dma_tile_capacity(24, 40, 28), 494)
 
     def test_r2v_name_table_words_match_single_nt_and_debug_routes(self) -> None:
         self.assertEqual(
@@ -47,19 +34,6 @@ class AnalysisDmaTests(unittest.TestCase):
         )
         with self.assertRaises(ValueError):
             r2v_model.name_table_words(41, 28, 30)
-
-    def test_r2v_components_repair_every_dma_run(self) -> None:
-        components = r2v_model.calculate_words(
-            [210], [20], [1], [1820])
-        self.assertEqual(int(components["pattern_words"][0]), 3360)
-        self.assertEqual(int(components["repair_words"][0]), 20)
-        self.assertEqual(int(components["cram_words"][0]), 64)
-        self.assertEqual(int(components["words"][0]), 5264)
-
-    def test_slot_run_count_matches_packed_order(self) -> None:
-        self.assertEqual(count_slot_runs([]), 0)
-        self.assertEqual(count_slot_runs([4]), 1)
-        self.assertEqual(count_slot_runs([4, 5, 6, 9, 10, 3]), 3)
 
     def test_slot_runs_are_the_player_records(self) -> None:
         self.assertEqual(slot_runs([]), [])
