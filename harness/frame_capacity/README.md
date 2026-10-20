@@ -117,11 +117,11 @@ in the pinned Genesis Plus GX source, `core/system.c` (`audio_set_rate`),
 
 `make_source.py --frames 16384` creates an actual 16,384-frame, 24fps H.264
 source in the selected workspace. Full-capacity sources require an explicit
-`--frames 83520` request. Its full 320x224 raster uses losslessly encoded
+`--frames 83520` request. Its default 320x224 raster uses losslessly encoded
 flat grey background, silent audio, and a small white marker at the index boundaries
 and final two frames. It probes the decoded frame count before writing the
-normal encoder profile. The test uses the original encoder at full geometry
-and cadence, with cold cap 210; it does not shorten or retime the movie.
+normal encoder profile. The test uses the original encoder at the selected
+geometry and cadence, with cold cap 210; it does not shorten or retime the movie.
 
 ```sh
 tools/python.sh harness/frame_capacity/make_source.py \
@@ -129,6 +129,42 @@ tools/python.sh harness/frame_capacity/make_source.py \
 tools/python.sh --gpu tools/sim.py tmp/frame16384/long16384.toml
 make disc CONFIG=tmp/frame16384/long16384.toml DEBUG=1
 ```
+
+For an explicitly requested reduced-raster long encode, `--width` and `--height`
+select both the source dimensions and the encoder grid. They must be multiples
+of 8 within the 320x224 aperture. For example, `--frames 65536 --fps 24 --width
+288 --height 144` creates a 45m30.667s source with a 36x18-tile grid. The player
+centers it with 16-pixel side borders and 40-pixel top/bottom borders.
+The narrower grid skips scroll detection through the normal geometry gate;
+it does not set a scroll override. This reduces per-frame work but does not
+qualify full-aperture frame-0 capacity or heavy-motion quality.
+
+The 65,536-frame 288x144/24fps source completed all encoder stages on
+2026-10-20 using e194, the GPU environment, and disk-backed arrays on ext4.
+The saved decisions and completion marker contain all 65,536 frames through
+index 65,535. Scroll windows are empty. Both WordBuf capacities, planned loads,
+boot preloads, refills, and staging are zero; the word ring is disabled.
+The encoder's final route/cadence prefix proof passes. This run qualifies
+source encoding; it does not add a packed-disc or emulator playback result.
+
+| Measurement | Result |
+|---|---:|
+| Complete encoder wall time | 7:12:37 |
+| Complete encoder throughput | 2.525 frames/s |
+| Decide stage | 25,462.2 s |
+| Maximum process RSS (`time -v`) | 8.978 GiB |
+| Cgroup peak, including charged file cache | 16.166 GiB |
+| Cgroup peak swap | 0 |
+
+The run was not restarted. Every ten-minute report after 16:46 includes
+interval throughput from the 200-frame progress log. Process-tree sampling
+every five seconds observed only 8.687 GiB at its peak; the OS high-water mark
+above includes the brief higher peak. Filesystem-wide `/tmp` usage grew by
+36 KiB and `/dev/shm` stayed unchanged. System-wide Shmem ranged from 14.252
+to 14.379 GiB. These filesystem and Shmem readings include other jobs; GPU
+device memory was not measured. Scratch arrays were removed on normal
+completion. The saved local evidence is
+`logs/frame65536-288x144-{result.json,encode.log,memory.tsv,memory.json,time.txt,progress.tsv}`.
 
 `test_extended.py` checks complete-header parsing at every boundary, unchanged
 field offsets, full-aperture memory bounds, one-byte routes, palette switches

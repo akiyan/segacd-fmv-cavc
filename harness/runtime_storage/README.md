@@ -61,6 +61,10 @@ count shared pages twice, and sampled peaks can miss short spikes. On Linux,
 `/usr/bin/time -v` around the encoder additionally records its process peak.
 System Shmem and filesystem usage include other processes. Do not add these
 figures together or describe cgroup file cache as encoder heap.
+Repeat `--watch-filesystem PATH` before `--` to sample additional filesystems,
+for example explicit `/tmp` and `/dev/shm` paths on Linux. Their numbered TSV
+columns map to paths in the JSON receipt. This observes usage without selecting
+those filesystems as artifact or array storage.
 Pressing Ctrl-C stops the command's process group, including wrappers
 and their child encoder, instead of leaving an unobserved encode running.
 
