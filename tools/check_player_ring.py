@@ -515,6 +515,7 @@ apply_base = equ(sp_text, "APPLY_BASE", SP)
 apply_size = equ(sp_text, "APPLY_SIZE", SP)
 f0pat_tmp = equ(sp_text, "F0PAT_TMP", SP)
 routing_tmp = equ(sp_text, "ROUTING_TMP", SP)
+routing_tmp_bytes = equ(sp_text, "ROUTING_TMP_BYTES", SP)
 iso_buf = equ(sp_text, "ISO_BUF", SP)
 iso_buf_bytes = equ(sp_text, "ISO_BUF_BYTES", SP)
 sub_prg_safe_base = equ(sp_text, "SUB_PRG_SAFE_BASE", SP)
@@ -544,8 +545,22 @@ if ring_base + ring_size + cavc_routing.SECTOR_BYTES != apply_base:
         "does not end at APPLY")
 if f0pat_tmp + max_f0_bytes != routing_tmp:
     sys.exit("check_player_ring: routing staging does not follow frame-0 staging")
-if routing_tmp + cavc_routing.ROUTE_BYTES > apply_base + apply_size:
-    sys.exit("check_player_ring: maximum routing staging exceeds APPLY")
+if routing_tmp_bytes != 16384:
+    sys.exit("check_player_ring: legacy routing stage must remain 16 KiB")
+if routing_tmp + routing_tmp_bytes > apply_base + apply_size:
+    sys.exit("check_player_ring: legacy routing staging exceeds APPLY")
+if routing_tmp + cavc_routing.SECTOR_BYTES > extension_values.load_base:
+    sys.exit("check_player_ring: route mirror scratch reaches the staged extension")
+for token in (
+        ".if PC_ROUTING_BYTES > 16384",
+        ".equ ROUTING_DIRECT_WORD, 1",
+        "andi.l\t#0x0000FFFF, d0",
+        "move.b\t(a0,d0.l), ",
+):
+    if token not in sp_text:
+        sys.exit(f"check_player_ring: wide-frame route path is missing {token!r}")
+if sp_text.count("ROUTING_LOAD d2") != 3:
+    sys.exit("check_player_ring: every live route consumer must use ROUTING_LOAD")
 if (
         iso_buf != av_config.SUB_BOOT_ISO_BUF_BASE
         or iso_buf_bytes != av_config.SUB_BOOT_ISO_BUF_BYTES

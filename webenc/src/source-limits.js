@@ -1,6 +1,8 @@
-export const MAX_OUTPUT_FRAMES = 16384;
+import scheduleConfig from './generated/schedule-config.json' with {type: 'json'};
 
-const secondsAt24fps = Math.round(MAX_OUTPUT_FRAMES / 24);
+export const MAX_OUTPUT_FRAMES = scheduleConfig.maxFrames;
+
+const secondsAt24fps = Math.round(MAX_OUTPUT_FRAMES / (scheduleConfig.vsync * 2 / 5));
 export const sourceFrameLimitNotice = `Max ${MAX_OUTPUT_FRAMES.toLocaleString('en-US')} output frames (≈${Math.floor(secondsAt24fps / 60)}m${String(secondsAt24fps % 60).padStart(2, '0')}s at 24fps).`;
 
 export function validateOutputFrameCount(frames) {

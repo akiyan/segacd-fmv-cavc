@@ -67,7 +67,7 @@ memory.
 | `WordBuf0` | build-derived | sp / ip / sim / pack | Boot-preloaded sequence in the even-frame physical bank; its start follows that parity's exact `32*Prg + 22*run` `O_LOADS v2` peak. |
 | `WordBuf1` | build-derived | sp / ip / sim / pack | Different boot-preloaded sequence in the odd-frame bank; its start follows that parity's independently computed peak. |
 | `DicBuf` | 512 patterns, 16 KiB | ip / sim / pack | Persistent Main-RAM dictionary, reusable by 9-bit index (top bit in the run source field). |
-| routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 16,384 frames. |
+| routing table | `ceil(frames / 2048) * 2 KiB` in each Word-RAM bank | sp / pack | One byte per frame, sector-rounded, maximum 65,535 frames; at most 64 KiB per bank. |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | Circular control-block queue. |
 | frame-0 pattern stage | 36 KiB | sp | Boot-only PRG area `0x72000..0x7B000`. |
 | boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | Temporary Word-RAM image at bank `+0x0000..+0x6000`; Main consumes it before frame 0 reuses the range. |
@@ -222,9 +222,10 @@ chunk to RF5C164 sign-magnitude samples and writes them to the wave-RAM ring.
 | decoded `AUDIO_BYTES` | normally 1472 / 920 / 736 at 15 / 24 / 30 fps | cfg / pack / sp | Even decoded samples per effective playback frame. |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | Predictor, step index, reserved byte, and packed IMA codes. |
 | `audio_fd` | header offset 56 | cfg / pack / sp | RF5C164 frequency delta derived from chunk size and playback cadence. |
+| long-movie PCM clock | specialized, more than 16,384 frames | cfg / sp | Alternates adjacent FD values with a 16-bit phase accumulator using the physical NTSC crystal/scan clock; no extra header or audio bytes. Phase resets on replay. Short movies retain fixed FD. |
 | ADPCM table image | 8,800 B in five sectors | pack / sp | Unchanged lookup bytes copied once to Sub PRG: next-index at `0x07400`, output LUT at `0x09600`, and signed deltas at `0x0C000`. No Word-RAM copy remains. |
 | PCM work buffer | 1,536 B at Sub PRG `0x08000..0x085FF` | sp | Reconstructed chunk; no matching Word-RAM reservation remains. |
-| Sub preload extension | 940 B staged at Sub PRG `0x7D260` | make / pack / sp | Position-fixed boot table install, PCM initialization, routing preparation, and queue initialization in existing five-sector padding. The qualified first 88 B execute at `0x76800`; the PCM entry runs at `0x7D560`; with routing up to 8 KiB the second entry executes in place at `0x7D2B8` after prebuffer, while longer-route builds copy the complete extension and use `0x76858`. Size/address/hash and overlap are checked before assembly. |
+| Sub preload extension | 1,108 B staged at Sub PRG `0x7D260` | make / pack / sp | Position-fixed boot table install, PCM initialization, routing preparation, and queue initialization in existing five-sector padding. The qualified first 88 B execute at `0x76800`; the PCM entry runs at `0x7D560`; with routing up to 8 KiB the second entry executes in place at `0x7D2B8` after prebuffer, while longer-route builds copy the complete extension and use `0x76858`. Size/address/hash and overlap are checked before assembly. |
 | `SYNC_LEAD` | `0x3000`, 12,288 B | sp | Initial write-ahead lead. |
 | startup prefetch request | 30 frames | cfg / pack / sp | Decoded PCM prefix, clamped by wave-RAM capacity and chunk size. |
 | `SYNC_MIN` | `0` | sp | Lower accepted lead. |
@@ -559,8 +560,9 @@ copies its qualified 88-byte entry from the five-sector stage to the unused
 timed-ring tail and runs its wave-RAM initializer from staged offset `+0x300`.
 The routing entry executes after prebuffer from the protected stage tail when
 the route is at most 8 KiB; longer-route builds copy the complete extension
-before staging routing. That entry also initializes the ring, APPLY, and
-frame-0 queue state. Standard specialized DEBUG keeps
+before staging routing. Tables above 16 KiB load directly into the frame-0 Word bank and are mirrored
+after HEADER EOF through one 2 KiB PRG scratch sector. No full-size PRG stage
+is needed. That entry also initializes the ring, APPLY, and frame-0 queue state. Standard specialized DEBUG keeps
 its G state and measurement inline in the resident SP. Startup shows four hexadecimal digits containing safe PrgBuf
 preload KiB; a failure shows `BADx`.
 
@@ -649,7 +651,7 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 | `WordBuf0` | buildから導出 | sp / ip / sim / pack | 偶数frame physical bankのboot preload sequence。開始位置はそのparityの正確な`32*Prg + 22*run` `O_LOADS v2`ピーク直後。 |
 | `WordBuf1` | buildから導出 | sp / ip / sim / pack | 奇数frame bankの異なるboot preload sequence。開始位置は独立計算したそのparityピーク直後。 |
 | `DicBuf` | 512 patterns、16 KiB | ip / sim / pack | 9-bit index（最上位bitはrun source field）で再利用するpersistent Main-RAM dictionary。 |
-| routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大16,384 frame。 |
+| routing table | 各Word-RAM bankに `ceil(frames / 2048) * 2 KiB` | sp / pack | frame当たり1 byte、sector丸め、最大65,535 frame、bank当たり最大64 KiB。 |
 | `APPLY_SIZE` | 34 KiB (`0x8800`) | sp | control blockのcircular queue。 |
 | frame-0 pattern stage | 36 KiB | sp | boot専用PRG領域 `0x72000..0x7B000`。 |
 | boot VRAM sidecar stage | 24 KiB | cfg / pack / sp / ip | bank `+0x0000..+0x6000` のtemporary Word-RAM image。Mainが消費した後にframe 0が同じrangeを再利用する。 |
@@ -780,9 +782,10 @@ RF5C164 sign-magnitude sampleへdecodeし、wave-RAM ringへ書きます。
 | decoded `AUDIO_BYTES` | 15 / 24 / 30 fpsで通常1472 / 920 / 736 | cfg / pack / sp | 実効playback frameごとの偶数decoded sample数。 |
 | control audio size | `4 + AUDIO_BYTES / 2` | pack / sp | predictor、step index、reserved byte、packed IMA code。 |
 | `audio_fd` | header offset 56 | cfg / pack / sp | chunk sizeとplayback cadenceから導出するRF5C164 frequency delta。 |
+| 長尺PCM clock | specialized、16,384 frame超 | cfg / sp | 物理NTSCのcrystal/scan clockを使い、16-bit phase accumulatorで隣接FD値を選ぶ。headerとaudio byteの追加はない。再開時にphaseをresetし、短編は固定FDを維持する。 |
 | ADPCM table image | 5 sectors内の8,800 B | pack / sp | 変更しないlookup byteをSub PRGへ1回copyする。next-indexは`0x07400`、output LUTは`0x09600`、signed deltaは`0x0C000`。Word-RAM copyはない。 |
 | PCM work buffer | Sub PRG `0x08000..0x085FF`の1,536 B | sp | 再構築chunk。対応するWord-RAM予約はない。 |
-| Sub preload extension | Sub PRG `0x7D260`へstageする940 B | make / pack / sp | 既存5-sector padding内のposition-fixed boot table install・PCM initialization・routing preparation・queue initialization。Qualified済み先頭88 Bは`0x76800`、PCM入口は`0x7D560`で実行する。routingが8 KiB以下ならprebuffer後に第2入口を`0x7D2B8`でそのまま実行し、長いroutingのbuildはextension全体をcopyして`0x76858`を使う。assemble前にsize/address/hashとoverlapを検査する。 |
+| Sub preload extension | Sub PRG `0x7D260`へstageする1,108 B | make / pack / sp | 既存5-sector padding内のposition-fixed boot table install・PCM initialization・routing preparation・queue initialization。Qualified済み先頭88 Bは`0x76800`、PCM入口は`0x7D560`で実行する。routingが8 KiB以下ならprebuffer後に第2入口を`0x7D2B8`でそのまま実行し、長いroutingのbuildはextension全体をcopyして`0x76858`を使う。assemble前にsize/address/hashとoverlapを検査する。 |
 | `SYNC_LEAD` | `0x3000`、12,288 B | sp | 初期write-ahead lead。 |
 | startup prefetch request | 30 frames | cfg / pack / sp | wave-RAM容量とchunk sizeでclampするdecoded PCM prefix。 |
 | `SYNC_MIN` | `0` | sp | 許容lead下限。 |
@@ -1092,8 +1095,10 @@ ADPCM lookup data直後にある未使用padding
 へ配置し、startupがqualified済み88-byte入口を5-sector stageから未使用timed-ring
 tailへcopyし、staged offset `+0x300`からwave-RAM initializerを実行します。
 routingが8 KiB以下ならrouting入口はprebuffer後に保護済みstage tailから実行し、
-長いroutingのbuildはrouting stage前にextension全体をcopyします。同じ入口が
-timed playback前にring、APPLY、frame-0 queue stateを初期化します。
+長いroutingのbuildはrouting stage前にextension全体をcopyします。16 KiBを超える表は
+frame-0 Word bankへ直接loadし、HEADER EOF後に2 KiBのPRG scratch sectorを経由して
+他方へ複写します。表全体のPRG stageは不要です。同じ入口がtimed playback前に
+ring、APPLY、frame-0 queue stateを初期化します。
 Standard specialized DEBUGのG stateとmeasurementはresident SP内にinlineで保持します。
 startupは安全に受信済みのPrgBuf preload
 KiBを4桁hexで表示し、failureは`BADx`を表示します。

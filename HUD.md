@@ -59,7 +59,8 @@ its 40-cell row width as `HUD_ROW_CELLS`, and returns it from `hud_layout()`.
 
 The player-only pre-roll sentinel uses `frame=FFFF`. It is an OCR anchor, not a
 stream frame, and is never written to the HUD TSV. Movie frame 0 remains in the
-TSV for sequence alignment but is untimed boot staging.
+TSV for sequence alignment but is untimed boot staging. The four hexadecimal
+digits cover every movie index `0000..FFFE` at the 65,535-frame limit.
 
 ## Field reference
 
@@ -321,7 +322,8 @@ confidence check に使います。
 
 Player-only pre-roll sentinel は `frame=FFFF` です。OCR anchor であり stream frame
 ではなく、HUD TSV にも書きません。Movie frame 0 は sequence alignment のため
-TSV に残しますが、untimed boot staging です。
+TSV に残しますが、untimed boot staging です。4桁hexで65,535-frame上限の
+全movie index `0000..FFFE`を表せます。
 
 ## Field reference
 

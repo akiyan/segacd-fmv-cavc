@@ -90,10 +90,15 @@ patterns only. Remaining resident VRAM slots may receive future patterns
 through the frame-0 cold suffix and the boot VRAM sidecar. Analysis reports
 frame-0 Cold, Pre, DMA, Run, and Band as zero because they describe timed work.
 
-The routing table is staged in the not-yet-active APPLY ring and copied into a
-sector-rounded allocation at the end of both physical 1M Word-RAM banks. Its
-resident size is `routing_sec * 2048`. The two copies are required because the
-Sub-owned bank follows the display handoff while delivery may run ahead.
+The routing table occupies `routing_sec * 2048` bytes at the end of each
+physical 1M Word-RAM bank. Specialized tables up to 16 KiB stage in the
+inactive APPLY area. Longer tables load directly into the Sub-owned frame-0
+bank. After HEADER EOF, Sub validates the complete table and mirrors it to
+the other bank through one 2 KiB PRG scratch sector, restoring bank ownership
+after each sector. The generic player uses this sector path at every length.
+Both copies exist before frame-0 expansion: the Sub-owned bank follows the
+display handoff while delivery may run ahead. Neither path reduces timed
+PrgBuf or APPLY capacity.
 
 Frame 0 patterns use the fixed 36 KiB boot-only staging area at PRG RAM
 `0x72000..0x7B000`, which overlaps space that is not yet serving its timed
@@ -109,7 +114,7 @@ format-version field.
 | Off | Size | Field | Meaning |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"CAVC"` |
-| 4 | 2 | frames | total frame count (`nfr`) |
+| 4 | 2 | frames | unsigned total frame count (`nfr`), 1..65,535; last display index <= 65,534 |
 | 6 | 2 | tcols | tile-grid columns |
 | 8 | 2 | trows | tile-grid rows |
 | 10 | 2 | cells | `tcols * trows` |
@@ -254,21 +259,21 @@ runs on movie restart.
 ## ADPCM table
 
 Five sectors follow DIC_PRELOAD. The first 8,800 bytes are immutable lookup
-data. The 940-byte position-fixed Sub boot extension follows in existing
-padding, and the remaining 500 bytes are zero.
+data. The 1,108-byte position-fixed Sub boot extension follows in existing
+padding, and the remaining 332 bytes are zero.
 
 | Offset | Size | Contents |
 |---:|---:|---|
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byte to RF5C164 output lookup |
-| 8,800 | 940 B | boot-only Sub table install, PCM initialization, routing preparation, and queue initialization extension |
-| 9,740 | 500 B | zero padding |
+| 8,800 | 1,108 B | boot-only Sub table install, PCM initialization, routing preparation, and queue initialization extension |
+| 9,908 | 332 B | zero padding |
 
 The first 88 extension bytes are copied to `0x76800` and run before routing is
 staged. With a routing preload of at most 8 KiB, the second entry remains
 outside the routing bytes and runs in place at staged address `0x7D2B8` after
-prebuffer completes. Longer-route builds copy all 940 bytes first and run that
+prebuffer completes. Longer-route builds copy all 1,108 bytes first and run that
 entry at `0x76858`. The fixed third entry at extension offset `+0x300` runs in
 place at `0x7D560` to clear and initialize wave RAM before routing can reuse
 the staged area.
@@ -358,7 +363,10 @@ requires
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` and
 `routing_sec = ceil(nfr / 2048)`. Frame 0's entry and unused tail bytes are
 zero. The resident copy uses exactly `routing_sec` sectors and supports at most
-16,384 frames.
+65,535 frames. The maximum table is 64 KiB per bank. The frame count and
+control sequence remain unsigned 16-bit fields; header and control-prefix
+lengths are unchanged. The palette-switch sentinel remains `0xFFFF`, above
+every displayed frame index.
 
 Control and payload are continuous streams split at sector boundaries. One
 control sector may finish multiple future blocks, and payload normally
@@ -652,10 +660,13 @@ patternだけを参照します。空いているresident VRAM slotにはframe-0
 boot VRAM sidecarを使って将来patternを置けます。frame 0のCold、Pre、DMA、Run、
 Bandはtimed workではないため解析では0とします。
 
-routing tableは未使用のAPPLY ringへ一時配置し、両方の物理1M Word-RAM bank末尾の
-sector丸めallocationへcopyします。Resident sizeは `routing_sec * 2048` です。表示
-handoffに応じてSub所有bankが変わり、deliveryが先行し得るため、両bankに同一copyが
-必要です。
+routing tableは各物理1M Word-RAM bank末尾に `routing_sec * 2048` byteずつ置きます。
+Specializedの16 KiB以下の表は未使用APPLY領域へstageします。長い表はSub所有の
+frame-0 bankへ直接loadします。HEADER EOF後にSubが表全体を検証し、PRGの2 KiB
+scratch sectorを経由して他方のbankへ複写し、sectorごとにbank ownershipを戻します。
+Generic playerは全長でこのsector単位の経路を使います。表示handoffに応じてSub所有
+bankが変わり、deliveryが先行し得るため、frame 0展開前に両copyを用意します。
+どちらの経路もtimed PrgBufとAPPLYの容量を減らしません。
 
 frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
 領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。有限の
@@ -670,7 +681,7 @@ BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後�
 | Off | Size | Field | 意味 |
 |---:|---:|---|---|
 | 0 | 4 | magic | `"CAVC"` |
-| 4 | 2 | frames | 総frame数（`nfr`） |
+| 4 | 2 | frames | 符号なし総frame数（`nfr`）、1..65,535。最終表示indexは最大65,534 |
 | 6 | 2 | tcols | tile gridの列数 |
 | 8 | 2 | trows | tile gridの行数 |
 | 10 | 2 | cells | `tcols * trows` |
@@ -806,7 +817,7 @@ copyしてからbankをSubへ返します。その後、frame 0とWordBufがtemp
 ## ADPCM table
 
 DIC_PRELOADの直後に5 sector置きます。先頭8,800 byteは不変のlookup dataです。
-940-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り500 byteは
+1,108-byteのposition-fixed Sub boot extensionを既存paddingへ続け、残り332 byteは
 zeroです。
 
 | Offset | Size | 内容 |
@@ -814,12 +825,12 @@ zeroです。
 | 0 | 2,848 B | `u16 next_index_x32[89][16]` |
 | 2,848 | 5,696 B | `s32 signed_delta[89][16]` |
 | 8,544 | 256 B | predictor-high-byteからRF5C164 outputへのlookup |
-| 8,800 | 940 B | boot-only Sub table install・PCM initialization・routing preparation・queue initialization extension |
-| 9,740 | 500 B | zero padding |
+| 8,800 | 1,108 B | boot-only Sub table install・PCM initialization・routing preparation・queue initialization extension |
+| 9,908 | 332 B | zero padding |
 
 extensionの先頭88 byteを`0x76800`へcopyし、routingをstageする前に実行します。
 routing preloadが8 KiB以下なら、第2入口はrouting byteの外側に残るため、prebuffer
-完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に940
+完了後にstage address `0x7D2B8`でそのまま実行します。長いroutingのbuildは先に1,108
 byte全体をcopyし、第2入口を`0x76858`で実行します。Extension offset `+0x300`の
 固定第3入口は、routingがstaged areaを再利用する前に`0x7D560`で実行し、wave RAMを
 clear・初期化します。
@@ -902,8 +913,10 @@ WordBuf-ring featureを持たないstreamは常に `n_word_sec = 0` をencodeし
 playerは
 `n_ctrl_sec <= total_sec <= FRAME_SECTORS` と
 `routing_sec = ceil(nfr / 2048)` を要求します。frame 0のentryと末尾の未使用byteは
-zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大16,384 frameに
-対応します。
+zeroです。Resident copyは正確に `routing_sec` sectorを使い、最大65,535 frameに
+対応します。表の最大容量はbank当たり64 KiBです。frame数とcontrol sequenceは
+符号なし16-bit欄を維持し、headerとcontrol prefixの長さも維持します。パレット切替の
+終端`0xFFFF`は全表示frame indexより大きいままです。
 
 controlとpayloadはsector境界で分割した連続streamです。1個のcontrol sectorが複数の
 将来blockを完成させることがあり、payloadは通常、後のframeで使うpatternを先読み

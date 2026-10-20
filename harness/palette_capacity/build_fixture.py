@@ -24,8 +24,10 @@ import sp_extension
 from harness.player_constants.verify import find_tool, run
 
 
-def fixture_log(segments: int, fps: int) -> dict:
-    frames = segments * 4
+def fixture_log(segments: int, fps: int, frames: int | None = None) -> dict:
+    frames = segments * 4 if frames is None else frames
+    if not segments <= frames <= 65535:
+        raise ValueError("fixture needs segments <= frames <= 65535")
     palettes = []
     for segment in range(segments):
         palette = np.full((4, 15, 3), 3, np.uint8)
@@ -45,7 +47,7 @@ def fixture_log(segments: int, fps: int) -> dict:
     rate, pcm, control = av_config.audio_frame_layout(fps)
     return {
         "frames": updates,
-        "frame_seg": np.repeat(np.arange(segments), 4),
+        "frame_seg": np.arange(frames, dtype=np.int64) * segments // frames,
         "seg_pals": palettes,
         "geom": (40, 28, 40 * 28, 8),
         "fps": fps,
@@ -113,7 +115,8 @@ def pack_fixture(directory: Path, log: dict, extension: bytes) -> None:
     assert struct.unpack_from(">HH", index, cursor) == (0xFFFF, 0)
 
 
-def build(directory: Path, fps: int, segments: int, generic: bool) -> Path:
+def build(directory: Path, fps: int, segments: int, generic: bool,
+          frames: int | None = None, stream_from: Path | None = None) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     assembler, linker, objcopy, objdump = (
         find_tool("m68k-elf-" + name) for name in ("as", "ld", "objcopy", "objdump"))
@@ -126,7 +129,15 @@ def build(directory: Path, fps: int, segments: int, generic: bool) -> Path:
          "-T", str(ROOT / "cfg/sp_ext.ld"), "-o", str(extension),
          str(directory / "movieplay_sp_ext.o")])
     sp_extension.generate(extension, directory / "sp_extension.inc")
-    pack_fixture(directory, fixture_log(segments, fps), extension.read_bytes())
+    if stream_from is None:
+        pack_fixture(directory, fixture_log(segments, fps, frames), extension.read_bytes())
+    else:
+        for name in ("HEADER.DAT", "BODY.DAT", "MOVIE.DAT", "paltab.bin", "palidx.bin"):
+            shutil.copyfile(stream_from / name, directory / name)
+        header = (directory / "HEADER.DAT").read_bytes()
+        pc = player_constants.parse_header_sector(header[:2048])
+        start = (1 + pc.paltab_sec + pc.dic_sectors) * 2048 + 8800
+        assert header[start:start + extension.stat().st_size] == extension.read_bytes()
     player_constants.generate_include(
         directory / "HEADER.DAT", directory / "player_constants.inc")
     run([sys.executable, str(ROOT / "tools/check_player_ring.py"),
@@ -173,10 +184,13 @@ def build(directory: Path, fps: int, segments: int, generic: bool) -> Path:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--fps", type=int, choices=(15, 30), required=True)
+    parser.add_argument("--fps", type=int, choices=(15, 24, 30), required=True)
     parser.add_argument("--segments", type=int, default=64)
     parser.add_argument("--generic", action="store_true")
+    parser.add_argument("--frames", type=int)
+    parser.add_argument("--stream-from", type=Path)
     args = parser.parse_args()
     if not 1 <= args.segments <= av_config.PALTAB_MAX_SEG:
         parser.error("segments must fit the configured palette capacity")
-    print(build(args.output.resolve(), args.fps, args.segments, args.generic))
+    print(build(args.output.resolve(), args.fps, args.segments, args.generic,
+                args.frames, args.stream_from))

@@ -29,6 +29,14 @@ player therefore keeps decode and RF5C164 output on the Sub CPU.
 - Header offset 56 stores the RF5C164 frequency delta calculated from the fixed
   chunk size and actual playback cadence.
 
+Specialized movies above 16,384 frames alternate neighboring frequency deltas
+using a 16-bit phase accumulator. The average follows the physical NTSC clock
+(53,693,175 master clocks/s, 3420 clocks/line, 262 lines/frame), avoiding a
+long-movie wave-buffer drift from rounding one fixed delta. The phase resets
+on each replay. The header retains its rounded base delta, and source samples,
+chunk sizes and control fields retain their layout. Short movies keep fixed
+frequency. Each frequency-register write observes the 384-cycle spacing.
+
 The encoder and independent reference decoder are in `tools/ima_adpcm.py`.
 `tools/pack_stream.py --verify` reconstructs every audio chunk and proves that
 the startup prefix plus shifted controls reproduce the source chunk order for
@@ -177,6 +185,14 @@ Sub CPU上で行います。
   `4 + decoded_samples / 2`で求めます。
 - Header offset 56は、固定chunk sizeと実際のplayback cadenceから求めたRF5C164
   frequency deltaを格納します。
+
+16,384 frameを超えるspecialized movieでは16-bit phase accumulatorを使って
+隣接するfrequency deltaを交互に選びます。平均を物理NTSC clock（53,693,175
+master clock/s、3420 clock/line、262 line/frame）に合わせ、固定整数への丸めで
+長尺movieのwave buffer残量がずれることを防ぎます。再開ごとにphaseをresetします。
+headerは丸めたbase deltaを維持し、source sample、chunk size、control fieldの配置を
+維持します。短編は固定frequencyを使います。各frequency-register writeは384-cycle
+spacingを守ります。
 
 Encoderと独立reference decoderは`tools/ima_adpcm.py`にあります。
 `tools/pack_stream.py --verify`は全audio chunkを復元し、startup prefixと

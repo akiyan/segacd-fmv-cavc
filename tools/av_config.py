@@ -29,6 +29,7 @@ refuses to re-cap an already encoded stream.
 
 import math
 import os
+from fractions import Fraction
 
 # The outer boot image occupies the first 32 KiB of the data track. The BIOS
 # supports a multi-sector Sub program; this project reserves its final 5 KiB at
@@ -324,6 +325,32 @@ def rf5c164_fd(samples_per_frame, playback_fps):
     if not 0 < fd <= 0xFFFF:
         raise ValueError(f"RF5C164 frequency delta is out of range: {fd}")
     return fd
+
+
+def long_movie_audio_fd_plan(samples_per_frame, fps, frames):
+    """Match the physical NTSC frame clock without changing header fields.
+
+    A rounded integer FD slowly drains the reserve in long movies. The
+    specialized long player alternates neighboring values with a 16-bit
+    phase accumulator. Short streams retain their established fixed FD.
+    The display crystal is 53,693,175 Hz, with 3420 clocks/line and 262 lines.
+    This audio clock conversion does not change the CD deadline model.
+    """
+    cadence = vblank_cadence_pattern(fps)
+    if frames <= 16384 or cadence is None:
+        return 0, 0, 0
+    rate = (int(samples_per_frame) * Fraction(53_693_175, 3420 * 262)
+            * Fraction(len(cadence), sum(cadence)))
+    exact = rate * RF5C164_DIVIDER * RF5C164_FD_SCALE / RF5C164_CLOCK_HZ
+    low = int(exact)
+    modulus = 10000
+    step = round((exact - low) * modulus)
+    if step == modulus:
+        low += 1
+        step = 0
+    if not 0 < low < 0xFFFF:
+        raise ValueError(f"long-movie audio FD is out of range: {exact}")
+    return low, step, modulus
 
 
 def fixed_vblank_interval(fps):

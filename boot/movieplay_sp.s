@@ -25,6 +25,9 @@
 
 .ifdef PLAYER_SPECIALIZED
 	.include "player_constants.inc"
+.if PC_AUDIO_FD_MOD > 0
+.equ INCLUDE_AUDIO_FD_DITHER, 1
+.endif
 .if (PC_FEATURES & 0x0008)
 .equ INCLUDE_PATTERN_SUPPLY, 1
 .endif
@@ -86,6 +89,22 @@
 .endif
 .endm
 
+/* Brief indexed addressing sign-extends a .w index. Keep short specialized
+   streams byte-identical here; long/generic streams zero-extend all 16 bits. */
+.macro ROUTING_LOAD dest
+.ifdef PLAYER_SPECIALIZED
+.if PC_FRAMES <= 32768
+	move.b	(a0,d0.w), \dest
+.else
+	andi.l	#0x0000FFFF, d0
+	move.b	(a0,d0.l), \dest
+.endif
+.else
+	andi.l	#0x0000FFFF, d0
+	move.b	(a0,d0.l), \dest
+.endif
+.endm
+
 .macro PC_ADD_W runtime, constant, dest
 .ifdef PLAYER_SPECIALIZED
 	addi.w	#\constant, \dest
@@ -131,9 +150,9 @@
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_BYTES,         PC_ROUTING_BYTES
 .else
-.equ ROUTING_BYTES,         16384
+.equ ROUTING_BYTES,         65536
 .endif
-.equ ROUTING_MAX_FRAMES,    16384
+.equ ROUTING_MAX_FRAMES,    65535
 .equ ROUTING_SECTOR_BYTES,  2048
 .equ ROUTING_SECTOR_SHIFT_A,8
 .equ ROUTING_SECTOR_SHIFT_B,3
@@ -163,9 +182,18 @@
 .ifdef PLAYER_SPECIALIZED
 .equ ROUTING_COPY_LONGS,    PC_ROUTING_COPY_LONGS
 .else
-.equ ROUTING_COPY_LONGS,    4096
+.equ ROUTING_COPY_LONGS,    16384
 .endif
 .equ ROUTING_BANK_COPIES,   2
+/* Small streams retain their complete PRG staging. Long streams load bank 0
+   directly, then mirror it after HEADER EOF through one PRG scratch sector. */
+.ifdef PLAYER_SPECIALIZED
+.if PC_ROUTING_BYTES > 16384
+.equ ROUTING_DIRECT_WORD, 1
+.endif
+.else
+.equ ROUTING_DIRECT_WORD, 1
+.endif
 
 /* --- PRG-RAM layout --- */
 /* The BIOS loads this 5 KiB resident image at 0x6000. ISO directory discovery
@@ -266,6 +294,7 @@
 .endif
 .equ APPLY_END,   APPLY_BASE+APPLY_SIZE   /* 0x7F800 */
 .equ ROUTING_TMP, 0x0007B000        /* boot限定。最大frame0 staging直後の未使用APPLY 16KB */
+.equ ROUTING_TMP_BYTES, 16384
 .if RING_END != WORD_PENDING3
 .error "fourth pending Word sector must begin at the physical PrgBuf end"
 .endif
@@ -288,16 +317,16 @@
 .equ ROUTING,     SUB_BANK_1M+PC_ROUTING_OFFSET
 .equ O_STATUS,    SUB_BANK_1M+PC_STATUS_OFFSET
 .else
-.equ CTRL_SCR,    0x000D0000
-.equ PAD_SCR,     0x000D2000
-.equ WORD_BUF0,   0x000D5200
-.equ WORD_BUF1,   0x000D5200
-.equ WORD_BUF0_END,0x000DC000
-.equ WORD_BUF1_END,0x000DC000
+.equ CTRL_SCR,    0x000CD800
+.equ PAD_SCR,     0x000CF800
+.equ WORD_BUF0,   0x000C8C20
+.equ WORD_BUF1,   0x000C8C20
+.equ WORD_BUF0_END,0x000CD420
+.equ WORD_BUF1_END,0x000CD420
 .equ WORD_BUF0_CAP,(WORD_BUF0_END-WORD_BUF0)/32
 .equ WORD_BUF1_CAP,(WORD_BUF1_END-WORD_BUF1)/32
-.equ ROUTING,     0x000DC000
-.equ O_STATUS,    SUB_BANK_1M+0xAF00
+.equ ROUTING,     0x000D0000
+.equ O_STATUS,    SUB_BANK_1M+0xD700
 .endif
 .equ ADPCM_TABLE_BYTES, 8800
 .equ ADPCM_TABLE_SECTORS, 5
@@ -487,6 +516,9 @@ stream_start:
 .endif
 	move.b	#0xFF, (PCM_ONOFF).l		/* extension initializes the channel after HEADER load */
 	clr.w	pcm_running
+.ifdef INCLUDE_AUDIO_FD_DITHER
+	clr.w	audio_fd_phase
+.endif
 	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
 	clr.l	base_msf
 	move.l	header_lba, d0
@@ -517,12 +549,12 @@ stream_start:
 	moveq	#0, d1
 	move.w	4(a0), d1
 	beq	bad_header
-	cmpi.w	#ROUTING_MAX_FRAMES, d1		/* one-byte table: 16KB = 16384 frames */
+	cmpi.w	#ROUTING_MAX_FRAMES, d1		/* u16 count; last displayed frame <= 0xFFFE */
 	bhi	bad_header
 	move.w	d1, h_frames
-	addi.w	#ROUTING_SECTOR_BYTES-1, d1
-	lsr.w	#ROUTING_SECTOR_SHIFT_A, d1
-	lsr.w	#ROUTING_SECTOR_SHIFT_B, d1	/* exact routing_sec = ceil(frames/2048) */
+	addi.l	#ROUTING_SECTOR_BYTES-1, d1
+	lsr.l	#ROUTING_SECTOR_SHIFT_A, d1
+	lsr.l	#ROUTING_SECTOR_SHIFT_B, d1	/* exact ceil(frames/2048), including 65535 */
 	cmp.l	24(a0), d1			/* long compare also rejects a nonzero high half */
 	bne	bad_header
 	move.w	d1, h_routing_sec
@@ -762,7 +794,11 @@ header_accepted:
 	/* HEADER ends with the static routing table and frame-1 Prg prebuffer. */
 	moveq	#0, d0
 	PC_MOVE_W h_routing_sec, PC_ROUTING_SEC, d0
+.ifdef ROUTING_DIRECT_WORD
+	lea	ROUTING, a0			/* bank 0 owns the whole route before HEADER EOF */
+.else
 	lea	ROUTING_TMP, a0
+.endif
 	bsr	drain_lin_staged
 	/* prebuffer(PREBUF1=frame1満タン) → STAGE経由でリング下部(RING_BASE)へ */
 	move.l	#RING_BASE, ring_tail
@@ -799,13 +835,22 @@ pb_done:
 	jsr	(SP_EXTENSION_EXEC_BASE+PCM_BOOT_INIT_OFF).l
 .endif
 	move.w	#SYNC_LEAD, write_ptr
-	/* HEADER.DAT is exhausted, so a boot-only copy cannot delay its continuous
-	   drain. Validate every packed route and duplicate the sector-sized routing
-	   reservation into both physical 1M Word-RAM banks. This boot-only work runs
-	   from the HEADER-preloaded extension, leaving resident space for Q. */
+	/* HEADER.DAT is exhausted before validation/copying and bank toggles.
+	   Long routes use one PRG scratch sector, never a 64 KiB live allocation. */
+.ifdef ROUTING_DIRECT_WORD
+	lea	ROUTING, a0
+.else
+	lea	ROUTING_TMP, a0
+.endif
 	lea	ROUTING, a1
 	PC_MOVE_W h_frames, PC_FRAMES, d7
+.ifdef PLAYER_SPECIALIZED
 	move.w	#ROUTING_COPY_LONGS, d5
+.else
+	move.w	h_routing_sec, d5
+	lsl.w	#8, d5
+	lsl.w	#1, d5			/* actual route sectors * 512 longs */
+.endif
 	PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d6
 	lea	ring_head, a4
 	lea	drain_k, a5
@@ -1343,7 +1388,7 @@ p1_top:
 	/* --- コマ先頭: v7+ routingを展開し cur_fsec を計算 --- */
 	lea	ROUTING, a0
 	moveq	#0, d2
-	move.b	(a0,d0.w), d2			/* word prefix, total, n_ctrl */
+	ROUTING_LOAD d2			/* word prefix, total, n_ctrl */
 	moveq	#ROUTING_CTRL_MASK, d1
 	and.w	d2, d1
 	move.w	d2, d3
@@ -1681,7 +1726,7 @@ pump_poll_core:
 	   room.  ROUTING is valid in both physical Word-RAM banks. */
 	lea	ROUTING, a0
 	moveq	#0, d2
-	move.b	0(a0,d0.w), d2
+	ROUTING_LOAD d2
 	moveq	#ROUTING_CTRL_MASK, d1
 	and.w	d2, d1				/* packed n_ctrl + Word-4 escape */
 .ifdef INCLUDE_WORDBUF_RING
@@ -1920,7 +1965,7 @@ pf_pump:
 		   reuse patterns before Main has consumed the current bank. */
 	lea	ROUTING, a0
 	moveq	#0, d2
-	move.b	(a0,d0.w), d2
+	ROUTING_LOAD d2
 	moveq	#ROUTING_CTRL_MASK, d1
 	and.w	d2, d1				/* packed n_ctrl + Word-4 escape */
 .ifdef INCLUDE_WORDBUF_RING
@@ -2777,6 +2822,24 @@ write_wave_chunk:
 	move.w	d2, cur_lead
 	bra	wwc_sync_ready
 wwc_live_sync:
+.ifdef INCLUDE_AUDIO_FD_DITHER
+	/* Deterministic neighboring-FD alternation avoids cumulative rounding
+	   drift. It never changes source order or jumps the wave write pointer. */
+	move.w	#PC_AUDIO_FD_LOW, d1
+	move.w	audio_fd_phase, d4
+	addi.w	#PC_AUDIO_FD_STEP, d4
+	cmpi.w	#PC_AUDIO_FD_MOD, d4
+	blo.s	wwc_fd_ready
+	subi.w	#PC_AUDIO_FD_MOD, d4
+	addq.w	#1, d1
+wwc_fd_ready:
+	move.w	d4, audio_fd_phase
+	move.b	d1, (PCM_FDL).l
+	PCM_REG_WAIT d0
+	lsr.w	#8, d1
+	move.b	d1, (PCM_FDH).l
+	PCM_REG_WAIT d0
+.endif
 	moveq	#0, d5
 	move.b	(PCM_PLAY_H).l, d5
 	lsl.w	#8, d5
@@ -3038,6 +3101,10 @@ write_ptr:
 	.word	0
 f0_expand:
 	.word	0				/* !=0: frame0 cold pop is contiguous boot storage, not streaming ring */
+.ifdef INCLUDE_AUDIO_FD_DITHER
+audio_fd_phase:
+	.word	0
+.endif
 .ifdef INCLUDE_COLD_RUN_FASTPATH
 word_read_ptr0:
 	.long	0				/* next Wr0 run source; owned by Sub expansion */

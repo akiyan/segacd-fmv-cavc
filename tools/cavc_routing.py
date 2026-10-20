@@ -16,11 +16,13 @@ FEATURE_BOOT_VRAM_SIDECAR = 0x0080
 FEATURE_WORDBUF_RING = 0x0100
 FEATURE_SCROLL = 0x0200
 SECTOR_BYTES = 2048
-ROUTE_BYTES = 16 * 1024
+ROUTE_BYTES = 64 * 1024
 # Compatibility name for callers that describe the allocation as a table.
 TABLE_BYTES = ROUTE_BYTES
 ENTRY_BYTES = 1
-MAX_FRAMES = ROUTE_BYTES // ENTRY_BYTES
+# 0xFFFF remains the palette-switch sentinel and the player-only frame -1.
+# The header's existing u16 stores the count, not the last frame index.
+MAX_FRAMES = min(ROUTE_BYTES // ENTRY_BYTES, 0xFFFF)
 MAX_TABLE_SECTORS = ROUTE_BYTES // SECTOR_BYTES
 FRAME_SECTORS = 5
 CTRL_MASK = 0x07

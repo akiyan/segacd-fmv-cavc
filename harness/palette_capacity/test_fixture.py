@@ -14,7 +14,7 @@ from harness.palette_capacity.build_fixture import (
 )
 
 
-class PaletteCapacityTests(unittest.TestCase):
+class PackedFixtureTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temporary = tempfile.TemporaryDirectory()
@@ -36,6 +36,8 @@ class PaletteCapacityTests(unittest.TestCase):
             pack_fixture(directory, fixture_log(segments, fps), self.extension)
         return directory
 
+
+class PaletteCapacityTests(PackedFixtureTestCase):
     def test_existing_stream_and_palette_bytes_are_identical(self):
         with patch.multiple(av_config, PALTAB_MAX_SEG=16,
                             PALIDX_ENTRIES=16, PALIDX_BYTES=64):

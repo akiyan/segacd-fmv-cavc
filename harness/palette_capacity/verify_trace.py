@@ -8,6 +8,8 @@ import re
 import struct
 from pathlib import Path
 
+import numpy as np
+
 
 WRITE = re.compile(
     r"(VRAM|CRAM) 0x([0-9a-f]+) write -> 0x([0-9a-f]+) \(([0-9a-f]+)\)")
@@ -37,6 +39,9 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
     hud = []
     pending = None
     rows = []
+    counter_faults = []
+    expected_lines = np.arange(40 * 28) % 4
+    expected_patterns = np.full((40 * 28, 32), 0x22, np.uint8)
 
     def finish_frame():
         nonlocal pending
@@ -48,17 +53,14 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
         segment = frame_segments[frame]
         assert tuple(cram) == palettes[segment], ("CRAM", frame, segment)
         assert digits[4] == segment % 16, ("HUD segment", frame, digits[4])
-        assert digits[5:8] == [0, 0, 0], ("recovery counters", frame, digits[5:8])
-        for cell in range(40 * 28):
-            address = 0xE000 + ((cell // 40) * 64 + cell % 40) * 2
-            entry = struct.unpack_from(">H", vram, address)[0]
-            assert (entry >> 13) & 3 == cell % 4, ("palette line", frame, cell)
-            start = (entry & 0x7FF) * 32
-            pattern = bytes(vram[start:start + 32])
-            expected = (b"\x01\xff" + bytes([0x22]) * 30
-                        if frame == frames - 1 and cell == 0
-                        else bytes([0x22]) * 32)
-            assert pattern == expected, ("pattern", frame, cell, start)
+        if digits[5:8] != [0, 0, 0]:
+            counter_faults.append((frame, digits[5:8]))
+        entries = np.frombuffer(vram, ">u2", count=2048, offset=0xE000).reshape(
+            32, 64)[:28, :40].reshape(-1)
+        assert np.array_equal((entries >> 13) & 3, expected_lines), ("palette lines", frame)
+        patterns = np.frombuffer(vram, np.uint8).reshape(2048, 32)[entries & 0x7FF]
+        expected_patterns[0, :2] = (1, 255) if frame == frames - 1 else (0x22, 0x22)
+        assert np.array_equal(patterns, expected_patterns), ("patterns", frame)
         rows.append((len(rows) // frames, frame, segment, digits[4], *digits[5:8]))
         pending = None
 
@@ -104,6 +106,8 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
         writer.writerow(("loop", "frame", "palette_segment", "hud_palette_low4",
                          "sector_slip", "control_desync", "audio_resync"))
         writer.writerows(rows)
+    assert not counter_faults, ("recovery counters", counter_faults[0],
+                                "affected rows", len(counter_faults), "TSV", str(output))
     print(f"PASS: {len(rows)} displayed frames, {complete_loops} complete loops, "
           f"all {segments} palettes and every cell/pattern exact; DicBuf entry 511 exact")
     print(output)
