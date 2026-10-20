@@ -1,0 +1,37 @@
+schema_version = 5
+
+[source]
+path = "assets/shutoko-c2/XDFhv0YfZZE.mp4"
+fps = "30000/1001"
+# Exactly 65,535 output frames, ending partway through the source drive.
+duration = "2186.6845"
+sar = "1:1"
+
+[video]
+width = 320
+height = 168
+# Fill the tile-aligned picture with a small, explicitly requested enlargement.
+# The player supplies the surrounding black bars in its 320x224 aperture.
+fit = "crop"
+
+[output]
+directory = "tmpfs/ShutokoC2_H40_320x168_adpcm22/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+cold_cap = 210
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 224]
+source_par = [32, 35]
+tail_seconds = 5.0
+
+[youtube]
+playback_title = "Sega CD FMV — Tokyo Expressway C2 Drive, 65,535 Frames (320×168, 29.97 FPS)"
+source_label = "Tokyo Expressway C2 counterclockwise drive from Sangenjaya, akiyan dot com Channel; first 65,535 frames, slightly enlarged to fill 320x168; 1920x1080 source at 30 fps"
+source_label_ja = "首都高C2内回り・三軒茶屋スタート（akiyan dot com Channel）。先頭65,535フレームを使用し、320x168を埋めるよう少し拡大。元動画は1920x1080・30fps"
+source_url = "https://www.youtube.com/watch?v=XDFhv0YfZZE"
