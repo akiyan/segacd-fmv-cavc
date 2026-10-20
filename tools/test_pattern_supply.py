@@ -222,6 +222,37 @@ class PatternSupplyEncodingTests(unittest.TestCase):
         )
         self.assertEqual(cursor, 0)
 
+    def test_disabled_wordbuf_preserves_prg_and_dictionary_runs(self):
+        runs = ((7, 2, supply.SOURCE_PRG, -1),
+                (10, 3, supply.SOURCE_DIC, 256))
+        self.assertEqual(
+            supply.split_word_ring_runs(runs, capacity=0, cursor=0),
+            (runs, 0))
+
+    def test_disabled_wordbuf_accepts_empty_frame(self):
+        self.assertEqual(
+            supply.split_word_ring_runs((), capacity=0, cursor=0),
+            ((), 0))
+
+    def test_disabled_wordbuf_rejects_word_source(self):
+        with self.assertRaisesRegex(ValueError, 'positive ring capacity'):
+            supply.split_word_ring_runs(
+                ((7, 1, supply.SOURCE_WR, 0),), capacity=0, cursor=0)
+
+    def test_disabled_wordbuf_rejects_nonzero_cursor(self):
+        for cursor in (-1, 1):
+            with self.subTest(cursor=cursor), self.assertRaises(ValueError):
+                supply.split_word_ring_runs((), capacity=0, cursor=cursor)
+
+    def test_disabled_wordbuf_still_rejects_invalid_run_count(self):
+        with self.assertRaisesRegex(ValueError, 'invalid source run count'):
+            supply.split_word_ring_runs(
+                ((7, 0, supply.SOURCE_PRG, -1),), capacity=0, cursor=0)
+
+    def test_negative_wordbuf_capacity_is_invalid(self):
+        with self.assertRaises(ValueError):
+            supply.split_word_ring_runs((), capacity=-1, cursor=0)
+
 
 class PatternSupplyPlannerTests(unittest.TestCase):
     def test_dicbuf_is_selected_first_and_hits_persist(self):

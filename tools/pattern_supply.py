@@ -434,13 +434,14 @@ def split_word_ring_runs(
     A VDP DMA source is linear, so one WordBuf descriptor cannot cross the
     generated parity-specific ring end. Splitting preserves destination order
     and exposes the extra control/O_LOADS record to every byte/work model
-    before the stream is written.
+    before the stream is written. A disabled, zero-capacity bank accepts only
+    non-WordBuf runs and keeps its cursor at zero.
     """
     capacity = int(capacity)
     cursor = int(cursor)
-    if capacity <= 0:
-        raise ValueError("WordBuf ring capacity must be positive")
-    if not 0 <= cursor < capacity:
+    if capacity < 0:
+        raise ValueError("WordBuf ring capacity must be nonnegative")
+    if not (cursor == 0 if capacity == 0 else 0 <= cursor < capacity):
         raise ValueError(
             f"WordBuf ring cursor {cursor} is outside capacity {capacity}")
     split: list[tuple[int, int, int, int]] = []
@@ -454,6 +455,8 @@ def split_word_ring_runs(
         if source != SOURCE_WR:
             split.append((slot, remaining, source, dic_index))
             continue
+        if capacity == 0:
+            raise ValueError("WordBuf run requires positive ring capacity")
         while remaining:
             count = min(remaining, capacity - cursor)
             split.append((slot, count, source, 0))
