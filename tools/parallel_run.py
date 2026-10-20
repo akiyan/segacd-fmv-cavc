@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Run independent profile pipelines concurrently under shared resource tokens.
 
-The local pipeline stops at the playback HUD gate. Public timeline/Gist and
-upload stages remain owned by the interactive ``run`` workflow because they
-require visual inspection and publication authorization.
+The local pipeline stops at the playback HUD gate. Timeline review and uploads
+are separate requested outputs. Gist publication is optional and requires an
+explicit request for that destination.
 """
 
 from __future__ import annotations

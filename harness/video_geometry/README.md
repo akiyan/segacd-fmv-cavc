@@ -1,6 +1,6 @@
 # Source geometry harness
 
-This is the single source of truth for converting square-pixel source video
+`tools/video_geometry.py` is the single source of truth for converting square-pixel source video
 to the Mega Drive H40 raster.  H40 dots are not square, so scaling a source
 directly to `320x224` stretches it.
 
@@ -41,3 +41,6 @@ filter. It runs before both the denoised master path and the raw Source-panel
 path; its public settings are documented in `CONFIG.md`.
 The same TOML video section can select the resize filter and disable the
 master-only denoise/blur pass for already-clean sources such as Bad Apple.
+
+The local regression suite is `tools/test_video_geometry.py`; run it with
+`tools/python.sh -m unittest tools.test_video_geometry`.

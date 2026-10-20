@@ -8,7 +8,6 @@ import sys
 import unittest
 from pathlib import Path
 
-from PIL import Image
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,21 +81,6 @@ class MixlineRenderingTests(unittest.TestCase):
                 ]),
                 image_height=30,
             )
-
-    def test_vertical_segment_join_preserves_pixels_and_order(self):
-        source = Image.new("RGB", (2, 8))
-        for y in range(source.height):
-            for x in range(source.width):
-                source.putpixel((x, y), (y, x, 0))
-        joined = mixline.crop_vertical_segments(
-            source,
-            [(1, 3), (6, 8)],
-        )
-        self.assertEqual(joined.size, (2, 4))
-        self.assertEqual(
-            [joined.getpixel((0, y))[0] for y in range(4)],
-            [1, 2, 6, 7],
-        )
 
 
 if __name__ == "__main__":

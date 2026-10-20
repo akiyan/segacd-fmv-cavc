@@ -17,11 +17,9 @@ The comparison reports:
 Run it with the project Python environment and a new output directory:
 
 ```sh
-out=$(mktemp -d /tmp/sonic-dedither.XXXXXX)
-rmdir "$out"
 tools/python.sh harness/sonic_dedither/compare.py \
   --source assets/sonic-jam-op/original-sonic-jam-op.avi \
-  --output "$out"
+  --output /path/to/new-comparison-directory
 ```
 
 The default frames are `0x012B` and `0x0232`. The harness writes UTF-8 TSV

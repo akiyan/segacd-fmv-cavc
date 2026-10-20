@@ -14,7 +14,7 @@ import cavc_routing
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--frames", type=int, default=cavc_routing.MAX_FRAMES)
+    parser.add_argument("--frames", type=int, default=16384)
     parser.add_argument("--fps", type=int, choices=(15, 24, 30), default=24)
     parser.add_argument("--profile", type=Path, required=True)
     parser.add_argument("--pattern", choices=("flat", "bars"), default="flat")

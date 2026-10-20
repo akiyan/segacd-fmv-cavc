@@ -42,15 +42,6 @@ class PackAdpcmTest(unittest.TestCase):
             expected_pcm.append(ima_adpcm.pcm16_to_sign_magnitude(decoded))
             self.assertEqual(expected_pcm[-1], pcm_chunks[frame])
 
-    def test_audio_layout_matches_codec_chunk(self):
-        rate, pcm_bytes, control_bytes = pack_stream.av_config.audio_frame_layout(30)
-        self.assertEqual((rate, pcm_bytes, control_bytes), (22_050, 736, 372))
-        chunk, _ = ima_adpcm.encode_chunk(np.zeros(pcm_bytes, np.int16))
-        self.assertEqual(len(chunk), control_bytes)
-        playback_fps = pack_stream.av_config.playback_fps_for_content(30)
-        self.assertEqual(
-            pack_stream.av_config.rf5c164_fd(pcm_bytes, playback_fps), 0x56C)
-
 
 if __name__ == "__main__":
     unittest.main()

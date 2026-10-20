@@ -23,7 +23,7 @@ else:
 for key in list(os.environ):
     if key.startswith('CBRSIM_'):del os.environ[key]
 sys.path.insert(0,str(source));sys.argv=['numeric-constants']
-os.environ['CBRSIM_OUT']='/dev/shm/segacd-fmv-cavc/numeric-probe'
+os.environ['CBRSIM_OUT']=str(output.parent/'numeric-probe')
 import sim
 names=['_MD_LUM','_MD_CB','_MD_CR','_F3_DY_LUT','_F3_DC_LUT']
 arrays={name:getattr(sim,name) for name in names}

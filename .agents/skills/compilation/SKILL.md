@@ -1,155 +1,44 @@
 ---
 name: compilation
-description: Prepare and upload an existing, verified record lossless playback capture to YouTube. Bake the validated H40 pixel aspect into a high-resolution square-pixel nearest-neighbor raster, state the encode's CRAM palette switch count, add project metadata, verify the result, and upload without recording, trimming, or chapters. Use for "実機録画をアップ", "playback recording upload", or "/compilation" after record has produced the latest capture.
+description: "Prepare and upload an existing lossless playback recording when the user requests playback publication or invokes /compilation. Use after recording; this skill does not request a new encode or capture."
 ---
 
-# compilation — 録画済み再生映像をYouTubeへ
+# Playback publication
 
-`record` が作成・検証した同期録画を、YouTube向けに整形して公開する。
-エミュレータ録画を物理実機録画とは呼ばない。
+Select the requested lossless recording and its identity/evidence. An emulator
+capture is not a physical-hardware capture. If evidence is missing, determine
+whether it can be recovered from existing logs/recording before starting work.
+Read `YOUTUBE.md` for all metadata and version rules; do not duplicate them here.
 
-## 役割境界
+For DEBUG publication, use the matching complete-loop PASS gate described in
+`record/references/qualification.md`. HUD-free publication uses the `release`
+evidence chain. Never transplant a gate or claim unperformed verification.
+Existing user authorization to upload remains sufficient after checks; no
+additional approval of gate statistics is required.
 
-このスキルが担当するもの:
+Transcode the whole startup-inclusive input:
 
-- 最新ビルドを収録した検証済みロスレスMKVの選択
-- 表示モードに対応するPARのsquare-pixel高解像度化、nearest拡大、配信用エンコード
-- CRAM切り替え回数を含むYouTubeメタデータ
-- 最終ファイルの検証とアップロード
+```sh
+tools/python.sh tools/tmpfs_workspace.py run-file \
+  --output STEM_emu.mp4 --kind compilation-mp4 --required-gb 8 \
+  --input "$LOSSLESS" -- \
+  ffmpeg -i "$LOSSLESS" \
+    -vf "scale=2048:1568:flags=neighbor,setsar=1" \
+    -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
+    -c:a aac -b:a 192k -movflags +faststart '{output}'
+```
 
-このスキルでは行わないもの:
+Use configured runtime roots and the printed result path. H40's 320x224 PAR
+32:35 becomes 2048x1568 SAR 1:1, DAR 64:49. Horizontal replication varies
+between six and seven pixels; nearest preserves source samples, but H.264 and
+YouTube delivery are not lossless. Do not add trimming, fps conversion or
+chapters unless specifically requested.
 
-- discのビルド、RetroArch起動、START入力、録画、同期検証
-- DEBUGビルドの要求やHUD OCRの実行（検証済みgate JSONを入力として使う）
-- `-ss` / `-t`による頭出しや映画部分だけの切り出し
-- YouTubeチャプターの生成、説明文へのタイムスタンプリンクの追加
-
-録画が無い、またはコード・データより古い場合は、ここへ録画手順を複製せず
-`record` を先に実行してから戻る。アップロードは常に最新成果物を使う。
-
-## 入力
-
-- `record` が作成したネイティブ解像度のロスレスMKV
-- 同じMKVを直接OCRして作られた、gateが`PASS`でalertが`NONE`または
-  `WARNING`のdescriptive schema-16 HUD result JSON
-  （`cd_wait_count`と`adpcm_decode_units`はdiagnostic）
-- 同gateの`ocr_start_anchor`。`method=frame_minus_one`、
-  `frame_minus_one_raw16=65535`、`frame0_time_first_s`が必須。これは録画が
-  起動画面から映画先頭まで欠落なく揃っている証跡であり、頭出しや
-  タイムスタンプの生成には使わない
-- 同録画のRetroArchログ、音声ストリーム情報、タイミング確認結果
-- 対応するsim出力ディレクトリ（CRAM切り替え回数用）
-- `tools/av_version.txt` の現行ビルド版
-
-HUDを描かないrelease buildの録画は例外で、gate JSONを自分では持てない。その録画は
-`release` skillが別の証跡で資格付けする: packed streamがgate `PASS`済みのDEBUG録画と
-byte同一であること、LOGVDP DMA traceの比較、そして目視確認。`release`が提示した
-その連鎖を入力条件として受け取り、DEBUGのgate JSONを手で流用しない。以下の
-DEBUG HUD条件は、それ以外の通常録画に適用する。
-
-アップロードへ進む録画ではDEBUG HUDとその全編gateが入力条件になる。gate JSONの
-`recording`、`recording_size`、`recording_mtime_ns`が入力MKVと一致しない、全映画
-フレームを含まない、またはgateが`FAIL`なら変換・アップロード前に停止して
-`record`へ戻る。Gateが`PASS`でも、そのJSONの5つのdescriptive gate maximum、
-diagnostic `cd_wait_count` maximum、`cd_wait_count`と`adpcm_decode_units`の
-minimum/mean/median/maximumを提示した後のユーザーの明示承認が
-無ければ停止する。HUD時刻を頭出しや説明文の時刻表記には使わない。
-
-## YouTube用square-pixel raster
-
-| mode | 入力raster / PAR | 出力raster | nearest倍率 | 出力SAR |
-|---|---:|---:|---:|---:|
-| H40 | 320x224 / 32:35 | 2048x1568 | 横6.4倍・縦7倍 | 1:1 |
-
-H40の320x224 PAR 32:35は64:49の表示領域を表す。YouTubeへ非正方形画素の拡大を
-任せず、2048x1568へnearestで変換してPARを画素数へ焼き込み、`setsar=1`で渡す。
-実用サイズでは完全な整数比にできないため、色を混ぜないnearestで各入力列を
-6列または7列へ振り分ける。これは正確な整数倍拡大ではない。
-
-## 手順
-
-1. **入力を確認する**
-
-   `ffprobe`で映像・音声、raster、約59.94fps、durationを確認する。対応する
-   音声ストリーム情報とRetroArchログも確認し、壊れた録画や未検証の録画を使わない。
-   `record`の既定である固定Replay高速録画は、要求されたpacket/decoded-frame数、
-   正常終了、非空の音声ストリーム、代表フレーム確認を通ったFFV1/FLACなら
-   正式な入力として使う。加えて対応するHUD gate JSONが入力MKVのpath・size・mtimeと
-   一致し、gateが`PASS`でalertが`NONE`または`WARNING`であることと、その結果に
-   対するユーザーの明示承認を確認する。
-   一致または承認が無ければここで停止する。
-   音声波形のしきい値判定は入力条件にしない。
-
-2. **起動画面を残したまま配信用ファイルを作る**
-
-   ```sh
-   tools/python.sh tools/tmpfs_workspace.py run-file \
-     --output STEM_emu.mp4 --kind compilation-mp4 --required-gb 8 \
-     --input "$LOSSLESS" -- \
-     ffmpeg -i "$LOSSLESS" \
-       -vf "scale=2048:1568:flags=neighbor,setsar=1" \
-       -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
-       -c:a aac -b:a 192k -movflags +faststart '{output}'
-   ```
-
-   `INPUT_lossless.mkv`と`STEM`は実値へ置き換える。`{output}` はtmpfs wrapperが
-   実体パスへ置き換え、最後にそのdirect pathを表示する。以降の検証とuploadは
-   表示されたpathを使う。repository内にmedia pathは作らない。nearest拡大そのものは
-   新しい色を作らず、入力の色標本をそのまま複製する。ただしYouTubeは必ず
-   再エンコードするため、最終配信までロスレスとは呼ばない。CRF 10の高品質な
-   入力を渡し、YouTube側の高解像度配信を使う。`-ss`、`-t`、fps filter、`-r`は
-   追加しない。録画開始からのMega-CD起動画面、CD player、START遷移、映画、
-   末尾をそのまま残す。
-
-3. **CRAM切り替え回数を求める**
-
-   ```sh
-   tools/python.sh tools/cram_switches.py SIM_OUT
-   ```
-
-   `cram_segments=<N> cram_switches=<N-1>`を出力する。回数はencodeの性質なので、
-   同じstreamのanalysis動画と同じ値になる。説明文のspec節へ英日とも記載する。
-   YouTubeチャプターは作らず、説明文にタイムスタンプのリンク行も置かない。
-
-4. **最終ファイルを確認する**
-
-   - 冒頭にMega-CD起動画面が残っている
-   - 映像と音声があり、durationが入力とほぼ同じ
-   - fpsが入力から変わっていない
-   - rasterが2048x1568、SARが1:1、DARが64:49
-   - 映画開始後の絵が縦長・横長になっていない
-
-   `tools/extract_verification_frames.sh`で完成MP4から起動・本編・末尾を名前付き抽出する。
-   出力先には`$(dirname "$OUTPUT")/compilation_check`をbaseとして渡し、毎回新しく作られる
-   source固有directoryの`manifest.tsv`とmontageだけを確認する。共有directoryの
-   `*.png`をmontageせず、以前の録画・変換から残ったloose stillを混ぜない。
-
-5. **YouTubeへアップロードする**
-
-   タイトル、英語→日本語の説明、CRAM切り替え回数、公開範囲、カテゴリ、再アップロード
-   の扱いは `YOUTUBE.md` を唯一の規約として使う。ここへ
-   同じ規約を複製しない。アップロードはunlisted、category 20とし、説明文へ
-   `https://github.com/akiyan/segacd-fmv-cavc` を含める。URLは言語に依存しない
-   ため英語側にのみ置き、日本語側へは繰り返さない。
-   Public codec名は両言語とも **Sega CD Constraint-Aware Video Codec** とし、
-   binary magicをcodec名やformat名として使わない。
-   送信する説明文はUTF-8 text fileへ保存し、YouTubeの上限である5,000文字以下を
-   事前にPythonの文字数で確認する。運用目標は4,800文字以下。超えた場合は説明部分を
-   短くし、CRAM切り替え回数、必須spec/layout/technique節、project linkを
-   削ってはならない。上限超過のままuploadを試してAPIのrejectを待たない。
-
-   ```sh
-   PY="$HOME/.config/youtube/venv/bin/python"
-   tools/python.sh -c 'import os; from pathlib import Path; p=Path(os.environ["PLAYBACK_DESCRIPTION"]); n=len(p.read_text(encoding="utf-8")); print(f"description_chars={n}"); assert n <= 5000'
-   "$PY" "$HOME/.claude/skills/youtube/youtube.py" upload \
-     /dev/shm/segacd-fmv-cavc/artifacts/COMPILATION_ENTRY/STEM_emu.mp4 \
-     --title "$TITLE" --desc "$DESCRIPTION" \
-     --privacy unlisted --category 20
-   ```
-
-   同じ成果物を再アップロードするときだけ、`AGENTS.md`に従って`--force`を足す。
-
-6. **報告する**
-
-   最新のYouTube URL、最終MP4のパス、duration、raster/SAR/DAR、音声の有無、
-   起動画面を保持したことを明示する。
+Check output raster/SAR, audio, cadence and duration against input and inspect
+fresh boot/content/tail stills. Read palette-switch count with
+`tools/python.sh tools/cram_switches.py SIM_OUT`. Prepare metadata from
+YOUTUBE.md; use the available configured uploader, not a workstation-specific
+credential path. Report missing upload capability without pretending success.
+Upload the high-quality artifact before its lease expires. Return the video
+link, local path, duration and any material limitation. Do not retitle or edit
+other uploads unless that change is within the user's request.

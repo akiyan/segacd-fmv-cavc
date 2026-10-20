@@ -200,16 +200,47 @@ defines the values-only hardware/emulator DEBUG HUD.
   runtime.
 
 Completed sim artifacts are reusable only when source bytes, effective
-settings, and the output-affecting encoder fingerprint match. Sim work and
+settings, and the public encoder version match. Sim work and
 all generated media, including native lossless emulator captures, use direct
-managed tmpfs paths. Per-frame codec timeline and playback HUD TSVs plus their
+managed workspace paths. Per-frame codec timeline and playback HUD TSVs plus their
 gate/layout/Gist metadata remain under `logs/`, with encoder and player
 versions in every TSV filename.
 
 Heavy stages share CPU, GPU, and emulator tokens. Different profile stems may
 overlap, while the same stem is rejected immediately. Xvfb displays, RetroArch
-system directories, build intermediates, and tmpfs leases are isolated per
+system directories, build intermediates, and workspace leases are isolated per
 run.
+
+## Runtime storage
+
+Choose artifact and temporary-array locations for each run. Ordinary disk
+storage is supported; `/dev/shm` is optional. Artifact storage does not require
+`/tmp`.
+
+```sh
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/sim.py profiles/PROFILE.toml
+```
+
+The default workspace is this checkout's `tmp/workspace`. Scratch defaults to
+`TMPDIR` when set, otherwise `WORKSPACE/scratch`. `--array-storage memory`
+(the default) keeps numeric caches in RAM; `disk` uses mapped files in scratch
+without changing quality settings. A RAM-backed scratch filesystem still uses
+physical RAM. Disk mode trades I/O and disk capacity for reclaimable array pages;
+pattern histories and decision logs still occupy memory.
+
+For `make`, recordings or another shell command, use the same options with
+`tools/runtime.sh OPTIONS -- COMMAND`. Children inherit the paths. Managed
+artifact leases prevent live files from being evicted. Persistent TSV/JSON
+reports stay in `logs/`; build staging and ISO/cue files stay in `tmp/PROFILE`
+and `out/`. See [CONFIG.md](CONFIG.md) for environment aliases and shared locks.
+
+The shell/Python tools target POSIX systems. Emulator and disc-burning harnesses
+have additional Linux dependencies. Storage portability does not imply native
+Windows or hardware qualification. Run the small path/lease/cache check with
+`tools/python.sh harness/runtime_storage/smoke.py`; the harness README also
+provides a complete 16,384-frame memory comparison.
 
 ## Build targets
 
@@ -346,7 +377,10 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 
 Independent invocations use the same cross-process locks, so separate sessions
 need no shared job list. Use `--sequential` for an A/B timing or determinism
-baseline. Public timeline, Gist, and upload stages remain interactive.
+baseline. Timeline rendering and publication are separate requested stages.
+Gist publication is optional and requires an explicit request for that
+destination, including when uploading a video to YouTube. Local timelines and
+YouTube descriptions work without Gist credentials or a public timeline URL.
 
 ## Disc images for distribution
 
@@ -636,15 +670,44 @@ timed-work valueとgraph maximumから除外します。
 - `boot/movieplay_sp.s`: Sub-CPUのdisc、PrgBuf、Word-RAM、ADPCM、handoff runtime。
 - `boot/movieplay_ip.s`: Main-CPUのVRAM、CRAM、name table、DMA、DEBUG HUD runtime。
 
-completed sim artifactはsource byte、effective setting、outputに影響するencoder fingerprintが
+completed sim artifactはsource byte、effective setting、公開encoder versionが
 一致するときだけ再利用します。sim workとnative lossless emulator captureを含む全生成mediaは
-managed tmpfs実体pathを直接使います。Frame別codec timeline TSVとplayback HUD TSV、
+managed workspace実体pathを直接使います。Frame別codec timeline TSVとplayback HUD TSV、
 およびgate/layout/Gist metadataは`logs/`へ保持し、TSV filenameにはencoder/player
 versionを入れます。
 
 heavy stageはCPU、GPU、emulator tokenを共有します。異なるprofile stemは重ねられますが、
 同じstemは即時拒否します。Xvfb display、RetroArch system directory、
-build intermediate、tmpfs leaseはrunごとに分離します。
+build intermediate、workspace leaseはrunごとに分離します。
+
+## 実行時の保存先
+
+実行ごとに成果物と一時配列の保存先を選べます。通常のディスクを使用でき、
+`/dev/shm` は任意です。`/tmp` を成果物の保存先として使う必要もありません。
+
+```sh
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/sim.py profiles/PROFILE.toml
+```
+
+workspaceの既定値は、このcheckoutの `tmp/workspace` です。scratchは `TMPDIR` が
+設定されていればその場所、なければ `WORKSPACE/scratch` です。
+`--array-storage memory`（既定）は数値cacheをRAMに置き、`disk` は画質設定を変えずに
+scratchのfileへmapします。RAM上のfilesystemをscratchに選ぶと物理RAMを使います。
+disk modeはI/Oとディスク容量を使う代わりに配列のpageを回収可能にします。
+pattern履歴とdecision logは引き続きメモリを使います。
+
+`make`、録画、その他のshell commandでは同じoptionを
+`tools/runtime.sh OPTIONS -- COMMAND` に渡します。子processにも保存先が伝わります。
+managed artifactのleaseは使用中のfileを自動削除から保護します。永続TSV/JSON reportは
+`logs/`、build stagingとISO/cueは `tmp/PROFILE` と `out/` に置きます。
+環境変数aliasと共有lockは [CONFIG.md](CONFIG.md) を参照してください。
+
+shell/Python toolの対象はPOSIX環境です。emulatorとdisc書き込みのharnessには追加の
+Linux依存があります。保存先の移植性はnative Windowsや実機での動作保証を意味しません。
+小規模なpath/lease/cache確認は `tools/python.sh harness/runtime_storage/smoke.py`
+で実行できます。同harnessのREADMEに16,384フレーム全工程のメモリ比較手順もあります。
 
 ## Build target
 
@@ -778,7 +841,10 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 
 独立したinvocationも同じprocess間lockを使うため、別session間でjob listを共有する必要は
 ありません。A/B timingまたはdeterminism baselineには `--sequential` を使います。
-public timeline、Gist、upload stageは対話的に実行します。
+タイムラインの描画と公開は、それぞれ依頼に応じて行います。
+Gistへの公開は任意で、YouTubeへ動画をアップロードする場合も、公開先として
+Gistを明示的に依頼されたときだけ行います。ローカルのタイムラインとYouTubeの
+説明文は、Gist認証情報や公開タイムラインURLがなくても利用できます。
 
 ## 配布用disc image
 

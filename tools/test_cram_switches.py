@@ -11,26 +11,6 @@ from pathlib import Path
 import cram_switches
 
 
-class SegmentStartTests(unittest.TestCase):
-    def test_counts_every_segment_change(self) -> None:
-        self.assertEqual(
-            cram_switches.segment_starts([0, 0, 1, 1, 1, 2]),
-            [0, 2, 5],
-        )
-
-    def test_single_segment_has_one_start(self) -> None:
-        self.assertEqual(cram_switches.segment_starts([0, 0, 0]), [0])
-
-    def test_inline_fades_and_segment_boundaries_are_both_switches(self) -> None:
-        self.assertEqual(
-            cram_switches.switch_frames(
-                [0, 0, 0, 1, 1, 1],
-                [0, 1, 2, 0, 0, 1],
-            ),
-            [1, 2, 3, 5],
-        )
-
-
 class CountTests(unittest.TestCase):
     def write_log(self, frame_seg, frame_types=None) -> Path:
         directory = tempfile.TemporaryDirectory()

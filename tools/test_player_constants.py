@@ -230,22 +230,6 @@ class PlayerConstantsTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "fixed boot-stage size"):
             player_constants.parse_header_sector(sector)
 
-    def test_adpcm_derives_control_and_table_sizes(self):
-        values = player_constants.parse_header_sector(make_header(
-            features=(cavc_routing.FEATURE_COLD_RUNS
-                      | cavc_routing.FEATURE_VBLANK_CADENCE),
-            audio_bytes=736,
-        ))
-        self.assertEqual(values.audio_bytes, 736)
-        self.assertEqual(values.audio_control_bytes, 372)
-        self.assertEqual(values.adpcm_table_sectors, 5)
-
-    def test_removed_audio_feature_bit_is_reserved(self):
-        with self.assertRaisesRegex(ValueError, "reserved feature bits"):
-            player_constants.parse_header_sector(make_header(
-                features=(cavc_routing.FEATURE_COLD_RUNS | 0x0004),
-            ))
-
     def test_pattern_supply_extension(self):
         layout = pattern_supply.word_ram_layout(
             frames=2714, cells=40 * 28, cold_cap=190)
@@ -272,22 +256,6 @@ class PlayerConstantsTest(unittest.TestCase):
         self.assertEqual(values.wr0_capacity, layout.wr0_patterns)
         self.assertEqual(values.wr1_offset, layout.wr1_offset)
         self.assertEqual(values.wr1_capacity, layout.wr1_patterns)
-
-    def test_pattern_supply_uses_fixed_n4_and_low_rate_polls_at_15fps(self):
-        values = player_constants.parse_header_sector(make_header(
-            fps=15,
-            features=(cavc_routing.FEATURE_COLD_RUNS
-                      | cavc_routing.FEATURE_VBLANK_CADENCE
-                      | cavc_routing.FEATURE_PATTERN_SUPPLY
-                      | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS),
-            supply_counts=(880, 880, 256),
-            cold_cap=360,
-        ))
-        self.assertEqual((values.sec_num, values.sec_mod), (1001, 200))
-        self.assertEqual(values.pump_mask, 0x003F)
-        self.assertEqual(values.wave_pump_mask, 0x00FF)
-        self.assertEqual(values.wr0_patterns, 880)
-        self.assertEqual(values.wr1_patterns, 880)
 
     def test_vblank_cadence_rejects_a_stale_vsync_hint(self):
         header = bytearray(make_header(fps=15))

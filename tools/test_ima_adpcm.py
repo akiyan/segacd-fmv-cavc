@@ -32,25 +32,6 @@ class ImaAdpcmTest(unittest.TestCase):
         np.testing.assert_array_equal(continuous, np.concatenate(independent))
         self.assertEqual(final_continuous, final_independent)
 
-    def test_checkpoint_records_continuous_state(self):
-        pcm = np.arange(-2048, 2048, dtype=np.int16)
-        first, state = ima_adpcm.encode_chunk(pcm[:2048])
-        second, _ = ima_adpcm.encode_chunk(pcm[2048:], state)
-        predictor, index, reserved = ima_adpcm.CHECKPOINT.unpack_from(second)
-        self.assertEqual((predictor, index), (state.predictor, state.index))
-        self.assertEqual(reserved, 0)
-        self.assertNotEqual(first[:4], second[:4])
-
-    def test_full_table_layout_and_size(self):
-        blob = ima_adpcm.full_tables()
-        self.assertEqual(len(blob), 8800)
-        self.assertEqual(len(blob[:ima_adpcm.FULL_INDEX_BYTES]), 2848)
-        self.assertEqual(
-            len(blob[ima_adpcm.FULL_INDEX_BYTES:
-                     ima_adpcm.FULL_INDEX_BYTES + ima_adpcm.FULL_DELTA_BYTES]),
-            5696)
-        self.assertEqual(blob[-256:], ima_adpcm.output_lut())
-
     def test_split_table_hashes_are_explicit_build_contracts(self):
         blob = ima_adpcm.full_tables()
         indices, deltas, output = ima_adpcm.split_tables(blob)

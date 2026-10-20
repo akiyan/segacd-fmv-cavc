@@ -26,6 +26,40 @@ The “Where” column uses these short names:
 - **sp**: `boot/movieplay_sp.s`, Sub CPU
 - **ip**: `boot/movieplay_ip.s`, Main CPU
 
+## Runtime storage
+
+Storage is an execution choice, independent of TOML quality settings and cache
+identity. Pass options **before** the Python script, or before `-- COMMAND` in
+`tools/runtime.sh`:
+
+| Option | Environment | Default | Purpose |
+|---|---|---|---|
+| `--workspace-root DIR` | `CAVC_WORKSPACE_ROOT` | checkout `tmp/workspace` | Managed sim/media artifacts and resource locks. |
+| `--scratch-root DIR` | `CAVC_SCRATCH_ROOT` | `TMPDIR`, otherwise `WORKSPACE/scratch` | Temporary files and disk-backed numeric arrays. |
+| `--array-storage memory\|disk` | `CAVC_ARRAY_STORAGE` | `memory` | RAM arrays or file-backed caches with identical numeric values. |
+| — | `CAVC_WORKSPACE_MIN_FREE_GB` | 4 | Free-space margin used when reserving managed artifacts. |
+
+CLI values override their corresponding environment values. The legacy
+`SEGACD_TMPFS_ROOT` and `SEGACD_TMPFS_MIN_FREE_GB` remain lower-priority aliases;
+`SEGACD_TMPFS_ALLOW_NON_TMPFS` is unnecessary because ordinary filesystems are
+accepted. The wrapper exports TMPDIR/TMP/TEMP for child programs. Explicit
+relative roots resolve from the caller's working directory. Existing build
+staging and disc output paths remain repository-relative.
+
+Use a real disk for scratch to reduce physical RAM demand in disk mode. Array
+pages can be reclaimed after flush; pattern histories, Python objects and
+GPU allocations still require memory. Workspace eviction removes only inactive
+managed entries under `artifacts/`, never arbitrary files in the selected root
+or a live leased entry. Select a project-owned workspace, not a shared scratch
+root used by unrelated tools. Scratch arrays are removed on normal exit;
+a forcibly killed job may leave `cavc-arrays-*` files for manual cleanup.
+
+When jobs use different workspaces but share a GPU/CPU/emulator pool, give them
+the same explicit `SEGACD_RESOURCE_ROOT`; locks in separate roots cannot
+coordinate. Resource coordination uses POSIX file locks. Linux-specific quota
+and memory probes are optional; the storage harness records unavailable fields
+as empty. See `harness/runtime_storage/README.md` for measurement semantics.
+
 ## Workstation concurrency
 
 Concurrency controls change workstation scheduling, not encoded decisions.
@@ -38,13 +72,13 @@ exclusive lock per media `<stem>`.
 | `CBRSIM_WORKERS` | available CPU tokens | Worker count and exact CPU-token request for one heavy stage. |
 | `SEGACD_GPU_TOKENS` | 1 | Concurrent GPU palette/quantization or NVENC stages. |
 | `SEGACD_EMU_TOKENS` | 2 | Concurrent `run_headless.sh` emulator instances. |
-| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-cavc/resources` | Lock-file root. |
+| `SEGACD_RESOURCE_ROOT` | `WORKSPACE/resources` | Lock-file root. |
 
 Sim acquires CPU/GPU tokens only for Extract, Palette, and Quantize.
 `render_analysis.py` and record-preview transcoding use the same token pool.
 Xvfb allocates a free display dynamically and each emulator gets a private
 RetroArch system directory. `tools/parallel_run.py` divides CPU workers across
-profiles and retains the sim tmpfs lease between stages. A second process for
+profiles and retains the sim workspace lease between stages. A second process for
 the same stem fails immediately; it never shares managed paths or output files.
 
 ## Pattern supplies and quality budget
@@ -162,7 +196,7 @@ display slot, while layout and reservation envelopes use the largest cap. No
 cap may exceed the 1,743-tile resident pool.
 
 The checked-in profile records the source's qualified playback ceiling.
-Temporary comparison profiles use the same key, so artifact identity, tmpfs
+Temporary comparison profiles use the same key, so artifact identity, workspace
 handoff, sim, pack, and analysis all receive one value. Lowering a qualified
 profile is conservative; raising it requires a new full-length playback
 qualification with the complete encoder, stream, Sub-CPU, Main-CPU, audio, and
@@ -498,7 +532,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[source.preprocess]` | optional `auto_range` | Whole-movie automatic black/white dynamic-range expansion after extraction. |
 | `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
-| `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct tmpfs path. |
+| `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct workspace path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
@@ -611,6 +645,37 @@ buildがplayer assembly constantとの一致を確認します。導出値を別
 - **sp**: `boot/movieplay_sp.s`、Sub CPU
 - **ip**: `boot/movieplay_ip.s`、Main CPU
 
+## 実行時の保存先
+
+保存先は実行時の選択で、TOMLの画質設定やcache identityとは独立です。
+Python scriptの**前**、または `tools/runtime.sh` の `-- COMMAND` の前に指定します。
+
+| Option | 環境変数 | 既定値 | 用途 |
+|---|---|---|---|
+| `--workspace-root DIR` | `CAVC_WORKSPACE_ROOT` | checkoutの `tmp/workspace` | 管理対象sim/media成果物とresource lock。 |
+| `--scratch-root DIR` | `CAVC_SCRATCH_ROOT` | `TMPDIR`、なければ `WORKSPACE/scratch` | 一時fileとdisk上の数値配列。 |
+| `--array-storage memory\|disk` | `CAVC_ARRAY_STORAGE` | `memory` | RAM配列、または同じ数値を保持するfile-backed cache。 |
+| — | `CAVC_WORKSPACE_MIN_FREE_GB` | 4 | 管理対象成果物の容量予約時に確保する空き容量。 |
+
+CLI値が対応する環境変数より優先されます。`SEGACD_TMPFS_ROOT` と
+`SEGACD_TMPFS_MIN_FREE_GB` は優先度の低い互換aliasです。通常のfilesystemを
+受け入れるため `SEGACD_TMPFS_ALLOW_NON_TMPFS` は不要です。wrapperは子program向けに
+TMPDIR/TMP/TEMPも設定します。明示した相対rootは呼び出し元のworking directoryから
+解決します。build stagingとdiscの出力先はrepositoryからの相対pathを維持します。
+
+disk modeで物理RAMを節約するにはscratchに実ディスクを指定してください。flush済みの
+配列pageは回収できますが、pattern履歴、Python object、GPU割り当てはメモリを使います。
+workspaceの自動削除対象は `artifacts/` 内の非使用managed entryだけです。root内の任意fileや
+使用中のleaseを持つentryは削除しません。他toolと共有するscratch rootではなく、project専用の
+workspaceを指定してください。数値配列は正常終了時に削除します。強制終了したjobの
+`cavc-arrays-*` fileは手動での片付けが必要な場合があります。
+
+異なるworkspaceのjobが同じGPU/CPU/emulator poolを使うときは、共通の
+`SEGACD_RESOURCE_ROOT` を明示してください。別rootのlock同士は協調できません。
+resource制御はPOSIX file lockを使用します。Linux専用のquota・memory probeは任意で、
+storage harnessは取得できない項目を空欄にします。計測値の意味は
+`harness/runtime_storage/README.md` を参照してください。
+
 ## Workstation concurrency
 
 concurrency controlはworkstation上のscheduleだけを変え、encode decisionは変えません。
@@ -623,13 +688,13 @@ media `<stem>` ごとのexclusive lockを実装します。
 | `CBRSIM_WORKERS` | 使用可能なCPU token数 | 1つのheavy stageのworker数かつ正確なCPU token要求数。 |
 | `SEGACD_GPU_TOKENS` | 1 | 同時GPU palette/quantizationまたはNVENC stage数。 |
 | `SEGACD_EMU_TOKENS` | 2 | 同時 `run_headless.sh` emulator instance数。 |
-| `SEGACD_RESOURCE_ROOT` | `/dev/shm/segacd-fmv-cavc/resources` | lock file root。 |
+| `SEGACD_RESOURCE_ROOT` | `WORKSPACE/resources` | lock file root。 |
 
 simはExtract、Palette、Quantizeの間だけCPU/GPU tokenを取得します。
 `render_analysis.py` とrecord preview transcodeも同じtoken poolを使います。
 Xvfbは空きdisplayを動的に割り当て、各emulatorはprivate RetroArch system directoryを
 使います。`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
-tmpfs leaseを保持します。同じstemの2つ目のprocessは即時FAILし、managed pathや
+workspace leaseを保持します。同じstemの2つ目のprocessは即時FAILし、managed pathや
 output fileを共有しません。
 
 ## Pattern供給とquality budget
@@ -729,7 +794,7 @@ display slotのcapを受け取り、layoutと予約envelopeは最大capを使い
 1,743-tile resident pool以下にします。
 
 checked-in profileは、そのsourceでqualificationした再生上限を記録します。一時的な比較
-profileも同じkeyを使うため、artifact identity、tmpfs handoff、sim、pack、analysisへ
+profileも同じkeyを使うため、artifact identity、workspace handoff、sim、pack、analysisへ
 1つの値がそのまま流れます。Qualification済みprofileから値を下げるのは保守的な変更
 です。引き上げる場合はencoder、stream、Sub CPU、Main CPU、audio、CD pumpを含む
 完全な経路で新しい全編再生qualificationが必要です。
@@ -1040,7 +1105,7 @@ tmp/<profile>/
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[source.preprocess]` | optional `auto_range` | 展開後に動画全編で判定する黒/白dynamic-range自動拡張。 |
 | `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
-| `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなtmpfs実体pathを直接使う。 |
+| `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなworkspace実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |

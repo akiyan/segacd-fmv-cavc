@@ -39,6 +39,7 @@ for fps in [15,24,30,29.97,20,60,23.5]:
         except ScheduleError as e:
             record['error']=str(e)
         cases.append(record)
-out=Path('/dev/shm/segacd-fmv-cavc/webenc-kernel-test/schedule.json')
+from test_paths import KERNEL_ROOT
+out=KERNEL_ROOT/'schedule.json'
 out.parent.mkdir(parents=True,exist_ok=True);out.write_text(json.dumps(cases))
 print(f'Python scheduling reference: {len(cases)} complete 60-second traces, {sum(len(c["loads"]) for c in cases)} frames')

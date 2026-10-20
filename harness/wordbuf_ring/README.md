@@ -84,7 +84,7 @@ BAD_APPLE_SHORT_SIM="$(tools/python.sh tools/encode_config.py \
 tools/python.sh harness/wordbuf_ring/model_ring.py \
   --decisions \
     "$BAD_APPLE_SHORT_SIM/decisions.pkl" \
-  --output /tmp/issue64-ring-model.tsv
+  --output logs/wordbuf-ring-model.tsv
 ```
 
 ## Decision rule

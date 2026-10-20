@@ -17,10 +17,10 @@ Sub PRG-RAM addresses so they can be disassembled locally:
 
 ```sh
 tools/python.sh harness/security_skip/extract_jp_sub_bios.py \
-  original/jp_mcd2_9212.bin /tmp/jp-sub-bios
+  original/jp_mcd2_9212.bin tmp/jp-sub-bios
 
 tools/python.sh harness/security_skip/extract_us_sub_bios.py \
-  original/us_scd1_9210.bin /tmp/us-sub-bios
+  original/us_scd1_9210.bin tmp/us-sub-bios
 ```
 
 | Region | BIOS ROM source | Sub PRG-RAM destination |
@@ -172,7 +172,7 @@ case, not a successful display-skip build.
 Run a US experiment without a cross-region Replay:
 
 ```sh
-BIOS_REGION=us OUTDIR=/tmp/security-skip-us \
+BIOS_REGION=us OUTDIR=tmp/security-skip-us \
   tools/run_headless.sh \
   out/security-skip/bad-apple_us_release_ussec_baseline.cue \
   --tag baseline --max-frames 900

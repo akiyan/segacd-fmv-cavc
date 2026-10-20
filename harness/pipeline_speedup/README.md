@@ -152,19 +152,6 @@ For the measured Sonic file the split is sector 211, leaving 6777 timed sectors.
 the first FRAMES sector is checked against the prefix's final MSF. The observed
 zero is therefore a real zero, not a counter reset.
 
-### Boundary proof
-
-Run:
-
-```sh
-tools/python.sh harness/pipeline_speedup/verify_wave_chunk.py
-```
-
-The model compares the old byte loop with the chunked writer across pump positions,
-physical wave addresses, MOVEP stride, PCM bank changes, 0x8000 wrap and final write
-pointer. It covers a boundary matrix plus 5000 deterministic random cases, including
-odd source addresses.
-
 ### Fixed costs that remain
 
 The two biggest fixed costs are hard to cut without an architecture change:
@@ -274,17 +261,8 @@ The same pass removes fixed work from the 75 Hz CDC path:
 - remove the successful-sector register save after all callers reload their
   live state from memory.
 
-Run the format proof against the real packed stream:
-
-```sh
-tools/python.sh harness/pipeline_speedup/verify_entry_walk.py \
-  out/PROFILE/HEADER.DAT out/PROFILE/BODY.DAT
-```
-
-That p35 Sonic disc passed all 2714 frames: 1,870,030 entries and 262,363 cold
-entries produced identical entry order and cold-run grouping. Later encoder
-changes alter those counts, so the verifier output is the current source of
-truth.
+Use `harness/pattern_supply/verify.py` against the real packed stream and its
+matching decision log to check entry order, runs and physical pattern sources.
 
 The important A/B result is that the first dense section did **not** move after
 the CPU work was removed. Relative to the first visible frame, both p34 and p35
@@ -301,27 +279,13 @@ timed stream and place current control before future payload. CPU optimization
 adds safety margin, but cannot make a control block arrive before preceding CD
 sectors.
 
-## Main bitmap and name-table fast-path proof
+## Shared diagnostic reader
 
-p39 implements dedicated zero/full/mixed bitmap-byte paths and advances the
-shadow pointer directly. Name-table rows use four longword writes for each
-eight-word group, followed by a scalar 0--7-word tail for arbitrary per-source
-widths. Run the equivalence proof against the real DEBUG control stream:
-
-```sh
-SIM_OUT="$(tools/python.sh tools/encode_config.py \
-  profiles/PROFILE.toml --print-sim-output)"
-tools/python.sh harness/pipeline_speedup/verify_main_fastpaths.py \
-  --header out/PROFILE/HEADER.DAT --body out/PROFILE/BODY.DAT \
-  --decisions "$SIM_OUT/decisions.pkl"
-```
-
-The checker replays all packed Sonic frames and requires the optimized shadow to
-match the former bit loop after every frame. It also checks each packed bitmap and
-entry palette against `decisions.pkl`, and requires the real stream to exercise all
-three bitmap paths (`0x00`, `0xFF`, and mixed). For the blit, it models the 68000
-longword groups plus the tail and compares every real shadow row and
-deterministic widths 1--40 with the scalar word copy.
+`stream_reader.py` reads packed control blocks for the cycle and shadow-list
+harnesses. Byte and display-state validation belongs to
+`harness/pattern_supply/verify.py`; actual transfer behavior belongs to the
+LOGVDP and playback detectors. Local Python copies of assembly loops are not
+runtime qualification.
 
 ## Packed cold-run descriptor proof
 
@@ -379,23 +343,3 @@ tools/python.sh harness/pipeline_speedup/verify_run_hud.py \
 The checker uses high-confidence observations by default and compares every one
 with `packed_n_runs & 0xff`. Early p45 CSVs called the same HUD field `dma_calls`;
 that legacy column name never represented the physical VDP DMA command count.
-
-## 30 fps entry-poll fast-path proof
-
-The legacy/fallback Sub entry loop decrements both an update counter and a CDC
-cadence counter for every entry. At 30 fps the cadence is 1024 entries, while a
-full-screen 40x28 grid holds up to 1120 cells, so a frame can cross that cadence
-once: the fallback keeps its possible short-prefix poll followed by the final
-poll. The descriptor path must reach the same poll points. Run:
-
-```sh
-tools/python.sh harness/pipeline_speedup/verify_entry_poll_fastpath.py \
-  --header out/PROFILE/HEADER.DAT --body out/PROFILE/BODY.DAT
-```
-
-The checker compares the fallback masked initial `DBRA` counter with an
-equivalent grouped model. It requires identical poll positions, entry order and
-cold-run grouping, including v10 physical-source boundaries, for every packed frame, then
-repeats the cadence comparison for every synthetic update count from 0 through
-the 1120-cell H40 limit. H40 retains the fallback entry walk and its possible
-prefix poll when a frame exceeds 1024 updates.

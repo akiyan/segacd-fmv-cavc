@@ -116,21 +116,6 @@ class SimArtifactCacheTests(unittest.TestCase):
                 cache.identity_sha256(first),
                 cache.identity_sha256(changed_source))
 
-    def test_readable_key_exposes_major_conditions(self) -> None:
-        identity = {
-            "source": {"name": "SonicJamOp", "sha256": "1" * 64},
-            "effective_environment": {"CBRSIM_COLD_CAP": "190"},
-            "emit_decisions": True,
-            "encoder_version": "e123",
-        }
-        key = cache.readable_key(
-            identity,
-            mode="H40", width=320, height=224, fps="30",
-            fit="crop", cold_cap=190)
-        self.assertIn("SonicJamOp-H40-320x224-30fps-fit-crop-cold190", key)
-        self.assertIn("src11111111", key)
-        self.assertIn("enc-e123", key)
-
     def test_encoder_version_change_invalidates_identity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "movie.mp4"

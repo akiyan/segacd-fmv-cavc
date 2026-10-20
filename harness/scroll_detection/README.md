@@ -14,10 +14,10 @@ segments again over two-frame spans.
 
 ```sh
 tools/python.sh harness/scroll_detection/analyze.py \
-  /dev/shm/segacd-fmv-ttrc/issue29/source \
+  /path/to/extracted-source \
   --first-frame 1056 \
   --backend cpu \
-  --tsv /dev/shm/segacd-fmv-ttrc/issue29/lunar-scroll.tsv
+  --tsv logs/source-scroll.tsv
 ```
 
 The production encoder always scans the complete source. A short extracted
@@ -37,10 +37,10 @@ residualを満たす必要があります。Temporal groupingは最大2 frameの
 
 ```sh
 tools/python.sh harness/scroll_detection/analyze.py \
-  /dev/shm/segacd-fmv-ttrc/issue29/source \
+  /path/to/extracted-source \
   --first-frame 1056 \
   --backend cpu \
-  --tsv /dev/shm/segacd-fmv-ttrc/issue29/lunar-scroll.tsv
+  --tsv logs/source-scroll.tsv
 ```
 
 Production encoderは常にsource全編を走査します。短尺の展開sequenceは、検出器を高速に

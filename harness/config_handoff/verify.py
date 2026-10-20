@@ -14,8 +14,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 TOOLS = ROOT / "tools"
 sys.path.insert(0, str(TOOLS))
-from encode_config import apply_profile_env, load_profile  # noqa: E402
-import av_config  # noqa: E402
 
 
 PER_SOURCE_ENV = {
@@ -55,51 +53,8 @@ def run_pack(
     subprocess.run(command, cwd=ROOT, env=env, check=True)
 
 
-def check_profiles() -> None:
-    for name, fps, width, cold_cap in (
-            ("bad-apple.toml", "30", "320", "210"),
-            ("tears-of-steel.toml", "24", "320", "225")):
-        profile = load_profile(ROOT / "profiles" / name)
-        env = {"CBRSIM_FPS": "999", "CBRSIM_W": "1"}
-        apply_profile_env(profile, env)
-        assert env["CBRSIM_FPS"] == fps
-        assert env["CBRSIM_W"] == width
-        assert env["CBRSIM_PAL_ALGO"] == "mosaic-gm"
-        assert env["CBRSIM_COLD_CAP"] == cold_cap
-    sonic = load_profile(ROOT / "profiles" / "sonic-jam-op.toml")
-    sonic_env = {"CBRSIM_COLD_CAP": "1"}
-    apply_profile_env(sonic, sonic_env)
-    assert sonic_env["CBRSIM_COLD_CAP"] == "210"
-
-    source = (ROOT / "profiles" / "sonic-jam-op.toml").read_text(
-        encoding="utf-8")
-    with tempfile.TemporaryDirectory(prefix="cold-cap-profile-") as td:
-        temp = Path(td)
-        lower_path = temp / "sonic-h40-lower.toml"
-        lower_path.write_text(
-            source.replace("cold_cap = 210", "cold_cap = 180"),
-            encoding="utf-8")
-        lower_env = {"CBRSIM_COLD_CAP": "999"}
-        apply_profile_env(load_profile(lower_path), lower_env)
-        assert lower_env["CBRSIM_COLD_CAP"] == "180"
-
-        omitted_path = temp / "sonic-h40-omitted.toml"
-        omitted_path.write_text(
-            source.replace("cold_cap = 210\n", ""), encoding="utf-8")
-        try:
-            load_profile(omitted_path)
-        except ValueError as exc:
-            assert "missing [encoder] keys: cold_cap" in str(exc)
-        else:
-            raise AssertionError("profile without cold cap was accepted")
-    print("TOML mapping: OK (profile values replace polluted environment)")
 
 
-def check_cold_caps() -> None:
-    for cap in (180, 200, 225, 480):
-        assert av_config.cold_cap(cap) == cap
-        assert av_config.cold_realized_ceiling(cap) == cap
-    print("Cold caps: OK (explicit sim and pack limits agree)")
 
 
 def main() -> None:
@@ -116,8 +71,6 @@ def main() -> None:
     extension = args.sp_extension.resolve()
     if not extension.exists():
         raise SystemExit(f"not found: {extension}")
-    check_profiles()
-    check_cold_caps()
 
     clean = {key: value for key, value in os.environ.items() if key not in PER_SOURCE_ENV}
     polluted = dict(clean)

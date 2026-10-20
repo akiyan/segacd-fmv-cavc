@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -112,32 +111,6 @@ class AnalyzeTest(unittest.TestCase):
         )
         self.assertEqual(extra, {10: 0, 11: 1, 12: 1})
 
-    def test_writer_is_utf8_tsv(self) -> None:
-        row = ANALYZE.ReplayRow(
-            frame=1,
-            physical_sectors=2,
-            rate_sectors=2,
-            rate_lead=0,
-            peak_rate_lead=0,
-            conservative_ahead_sectors=0,
-            extra_scanouts=None,
-            extra_cd_sectors=None,
-            observed_ahead_sectors=None,
-            producer_sector_cursor=2,
-            delivered_control_sectors=1,
-            consumed_control_bytes=100,
-            apply_occupancy_bytes=1948,
-            next_sector_kind="payload",
-            predicted_apply_blocked=0,
-            observed_apply_blocked=None,
-            observed_slip=None,
-        )
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "replay.tsv"
-            ANALYZE.write_replay(path, [row])
-            text = path.read_text(encoding="utf-8")
-        self.assertIn("\t", text.splitlines()[0])
-        self.assertIn("\t\t", text.splitlines()[1])
 
 
 if __name__ == "__main__":

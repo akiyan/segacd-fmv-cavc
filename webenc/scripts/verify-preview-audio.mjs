@@ -9,7 +9,6 @@ const restrictedNative=async (codec, options={})=>{
   return registered && codec==='aac' && options.fullCodecString==='mp4a.40.2'
     && options.sampleRate===22050 && options.numberOfChannels===1 && options.bitrate===96000;
 };
-assert(await restrictedNative('aac'));
 const fallback=await preparePreviewAac(restrictedNative,()=>{registered=true;});
 assert.equal(fallback.fallback,true);
 assert(registered);

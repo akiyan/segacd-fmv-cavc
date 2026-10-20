@@ -1,3 +1,6 @@
+import {qaRoot} from './test-paths.mjs';
+import {mkdir} from 'node:fs/promises';
+await mkdir(qaRoot,{recursive:true});
 import {fileURLToPath} from 'node:url';
 import { chromium, expect } from "@playwright/test";
 const browser = await chromium.launch({ headless: true });
@@ -56,7 +59,7 @@ await expect(
 ).toBeDisabled();
 await cap.fill("2:160,3:220");
 await page.screenshot({
-  path: "/dev/shm/segacd-fmv-cavc/webenc-qa/cold-cap-manual.png",
+  path: `${qaRoot}/cold-cap-manual.png`,
   fullPage: true,
 });
 expect(errors).toEqual([]);

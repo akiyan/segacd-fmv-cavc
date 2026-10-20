@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import {createKernel} from '../src/kernel.js';
-const root='/dev/shm/segacd-fmv-cavc/webenc-kernel-test';
+import {kernelRoot as root} from './test-paths.mjs';
 const data=JSON.parse(await readFile(`${root}/fixture.json`));
 const kernel=await createKernel(await readFile('public/wasm/webenc-kernel.wasm'));
 for(const frame of data.frames){const read=async suffix=>new Uint8Array(await readFile(`${root}/${frame.stem}.${suffix}`));const result=kernel.quantize(await read('rgba'),frame.width,frame.height,await read('palette'));for(const kind of ['rgba','tile','pmap'])assert.deepEqual(result[kind],await read(`expected-${kind}`),`${frame.stem} ${kind}`);}

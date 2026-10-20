@@ -12,8 +12,8 @@ all stream writing and physical delivery verification remain unchanged.
 Run `tools/python.sh webenc/harness/equivalence/test_pack_validation.py` for the
 exact original/corrected validation predicates: dense scroll and zero-update
 scroll reproduce the rejection, slow normal lists remain rejected, and fast
-normal lists remain valid. An AST comparison requires every other statement in
-the packer's main function to stay unchanged. The same tests run in Pyodide.
+normal lists remain valid. The complete repack below checks the written stream; source-code equality is
+not used as an output guarantee. The predicate cases also run in Pyodide.
 
 `scroll_pack_repro.py SOURCE.mp4` normalizes and simulates the complete source at
 320x224, 30fps, preserve-aspect with source PAR 32:35 and cold cap 210. It runs

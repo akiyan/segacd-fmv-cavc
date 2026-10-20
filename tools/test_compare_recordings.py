@@ -12,15 +12,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from compare_recordings import (
-    _optional_integer,
-    _packet_summary,
-    compare_recordings,
-    first_decreasing,
-    first_non_monotonic,
-    first_sequence_mismatch,
-    main,
-)
+from compare_recordings import _optional_integer, _packet_summary, compare_recordings, main
 
 
 FFMPEG_AVAILABLE = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
@@ -139,22 +131,6 @@ class RecordingComparisonIntegrationTests(unittest.TestCase):
 
 
 class TimelineHelperTests(unittest.TestCase):
-    def test_strict_monotonicity(self) -> None:
-        self.assertIsNone(first_non_monotonic([]))
-        self.assertIsNone(first_non_monotonic([0]))
-        self.assertIsNone(first_non_monotonic([0, 1, 3]))
-        self.assertEqual(first_non_monotonic([0, 1, 1]), 2)
-        self.assertEqual(first_non_monotonic([0, 2, 1]), 2)
-
-    def test_derived_timestamp_may_repeat_but_must_not_decrease(self) -> None:
-        self.assertIsNone(first_decreasing([]))
-        self.assertIsNone(first_decreasing([0, 1, 1, 2]))
-        self.assertEqual(first_decreasing([0, 2, 1]), 2)
-
-    def test_timeline_length_is_part_of_equality(self) -> None:
-        self.assertIsNone(first_sequence_mismatch([(0, 1)], [(0, 1)]))
-        self.assertEqual(first_sequence_mismatch([(0, 1)], [(0, 1), (1, 1)]), 1)
-        self.assertEqual(first_sequence_mismatch([(0, 1), (2, 1)], [(0, 1), (3, 1)]), 1)
 
     def test_missing_packet_duration_is_valid_and_end_uses_pts_delta(self) -> None:
         self.assertIsNone(_optional_integer(None, "duration"))

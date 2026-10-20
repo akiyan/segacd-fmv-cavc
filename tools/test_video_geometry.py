@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from video_geometry import geometry_plan, raw_filter, source_filter
+from video_geometry import endpoint_snap_filter, geometry_plan, raw_filter, source_filter
 
 
 class VideoGeometryTests(unittest.TestCase):
@@ -54,6 +54,22 @@ class VideoGeometryTests(unittest.TestCase):
             raw_filter(320, 224, 512, 384, fit="pad"),
             "setsar=1,scale=320:218:flags=lanczos,"
             "pad=320:224:(ow-iw)/2:(oh-ih)/2:color=black")
+
+    def test_anamorphic_source_uses_displayed_width(self):
+        plan = geometry_plan(320, 224, 640, 480, 8, 9)
+        self.assertEqual(plan["crop"], [640, 434, 0, 23])
+
+    def test_explicit_resize_can_disable_master_filters(self):
+        vf = source_filter(320, 224, 576, 400, denoise=False, resize_filter="area")
+        self.assertNotIn("hqdn3d", vf)
+        self.assertNotIn("gblur", vf)
+        self.assertIn("flags=area", vf)
+
+    def test_endpoint_snap_is_opt_in_and_rejects_reversed_bounds(self):
+        self.assertEqual(endpoint_snap_filter(), "")
+        self.assertTrue(endpoint_snap_filter(2, 253).startswith("format=rgb24,lutrgb="))
+        with self.assertRaisesRegex(ValueError, "black_max must be below"):
+            endpoint_snap_filter(253, 2)
 
 
 if __name__ == "__main__":

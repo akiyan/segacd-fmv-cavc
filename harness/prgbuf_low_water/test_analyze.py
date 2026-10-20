@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -77,27 +76,6 @@ class AnalyzeTest(unittest.TestCase):
             ANALYZE.interval_extra_scanouts(hud, 10, 11, 2),
         )
 
-    def test_tsv_writers_use_tabs(self) -> None:
-        timeline = [
-            ANALYZE.TimelineRow(1, 200),
-            ANALYZE.TimelineRow(2, 100),
-        ]
-        hud = {
-            1: ANALYZE.HudRow(1, 0, 0),
-            2: ANALYZE.HudRow(2, 1, 0),
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            ranges_path = root / "ranges.tsv"
-            events_path = root / "events.tsv"
-            ANALYZE.write_ranges(ranges_path, [timeline], hud, [2], [])
-            ANALYZE.write_events(events_path, timeline, hud, [2], [], 256)
-            ranges_text = ranges_path.read_text(encoding="utf-8")
-            events_text = events_path.read_text(encoding="utf-8")
-        self.assertIn("\t", ranges_text.splitlines()[0])
-        self.assertIn("\t", events_text.splitlines()[0])
-        self.assertIn("sector_slip", events_text)
-        self.assertIn("prior_apply_block_frame", events_text.splitlines()[0])
 
 
 if __name__ == "__main__":

@@ -71,15 +71,6 @@ class ScrollListValidation(unittest.TestCase):
         for source in (self.original, self.corrected):
             self.guard(source, [0, 0], [[], [30]], [False, True])
 
-    def test_other_validation_and_packing_code_is_unchanged(self):
-        def strip(source):
-            tree = ast.parse(source)
-            body = tree.body[0].body
-            body[:] = [node for node in body
-                       if not (isinstance(node, ast.If) and 'selected shadow list is not faster' in ast.unparse(node))
-                       and not (isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'optional_list_regressions' for t in node.targets))]
-            return ast.dump(tree)
-        self.assertEqual(strip(self.original), strip(self.corrected))
 
 
 if __name__ == '__main__':

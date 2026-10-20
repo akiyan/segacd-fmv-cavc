@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Manage disposable codec artifacts in a project-scoped tmpfs workspace.
+"""Manage disposable codec artifacts on a user-selected filesystem.
 
-Callers read and write the managed ``/dev/shm`` paths directly. Eviction is
+Callers read and write the managed paths directly. Eviction is
 limited to this project's entries and never removes a live lease owned by
 another encoder/render process.
 """
@@ -24,8 +24,10 @@ import subprocess
 import time
 import uuid
 
+from runtime_paths import DEFAULT_WORKSPACE, workspace_root
 
-DEFAULT_ROOT = Path("/dev/shm/segacd-fmv-cavc")
+
+DEFAULT_ROOT = DEFAULT_WORKSPACE
 DEFAULT_MIN_FREE_BYTES = 4 * 1024 ** 3
 
 # Linux assigns the same quotactl_fd syscall number on the architectures used
@@ -49,8 +51,7 @@ class TmpfsWorkspaceError(RuntimeError):
 
 
 def managed_root() -> Path:
-    return Path(os.environ.get(
-        "SEGACD_TMPFS_ROOT", str(DEFAULT_ROOT))).expanduser().resolve()
+    return workspace_root()
 
 
 def _decode_mount_path(value: str) -> str:
@@ -88,14 +89,6 @@ def filesystem_type(path: Path) -> str | None:
 def ensure_root(root: Path | None = None) -> Path:
     root = (root or managed_root()).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    fs_type = filesystem_type(root)
-    allow_non_tmpfs = os.environ.get(
-        "SEGACD_TMPFS_ALLOW_NON_TMPFS", "0").strip().lower() in {
-            "1", "true", "yes", "on",
-        }
-    if fs_type != "tmpfs" and not allow_non_tmpfs:
-        raise TmpfsWorkspaceError(
-            f"managed artifact root is not tmpfs: {root} ({fs_type or 'unknown'})")
     for name in ("artifacts", "leases"):
         (root / name).mkdir(exist_ok=True)
     return root
@@ -122,12 +115,20 @@ def _slug(value: str, limit: int = 72) -> str:
 def _entry_key(kind: str, key: str) -> str:
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
     # Sim keys intentionally spell out geometry, fps, fit and caps. Preserve
-    # enough of that human-readable identity to make tmpfs inspection useful.
+    # enough of that human-readable identity to make workspace inspection useful.
     return f"{_slug(kind, 20)}-{_slug(key, 180)}-{digest}"
 
 
 def _pid_alive(pid: int) -> bool:
-    return pid > 0 and Path(f"/proc/{pid}").exists()
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
 
 
 def _lease_records(root: Path) -> list[tuple[Path, dict]]:
@@ -161,7 +162,9 @@ def _allocated_bytes(entry: Path) -> int:
     for path in paths:
         try:
             if not path.is_symlink():
-                total += path.stat().st_blocks * 512
+                stat = path.stat()
+                total += (stat.st_blocks * 512 if hasattr(stat, "st_blocks")
+                          else stat.st_size)
         except FileNotFoundError:
             continue
     return total
@@ -188,7 +191,8 @@ def _remove_entry(entry: Path) -> None:
 
 
 def _minimum_free_bytes() -> int:
-    raw = os.environ.get("SEGACD_TMPFS_MIN_FREE_GB")
+    raw = os.environ.get("CAVC_WORKSPACE_MIN_FREE_GB", os.environ.get(
+        "SEGACD_TMPFS_MIN_FREE_GB"))
     if raw is None:
         return DEFAULT_MIN_FREE_BYTES
     return max(0, int(float(raw) * 1024 ** 3))
@@ -211,6 +215,8 @@ class _QuotaBlock(ctypes.Structure):
 def _user_quota_available_bytes(root: Path) -> int | None:
     """Return this user's remaining hard-quota bytes, when Linux exposes it."""
 
+    if platform.system() != "Linux":
+        return None
     syscall_number = _QUOTACTL_FD_SYSCALLS.get(platform.machine())
     if syscall_number is None:
         return None
@@ -268,7 +274,7 @@ def _evict_old_entries_locked(
     )
     if target_free > usage.total:
         raise TmpfsWorkspaceError(
-            f"tmpfs request exceeds capacity: need {target_free / 1024**3:.1f} GiB, "
+            f"workspace request exceeds capacity: need {target_free / 1024**3:.1f} GiB, "
             f"total {usage.total / 1024**3:.1f} GiB")
     if available >= target_free:
         return []
@@ -291,12 +297,12 @@ def _evict_old_entries_locked(
     for _stamp, entry in candidates:
         _remove_entry(entry)
         removed.append(entry)
-        print(f"tmpfs eviction: removed {entry}", flush=True)
+        print(f"workspace eviction: removed {entry}", flush=True)
         if _available_bytes(root) >= target_free:
             break
     if _available_bytes(root) < target_free:
         raise TmpfsWorkspaceError(
-            "tmpfs filesystem/quota space is still short after deleting every "
+            "workspace filesystem/quota space is still short after deleting every "
             "inactive project artifact; leased artifacts were preserved")
     return removed
 
@@ -456,7 +462,7 @@ def allocate_file(
     required_bytes: int = 0,
     root: Path | None = None,
 ) -> tuple[Path, Lease]:
-    """Allocate and return a direct tmpfs target for one disposable file."""
+    """Allocate and return a direct workspace target for one disposable file."""
 
     root = ensure_root(root)
     requested_path = Path(requested_path)
@@ -516,13 +522,13 @@ def run_file_command(
     command: list[str],
     input_paths: list[Path] | tuple[Path, ...] = (),
 ) -> Path:
-    """Run a producer against a leased direct tmpfs target and return it."""
+    """Run a producer against a leased direct workspace target and return it."""
 
     if not command:
-        raise TmpfsWorkspaceError("tmpfs file producer command is empty")
+        raise TmpfsWorkspaceError("workspace file producer command is empty")
     if all("{output}" not in part for part in command):
         raise TmpfsWorkspaceError(
-            "tmpfs file producer command must contain {output}")
+            "workspace file producer command must contain {output}")
     input_leases = []
     output_lease = None
     try:
@@ -536,7 +542,7 @@ def run_file_command(
         subprocess.run(expanded, check=True)
         if not actual.is_file():
             raise TmpfsWorkspaceError(
-                f"tmpfs artifact was not produced: {actual}")
+                f"workspace artifact was not produced: {actual}")
         return actual
     finally:
         if output_lease is not None:
@@ -553,13 +559,13 @@ def run_directory_command(
     command: list[str],
     input_paths: list[Path] | tuple[Path, ...] = (),
 ) -> Path:
-    """Run a producer with one leased disposable tmpfs directory."""
+    """Run a producer with one leased disposable workspace directory."""
 
     if not command:
-        raise TmpfsWorkspaceError("tmpfs directory producer command is empty")
+        raise TmpfsWorkspaceError("workspace directory producer command is empty")
     if all("{output}" not in part for part in command):
         raise TmpfsWorkspaceError(
-            "tmpfs directory producer command must contain {output}")
+            "workspace directory producer command must contain {output}")
     input_leases = []
     output_lease = None
     try:
@@ -587,7 +593,7 @@ def _parse_cli() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="action", required=True)
     run_file = subparsers.add_parser(
-        "run-file", help="run a producer against one direct tmpfs file")
+        "run-file", help="run a producer against one direct workspace file")
     run_file.add_argument("--output", required=True, type=Path)
     run_file.add_argument("--kind", required=True)
     run_file.add_argument("--required-gb", type=float, default=1.0)
@@ -595,7 +601,7 @@ def _parse_cli() -> argparse.Namespace:
     run_file.add_argument("command", nargs=argparse.REMAINDER)
     run_directory = subparsers.add_parser(
         "run-directory",
-        help="run a producer inside one leased disposable tmpfs directory",
+        help="run a producer inside one leased disposable workspace directory",
     )
     run_directory.add_argument("--kind", required=True)
     run_directory.add_argument("--key", required=True)

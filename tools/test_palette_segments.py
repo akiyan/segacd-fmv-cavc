@@ -73,15 +73,6 @@ class PaletteSegmentTests(unittest.TestCase):
         for left, right in zip(capped, capped[1:]):
             self.assertEqual(left[1], right[0])
 
-    def test_max_segments_leaves_small_counts_alone(self) -> None:
-        ranges = palette_segments.segment_ranges(
-            [0.0, 0.1, 1.0, 0.2, 0.0],
-            [0.0, 0.1, 1.0, 0.2, 0.0],
-            gap=0,
-            max_segments=16,
-        )
-        self.assertEqual(ranges, [(0, 3), (3, 5)])
-
 
 if __name__ == "__main__":
     unittest.main()

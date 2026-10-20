@@ -68,6 +68,7 @@ import wordbuf_ring  # noqa: E402
 import sim_artifact_cache  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 import upgrade_planner  # noqa: E402
+from array_storage import ArrayStorage  # noqa: E402
 
 from quantize_md_video import (  # noqa: E402
     rgb333_to_rgb888, run, prepare_dir, MD_LEVELS,
@@ -739,17 +740,18 @@ def _frame_features(path):
 
 
 class FrameFeatureCache:
-    """One-decode in-memory source for palette learning and final quantization."""
+    """One-decode source for palette learning and final quantization."""
 
-    def __init__(self, frames, workers=None):
+    def __init__(self, frames, workers=None, arrays=None):
         self.frames = list(frames)
         n = len(self.frames)
-        self.tiles = np.empty((n, C_CELLS, 64, 3), dtype=np.uint8)
-        self.edge_strength = np.empty((n, C_CELLS, 64), dtype=np.uint8)
-        self.detail = np.empty((n, C_CELLS), dtype=np.float32)
-        self.flatten_mask = np.empty((n, C_CELLS), dtype=bool)
-        self.flat_color = np.empty((n, C_CELLS, 3), dtype=np.uint8)
-        self.fade_probe = np.empty((n, C_CELLS, 3), dtype=np.float32)
+        empty = arrays.empty if arrays is not None else np.empty
+        self.tiles = empty((n, C_CELLS, 64, 3), dtype=np.uint8)
+        self.edge_strength = empty((n, C_CELLS, 64), dtype=np.uint8)
+        self.detail = empty((n, C_CELLS), dtype=np.float32)
+        self.flatten_mask = empty((n, C_CELLS), dtype=bool)
+        self.flat_color = empty((n, C_CELLS, 3), dtype=np.uint8)
+        self.fade_probe = empty((n, C_CELLS, 3), dtype=np.float32)
         dark = np.empty(n, dtype=np.float64)
         uniform = np.empty(n, dtype=np.float64)
 
@@ -765,13 +767,30 @@ class FrameFeatureCache:
         else:
             from concurrent.futures import ThreadPoolExecutor
             pool = ThreadPoolExecutor(max_workers=worker_count)
-            results = pool.map(_frame_features, self.frames)
+            # Bound outstanding decodes on Python versions without map buffersize.
+            # One slow PNG must not retain every later decoded frame in futures.
+            def bounded_results():
+                from collections import deque
+                pending = deque()
+                paths = iter(self.frames)
+                for _ in range(worker_count * 2):
+                    path = next(paths, None)
+                    if path is not None:
+                        pending.append(pool.submit(_frame_features, path))
+                while pending:
+                    yield pending.popleft().result()
+                    path = next(paths, None)
+                    if path is not None:
+                        pending.append(pool.submit(_frame_features, path))
+            results = bounded_results()
         try:
             for index, result in enumerate(results):
                 (self.tiles[index], self.edge_strength[index], self.detail[index],
                  self.flatten_mask[index], self.flat_color[index],
                  self.fade_probe[index],
                  dark[index], uniform[index]) = result
+                if arrays is not None and index % 256 == 255:
+                    arrays.settle()
         finally:
             if pool is not None:
                 pool.shutdown(wait=True)
@@ -1201,17 +1220,23 @@ def quant_pool_start_method(gpu_enabled):
     must start clean worker interpreters. CPU-only runs retain the cheaper fork
     path because they have no device context to inherit.
     """
-    return "spawn" if gpu_enabled else "fork"
+    import multiprocessing as mp
+    return ("fork" if not gpu_enabled and "fork" in mp.get_all_start_methods()
+            else "spawn")
 
 
 def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
-                     seg_black_wanted=None):
+                     seg_black_wanted=None, arrays=None):
     """各フレームの (detail, assign, plain_idx, plain_rgb) を並列に前計算して返す。"""
     n = len(frames)
     import gpu_quant
     gpu_on = gpu_quant.enabled()
     w = quant_worker_count(
         gpu_on, n_workers(), override_present="CBRSIM_WORKERS" in os.environ)
+    empty = arrays.empty if arrays is not None else np.empty
+    details = empty((n, C_CELLS), np.float32)
+    assigns = empty((n, C_CELLS), np.int8)
+    pidxs = empty((n, C_CELLS, 64), np.uint8)
     if gpu_on:
         # CPU(並列)で読込/333化/タイル化 → GPU で割当/索引。imap で両者を重ねる
         # (ワーカーが flat を出す傍から親GPUが処理＝CPU I/OとGPU計算を並行)。
@@ -1221,9 +1246,6 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
                 f"CPU load x{w} + GPU assign/idx ...",
                 flush=True,
             )
-        details = [None] * n
-        assigns = [None] * n
-        pidxs = [None] * n
         cache = gpu_quant.PalCache()
         if frame_cache is not None:
             print(
@@ -1241,6 +1263,8 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
                     exclude_deep_black=not wanted.get(int(frame_seg[i]), True))
+                if arrays is not None and i % 256 == 255:
+                    arrays.settle()
         elif w > 1:
             import multiprocessing as mp
             with mp.get_context(quant_pool_start_method(gpu_on)).Pool(
@@ -1266,19 +1290,29 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
                     seam_weight=PAL_SEAM_WEIGHT,
                     seam_iterations=PAL_SEAM_ITERATIONS,
                     exclude_deep_black=not wanted.get(int(frame_seg[i]), True))
+        if arrays is not None:
+            arrays.settle()
         return (details, assigns, pidxs)
 
     print(f"precompute quantization: {n} frames on {w} workers ...", flush=True)
+    def collect(results):
+        for i, (detail, assign, pidx) in enumerate(results):
+            details[i], assigns[i], pidxs[i] = detail, assign, pidx
+            if arrays is not None and i % 256 == 255:
+                arrays.settle()
+
     if w > 1:
         import multiprocessing as mp
-        with mp.get_context("fork").Pool(
+        with mp.get_context(quant_pool_start_method(False)).Pool(
                 w, initializer=_quant_init,
                 initargs=(frames, seg_pals, frame_seg, seg_black_wanted)) as pool:
-            Q = pool.map(_quant_one, range(n), chunksize=8)
+            collect(pool.imap(_quant_one, range(n), chunksize=8))
     else:
         _quant_init(frames, seg_pals, frame_seg, seg_black_wanted)
-        Q = [_quant_one(i) for i in range(n)]
-    return ([q[0] for q in Q], [q[1] for q in Q], [q[2] for q in Q])
+        collect(map(_quant_one, range(n)))
+    if arrays is not None:
+        arrays.settle()
+    return details, assigns, pidxs
 
 
 class FadeDeadlineInfeasible(SystemExit):
@@ -1295,7 +1329,7 @@ class FadeDeadlineInfeasible(SystemExit):
         self.anchor = int(anchor)
 
 
-def main(demoted_fade_anchors=frozenset()):
+def main(demoted_fade_anchors=frozenset(), arrays=None):
     global DEDITHER_VF, RAW_VF
     if (sys.version_info[:3] == (3, 14, 4)
             and np.__version__ == "2.5.1"):
@@ -1446,6 +1480,7 @@ def main(demoted_fade_anchors=frozenset()):
         f"  ADPCM playback model: {len(source_pcm)} -> {len(retimed)} samples, "
         f"IMA decode + RF5C164 8-bit -> {playback_path.name} "
         f"@ {AUDIO_PLAYBACK_RATE}Hz")
+    del raw, source_pcm, retimed, _controls, rf5_chunks, playback_pcm
 
     # PRG先読みパッチ: {frame_idx: set(pattern_key)}。カット到達時にそのセル群を
     # バッファから適用する。パターンもcell->tile対応も事前ロード済みなのでCDバイト0。
@@ -1463,10 +1498,14 @@ def main(demoted_fade_anchors=frozenset()):
         f"DITHER={OUTPUT_DITHER} SEGPAL={SEGPAL_ON} NEAR={NEAR_ON} ...")
     with _parallel_phase(
             "Palette", worker_limit=12, use_gpu=True):
-        frame_cache = FrameFeatureCache(frames) if PAL_ALGO == MOSAIC_GM else None
+        frame_cache = (FrameFeatureCache(frames, arrays=arrays)
+                       if PAL_ALGO == MOSAIC_GM else None)
         _global_pals, seg_pals, frame_seg, seg_bounds, palette_stats = segment_and_train(
             frames, frame_cache=frame_cache)
     if frame_cache is not None:
+        del frame_cache.edge_strength
+        if arrays is not None:
+            arrays.settle()
         fade_probes = frame_cache.fade_probe
         fade_dark = frame_cache.segment_metrics[0]
     else:
@@ -1888,6 +1927,8 @@ def main(demoted_fade_anchors=frozenset()):
             chunk = frame_cache.tiles[start:start + 256]
             frame_black[start:start + len(chunk)] = (
                 chunk.astype(np.int16).sum(-1) == 0).mean(axis=(1, 2))
+        # A slice owns a reference to the entire backing array, not just 256 frames.
+        del chunk
         for seg in sorted(set(int(v) for v in frame_seg)):
             members = np.asarray(
                 [i for i in range(n_frames) if int(frame_seg[i]) == seg])
@@ -1902,7 +1943,7 @@ def main(demoted_fade_anchors=frozenset()):
             "Quantize", use_gpu=True, gpu_worker_limit=4):
         Q_detail, Q_assign, Q_pidx = precompute_quant(
             frames, seg_pals, frame_seg, frame_cache=frame_cache,
-            seg_black_wanted=seg_black_wanted)
+            seg_black_wanted=seg_black_wanted, arrays=arrays)
     # Both DEBUG extremes are pinned before quantization. Verify that the
     # lossless index-15 canonicalizer preserves rendered pixels.
     seg_pals, pal15_stats = canonicalize_p0_index15(
@@ -2135,6 +2176,8 @@ def main(demoted_fade_anchors=frozenset()):
         )
     del frame_cache
     del fade_probes
+    if arrays is not None:
+        arrays.settle()
 
     active_cram = np.asarray(segment_entry_cram[0], np.uint8).copy()
     active_frame_cram = np.empty((n, 4, 15, 3), np.uint8)
@@ -2409,6 +2452,10 @@ def main(demoted_fade_anchors=frozenset()):
             prg_capacity_patterns=(
                 PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
         )
+        # Only numeric demand traces are consumed after boot-source selection.
+        demand_prediction = dataclasses.replace(
+            demand_prediction, cold_keys=(), protected_keys=(), cold_slots=())
+        del baseline_demand_prediction, baseline_prefetch_forecast
         if RAW_PREFETCH_ON:
             prefetch_forecast = raw_prefetch.forecast_requests(
                 Q_pidx,
@@ -2426,8 +2473,6 @@ def main(demoted_fade_anchors=frozenset()):
             )
         return (
             main_protected,
-            baseline_demand_prediction,
-            baseline_prefetch_forecast,
             frame0_keys,
             frame0_inline_pattern_limit,
             boot_inline_capacity,
@@ -2442,8 +2487,6 @@ def main(demoted_fade_anchors=frozenset()):
 
     (
         main_protected,
-        baseline_demand_prediction,
-        baseline_prefetch_forecast,
         frame0_keys,
         frame0_inline_pattern_limit,
         boot_inline_capacity,
@@ -6068,8 +6111,9 @@ if __name__ == "__main__":
                 _demoted_fade_anchors = set()
                 while True:
                     try:
-                        main(demoted_fade_anchors=frozenset(
-                            _demoted_fade_anchors))
+                        with ArrayStorage() as _arrays:
+                            main(demoted_fade_anchors=frozenset(
+                                _demoted_fade_anchors), arrays=_arrays)
                         break
                     except FadeDeadlineInfeasible as exc:
                         if exc.anchor in _demoted_fade_anchors:

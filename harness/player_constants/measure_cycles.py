@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 
-from harness.pipeline_speedup.verify_main_fastpaths import read_stream  # noqa: E402
+from harness.pipeline_speedup.stream_reader import read_stream  # noqa: E402
 import player_constants  # noqa: E402
 import cavc_routing  # noqa: E402
 

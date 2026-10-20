@@ -1,13 +1,10 @@
 # TOML-to-decision-log handoff regression
 
-This harness proves the configuration boundary used by the encoder and packer:
-
-1. A per-source TOML profile overwrites inherited per-source `CBRSIM_*` values.
-2. `sim.py` freezes the resolved geometry, timing, audio, hardware and pack
-   settings in `decisions.pkl`.
-3. `pack_stream.py` reads those values from the decision log and produces the
-   same `HEADER.DAT`, `BODY.DAT`, `MOVIE.DAT`, `paltab.bin` and `palidx.bin` even when its
-   process receives deliberately wrong H40/15fps/ADPCM environment values.
+The unit suite in `tools/test_encode_config.py` owns TOML parsing and
+inherited-environment replacement. This integration harness uses an existing
+frozen decision log to prove that `pack_stream.py` produces identical
+HEADER.DAT, BODY.DAT, MOVIE.DAT, paltab.bin and palidx.bin under clean and
+deliberately polluted per-source environments. It does not re-encode a source.
 
 Run it against an existing full decision log:
 

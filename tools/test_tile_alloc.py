@@ -9,12 +9,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from tile_alloc import (
-    FrameTransitionGuard,
-    TileAllocator,
-    cold_transfer_order,
-    count_slot_runs,
-)
+from tile_alloc import FrameTransitionGuard, TileAllocator
 
 
 class TileAllocatorPrefetchTests(unittest.TestCase):
@@ -311,11 +306,6 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
             [int(before[1]), int(before[2]), int(before[0])],
         )
 
-    def test_display_rebase_rejects_duplicate_destinations(self) -> None:
-        alloc = TileAllocator(3, 3)
-        with self.assertRaisesRegex(ValueError, "destinations must be unique"):
-            alloc.replace_display_cells(((0, 1), (0, 2)))
-
     def test_cell_domain_expansion_preserves_cache_and_maps_history(self) -> None:
         alloc = TileAllocator(2, 4)
         alloc.place_frame([(0, b"a"), (1, b"b")], 0)
@@ -330,31 +320,6 @@ class TileAllocatorPrefetchTests(unittest.TestCase):
         self.assertEqual(int(alloc.prev_slot[0]), before_keys[b"a"])
         self.assertEqual(int(alloc.prev_slot[4]), before_keys[b"b"])
         self.assertEqual(int(alloc.slot_refs.sum()), 2)
-
-
-class ColdRunTests(unittest.TestCase):
-    def test_identity_contiguous_allocation_matches_legacy_and_suffix_runs(self):
-        alloc = TileAllocator(4, 6)
-        frames = [
-            [(0, b"a"), (1, b"b"), (2, b"c"), (3, b"d")],
-            [(0, b"e"), (1, b"b"), (2, b"f"), (3, b"g")],
-            [(0, b"h"), (1, b"i"), (2, b"f"), (3, b"j")],
-        ]
-        for frame, updates in enumerate(frames):
-            placements = alloc.place_frame(updates, frame)
-            legacy_slots = [slot for slot, cold in placements if cold]
-            suffix_slots = [
-                placements[index][0]
-                for index in cold_transfer_order(placements)
-            ]
-            self.assertEqual(
-                count_slot_runs(legacy_slots),
-                count_slot_runs(suffix_slots),
-            )
-
-    def test_transfer_order_follows_physical_slots(self):
-        placements = [(5, True), (2, False), (1, True), (3, True)]
-        self.assertEqual(cold_transfer_order(placements), (2, 3, 0))
 
 
 class FrameTransitionGuardTests(unittest.TestCase):

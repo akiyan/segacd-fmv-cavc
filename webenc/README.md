@@ -126,7 +126,8 @@ arbitrary media/version pairs are not qualified. CAVC output and lossy MP4
 container bytes are separate comparisons.
 RGB replay hashes and the pre-AAC reconstructed WAV expose playback fidelity.
 
-`npm run test:ui` checks the SPA controls, cancel/retry, playback, ZIP and viewport.
+`npm run test:ui` checks SPA controls, cancellation, source preview and viewport.
+`npm run test:encode` owns the actual encode, ZIP/media and stale-download checks.
 `node scripts/verify-encode.mjs` performs actual browser encoding, playback and
 ISO/CUE/stream extraction checks. `WEBENC_INPUT`, `WEBENC_URL`,
 `WEBENC_TEST_DIMENSIONS`, `WEBENC_TEST_FPS`, `WEBENC_TEST_SAR`, `WEBENC_TEST_CAP`,
@@ -138,8 +139,17 @@ controls, mobile layout, exact selected frame pixels and matching trimmed PCM.
 audio configuration and cap selection.
 `WEBENC_TEST_LONG=1 node harness/ffmpeg/verify.mjs` runs preprocessing comparisons,
 including all 1,440 frames of a one-minute source; set `WEBENC_URL` to a local
-development server and `WEBENC_TEST_OUTPUT` to a managed tmpfs fixture directory.
+development server and `WEBENC_TEST_OUTPUT` to a fixture directory in the selected workspace.
 Diagnostic hashes and comparison receipts are retained under `logs/`.
+
+Run Node/npm under `../tools/runtime.sh --workspace-root /path/to/workspace
+--scratch-root /path/to/scratch -- COMMAND` to share the native runtime paths.
+QA files default to `WORKSPACE/webenc-qa`; kernel fixtures use
+`WORKSPACE/webenc-kernel-test`. `WEBENC_TEST_OUTPUT` and `WEBENC_KERNEL_OUTPUT`
+override these locations. Give simultaneous runs distinct output directories.
+The `test:encode:long` and `test:encode:stress` commands share
+`scripts/test-encode.sh`; their default 60-second sources are explicit
+qualification workloads and are not part of the UI suite.
 
 A narrowly bounded diagnostic adapter handles unused whole-sector padding when
 the entire Prg stream fits in the boot prebuffer. It changes no encoding choices

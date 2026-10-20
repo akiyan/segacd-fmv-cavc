@@ -20,6 +20,25 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Decide** | Select each frame's exact or reused patterns, keep the preceding display's slots live until the final name-table DMA and reject choices whose temporary old-plus-new pattern union would overflow VRAM, allocate slots, retain resident one-sided fade references and collect their cold preloads into a contiguous edge block, catch up any reclaimed entries, reserve each adopted scroll frame's guard-edge supply and clamp its cold and Prg ceilings to the single-run limit, assign pattern sources, and commit the physical budget. A fade preparation deadline that cannot complete demotes its shot to ordinary frames and restarts the encode without that fade. |
 | **Finalize** | Plan the shadow update lists over the exact shared-sector pack route, add each scroll frame's rolling-plane name-table words, verify the complete physical schedule, and write the numeric traces and decision log. |
 
+## Working memory
+
+`--array-storage disk` places frame features and quantized numeric caches in
+mapped files under the selected scratch root; `memory` uses ordinary arrays.
+Frame-feature loading queues a bounded number of tasks. Edge-strength data is
+released after palette training, source-feature views after quantization, audio
+intermediates after their output is written, and baseline demand/prefetch
+objects after boot planning. Final decisions retain the numeric forecast
+metrics needed downstream, without keeping duplicate pattern-key sequences.
+
+These changes preserve encoder settings and numeric results. Disk mode can add
+I/O latency and needs disk space; it does not bound Python pattern-history or
+decision-log growth. A tmpfs scratch root still consumes physical RAM. Use
+`harness/runtime_storage/measure.py` to distinguish process RSS, sampled process
+tree RSS, system shared memory and filesystem use. The full-source comparison
+uses 16,384 frames at 320x224 and compares outputs from the frozen parent with
+the current encoder. Its low-motion input measures stage-cache retention, not
+the worst-case pattern history of a complex movie.
+
 ## Measured Time
 
 The following measurement is a versioned historical reference taken at
@@ -63,6 +82,22 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用（frame 0のinline staging領域とboot-VRAM sidecarのbacksideへの振り分けを含む）、片側fade-outに必須のreference prefetch容量を1パスで計算します。 |
 | **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、最後のname-table DMAまで直前表示のslotを維持し、一時的な旧表示と新表示のpattern和集合がVRAMを越える選択を退けてslotを割り当て、片側fade referenceのresident分を維持しながらcold preloadを端の連続blockへ集約して回収されたentryを取り戻し、採用したscroll frameではguard辺の供給分を予約して単独runを前提にcoldとPrgの上限をクランプし、パターン供給元と物理予算を確定します。準備deadlineを完了できないfadeはそのshotを通常frameへ降格し、そのfadeを除いてencodeを再実行します。 |
 | **Finalize** | packと同一の共有sector経路でshadow update listを計画し、scroll frameのrolling plane分のname-table wordを加算したうえで、全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
+
+## 作業メモリ
+
+`--array-storage disk` はframe特徴量と量子化後の数値cacheを、指定したscratch rootの
+fileへmapします。`memory` は通常の配列を使います。frame特徴量の読み込みは、待機task数を
+制限します。edge-strength dataはpalette学習後、source特徴量のviewは量子化後、音声の
+中間dataは出力後、baselineの需要予測・prefetch objectはboot計画後に解放します。
+最終decisionには後工程で必要な数値予測を保持し、重複したpattern-key sequenceは残しません。
+
+encoder設定と数値結果は維持します。disk modeにはI/O待ち時間とディスク容量が必要で、
+Pythonのpattern履歴やdecision logの増加までは制限しません。scratchがtmpfsなら物理RAMを
+使います。`harness/runtime_storage/measure.py` でprocess RSS、process treeのsampled RSS、
+system shared memory、filesystem使用量を区別できます。全工程のsource比較には
+320x224・16,384フレームを使い、固定した親commitと現在のencoderの出力を照合します。
+動きの少ない入力なので、stage cacheの保持は計測できますが、複雑な映像のpattern履歴の
+最大量を測るものではありません。
 
 ## 実測時間
 

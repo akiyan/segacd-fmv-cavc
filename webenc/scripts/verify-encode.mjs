@@ -4,7 +4,8 @@ import {unzipSync} from 'fflate';
 import path from 'node:path';
 import {spawn} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
-const output=process.env.WEBENC_TEST_OUTPUT||'/dev/shm/segacd-fmv-cavc/webenc-qa';await mkdir(output,{recursive:true});
+import {qaRoot as output} from './test-paths.mjs';
+await mkdir(output,{recursive:true});
 const repo=fileURLToPath(new URL('../../',import.meta.url));
 const manager=spawn(path.join(repo,'tools/python.sh'),['--gpu',path.join(repo,'webenc/harness/equivalence/lease.py'),output,...(process.env.WEBENC_INPUT?[process.env.WEBENC_INPUT]:[])],{stdio:['pipe','pipe','inherit']});
 await new Promise((resolve,reject)=>{manager.stdout.once('data',resolve);manager.once('exit',code=>{if(code)reject(new Error('Fixture lease failed'));});});
@@ -93,6 +94,8 @@ try {
  for(const name of ['HEADER.DAT','BODY.DAT'])expect(Buffer.from(found[name+';1']).equals(Buffer.from(files[name]))).toBe(true);
  expect(Buffer.concat([Buffer.from(files['HEADER.DAT']),Buffer.from(files['BODY.DAT'])]).equals(Buffer.from(files['MOVIE.DAT']))).toBe(true);
  for(const name of ['preview.mp4','playback.wav',isoName,cueName,'settings.json','stage-sha256.tsv'])await writeFile(path.join(output,name),files[name]);
+ await page.getByRole('spinbutton',{name:'Crop X',exact:true}).fill('1');
+ await expect(page.getByRole('button',{name:'Download ZIP',exact:true})).toBeDisabled();
  await page.screenshot({path:path.join(output,'cavc-complete.png'),fullPage:true});await writeFile(path.join(output,'webapp-log.txt'),await page.locator('.log-output').textContent());expect(errors).toEqual([]);
  console.log(JSON.stringify({gate:'PASS',zip,isoName,frames:JSON.parse(new TextDecoder().decode(files['settings.json'])).input.frames}));
 }finally{await browser.close();manager.stdin.end();}

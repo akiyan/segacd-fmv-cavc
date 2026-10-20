@@ -1,53 +1,9 @@
-# Main-CPU boot-time code generation
+# Main-CPU generated-handler cycle diagnostics
 
-This harness fixes the executable-byte contract for Main-CPU code generation
-before the player emits any code at runtime. The generator replaces the mixed
-bitmap-byte loop with 256 straight-line handlers generated once after
-stream-header setup.
-
-The reserved Main RAM layout is:
-
-```text
-0xFF2100  256-entry table of signed word offsets (512 bytes)
-0xFF2300  generated bitmap handlers
-0xFF4A00  expected generated-handler end
-0xFF6700  hard code-generation limit and M-STATE start
-0xFF8800  unallocated M-FREE start
-```
-
-Each set bit emits exactly one entry read, register-mask cold/source-bit strip, and shadow write.
-Every handler then advances the shadow cursor by 16 bytes and branches to the
-assembly loop continuation. No handler modifies its generated instructions
-during playback.
-
-The dispatch keeps the existing `00` skip and uses four masked longword writes
-for `FF`; only partial masks enter the generated jump table. The shared
-`0x67FF67FF` register mask strips the cold bit and the two Prg/Wr/Dic
-source bits while keeping the palette and tile index intact.
-
-Run the full proof:
-
-```sh
-tools/python.sh harness/main_codegen/verify_handlers.py
-```
-
-The proof covers all 256 masks with deterministic entry/shadow data, parses
-every emitted opcode, verifies every table offset and branch target, checks the
-M-STATE boundary, and asks the project 68000 objdump to decode representative
-handlers. To retain the complete generated image for manual disassembly:
-
-```sh
-tools/python.sh harness/main_codegen/verify_handlers.py \
-  --output tmp/main_codegen/bitmap_handlers.bin
-
-~/toolchains/mars/m68k-elf/bin/m68k-elf-objdump \
-  -b binary -m 68000 --adjust-vma=0xFF2100 -D \
-  tmp/main_codegen/bitmap_handlers.bin
-```
-
-The runtime assembly generator must emit byte-for-byte the same table and
-handlers. Keep this harness synchronized whenever that instruction template
-changes.
+The player emits bitmap handlers into Main RAM. `PLAYER.md` describes the
+active allocation. Qualify emitter changes against the built player and actual
+handler memory or playback traces; a second Python emitter is not evidence
+that the assembly emitted those bytes.
 
 Measure the per-frame instruction cost against a real packed stream with:
 

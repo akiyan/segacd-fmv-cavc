@@ -1,4 +1,4 @@
 interface:
   display_name: "HUD Timeline"
-  short_description: "Render HUD timelines and matching mixlines"
-  default_prompt: "Use $hudline to render and publicly publish the complete DEBUG HUD timeline, then create and publicly publish its matching $mixline."
+  short_description: "Render requested playback HUD diagnostics"
+  default_prompt: "Use $hudline to render and show the complete DEBUG HUD timeline from this recording\u2019s matching TSV and gate."
