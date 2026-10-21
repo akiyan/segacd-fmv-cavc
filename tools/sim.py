@@ -66,6 +66,7 @@ import shadow_updates  # noqa: E402
 import cavc_routing  # noqa: E402
 import wordbuf_ring  # noqa: E402
 import sim_artifact_cache  # noqa: E402
+import source_range  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 import upgrade_planner  # noqa: E402
 from array_storage import ArrayStorage  # noqa: E402
@@ -117,6 +118,11 @@ if not 1 <= ACTIVE_TILES <= C_CELLS:
 FPS_STR = os.environ.get("CBRSIM_FPS", "15").strip()
 FPS = (float(FPS_STR.split("/")[0]) / float(FPS_STR.split("/")[1])) if "/" in FPS_STR else float(FPS_STR)
 DURATION = os.environ.get("CBRSIM_DURATION", "152.866667")
+SOURCE_RANGE = source_range.frame_range({
+    key: int(os.environ[env]) for key, env in (
+        ("start_frame", "CBRSIM_START_FRAME"), ("end_frame", "CBRSIM_END_FRAME"))
+    if env in os.environ
+})
 
 # Qualified rates use their exact NTSC cadence (N4=14.985, 2/3=23.976,
 # N2=29.97). Other rates keep their requested long-term rate.
@@ -1395,12 +1401,14 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                  *ffmpeg_threads,
                  "-ss", "0", "-t", DURATION, "-i", SRC,
-                 "-vf", f"{DEDITHER_VF},fps={FPS_STR}", str(master_dir / "%05d.png")])
+                 "-vf", source_range.video_filter(DEDITHER_VF, FPS_STR, SOURCE_RANGE),
+                 str(master_dir / "%05d.png")])
             print(f"extracting raw comparison frames ({W}x{H} raster) ...")
             run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
                  *ffmpeg_threads,
                  "-ss", "0", "-t", DURATION, "-i", SRC,
-                 "-vf", f"{RAW_VF},fps={FPS_STR}", str(raw_dir / "%05d.png")])
+                 "-vf", source_range.video_filter(RAW_VF, FPS_STR, SOURCE_RANGE),
+                 str(raw_dir / "%05d.png")])
             print(f"extracting audio ({AUDIO_LABEL}) ...")
             if AUDIO_AF:
                 print(f"  audio filter: {AUDIO_AF}")
@@ -1412,6 +1420,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                  "-vn", *(["-af", AUDIO_AF] if AUDIO_AF else []),
                  "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
                  str(OUT / AUDIO_FILE)])
+            if SOURCE_RANGE is not None:
+                source_range.trim_audio(OUT / AUDIO_FILE, SOURCE_RANGE, FPS_STR)
             if PREPROCESS_AUTO_RANGE:
                 masters = sorted(master_dir.glob("*.png"))
                 black, white = auto_range.detect_range(
@@ -1429,6 +1439,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
     _t = _mark("Extract", _t)
     frames = sorted(master_dir.glob("*.png"))
     n = len(frames)
+    if SOURCE_RANGE is not None and n != SOURCE_RANGE[1] - SOURCE_RANGE[0]:
+        raise ValueError(f"source range {SOURCE_RANGE} produced only {n} frames")
     wordram_layout = pattern_supply.word_ram_layout(
         n, C_CELLS, MAX_COLD)
     if ACTIVE_TILES < C_CELLS:
@@ -5960,6 +5972,8 @@ def _tmpfs_key():
 
 
 def _estimated_frame_count():
+    if SOURCE_RANGE is not None:
+        return SOURCE_RANGE[1] - SOURCE_RANGE[0]
     return max(1, int(math.ceil(float(DURATION) * FPS)) + 2)
 
 

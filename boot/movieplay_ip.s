@@ -327,6 +327,10 @@
 
 .text
 
+.ifdef MULTIPART
+	.include "multipart_player.inc"
+.endif
+
 	/* The BIOS enters the IP here, at the region's security code, and that
 	   code falls through to this branch.  Both the code and the offset the
 	   branch target is padded to belong to the region, because the three
@@ -341,6 +345,21 @@
 ip_entry:
 	move.w	#0x2700, sr
 	lea	STACK, sp
+.ifdef MULTIPART
+	/* Later parts replace this image without a BIOS BSS clear. */
+	lea	0x00FF6700.l, a0
+	moveq	#0, d0
+	move.w	#(0x2100/4)-1, d1
+1:
+	move.l	d0, (a0)+
+	dbra	d1, 1b
+	lea	multipart_restore, a0
+	lea	0x00FF8880.l, a1
+	move.w	#((multipart_restore_end-multipart_restore)/2)-1, d0
+1:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 1b
+.endif
 
 	/* Real hardware powers up the Z80, PSG and YM2612 undefined; an unheld
 	   Z80 executes garbage RAM and can drive constant noise over PCM
@@ -602,6 +621,10 @@ play_loop:
 
 /* 映画終端: 最終フレームを表示したまま15秒(900vblank)待ち、先頭からループ再生 */
 movie_end_md:
+.ifdef MULTIPART
+	/* Execute outside the IP image which the loader will replace. */
+	jmp	0x00FF8880.l
+.endif
 	move.w	#900-1, d2
 1:
 	bsr	wait_vblank
@@ -620,6 +643,26 @@ movie_end_md:
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
 	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
 	bra	play_loop
+
+.ifdef MULTIPART
+/* Main owns only the handed-over bank, until its final copy ACK. */
+multipart_restore:
+	move.w	#1, (GA_COMCMD1).l
+1:
+	cmpi.w	#0x8006, (GA_COMSTAT0).l
+	bne.s	1b
+	lea	PROBE_BANK.l, a0
+	lea	0x00FF0000.l, a1
+	move.w	#(0x5000/2)-1, d0
+2:
+	move.w	(a0)+, (a1)+
+	dbra	d0, 2b
+	clr.w	(GA_COMCMD1).l
+	movea.l	#MULTIPART_RETURN_ENTRY, a0
+	jmp	(a0)
+multipart_restore_end:
+/* multipart_build.py checks the assembled stub against its resident region. */
+.endif
 
 .ifdef MAIN_CODEGEN
 /* Emit the 256 straight-line bitmap handlers once into Main RAM.

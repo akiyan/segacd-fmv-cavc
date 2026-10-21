@@ -535,6 +535,7 @@ tmp/<profile>/
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct workspace path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
+| `[multipart]` | optional `parts` | Default part count (integer 1..64) for `tools/multipart.py`; CLI `--parts N` takes precedence. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
 `fit = "pad"` preserves all source pixels and adds bars. `fit = "crop"` fills
@@ -572,6 +573,30 @@ and a negative or non-integer CRAM-risk search length. GPU, the
 1,743-tile resident pool, segmented palettes, Near, boot prefetch, and the four
 physical supplies are fixed behavior; only the diagnostic-only environment
 overrides listed above can switch them off for isolation.
+
+### Independent source ranges
+
+Optional `[source]` keys `start_frame` and `end_frame` select a half-open range
+after the profile's video filters and `fps` conversion. Both must be integers
+with `0 <= start_frame < end_frame`; omission selects the whole input. The
+internal environment equivalents are `CBRSIM_START_FRAME`/`CBRSIM_END_FRAME`.
+`duration` still bounds the original input, not the part's running time.
+Filtered mono PCM is cut at `floor(frame * sample_rate / fps)` on the same
+source clock, with silence padding when the original audio ends early.
+
+`tools/multipart.py` generates these ranges and profiles from `--parts N`, or
+`[multipart] parts = N` when the CLI count is omitted. One of them is required;
+the count must be an integer in 1..64. The optional CLI-only `--part K` selects
+one part, numbered from 1 through the resolved count; omission completes all
+parts. This is orchestration configuration for the multipart entry point, and
+is omitted from generated per-part profiles. Equal resolved counts reuse the
+same plan and completed parts regardless of whether TOML or CLI supplied them.
+The other source/quality settings are retained.
+Independent parts have separate palette training, whole-movie quality budgets,
+boot preloads and delivery schedules. `--build-only`, `--debug`, and
+`--security-region jp|us` control assembly after all parts are complete.
+`MULTIPART=1` is the internal player-module build switch; the CLI supplies its
+dispatcher address and uses `PLAYER_SPECIALIZE=1`.
 
 ## Build switches
 
@@ -1108,6 +1133,7 @@ tmp/<profile>/
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなworkspace実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
+| `[multipart]` | optional `parts` | `tools/multipart.py`の分割数の既定値（1..64の整数）。CLIの`--parts N`を優先する。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 
 `fit = "pad"` は全source pixelを保持し、barを追加します。`fit = "crop"` は表示aspectを
@@ -1140,6 +1166,28 @@ tile境界に揃わないdimension、
 負または非integerのCRAM-risk search長を拒否します。GPU、1,743-tile
 resident pool、segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 上に挙げた診断専用environment overrideだけが分離用にこれらを無効化できます。
+
+### 独立したsource範囲
+
+`[source]`の省略可能な`start_frame`と`end_frame`は、profileのvideo filterと`fps`
+変換を適用した後の半開区間を指定します。両方とも整数で、
+`0 <= start_frame < end_frame`が必要です。省略時は入力全体を使います。
+内部の対応環境変数は`CBRSIM_START_FRAME`/`CBRSIM_END_FRAME`です。
+`duration`はpartの再生時間ではなく、元の入力を読む時間の上限です。
+filter適用後のmono PCMを同じsource clockの`floor(frame * sample_rate / fps)`で
+切り出し、元音声が先に終わる場合は無音で埋めます。
+
+`tools/multipart.py`は`--parts N`から、CLIで分割数を省略した場合は
+`[multipart] parts = N`から範囲とprofileを生成します。どちらかで1..64の整数を
+指定する必要があります。CLI専用の`--part K`で、解決した分割数の範囲内の1始まりの
+part番号を選びます。省略時は全partを完成させます。この設定はmultipartの実行入口で
+使い、生成する各partのprofileには含めません。解決した分割数が同じなら、TOMLとCLIの
+どちらで指定しても同じ計画と完成済みpartを再利用します。
+それ以外のsource/画質設定は維持します。各partのpalette学習、
+whole-movie quality budget、boot preload、配送スケジュールは独立します。
+`--build-only`、`--debug`、`--security-region jp|us`で全part完成後の組み立てを制御します。
+`MULTIPART=1`は内部のplayer moduleビルド用switchです。CLIがdispatcherの戻り先を
+渡し、`PLAYER_SPECIALIZE=1`でビルドします。
 
 ## Build switch
 

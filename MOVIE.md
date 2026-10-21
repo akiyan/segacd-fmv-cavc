@@ -106,6 +106,23 @@ purpose. The finite BODY arm is stopped before frame 0 is expanded, and the
 timed BODY suffix starts only after frame 0 is visible, so this area is
 independent of the timed PrgBuf and its jitter reserve.
 
+### Multipart disc container
+
+A multipart ISO holds independent movies on one MODE1/2048 data track. For
+part 1, `P0001HDR.DAT` and `P0001BOD.DAT` are ordinary HEADER/BODY files;
+`P0001IP.BIN` and `P0001SP.BIN` are the matching specialized Main/Sub player
+modules. Parts 2..64 follow the same naming rule. There is no concatenated
+HEADER, shared routing table, or cross-part pattern reference.
+
+`PARTIP.BIN` (20 KiB) and `PARTSP.BIN` (8 KiB) implement the menu-free
+dispatcher. It loads the next movie after EOF, stopping PCM during loading,
+and loops to the first after the last. Every part restarts the normal boot,
+frame-0 handoff and timed BODY protocol. Inner HEADER/BODY layouts are unchanged.
+The builder checks exact ISO directory entries, lengths, extent bounds and
+payload hashes against completed part files. The loader bounds the root
+directory to 64 KiB, validates each selected extent and checks incoming sector
+addresses before advancing a finite read.
+
 ## Header
 
 The first 20 bytes are `struct ">4sHHHHHHHH"`. There is no independent
@@ -676,6 +693,21 @@ frame 0 patternはPRG RAM `0x72000..0x7B000` の固定36 KiB boot-only staging
 領域を使います。この領域はtimed用途がまだ始まっていない空間と重なります。有限の
 BODY armはframe 0展開前に停止し、timed BODY suffixはframe 0表示後にだけ開始する
 ため、timed PrgBufとそのjitter reserveから独立しています。
+
+### Multipart disc container
+
+multipart ISOは、1本のMODE1/2048 data trackに独立した動画を収録します。
+part 1では`P0001HDR.DAT`と`P0001BOD.DAT`が通常のHEADER/BODYにあたり、
+`P0001IP.BIN`と`P0001SP.BIN`が対応するspecialized Main/Sub player moduleです。
+part 2..64も同じ命名規則です。HEADERの連結、routing tableの共有、partをまたぐ
+pattern参照は行いません。
+
+`PARTIP.BIN`（20 KiB）と`PARTSP.BIN`（8 KiB）がメニューなしのdispatcherです。
+EOFでPCMを止めて次の動画を読み込み、最後から最初へループします。各partで通常の
+boot、frame 0 handoff、timed BODY protocolを開始し直します。HEADER/BODY内部の
+layoutは変更しません。builderはISOのdirectory entry、長さ、extent範囲、payload
+hashを完成済みpartのfileと照合します。loaderはroot directoryを64 KiB以内に制限し、
+選択したextentの範囲と、有限readで受信したsectorのaddressを検証してから進みます。
 
 ## Header
 

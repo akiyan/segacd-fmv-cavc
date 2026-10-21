@@ -16,6 +16,10 @@ initial download finishes and **Offline ready** appears, you can encode without
 a network connection. **Encoding can take a long time**, especially for longer
 videos.
 
+For long sources, the CLI offers [multipart encoding](#multipart-cli)
+to divide the scheduling work into shorter movies. Parts play in order without
+a menu and loop, with a loading pause between parts.
+
 ---
 
 Sega CD Constraint-Aware Video Codec is a full-motion-video codec designed for
@@ -336,6 +340,9 @@ core errors. The complete upstream trace is kept beside it as
 
 ## Build
 
+For a split encode, use [multipart](#multipart-cli); it builds the ISO
+automatically when all parts are ready.
+
 Run a full encode and DEBUG disc build:
 
 ```sh
@@ -381,6 +388,58 @@ baseline. Timeline rendering and publication are separate requested stages.
 Gist publication is optional and requires an explicit request for that
 destination, including when uploading a video to YouTube. Local timelines and
 YouTube descriptions work without Gist credentials or a public timeline URL.
+
+<a id="multipart-cli"></a>
+
+## Multipart encoding (CLI)
+
+`multipart` splits one source into independent movies. Each part has its own
+HEADER/BODY and specialized player, keeping each scheduling pass shorter for
+long sources. The disc starts part 1 without a menu,
+advances in numbered order, and loops from the last part to part 1. Picture and
+audio pause while the next movie loads. The browser encoder does not expose
+this mode.
+
+Encode only part 2 of a three-part Sonic Jam opening, then complete the rest:
+
+```sh
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/multipart.py profiles/sonic-jam-op.toml --parts 3 --part 2
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/multipart.py profiles/sonic-jam-op.toml --parts 3
+```
+
+You can also set the default count in the source TOML:
+
+```toml
+[multipart]
+parts = 3
+```
+
+Then run `tools/python.sh --gpu tools/multipart.py profiles/sonic-jam-op.toml`
+to complete all parts, or append `--part 2` to select one. `--parts N` overrides
+the TOML count. Either the TOML setting or `--parts` is required. This setting
+is read by `tools/multipart.py`; use that entry point for multipart encoding.
+The [Sonic Jam profile](profiles/sonic-jam-op.toml) includes a commented example.
+Run `tools/python.sh tools/multipart.py --help` for the CLI options.
+
+`--parts` accepts 1..64; `--part` is 1-based. Parts divide the profile's output
+frames as evenly as possible, with any extra frames assigned to earlier parts.
+Each part must contain 2..83,520 frames. Raster, cadence, filters, palette policy
+and cold cap stay at their profile values. Palettes and quality decisions are
+computed independently per part, so pixels need not match a single full encode.
+
+Completed parts are authenticated by source bytes, effective settings, encoder
+version, frame range and packed-file hashes. Rerunning the command reuses them;
+an interrupted part has no completion marker. The ISO is built automatically
+only when every part is complete. `--build-only` checks and builds existing
+parts without encoding; it fails if a part is missing. `--debug` includes the
+HUD; omission builds a release disc. `--security-region us` selects North
+America; the default is Japan. Output paths are printed, including
+`out/<profile>-multipart<N>-<identity>_release.iso` and its CUE. Generated
+profiles and staging live under `tmp/<profile>-multipart<N>-<identity>/`.
 
 ## Disc images for distribution
 
@@ -506,6 +565,10 @@ repository.
 動画はアップロードされず、ブラウザ内で処理します。初回の必要ファイルの取得が完了し、
 **Offline ready**と表示された後は、オフラインでもエンコードできます。
 特に長い動画では、**エンコードに長い時間がかかることがあります。**
+
+長尺素材には、計画処理を短い動画ごとに分けるCLI専用の
+[multipartエンコード](#multipart-cli-jp)があります。
+メニューなしで順番に再生してループし、各partの間に読み込み待ちが入ります。
 
 ---
 
@@ -801,6 +864,9 @@ BIOSをrunごとのprivate system directoryへcopyします。通常の
 
 ## Build
 
+分割エンコードには[multipart](#multipart-cli-jp)を使います。
+全partが揃うとISOを自動生成します。
+
 full encodeとDEBUG disc build:
 
 ```sh
@@ -845,6 +911,56 @@ tools/python.sh tools/parallel_run.py --jobs 2 --through hud \
 Gistへの公開は任意で、YouTubeへ動画をアップロードする場合も、公開先として
 Gistを明示的に依頼されたときだけ行います。ローカルのタイムラインとYouTubeの
 説明文は、Gist認証情報や公開タイムラインURLがなくても利用できます。
+
+<a id="multipart-cli-jp"></a>
+
+## Multipartエンコード（CLI）
+
+`multipart`は、1つの素材を独立した動画に分割します。各partは専用のHEADER/BODYと
+specialized playerを持ち、長尺素材の計画処理を短い動画ごとに行います。
+ディスクはメニューを表示せずpart 1から再生し、番号順に
+進み、最終partからpart 1へループします。次の動画の読み込み中は映像・音声が止まります。
+このモードはCLI専用です。
+
+Sonic Jam openingを3分割し、part 2だけをエンコードしてから残りを完成させる例です。
+
+```sh
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/multipart.py profiles/sonic-jam-op.toml --parts 3 --part 2
+tools/python.sh --gpu --workspace-root /path/to/workspace \
+  --scratch-root /path/to/ssd/scratch --array-storage disk \
+  tools/multipart.py profiles/sonic-jam-op.toml --parts 3
+```
+
+分割数の既定値を素材のTOMLに設定することもできます。
+
+```toml
+[multipart]
+parts = 3
+```
+
+この場合、`tools/python.sh --gpu tools/multipart.py profiles/sonic-jam-op.toml`で
+全partを完成させ、`--part 2`を付けると1つのpartを指定できます。
+`--parts N`はTOMLの分割数より優先されます。TOMLか`--parts`のどちらかで指定が必要です。
+この設定を読むのは`tools/multipart.py`なので、multipartエンコードにはこの入口を使います。
+[Sonic Jamのprofile](profiles/sonic-jam-op.toml)にコメントアウトした例があります。
+CLIのオプションは`tools/python.sh tools/multipart.py --help`で確認できます。
+
+`--parts`は1..64、`--part`は1始まりです。profileの出力frame数をなるべく均等に分け、
+余りは先のpartから1 frameずつ割り当てます。各partの範囲は2..83,520 framesです。
+raster、cadence、filter、palette policy、cold capはprofileの値を維持します。
+paletteと画質の判断はpartごとに独立するため、全編を一度にエンコードした場合とは
+pixelが一致しないことがあります。
+
+完成済みpartは、素材のbytes、実効設定、encoder version、frame範囲、packed fileの
+hashで検証します。同じコマンドを再実行すると再利用され、中断したpartには完了markerが
+付きません。全partが揃った時点でISOを自動生成します。`--build-only`はエンコードせず
+既存partを検証してビルドし、不足があれば失敗します。`--debug`でHUDを含め、省略時は
+release discを作ります。`--security-region us`は北米向けで、既定値は日本向けです。
+出力先として`out/<profile>-multipart<N>-<identity>_release.iso`と対応するCUEなどを
+表示します。生成したprofileとstagingは`tmp/<profile>-multipart<N>-<identity>/`に
+置きます。
 
 ## 配布用disc image
 

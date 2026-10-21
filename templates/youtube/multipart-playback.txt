@@ -1,0 +1,28 @@
+I built a video codec for the Sega CD. The Sega CD Constraint-Aware Video Codec plays full motion video on unmodified Sega CD / Mega-CD hardware: the console decodes and displays every frame itself while reading one single-speed CD, with no extra chip. This video is that codec running, captured frame for frame as the machine puts it on screen.
+
+Output: display mode H40, {width}x{height} raster ({cols}x{rows} tile grid, {cells} tiles) centered in the 320x224 aperture; {fps} fps; 22.05 kHz mono IMA ADPCM decoded by the Sub CPU. Palette (CRAM) switches: {cram_switches} within the parts in one pass ({cram_switches_by_part}, in part order; {cram_segments} segments total). Each part loads its own initial palette. Useful BODY delivery about {band} KiB/s against the CD 1x ceiling of 150 KiB/s. Spare console RAM is used as prefetch buffers.
+
+{source_line}
+
+What the encoder does. Tiles already resident in VRAM are reused whenever an exact or close-enough match is on hand, and those cost no CD delivery at all. A cell that cannot afford its exact pattern is pointed at a resident one for two bytes instead of a 32-byte pattern. New patterns come from one of several prefetch buffers in the console's spare RAM, each arriving by an exact per-frame deadline tied to the CD's own sector rate, so the picture never runs ahead of what the drive can physically deliver. Palettes are trained per segment.
+
+Multipart playback. The source is encoded as {parts} independent movies. They play in order without a menu, pause while the next part loads, and loop back to the first. Startup, loading pauses and the return to the first part remain in this recording.
+
+The recording. It comes from {emulator} driving a stock Mega-CD configuration and the Japanese BIOS. The native 320x224 output is enlarged to 2048x1568 square pixels with nearest-neighbour scaling, which bakes the H40 32:35 pixel aspect into the pixel count without blending colours; the result displays at the hardware's 64:49 shape.
+
+Project: https://github.com/akiyan/segacd-fmv-cavc
+Build: {build}
+
+----
+
+Sega CD向けにvideo codecを自作しました。Sega CD Constraint-Aware Video Codec は、無改造の Sega CD / Mega-CD でfull motion videoを再生します。追加chipを使わず、単速CDを読みながら本体自身が毎frameをdecodeして表示します。この動画はそのcodecの動作を、機械が画面へ出すframeそのままで収録したものです。
+
+出力: display mode H40、{width}x{height} raster ({cols}x{rows} tile grid、{cells} tiles)を320x224 aperture中央へ配置。{fps} fps。音声はSub CPUがdecodeする22.05 kHz mono IMA ADPCM。Palette (CRAM) switchは一周のpart内で合計{cram_switches}回 (part順に{cram_switches_by_part}回、計{cram_segments} segments)。各partは自身の初期paletteを読み込みます。有効BODY配送は約{band} KiB/sで、CD 1xの上限は150 KiB/s。本体の空きRAMを先読みバッファとして使用します。
+
+{source_line_ja}
+
+encoderの動作。VRAMに常駐しているtileは、完全一致か十分近いものがあれば再利用し、CD配送を一切使いません。正確なpatternを賄えないcellは、32 byteのpatternではなく2 byteで常駐patternへ向けます。新しいpatternは、本体の空きRAMに置いた複数の先読みbufferのいずれかから、CDのsector rateに結び付いたframeごとの正確な期限に届きます。そのため絵がdriveの物理的な配送能力を先回りすることはありません。paletteはsegmentごとに学習します。
+
+Multipart再生。素材を{parts}本の独立した動画に分けてエンコードしています。メニューなしで順番に再生し、次のpartの読み込み中は止まり、最後から最初に戻ります。この録画には起動、読み込み待ち、先頭partへのループを残しています。
+
+録画について。{emulator}で実機構成のMega-CDと日本語BIOSを動かしたものです。native の320x224出力をnearest-neighbourで2048x1568のsquare pixelへ拡大し、H40の32:35 pixel aspectを色を混ぜずに画素数へ焼き込んでいます。表示は実機の64:49の形になります。

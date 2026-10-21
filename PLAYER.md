@@ -265,6 +265,43 @@ plane rows (2,048 words) on a vertical window. DEBUG then sends the first
 screen-width HUD row to the Window table and its three spill digits as
 sprites. Generic and specialized players use the same routes at every cadence.
 
+## Multipart loader ownership
+
+`MULTIPART` builds reserve overlays in the otherwise free regions below.
+The ordinary movie map and the PrgBuf/APPLY capacities remain unchanged.
+
+| Memory | Multipart use |
+|---|---|
+| Main `0xFF8880..0xFF98FF` | Copy/return stub; builder checks actual assembled length |
+| Main `0xFF9900..0xFF990F` | Persistent magic, part index, cycle and visit counters; outside BSS and PALTAB |
+| Sub `0x07F20..0x07F3F` | Dispatcher and selected HEADER/BODY extents |
+| Sub `0x07F42..0x07F4D` | Selected SP extent and exact byte length |
+| Sub `0x07F50..0x07F65` | Permanent 20-byte bank-switch stub and 2-byte BIOS interrupt/user return |
+| Sub `0x07F70..0x07F77`, `0x07F80..0x07F87` | Loader read parameters and ISO directory/volume bounds |
+| Sub `0x0D680..0x0D7FF` | EOF return routine; builder checks assembled length against 384 bytes |
+| Sub `0x67000..0x76FFF` | Untimed root-directory scratch; later reused for exact SP staging |
+| Each Word RAM bank, offset `0x00000..0x04FFF` | Transient 20 KiB Main dispatcher |
+| Each Word RAM bank, offset `0x05000..0x09FFF` | Selected Main module staging |
+| Each Word RAM bank, offset `0x1E000..0x1FFFF` | Transient 8 KiB Sub dispatcher, executing at `0xDE000` |
+
+The BIOS starts a small resident Sub bootstrap at `0x6000`. It installs the
+permanent stubs, places the Sub dispatcher in both physical Word RAM banks,
+and redirects BIOS interrupt/user callbacks before overwriting the bootstrap.
+Bank swaps execute from PRG RAM. The selected Main image becomes Main-visible
+only after the swap; Main acknowledges after copying its last word. The Sub
+module is copied by exact byte length into the 5 KiB resident SP slot, so the
+sector-rounded ISO read cannot overwrite ADP-IDX.
+
+After both modules start, ordinary movie boot owns Word RAM and replaces the
+transient loader images with WordBuf/output data. At EOF Sub stops PCM and
+enters its persistent return routine. Main requests the dispatcher and executes
+its copy from the reserved stub. The loader is reloaded before choosing the
+next part; the last wraps to part 1. Every movie resets its own BSS and restores
+its own palette and pattern state. There is a loading pause, no menu, and no
+15-second single-movie tail. Frame -1 remains untimed; frame 0 is displayed
+before starting the timed suffix, and the first frame-1 control proves service
+before PCM starts, independently for every part.
+
 ## Startup and Per-Frame CPU Sequence
 
 The sequences below are identical at 15, 24, and 30 fps; only the cadence
@@ -712,6 +749,41 @@ Cadence-final VBlank中に、gridのcentered top-left cellからfinal cellまで
 32 plane行すべて（2,048 word）です。DEBUGは続いて
 先頭screen-width HUD rowをWindow tableへ、spillする3桁をspriteとして
 送ります。Generic / specialized playerは全cadenceで同じrouteを使います。
+
+## Multipart loaderの所有領域
+
+`MULTIPART`ビルドでは、通常は空いている次の領域をoverlayとして予約します。
+通常のmovie mapとPrgBuf/APPLYの容量は維持します。
+
+| Memory | Multipartでの用途 |
+|---|---|
+| Main `0xFF8880..0xFF98FF` | Copy/return stub。builderが実際のアセンブル済み長さを検証 |
+| Main `0xFF9900..0xFF990F` | 永続するmagic、part index、cycle、visit counter。BSSとPALTABの外側 |
+| Sub `0x07F20..0x07F3F` | Dispatcherと選択したHEADER/BODYのextent |
+| Sub `0x07F42..0x07F4D` | 選択したSPのextentと正確なbyte長 |
+| Sub `0x07F50..0x07F65` | 永続する20-byte bank-switch stubと2-byte BIOS interrupt/user return |
+| Sub `0x07F70..0x07F77`, `0x07F80..0x07F87` | Loaderのread引数とISO directory/volumeの境界 |
+| Sub `0x0D680..0x0D7FF` | EOF return routine。builderがアセンブル済み長さを384 bytes以内と検証 |
+| Sub `0x67000..0x76FFF` | Untimedなroot-directory scratch。後で正確なSP stagingに再利用 |
+| 各Word RAM bank、offset `0x00000..0x04FFF` | 一時的な20 KiB Main dispatcher |
+| 各Word RAM bank、offset `0x05000..0x09FFF` | 選択したMain moduleのstaging |
+| 各Word RAM bank、offset `0x1E000..0x1FFFF` | 一時的な8 KiB Sub dispatcher。`0xDE000`で実行 |
+
+BIOSは`0x6000`の小さなresident Sub bootstrapを起動します。bootstrapは永続stubを
+設置し、両方の物理Word RAM bankにSub dispatcherを置き、自身を上書きする前に
+BIOS interrupt/user callbackを付け替えます。bank swapはPRG RAMから実行します。
+swap後にMainから選択したMain imageが見えるようになり、Mainは最後のwordを
+コピーしてから応答します。Sub moduleは正確なbyte長で5 KiBのresident SP slotへ
+コピーするため、sector単位のISO readがADP-IDXを上書きすることはありません。
+
+両moduleの開始後は、通常のmovie bootがWord RAMを所有し、一時loader imageを
+WordBuf/output dataで置き換えます。EOFでSubはPCMを止め、永続return routineへ
+進みます。Mainはdispatcherを要求し、予約したstubからコピーを実行します。
+loaderを読み直してから次のpartを選び、最後からpart 1へ戻ります。各動画は自身のBSSを
+初期化し、自身のpaletteとpattern stateを復元します。読み込み待ちはありますが、
+メニューと単一動画の15秒tailはありません。各partでframe -1はuntimedとし、frame 0を
+表示してからtimed suffixを開始し、最初のframe-1 controlで配送を確認してからPCMを
+開始します。
 
 ## StartupとframeごとのCPU sequence
 

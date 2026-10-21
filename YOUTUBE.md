@@ -148,6 +148,20 @@ playback template never mentions analysis panels, because that video has none.
 before upload. It is a safety net for a hand-edited or legacy description, not
 the primary path.
 
+## Multipart playback uploads
+
+Use the source profile's `playback_title` unchanged. Render the
+`multipart-playback.txt` template with `--kind multipart-playback` and
+`--multipart-manifest out/<multipart-stem>/multipart_release.json`. This reads
+the actual part profiles, palette counts and timed delivery arrays from the
+matching completed encodes; it does not use a full-source encode's statistics.
+The CRAM count is the sum of switches within the parts for one pass, with each
+part's count stated separately. Initial palette loads at part boundaries are
+described separately. The description identifies the loading pauses, automatic
+numbered playback and loop. No analysis cross-link is required when no matching
+multipart analysis video exists. Validate it as `--kind playback` with
+`--allow-missing-cross-link` in that case. Other upload rules remain the same.
+
 ## Comparison uploads
 
 A comparison video plays one encode beside its source master and reference
@@ -370,6 +384,18 @@ changelogではなく絶対的に述べること、buildの用語を持たない
 
 upload前に`harness/youtube_description/check_upload_text.py`で再確認します。
 これは手編集や過去の説明文に対する安全網であって、主経路ではありません。
+
+## Multipart再生動画のupload
+
+元profileの`playback_title`をそのまま使います。`--kind multipart-playback`と
+`--multipart-manifest out/<multipart-stem>/multipart_release.json`で
+`multipart-playback.txt`を生成します。対応する完成済みencodeの実際のpart profile、
+palette数、timed配送配列を読み、全素材を一度にエンコードした統計は使いません。
+CRAM回数は一周の各part内のswitchを合計し、各partの回数も記載します。
+part境界の初期palette読み込みは別に説明します。読み込み待ち、番号順の自動再生、
+ループを説明文に明記します。対応するmultipart解析動画がなければanalysisへの
+cross-linkは不要で、その場合は`--kind playback --allow-missing-cross-link`で
+検査します。それ以外のupload規約は共通です。
 
 ## 比較動画のupload
 

@@ -39,6 +39,9 @@
 .endif
 .endif
 	.include "sp_extension.inc"
+.ifdef MULTIPART
+	.include "multipart_player.inc"
+.endif
 
 /* The packed cold-run parser is used by every unified pattern-supply stream
    and by the dense 24/30fps cadence.  A legacy lower-rate plain-Prg diagnostic
@@ -439,9 +442,18 @@ sp_jmptbl:
 sp_init:
 	move.w	#0x2700, sr
 	andi.w	#0xFFFA, (MEMMODE).l
+.ifndef MULTIPART
 	move.w	#0, (COMSTAT0).l
+.endif
 	move.w	#0, (COMSTAT1).l
 	rts
+
+.ifdef MULTIPART
+.global multipart_player_entry
+multipart_player_entry:
+	bsr.s	sp_init
+	bra.w	sp_main
+.endif
 
 .global sp_main
 sp_main:
@@ -467,13 +479,23 @@ do_stream:
 	ori.b	#0x04, (SUB_GA_BASE+0x37).l	/* HOCK: enable CDD communication */
 	ori.b	#0x3C, (SUB_GA_BASE+0x33).l	/* IEN: enable INT2-5 (timer/CDD/CDC) */
 	move.w	#0x2000, sr			/* enable ints BEFORE the BIOS calls */
+.ifndef MULTIPART
 	andi.b	#0xFA, (MEMMODE+1).l
+.endif
 	lea	drv_init_tracklist, a0
 	BIOSCALL BIOS_DRV_INIT
 1:
 	BIOSCALL BIOS_CDB_STAT
 	andi.b	#0xF0, (CDB_STAT).w
 	bne	1b
+.ifdef MULTIPART
+	/* Qualified SP-GAP: saved HEADER/BODY extents, after BIOS init. */
+	lea	0x00007F30.w, a0
+	move.l	(a0)+, header_lba
+	move.l	(a0)+, header_total
+	move.l	(a0)+, body_lba
+	move.l	(a0)+, body_total
+.else
 	bsr	init_iso9660
 	lea	file_header, a0
 	bsr	find_file		/* d0=LBA, d1=sector count */
@@ -483,6 +505,7 @@ do_stream:
 	bsr	find_file
 	move.l	d0, body_lba
 	move.l	d1, body_total
+.endif
 	bset	#2, (MEMMODE+1).l
 stream_start:
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
@@ -1187,6 +1210,10 @@ movie_end:
 	bne	2b
 	move.w	#0, (COMSTAT0).l
 	move.b	#0xFF, (PCM_ONOFF).l		/* 全chオフ(静音) */
+.ifdef MULTIPART
+	/* The PRG return stub survives replacement of both player images. */
+	jmp	0x0000D680.l
+.endif
 3:
 	cmp.w	#CMD_STREAM, (COMCMD0).l	/* MDの再開指示を待つ */
 	bne	3b
@@ -1199,11 +1226,30 @@ issue_file_readn:
 	lea	bios_packet, a5
 	move.l	d0, read_lba
 	move.l	d1, read_total
+.ifdef MULTIPART
+	/* Check the first sector too: a preceding part can leave buffered CDC data. */
+	move.l	d0, d2
+	addi.l	#150, d2
+	move.l	d2, base_msf
+	subq.l	#1, d2
+	move.l	d2, prev_msf
+.endif
 	move.l	d0, (a5)
 	move.l	d1, 4(a5)
 	move.l	#SUB_BANK_1M, 8(a5)
 	movea.l	a5, a0
 	BIOSCALL BIOS_CDC_STOP
+.ifdef MULTIPART
+	/* No timed read or PCM is active at this finite-read boundary. */
+	move.w	(GA_STOPWATCH_ABS_W).w, d2
+1:
+	move.w	(GA_STOPWATCH_ABS_W).w, d3
+	sub.w	d2, d3
+	andi.w	#0x0FFF, d3
+	cmpi.w	#3256, d3
+	blo.s	1b
+	movea.l	a5, a0
+.endif
 	BIOSCALL BIOS_ROM_READN
 	move.l	read_total, stream_remaining
 	rts
@@ -2591,6 +2637,7 @@ swap_settle:
 	bne.s	1b
 	rts
 
+.ifndef MULTIPART
 read_cd:
 	movem.l	d0-d7/a0-a6, -(sp)
 	lea	bios_packet, a5
@@ -2681,6 +2728,8 @@ get_info:
 	lsr.l	d2, d1
 	movem.l	(sp)+, a1-a2/a6
 	rts
+
+.endif
 
 /* ---- RF5C164 PCM ---- */
 pcm_on:
@@ -2972,10 +3021,12 @@ sp_user:
 
 drv_init_tracklist:
 	.byte	1, 0xFF
+.ifndef MULTIPART
 file_header:
 	.asciz	"HEADER.DAT"
 file_body:
 	.asciz	"BODY.DAT"
+.endif
 	.align	2
 
 bios_packet:

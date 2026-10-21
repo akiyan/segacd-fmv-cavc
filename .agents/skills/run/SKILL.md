@@ -16,6 +16,11 @@ versions, commands, logs and stage results. Read `sim` for a new encode,
 `compilation` for publication, only when reaching that stage. Read YOUTUBE.md
 when preparing upload metadata.
 
+For a multipart request or an enabled `[multipart].parts` setting, start with
+`tools/multipart.py`, following the Multipart encoding section of `README.md`.
+Use its printed completed-disc paths for requested later stages; the
+single-movie `parallel_run.py` command below does not select multipart.
+
 For the standard DEBUG pipeline, the existing orchestrator retains the stem
 lock and artifact lease across stages:
 

@@ -1,5 +1,13 @@
 schema_version = 5
 
+# Optional CLI multipart encoding: uncomment both lines to default to 3 parts.
+# Parts play in order without a menu, pause while loading, and loop.
+# tools/python.sh --gpu tools/multipart.py profiles/sonic-jam-op.toml --part 2
+# Override the count: append --parts 4 (part numbers are 1-based).
+# See README.md: Multipart encoding (CLI).
+# [multipart]
+# parts = 3
+
 [source]
 path = "assets/sonic-jam-op/original-sonic-jam-op.avi"
 fps = "30"
