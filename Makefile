@@ -18,7 +18,7 @@ PYTHON ?= tools/python.sh
 ifeq ($(strip $(MAKECMDGOALS)),)
 MOVIEPLAY_REQUESTED := all
 else
-MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal test1m,$(MAKECMDGOALS))
+MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal movieplay-module test1m,$(MAKECMDGOALS))
 endif
 ifneq ($(strip $(MOVIEPLAY_REQUESTED)),)
 ifeq ($(strip $(CONFIG)),)
@@ -301,6 +301,9 @@ $(OUT_DIR)/CPUVRAMBENCH_$(CPUVRAMBENCH_TAG).cue: $(OUT_DIR)/CPUVRAMBENCH_$(CPUVR
 
 movieplay-internal: check-tools $(MOVIEPLAY_ISO) $(MOVIEPLAY_CUE)
 
+.PHONY: movieplay-module
+movieplay-module: check-tools $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin $(MOVIEPLAY_BUILD_DIR)/movieplay_sp.bin
+
 # A disc build must never trust stream files left by another stream layout,
 # profile, or decision log.  Pack from the authenticated current decisions on
 # every build, removing the complete old set first so a failed pack cannot fall
@@ -326,6 +329,13 @@ MAIN_CODEGEN ?= 1
 # Bind player hot constants to this profile's HEADER.DAT.  Set to 0 only for
 # the generic runtime-header reference player used in A/B diagnostics.
 PLAYER_SPECIALIZE ?= 1
+MULTIPART ?= 0
+ifeq ($(MULTIPART),1)
+ifneq ($(PLAYER_SPECIALIZE),1)
+$(error multipart requires PLAYER_SPECIALIZE=1)
+endif
+ASFLAGS += --defsym MULTIPART=1
+endif
 # DEBUG changes assembler flags without changing a source timestamp. Force this
 # small object to rebuild so `make disc DEBUG=1` can never reuse a release object
 # (or vice versa).

@@ -8,6 +8,11 @@ description: "Encode a requested source/profile with the CAVC encoder. Use for /
 Use one profile and retain the printed sim path, command, log and completion
 status. `CONFIG.md` owns profile settings; `ENCODE.md` owns stage behavior.
 
+For a multipart request or an enabled `[multipart].parts` setting, use
+`tools/multipart.py` with the same environment/storage options. Read the
+Multipart encoding section of `README.md` for count/part selection and ISO
+completion; the single-movie command below does not select multipart.
+
 1. Inspect source raster, SAR/DAR, cadence, duration, audio and a content frame.
    Default to H40 320x224 and HAR 32:35-aware fit/pad. Crop detection is needed
    only when removing bars; confirm fixed black margins across separated scenes.

@@ -39,6 +39,42 @@ uses 16,384 frames at 320x224 and compares outputs from the frozen parent with
 the current encoder. Its low-motion input measures stage-cache retention, not
 the worst-case pattern history of a complex movie.
 
+## Independent multipart planning
+
+The CLI `tools/multipart.py` resolves the part count from `--parts N`, falling
+back to `[multipart].parts` in the profile. It counts the source on the output-frame
+clock, divides it into contiguous ranges, and runs the complete encoder and
+packer for each range. Each part has its own palette, whole-movie quality
+budget and physical delivery schedule. Complete parts can be encoded in any
+order and reused without repeating their planning. Only the final ISO assembly
+requires every part. No browser workflow is added.
+
+Shorter ranges reduce the sequence length seen by the planning passes. They
+also repeat palette training, boot preloads and player startup. Extraction
+decodes the original prefix before trimming, preserving temporal filter and
+audio-filter context; later parts therefore retain linear input-reading work.
+Multipart is not a guarantee that a short source encodes faster overall.
+Resolution, cadence, cold cap and filter/palette policy remain fixed, while
+independent palette and quality decisions can change the resulting pixels.
+
+The Sonic Jam OP three-part qualification uses 2,714 source frames at 288x200,
+30 fps and cold cap 210. With e195, four CPU workers and SSD-backed workspace
+arrays, measured process wall times were:
+
+| Part | Source frames (half-open) | Encode | Pack/verify |
+|---|---|---:|---:|
+| 1 | `[0, 905)` | 146.0 s | 11.3 s |
+| 2 | `[905, 1810)` | 162.0 s | 17.6 s |
+| 3 | `[1810, 2714)` | 154.0 s | 11.7 s |
+
+The summed encode/pack time is 502.6 s, excluding ISO assembly. Part 2 was
+encoded first, then reused while completing the others. These CPU measurements
+are not a controlled comparison against a single full-source encode. The DEBUG
+ISO trace verifies all 2,714 frames plus another complete part 1 (3,619 displayed
+frames), with exact SIM pixel matches and zero recovery counters. The release
+ISO also completes numbered dispatch and loops in the managed emulator. Physical
+hardware and boundary audio quality are not qualified by these traces.
+
 ## Measured Time
 
 The following measurement is a versioned historical reference taken at
@@ -156,6 +192,39 @@ system shared memory、filesystem使用量を区別できます。全工程のso
 320x224・16,384フレームを使い、固定した親commitと現在のencoderの出力を照合します。
 動きの少ない入力なので、stage cacheの保持は計測できますが、複雑な映像のpattern履歴の
 最大量を測るものではありません。
+
+## Multipartの独立した計画処理
+
+CLIの`tools/multipart.py`は、`--parts N`を優先し、省略時はprofileの`[multipart].parts`から
+分割数を決めます。profileの出力frame clockで素材のframe数を数え、連続した
+範囲に分けて、それぞれでencoderとpackerの全工程を実行します。palette、
+whole-movie quality budget、物理配送スケジュールはpartごとに独立します。
+任意の順序でpartをエンコードでき、完成済みpartは計画処理を繰り返さずに再利用します。
+全partが必要になるのは最後のISO組み立てです。ブラウザ版のworkflowは追加しません。
+
+範囲を短くすることで計画処理が扱うsequence長を減らします。一方でpalette学習、
+boot preload、player起動はpartごとに繰り返します。抽出は元素材の先頭からdecodeして
+trimするため、時間方向のfilterと音声filterの文脈が保たれますが、後半のpartでも
+入力を読む線形の処理は残ります。短い素材の総エンコード時間が必ず減る機能ではありません。
+解像度、cadence、cold cap、filter/palette policyを維持しても、paletteと画質の判断が
+独立するため、生成されるpixelは変わる場合があります。
+
+Sonic Jam OPの3分割検証は、2,714 source frames、288x200、30 fps、cold cap 210を
+使っています。e195、CPU worker 4つ、SSD上のworkspace配列で計測したprocessの
+wall timeは次のとおりです。
+
+| Part | Source frames（半開区間） | Encode | Pack/verify |
+|---|---|---:|---:|
+| 1 | `[0, 905)` | 146.0 s | 11.3 s |
+| 2 | `[905, 1810)` | 162.0 s | 17.6 s |
+| 3 | `[1810, 2714)` | 154.0 s | 11.7 s |
+
+encode/packの合計は502.6秒で、ISO組み立ては含みません。part 2を先にエンコードし、
+残りの処理では再利用しました。これはCPUでの実測であり、全素材を一度にエンコードする
+方式との条件を揃えた比較ではありません。DEBUG ISOのtraceでは全2,714 framesと
+もう一度のpart 1全編、計3,619表示framesがSIMのpixelと完全一致し、復旧counterは
+ゼロでした。release ISOも管理対象emulatorで番号順の切り替えとループを完了します。
+このtraceでは実機と境界の音質は検証していません。
 
 ## 実測時間
 

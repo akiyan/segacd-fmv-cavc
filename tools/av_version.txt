@@ -1378,6 +1378,9 @@
 #         still land in the previously selected bank. Every internal-register
 #         write in the writer, pcm_on and pcm_boot_init is now followed by an
 #         explicit 390-cycle delay. Cost is under 0.2% of a frame at 30 fps.
-date=20261020
-e=194
-p=157
+# e195: exact output-frame ranges for independent CLI multipart encoding.
+# p158: menu-free multipart dispatch, separate specialized player modules,
+#       bounded ISO reads and checked loader memory ownership.
+date=20261021
+e=195
+p=158

@@ -41,6 +41,7 @@ promise; they are not ordinary unit tests.
 |---|---|---|
 | Local units | `tools/python.sh harness/test_audit/run.py` | Seconds; tools and harness units plus real streaming-log integration. Requires the project environment and m68k tools for palette fixtures. No long encode/emulator. |
 | Planner equivalence | `harness/encoder_planning/README.md` | Seconds to about a minute; compare real reference/current planners on synthetic delivery data. No source encode; requires a frozen reference tools directory. |
+| Multipart | `harness/multipart/README.md` | Sub-second range tests; explicit existing-ISO emulator tier checks independent parts, every displayed pixel, EOF and loop without re-encoding. |
 | Full Sonic planning comparison | `webenc/harness/planning/README.md` | Explicit opt-in; complete 2,714-frame native/browser encodes on common normalized inputs, packed bytes, every replay frame and PCM. Tens of minutes. |
 | Storage | `tools/python.sh harness/runtime_storage/smoke.py` | Real paths, subprocess locks, leases, mapped values and cleanup; seconds. |
 | Log compaction | `bash harness/gpgx_logvdp/test_compact_log.sh` | Real byte-preserving archive; seconds. |

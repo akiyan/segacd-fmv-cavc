@@ -4,6 +4,13 @@ This is the Sega CD Constraint-Aware Video Codec. The active path is
 `tools/sim.py -> tools/pack_stream.py -> boot/movieplay_*.s`. Keep work on this
 encoder/player unless the user explicitly asks for another project.
 
+For multipart requests or an enabled `[multipart].parts` setting, use the CLI
+`tools/multipart.py PROFILE [--parts N] [--part K]`. It encodes independent
+movies and builds their menu-free looping ISO when all parts are complete.
+`README.md` (Multipart encoding) owns usage and `CONFIG.md` owns TOML/CLI
+precedence. The single-movie `sim.py`/`parallel_run.py` entry points do not
+select this workflow. This is also an available option for long-source planning.
+
 ## Scope, completion, and long jobs
 
 - Follow the requested outcome and existing authorization. A skill is a scoped

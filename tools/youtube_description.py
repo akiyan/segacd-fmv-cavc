@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import pickle
 import re
 import string
@@ -37,6 +38,7 @@ EMULATOR = "Genesis Plus GX"
 URL_FIELDS = {
     "analysis": ("timeline_url", "playback_url"),
     "playback": ("analysis_url",),
+    "multipart-playback": (),
     "verification": (),
     # The comparison video's wording and its links are per-source, so both come
     # from the profile's [comparison.youtube] rather than from a shared
@@ -137,6 +139,48 @@ def band_kib(timeline_tsv: Path) -> int:
     return round(useful / (physical / CD_1X_BYTES) / 1024)
 
 
+def multipart_values(path: Path, profile) -> dict:
+    """Read one-pass palette and delivery totals from the recorded part set."""
+    import numpy as np
+    import tmpfs_workspace
+    from multipart import digest
+    manifest = json.loads(path.read_text())
+    if Path(manifest["profile"]).resolve() != profile.path.resolve():
+        raise SystemExit("multipart manifest belongs to another source profile")
+    if ".".join(manifest["versions"]) != ".".join(build_version().split(".")[1:]):
+        raise SystemExit("multipart manifest has a different encoder/player version")
+    if digest(manifest["iso"]) != manifest["iso_sha256"]:
+        raise SystemExit("multipart ISO differs from the manifest")
+    segments, switches, useful, physical = [], [], 0, 0
+    for item in manifest["items"]:
+        part = encode_config.load_profile(item["profile"])
+        if part.sha256 != item["profile_sha256"]:
+            raise SystemExit("multipart part profile changed")
+        lease = tmpfs_workspace.lease_managed_path(part.output_dir)
+        if lease is None:
+            raise SystemExit("multipart SIM is unavailable for description generation")
+        try:
+            counts = cram_counts(part.output_dir)
+            segments.append(counts[0])
+            switches.append(counts[1])
+            with np.load(part.output_dir / "buffer_remaining.npz", allow_pickle=False) as stats:
+                payload = stats["body_useful_payload_bytes"]
+                control = stats["body_useful_control_bytes"]
+                delivery = stats["body_physical_bytes"]
+                if len(delivery) != item["frames"]:
+                    raise SystemExit("multipart SIM frame count differs")
+                useful += int((payload[1:] + control[1:]).sum())
+                physical += int(delivery[1:].sum())
+        finally:
+            lease.release()
+    if not physical:
+        raise SystemExit("multipart has no timed BODY bytes")
+    return {"parts": len(segments), "cram_segments": sum(segments),
+            "cram_switches": sum(switches),
+            "cram_switches_by_part": ", ".join(map(str, switches)),
+            "band": round(useful / (physical / CD_1X_BYTES) / 1024)}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Render a YouTube description from templates/youtube/.")
@@ -146,6 +190,8 @@ def main(argv: list[str] | None = None) -> int:
                         choices=sorted(URL_FIELDS), help="which video")
     parser.add_argument("--timeline-tsv", type=Path,
                         help="analysis TSV, required for analysis/playback")
+    parser.add_argument("--multipart-manifest", type=Path,
+                        help="built disc manifest, required for multipart-playback")
     parser.add_argument("--analysis-url")
     parser.add_argument("--playback-url")
     parser.add_argument("--timeline-url",
@@ -173,9 +219,16 @@ def main(argv: list[str] | None = None) -> int:
         video = profile.section("video")
         width, height = int(video["width"]), int(video["height"])
         cols, rows = width // 8, height // 8
-        segments, switches = cram_counts(profile.output_dir)
-        if args.timeline_tsv is None:
-            raise SystemExit(f"--timeline-tsv is required for --kind {args.kind}")
+        if args.kind == "multipart-playback":
+            if args.multipart_manifest is None:
+                raise SystemExit("--multipart-manifest is required for multipart-playback")
+            measured = multipart_values(args.multipart_manifest, profile)
+        else:
+            segments, switches = cram_counts(profile.output_dir)
+            if args.timeline_tsv is None:
+                raise SystemExit(f"--timeline-tsv is required for --kind {args.kind}")
+            measured = dict(cram_segments=segments, cram_switches=switches,
+                            band=band_kib(args.timeline_tsv))
         for name, value in (("source_label", profile.source_label),
                             ("source_label_ja", profile.source_label_ja)):
             if not value:
@@ -207,8 +260,7 @@ def main(argv: list[str] | None = None) -> int:
             width=width, height=height, cols=cols, rows=rows,
             cells=cols * rows,
             fps=str(profile.section("source")["fps"]),
-            cram_segments=segments, cram_switches=switches,
-            band=band_kib(args.timeline_tsv),
+            **measured,
         )
 
     for field in URL_FIELDS[args.kind]:

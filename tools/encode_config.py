@@ -24,6 +24,7 @@ from disc_region import suffix as _region_suffix
 
 
 SCHEMA_VERSION = 5
+MAX_MULTIPART_PARTS = 64
 ARTIFACT_ROOT = Path("out")
 TEMP_ROOT = Path("tmp")
 _ARTIFACT_STEM_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -42,6 +43,8 @@ ENV_MAP = {
     ("source", "path"): "CBRSIM_SRC",
     ("source", "fps"): "CBRSIM_FPS",
     ("source", "duration"): "CBRSIM_DURATION",
+    ("source", "start_frame"): "CBRSIM_START_FRAME",
+    ("source", "end_frame"): "CBRSIM_END_FRAME",
     ("source", "sar"): "CBRSIM_SOURCE_SAR",
     ("source", "audio_filter"): "CBRSIM_AUDIO_AF",
     ("video", "width"): "CBRSIM_W",
@@ -107,6 +110,9 @@ ALLOWED = {
     "palette": {key for section, key in ENV_MAP if section == "palette"},
     "analysis": {"source_canvas", "source_par", "source_spec",
                  "tail_seconds"},
+    # Orchestration only: the multipart CLI resolves this default and writes
+    # independent source ranges into the generated per-part profiles.
+    "multipart": {"parts"},
     # Publication metadata only. Deliberately outside ENV_MAP so a title edit
     # cannot change the encode identity or invalidate a cached sim artifact.
     "youtube": {"analysis_title", "playback_title", "source_label",
@@ -316,6 +322,12 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         if missing:
             raise ValueError(
                 f"{profile_path}: missing [{section}] keys: {', '.join(sorted(missing))}")
+    from source_range import frame_range
+    frame_range(data["source"])
+    parts = data.get("multipart", {}).get("parts")
+    if parts is not None and (type(parts) is not int or not 1 <= parts <= MAX_MULTIPART_PARTS):
+        raise ValueError(
+            f"{profile_path}: multipart.parts must be an integer within 1..{MAX_MULTIPART_PARTS}")
     if int(data["video"]["width"]) % 8 or int(data["video"]["height"]) % 8:
         raise ValueError(f"{profile_path}: video width and height must be multiples of 8")
     if (int(data["video"]["width"]) > av_config.SCREEN_WIDTH
@@ -481,6 +493,9 @@ def apply_profile_env(
             "CBRSIM_TANK_KB"):
         env.pop(retired, None)
     applied: dict[str, str] = {}
+    # A single-movie profile must not inherit another part's extraction range.
+    env.pop("CBRSIM_START_FRAME", None)
+    env.pop("CBRSIM_END_FRAME", None)
     for (section, key), name in ENV_MAP.items():
         values = profile.data.get(section, {})
         if key not in values:
