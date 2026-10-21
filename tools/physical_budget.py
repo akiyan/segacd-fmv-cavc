@@ -68,6 +68,7 @@ class SharedSectorPlan:
     realized_prg_patterns: np.ndarray
     realized_cold_patterns: np.ndarray
     realized_control_block_bytes: np.ndarray
+    prefix_margin_sectors: np.ndarray
     planning_passes: int = 1
 
 
@@ -228,13 +229,17 @@ class SharedSectorPlanner:
                 "ring capacity is smaller than the prebuffer")
         route_capacity = (
             np.arange(count, dtype=np.int64) * self.frame_sectors)
+        self.cadence_sectors = (
+            None if self.fps is None
+            else stream_schedule.rate_deltas(count, self.fps))
         if self.fps is None:
             cadence_capacity = route_capacity
         else:
             cadence_capacity = np.cumsum(
-                stream_schedule.rate_deltas(count, self.fps),
+                self.cadence_sectors,
                 dtype=np.int64,
             )
+        self._cadence_capacity = cadence_capacity
         self.useful_sector_capacity = np.minimum(
             route_capacity, cadence_capacity)
         if maximum_control_block_bytes is None:
@@ -258,6 +263,11 @@ class SharedSectorPlanner:
         self.realized_prg = np.zeros(count, np.int64)
         self.realized_cold = np.zeros(count, np.int64)
         self.realized_control = np.zeros(count, np.int64)
+        self._candidate_fits_cache: dict[tuple[int, int], bool] = {}
+        self._ring_trials = (
+            None if self.ring_capacity_patterns is None
+            else stream_schedule.PayloadRingTrials(
+                count, frame_sectors=self.frame_sectors))
 
     def _control_limit_for_prg(
             self, frame: int, prg_patterns: int) -> int:
@@ -279,20 +289,14 @@ class SharedSectorPlanner:
             control_block_bytes: int) -> dict | None:
         if self.ring_capacity_patterns is None:
             return None
-        candidate_prg = self.realized_prg[:frame + 1].copy()
-        candidate_control = self.realized_control[:frame + 1].copy()
-        candidate_prg[frame] = int(prg_patterns)
-        candidate_control[frame] = int(control_block_bytes)
         try:
-            return stream_schedule.schedule_payload_ring(
-                candidate_prg,
-                candidate_control,
+            return self._ring_trials.evaluate(
+                frame, prg_patterns, control_block_bytes,
                 fps=self.fps,
                 ring_capacity_patterns=self.ring_capacity_patterns,
                 prebuffer_capacity_patterns=self.prebuffer_patterns,
-                frame_sectors=self.frame_sectors,
                 fill=self.fill,
-                control_sector_envelope=None,
+                cadence_sectors=self.cadence_sectors[:frame + 1],
             )
         except stream_schedule.ScheduleError:
             return None
@@ -306,12 +310,23 @@ class SharedSectorPlanner:
         if self.maximum_control is not None:
             worst_control = min(
                 worst_control, int(self.maximum_control[frame]))
+        # For this fixed prefix, only the final rounded sector counts change
+        # the route. Exact tail bytes affect diagnostics, not these bounds.
+        key = (
+            (self._cumulative_prg + int(prg_patterns)
+             + stream_schedule.PATTERNS_PER_SECTOR - 1)
+            // stream_schedule.PATTERNS_PER_SECTOR,
+            (self._cumulative_control + worst_control
+             + stream_schedule.SECTOR_BYTES - 1)
+            // stream_schedule.SECTOR_BYTES,
+        )
+        if key in self._candidate_fits_cache:
+            return self._candidate_fits_cache[key]
         schedule = self._candidate_schedule(
             frame, prg_patterns, worst_control)
-        if schedule is None:
-            return False
-        return bool(
-            schedule["feasible"]
+        fits = bool(
+            schedule is not None
+            and schedule["feasible"]
             and schedule["over"] == 0
             and schedule["under"] == 0
             and schedule["ready_min"] >= 0
@@ -319,6 +334,8 @@ class SharedSectorPlanner:
             and schedule["ring_peak"] <= self.ring_capacity_patterns
             and schedule["rate_lead_peak"] == 0
         )
+        self._candidate_fits_cache[key] = fits
+        return fits
 
     def begin_frame(self, frame: int) -> SharedSectorFrameLimit:
         frame = int(frame)
@@ -326,6 +343,7 @@ class SharedSectorPlanner:
             raise ValueError(
                 f"shared sector planner expected frame {self._next_frame}, "
                 f"got {frame}")
+        self._candidate_fits_cache.clear()
         if frame == 0:
             limit = SharedSectorFrameLimit(0, 0, 0, 0, 0, 0)
         else:
@@ -448,13 +466,37 @@ class SharedSectorPlanner:
         self.realized_control[frame] = control
         self._cumulative_prg += prg
         self._cumulative_control += control
-        verify_shared_sector_prefix(
-            self.realized_prg[:frame + 1],
-            self.realized_control[:frame + 1],
-            prebuffer_capacity_patterns=self.prebuffer_patterns,
-            frame_sectors=self.frame_sectors,
-            fps=self.fps,
-        )
+        # Appending a frame changes the former terminal slot's payload
+        # deadline and adds one slot. All earlier prefixes remain proven.
+        payload_sectors = (
+            max(0, self._cumulative_prg - self.prebuffer_patterns)
+            + stream_schedule.PATTERNS_PER_SECTOR - 1
+        ) // stream_schedule.PATTERNS_PER_SECTOR
+        for slot in range(max(1, frame - 1), frame + 1):
+            control_bytes = self._cumulative_control
+            if slot < frame:
+                control_bytes -= control
+            control_sectors = (
+                control_bytes + stream_schedule.SECTOR_BYTES - 1
+            ) // stream_schedule.SECTOR_BYTES
+            capacity = int(self.useful_sector_capacity[slot])
+            if control_sectors + payload_sectors > capacity:
+                raise stream_schedule.ScheduleError(
+                    f"shared BODY prefix exceeds slot {slot}: "
+                    f"control={control_sectors} sectors, "
+                    f"payload={payload_sectors} sectors, "
+                    f"capacity={capacity} sectors",
+                    kind="shared_sector_prefix",
+                    details={
+                        "failure_frame": slot,
+                        "control_sectors": control_sectors,
+                        "payload_sectors": payload_sectors,
+                        "capacity_sectors": capacity,
+                        "route_capacity_sectors": slot * self.frame_sectors,
+                        "cadence_capacity_sectors": int(
+                            self._cadence_capacity[slot]),
+                    },
+                )
         self._open_limit = None
         self._next_frame += 1
 
@@ -468,7 +510,7 @@ class SharedSectorPlanner:
             raise ValueError("desired Prg trace must be non-negative")
         desired = desired.copy()
         desired[0] = 0
-        verify_shared_sector_prefix(
+        prefix = verify_shared_sector_prefix(
             self.realized_prg,
             self.realized_control,
             prebuffer_capacity_patterns=self.prebuffer_patterns,
@@ -491,6 +533,7 @@ class SharedSectorPlanner:
             realized_prg_patterns=self.realized_prg.copy(),
             realized_cold_patterns=self.realized_cold.copy(),
             realized_control_block_bytes=self.realized_control.copy(),
+            prefix_margin_sectors=prefix["margin_sectors"],
         )
 
 

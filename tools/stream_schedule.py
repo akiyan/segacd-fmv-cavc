@@ -570,10 +570,69 @@ def split_body_payload_classes(
     return raw_bytes, delivered - raw_bytes
 
 
+class PayloadRingTrials:
+    """Own the fixed prefix of consecutive online candidate schedules.
+
+    Repeated trials may replace only the current frame. Before advancing,
+    evaluate that frame's actual committed values. Backward deadline
+    propagation and finite-ring delivery still run for every evaluation.
+    """
+
+    def __init__(self, frame_count, *, frame_sectors):
+        self.frame_sectors = int(frame_sectors)
+        self.frame = -1
+        self.loads = np.zeros(int(frame_count), np.int64)
+        self.lengths = np.zeros_like(self.loads)
+        self.consumed = np.zeros_like(self.loads)
+        self.consumed_before = np.zeros_like(self.loads)
+        self.consumed_sectors = np.zeros_like(self.loads)
+        self.control_need = np.zeros_like(self.loads)
+        self.control_delivered = np.zeros_like(self.loads)
+        self.control_sectors = np.zeros_like(self.loads)
+        self.payload_capacity = np.zeros_like(self.loads)
+
+    def evaluate(self, frame, patterns, control_bytes, *, fps,
+                 ring_capacity_patterns, prebuffer_capacity_patterns,
+                 fill=True, cadence_sectors=None):
+        frame, patterns, control_bytes = map(int, (frame, patterns, control_bytes))
+        if (frame not in (self.frame, self.frame + 1)
+                or not 0 <= frame < len(self.loads)):
+            raise ValueError("payload trials must advance one frame at a time")
+        if patterns < 0 or control_bytes < 0:
+            raise ValueError("pattern loads and block lengths must be non-negative")
+        self.loads[frame] = patterns
+        self.lengths[frame] = control_bytes
+        previous_patterns = int(self.consumed[frame - 1]) if frame else 0
+        previous_control = int(self.control_need[frame - 1]) if frame else 0
+        previous_delivery = int(self.control_delivered[frame - 1]) if frame else 0
+        self.consumed[frame] = previous_patterns + (patterns if frame else 0)
+        self.consumed_before[frame] = previous_patterns
+        self.consumed_sectors[frame] = (
+            int(self.consumed[frame]) + PATTERNS_PER_SECTOR - 1
+        ) // PATTERNS_PER_SECTOR
+        self.control_need[frame] = previous_control + (control_bytes if frame else 0)
+        self.control_delivered[frame] = (
+            (int(self.control_need[frame]) + SECTOR_BYTES - 1)
+            // SECTOR_BYTES * SECTOR_BYTES)
+        self.control_sectors[frame] = (
+            int(self.control_delivered[frame]) - previous_delivery
+        ) // SECTOR_BYTES
+        self.payload_capacity[frame] = max(
+            0, self.frame_sectors - int(self.control_sectors[frame]))
+        self.frame = frame
+        return schedule_payload_ring(
+            self.loads[:frame + 1], self.lengths[:frame + 1], fps=fps,
+            ring_capacity_patterns=ring_capacity_patterns,
+            prebuffer_capacity_patterns=prebuffer_capacity_patterns,
+            frame_sectors=self.frame_sectors, fill=fill,
+            materialize=False, cadence_sectors=cadence_sectors, _prefix=self)
+
+
 def schedule_payload_ring(
         pattern_loads, block_lengths, *, fps, ring_capacity_patterns,
         frame_sectors, fill=True, prebuffer_capacity_patterns=None,
-        control_sector_envelope=None):
+        control_sector_envelope=None, materialize=True, cadence_sectors=None,
+        _prefix=None):
     """Schedule control JIT and payload prefetch, including physical RING use.
 
     ``ring_occupancy[i]`` is the number of 32-byte pattern slots physically in
@@ -589,6 +648,10 @@ def schedule_payload_ring(
     below player back-pressure. Keeping them separate lets continuous BODY
     delivery absorb cadence-scaled jitter without pretending that the encoder
     owns the reserved interval as ordinary time-shifting capacity.
+
+    Trial callers may omit diagnostic traces with ``materialize=False`` and
+    reuse a prefix of ``rate_deltas`` for the same fps via ``cadence_sectors``.
+    All physical readiness, capacity and cadence checks still run.
     """
     n_load = np.asarray(pattern_loads, np.int64)
     blk_len = np.asarray(block_lengths, np.int64)
@@ -596,7 +659,8 @@ def schedule_payload_ring(
         raise ValueError("pattern loads and block lengths must be equal-length vectors")
     if not len(n_load):
         raise ValueError("the stream must contain at least one frame")
-    if (n_load < 0).any() or (blk_len < 0).any():
+    # PayloadRingTrials validates each appended/replaced pair on entry.
+    if _prefix is None and ((n_load < 0).any() or (blk_len < 0).any()):
         raise ValueError("pattern loads and block lengths must be non-negative")
     physical_capacity = int(ring_capacity_patterns)
     prebuffer_capacity = (
@@ -612,7 +676,11 @@ def schedule_payload_ring(
             "physical ring capacity")
 
     nfr = len(n_load)
-    if control_sector_envelope is None:
+    if _prefix is not None:
+        if control_sector_envelope is not None or _prefix.frame + 1 != nfr:
+            raise ValueError("prepared payload prefix does not match this trial")
+        reserved_nc = nc = _prefix.control_sectors[:nfr]
+    elif control_sector_envelope is None:
         reserved_nc = control_sector_schedule(blk_len)
         nc = reserved_nc
     else:
@@ -640,13 +708,19 @@ def schedule_payload_ring(
     # Payload is limited by the conservative reservation even when the final
     # control route is shorter. The difference is physical pad, never
     # post-decision payload capacity.
-    cap_sec = np.maximum(int(frame_sectors) - reserved_nc, 0)
-    n_load_body = n_load.copy()
-    n_load_body[0] = 0
-    consumed = np.cumsum(n_load_body)
-    consumed_before = consumed - n_load_body
+    if _prefix is None:
+        cap_sec = np.maximum(int(frame_sectors) - reserved_nc, 0)
+        n_load_body = n_load.copy()
+        n_load_body[0] = 0
+        consumed = np.cumsum(n_load_body)
+        consumed_before = consumed - n_load_body
+        consumed_sec = -(-consumed // PATTERNS_PER_SECTOR)
+    else:
+        cap_sec = _prefix.payload_capacity[:nfr]
+        consumed = _prefix.consumed[:nfr]
+        consumed_before = _prefix.consumed_before[:nfr]
+        consumed_sec = _prefix.consumed_sectors[:nfr]
     total_patterns = int(consumed[-1])
-    consumed_sec = -(-consumed // PATTERNS_PER_SECTOR)
     total_payload_sec = int(-(-total_patterns // PATTERNS_PER_SECTOR))
     delivered = np.zeros(nfr, np.int64)
 
@@ -676,8 +750,15 @@ def schedule_payload_ring(
                 f"prebuffer {prebuffer_sec} sectors cannot arm the payload schedule; "
                 f"at least {int(need[0])} are required")
 
-        ratedelta = rate_deltas(nfr, fps)
+        if cadence_sectors is None:
+            ratedelta = rate_deltas(nfr, fps)
+        else:
+            ratedelta = np.asarray(cadence_sectors, np.int64)
+            if (ratedelta.shape != n_load.shape
+                    or int(ratedelta[0]) != 0 or np.any(ratedelta < 0)):
+                raise ValueError("cadence sectors must match the timed frames")
         rate_lead = 0
+        rate_lead_peak = 0
         prev = prebuffer_sec
         delivered[0] = prebuffer_sec
         for i in range(1, nfr):
@@ -722,6 +803,7 @@ def schedule_payload_ring(
             actual = (current - prev) + int(nc[i])
             routed = max(actual, due)
             rate_lead += routed - int(ratedelta[i])
+            rate_lead_peak = max(rate_lead_peak, rate_lead)
             if rate_lead < 0:
                 raise AssertionError("rate-shaped schedule lead became negative")
             prev = current
@@ -739,30 +821,6 @@ def schedule_payload_ring(
     occupancy = delivered * PATTERNS_PER_SECTOR - consumed
     occupancy_before_consume = (
         delivered * PATTERNS_PER_SECTOR - consumed_before)
-    # Independent of the rate-shaped choice above, this is the most Prg
-    # payload that could physically have arrived before each frame after
-    # reserving its control sectors. It is the safe cumulative catch-up
-    # ceiling for a stateful accounting pass: unlike the projected demand
-    # curve, it does not permanently suppress work that was merely deferred.
-    max_prebuffer_sec = (
-        prebuffer_capacity // PATTERNS_PER_SECTOR)
-    timed_cap_sec = cap_sec.copy()
-    timed_cap_sec[0] = 0
-    max_delivered_sec = (
-        max_prebuffer_sec + np.cumsum(timed_cap_sec, dtype=np.int64))
-    max_cumulative_prg_consumption = np.zeros(nfr, np.int64)
-    if nfr > 1:
-        max_cumulative_prg_consumption[1:] = (
-            max_delivered_sec[:-1] * PATTERNS_PER_SECTOR)
-    payload_frames = np.flatnonzero(n_pay_sec > 0)
-    # Once the final payload sector has arrived, the terminal suffix can only
-    # consume what remains.  Keep that suffix in the feasibility proof, but do
-    # not let the intentional end-of-stream drain define comparison minima.
-    evaluation_end_frame = (
-        min(nfr, int(payload_frames[-1]) + 1) if payload_frames.size else nfr
-    )
-    evaluation_occupancy = occupancy[
-        1:evaluation_end_frame] if evaluation_end_frame > 1 else occupancy[:1]
     under = int((occupancy < 0).sum())
     over = int((n_pay_sec + nc > int(frame_sectors)).sum())
 
@@ -781,10 +839,14 @@ def schedule_payload_ring(
     else:
         ready_min = 0
 
-    ctrl_need_len = blk_len.copy()
-    ctrl_need_len[0] = 0
-    ctrl_need = np.cumsum(ctrl_need_len)
-    ctrl_delivered = np.cumsum(nc) * SECTOR_BYTES
+    if _prefix is None:
+        ctrl_need_len = blk_len.copy()
+        ctrl_need_len[0] = 0
+        ctrl_need = np.cumsum(ctrl_need_len)
+        ctrl_delivered = np.cumsum(nc) * SECTOR_BYTES
+    else:
+        ctrl_need = _prefix.control_need[:nfr]
+        ctrl_delivered = _prefix.control_delivered[:nfr]
     ctrl_margin = ctrl_delivered - ctrl_need
     ctrl_bad = np.flatnonzero(ctrl_margin < 0)
     ctrl_min = int(ctrl_margin.min())
@@ -795,8 +857,51 @@ def schedule_payload_ring(
             f"{int(ctrl_delivered[frame])} bytes delivered, "
             f"{int(ctrl_need[frame])} bytes required")
 
-    fsec, ratedelta, rate_lead_trace = rate_match_sectors(
-        n_pay_sec, nc, fps=fps)
+    if materialize or not fill:
+        fsec, ratedelta, rate_lead_trace = rate_match_sectors(
+            n_pay_sec, nc, fps=fps)
+        rate_lead_peak = int(rate_lead_trace.max())
+        rate_lead_end = int(rate_lead_trace[-1])
+    else:
+        rate_lead_end = rate_lead
+    if (n_pay_sec < 0).any() or (nc < 0).any():
+        raise ValueError("BODY delivery sector vectors are physically inconsistent")
+    feasible = (
+        (n_pay_sec >= 0).all() and over == 0 and under == 0
+        and ready_min >= 0 and ctrl_min >= 0 and rate_lead_peak == 0
+    )
+    result = {
+        "feasible": bool(feasible),
+        "over": over,
+        "under": under,
+        "ring_peak": int(occupancy_before_consume.max()),
+        "ready_min": ready_min,
+        "ctrl_min": ctrl_min,
+        "rate_lead_peak": rate_lead_peak,
+        "rate_lead_end": rate_lead_end,
+    }
+    if not materialize:
+        return result
+
+    # The trial predicate needs no catch-up ceiling or useful-byte traces.
+    # Materialize them only for the final schedule and its independent replay.
+    max_prebuffer_sec = prebuffer_capacity // PATTERNS_PER_SECTOR
+    timed_cap_sec = cap_sec.copy()
+    timed_cap_sec[0] = 0
+    max_delivered_sec = (
+        max_prebuffer_sec + np.cumsum(timed_cap_sec, dtype=np.int64))
+    max_cumulative_prg_consumption = np.zeros(nfr, np.int64)
+    if nfr > 1:
+        max_cumulative_prg_consumption[1:] = (
+            max_delivered_sec[:-1] * PATTERNS_PER_SECTOR)
+    payload_frames = np.flatnonzero(n_pay_sec > 0)
+    # Exclude the intentional terminal drain only from comparison minima,
+    # never from the physical feasibility checks above.
+    evaluation_end_frame = (
+        min(nfr, int(payload_frames[-1]) + 1) if payload_frames.size else nfr
+    )
+    evaluation_occupancy = occupancy[
+        1:evaluation_end_frame] if evaluation_end_frame > 1 else occupancy[:1]
     body_payload_bytes = max(
         0, (total_patterns - prebuffer_sec * PATTERNS_PER_SECTOR)
         * PATTERN_BYTES)
@@ -808,26 +913,16 @@ def schedule_payload_ring(
         body_payload_bytes=body_payload_bytes,
         body_control_bytes=body_control_bytes,
     )
-    rate_lead_peak = int(rate_lead_trace.max())
-    rate_lead_end = int(rate_lead_trace[-1])
-    feasible = (
-        (n_pay_sec >= 0).all() and over == 0 and under == 0
-        and ready_min >= 0 and ctrl_min >= 0 and rate_lead_peak == 0
-    )
-    result = {
+    result.update({
         "n_pay_sec": n_pay_sec,
         "n_ctrl_sec": nc,
         "control_reserved_sectors": reserved_nc,
         "control_envelope": bool(control_sector_envelope is not None),
-        "feasible": bool(feasible),
-        "over": over,
-        "under": under,
         "prebuf_pat": prebuffer_sec * PATTERNS_PER_SECTOR,
         "prebuffer_capacity_patterns": prebuffer_capacity,
         "ring_capacity_patterns": physical_capacity,
         "jitter_headroom_patterns": (
             physical_capacity - prebuffer_capacity),
-        "ring_peak": int(occupancy_before_consume.max()),
         "ring_jitter_peak": max(
             0, int(occupancy_before_consume.max()) - prebuffer_capacity),
         "ring_min": int(occupancy.min()),
@@ -837,17 +932,13 @@ def schedule_payload_ring(
         "ring_occupancy_before_consume": occupancy_before_consume,
         "max_cumulative_prg_consumption": (
             max_cumulative_prg_consumption),
-        "ready_min": ready_min,
-        "ctrl_min": ctrl_min,
         "blk_len": blk_len,
         "M": total_patterns,
         "fsec": fsec,
         "ratedelta": ratedelta,
-        "rate_lead_peak": rate_lead_peak,
-        "rate_lead_end": rate_lead_end,
         "f0_header": True,
         "f0_cold": int(n_load[0]),
         "f0_ctrl_len": int(blk_len[0]),
-    }
+    })
     result.update(delivery_trace)
     return result

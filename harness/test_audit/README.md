@@ -40,6 +40,8 @@ promise; they are not ordinary unit tests.
 | Tier | Entry point | Use/cost |
 |---|---|---|
 | Local units | `tools/python.sh harness/test_audit/run.py` | Seconds; tools and harness units plus real streaming-log integration. Requires the project environment and m68k tools for palette fixtures. No long encode/emulator. |
+| Planner equivalence | `harness/encoder_planning/README.md` | Seconds to about a minute; compare real reference/current planners on synthetic delivery data. No source encode; requires a frozen reference tools directory. |
+| Full Sonic planning comparison | `webenc/harness/planning/README.md` | Explicit opt-in; complete 2,714-frame native/browser encodes on common normalized inputs, packed bytes, every replay frame and PCM. Tens of minutes. |
 | Storage | `tools/python.sh harness/runtime_storage/smoke.py` | Real paths, subprocess locks, leases, mapped values and cleanup; seconds. |
 | Log compaction | `bash harness/gpgx_logvdp/test_compact_log.sh` | Real byte-preserving archive; seconds. |
 | Browser algorithms | `npm run test:sites`, `test:audio`, `test:temporal`, `test:admission`, `test:kernel`, `test:schedule` in `webenc/` | Actual worker/kernel/scheduler contracts; no source-movie encode. Kernel uses its native reference. |

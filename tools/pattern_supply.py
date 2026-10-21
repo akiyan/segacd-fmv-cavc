@@ -12,6 +12,7 @@ index so simulation, packing, and the player consume the same plan.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import heapq
 from typing import Sequence
 
 import numpy as np
@@ -560,8 +561,8 @@ def select_dic_dictionary(prediction, capacity: int) -> tuple[bytes, ...]:
             protected[key] += int(key in risk)
             first.setdefault(key, ordinal)
             ordinal += 1
-    ranked = sorted(
-        uses,
+    ranked = heapq.nsmallest(
+        int(capacity), uses,
         key=lambda key: (-uses[key], -protected[key], first[key], key),
     )
     return tuple(ranked[:int(capacity)])
@@ -605,7 +606,8 @@ def _allocate_credits(
     protected_cold: np.ndarray,
 ) -> None:
     """Water-fill one physical source over its eligible frames."""
-    import heapq
+    if capacity <= 0:
+        return
 
     heap: list[tuple[int, int, int, int, int, int]] = []
 

@@ -2455,7 +2455,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         # Only numeric demand traces are consumed after boot-source selection.
         demand_prediction = dataclasses.replace(
             demand_prediction, cold_keys=(), protected_keys=(), cold_slots=())
-        del baseline_demand_prediction, baseline_prefetch_forecast
+        del baseline_demand_prediction
         if RAW_PREFETCH_ON:
             prefetch_forecast = raw_prefetch.forecast_requests(
                 Q_pidx,
@@ -2464,13 +2464,14 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 vram_tiles=VRAM_TILES,
                 max_cold=frame_cold_caps,
                 boot_prefetch_requests=boot_prefetch_plan,
-            )
+            ) if boot_prefetch_plan else baseline_prefetch_forecast
         else:
             prefetch_forecast = raw_prefetch.PrefetchForecast(
                 requests=tuple(() for _ in range(n)),
                 protected_cold=np.zeros(n, np.int64),
                 requested_patterns=np.zeros(n, np.int64),
             )
+        del baseline_prefetch_forecast
         return (
             main_protected,
             frame0_keys,
@@ -3542,19 +3543,22 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                     return
 
                 bk, dYm, dYp, dCm = best_resident(c)
+                old_score = None
 
                 def acceptable(candidate, ym, yp, cm):
+                    nonlocal old_score
                     if candidate is None:
                         return False
                     if not FLBK_IMPROVE_ONLY:
                         return tier_of(ym, yp, cm) == 1
-                    cur = cur_rgb[c].astype(np.float64)
-                    tgt = plain_rgb[c].astype(np.float64)
-                    dY0 = np.abs(cur @ _LWv - tgt @ _LWv)
-                    dC0 = np.sqrt((cur @ _CBv - tgt @ _CBv) ** 2 +
-                                 (cur @ _CRv - tgt @ _CRv) ** 2)
-                    old_score = float(
-                        dY0.mean() + 0.3 * dY0.max() + 0.5 * dC0.mean())
+                    if old_score is None:
+                        cur = cur_rgb[c].astype(np.float64)
+                        tgt = plain_rgb[c].astype(np.float64)
+                        dY0 = np.abs(cur @ _LWv - tgt @ _LWv)
+                        dC0 = np.sqrt((cur @ _CBv - tgt @ _CBv) ** 2 +
+                                     (cur @ _CRv - tgt @ _CRv) ** 2)
+                        old_score = float(
+                            dY0.mean() + 0.3 * dY0.max() + 0.5 * dC0.mean())
                     new_score = ym + 0.3 * yp + 0.5 * cm
                     return new_score < old_score - FLBK_MIN_IMPROVE
 
@@ -4670,21 +4674,13 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             "one-pass physical reservation")
     physical_budget_plan = physical_budget_state.finish(
         predicted_prg_demand)
-    physical_prefix = physical_budget.verify_shared_sector_prefix(
-        physical_budget_plan.realized_prg_patterns,
-        physical_budget_plan.realized_control_block_bytes,
-        prebuffer_capacity_patterns=(
-            PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
-        frame_sectors=cavc_routing.FRAME_SECTORS,
-        fps=FPS,
-    )
     print(
         "physical budget final: route/cadence prefixes exact; "
         f"Prg actual={int(physical_budget_plan.realized_prg_patterns.sum())} "
         f"patterns; control="
         f"{int(physical_budget_plan.realized_control_block_bytes.sum())}B; "
         f"minimum cumulative spare="
-        f"{int(physical_prefix['margin_sectors'][1:].min())} sectors",
+        f"{int(physical_budget_plan.prefix_margin_sectors[1:].min())} sectors",
         flush=True,
     )
 
@@ -4889,6 +4885,21 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         # sector-rounded residual determines how many WordBuf patterns the
         # ring planner can select. Iterate those two deterministic decisions
         # to a fixed point, starting from word_ram_layout's safe envelope.
+        ring_inputs = wordbuf_ring.prepare(
+            per=ring_per_log,
+            prefetch_per=ring_prefetch_log,
+            transfer_orders=ring_transfer_orders_log,
+            current_plan=current_supply,
+            n_updates=control_update_counts,
+            update_lists=shadow_list_flags,
+            frame_types=control_frame_types,
+            fps=FPS,
+            cells=C_CELLS,
+            audio_frame_bytes=AUDIO_CONTROL_BYTES,
+            prg_capacity_patterns=PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES,
+            baseline_occupancy=np.asarray(
+                physical_schedule["ring_occupancy"], np.int64),
+        )
         seen_layouts = set()
         for _layout_pass in range(8):
             layout_key = (
@@ -4901,25 +4912,11 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 raise AssertionError(
                     "O_LOADS/WordBuf layout entered a capacity cycle")
             seen_layouts.add(layout_key)
-            ring_plan = wordbuf_ring.plan(
-                per=ring_per_log,
-                prefetch_per=ring_prefetch_log,
-                transfer_orders=ring_transfer_orders_log,
-                current_plan=current_supply,
-                n_updates=control_update_counts,
-                update_lists=shadow_list_flags,
-                frame_types=control_frame_types,
-                fps=FPS,
-                cells=C_CELLS,
-                audio_frame_bytes=AUDIO_CONTROL_BYTES,
-                prg_capacity_patterns=(
-                    PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
+            ring_plan = ring_inputs.plan(
                 word_capacities=(
                     wordram_layout.wr0_patterns,
                     wordram_layout.wr1_patterns,
                 ),
-                baseline_occupancy=np.asarray(
-                    physical_schedule["ring_occupancy"], np.int64),
             )
             peak_prg = np.asarray(
                 (
@@ -4956,6 +4953,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         else:
             raise AssertionError(
                 "O_LOADS/WordBuf layout did not converge in eight passes")
+        del ring_inputs
 
         if ring_plan.feasible:
             ring_enabled = True

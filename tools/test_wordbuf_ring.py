@@ -11,6 +11,13 @@ import wordbuf_ring
 
 class WordBufRingTest(unittest.TestCase):
     @staticmethod
+    def _demand(items, frames=16):
+        demand = np.zeros(frames, np.int64)
+        for item in items:
+            demand[item.frame] += item.count
+        return demand
+
+    @staticmethod
     def _replay(**overrides):
         values = {
             "prg_loads": [0, 64, 320, 256, 256, 320],
@@ -97,6 +104,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=0,
             word_occupancy=[4, 5],
             prg_remaining=0,
+            potential_prg_remaining=0,
+            frame_prg_demand=np.zeros(4, np.int64),
             word_remaining=[6, 15],
             prg_cursor=0,
             word_cursor=[0, 0],
@@ -123,6 +132,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=0,
             word_occupancy=[0, 0],
             prg_remaining=0,
+            potential_prg_remaining=69,
+            frame_prg_demand=self._demand(items),
             word_remaining=[0, 0],
             prg_cursor=0,
             word_cursor=[0, 0],
@@ -161,6 +172,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=0,
             word_occupancy=[0, 0],
             prg_remaining=0,
+            potential_prg_remaining=64,
+            frame_prg_demand=self._demand(items),
             word_remaining=[0, 0],
             prg_cursor=0,
             word_cursor=[0, 0],
@@ -187,6 +200,16 @@ class WordBufRingTest(unittest.TestCase):
         np.testing.assert_array_equal(state.delivered, [40, 24])
         self.assertEqual(state.word_occupancy, [64, 0])
         self.assertEqual(state.word_remaining, [0, 0])
+        transaction.rollback()
+        frame_items = [[] for _ in range(16)]
+        frame_items[10] = [0]
+        frame_items[12] = [1]
+        self.assertEqual(
+            wordbuf_ring._next_prg_pressure_frame(
+                frame=2, items=items, frame_items=frame_items, state=state,
+                payload_capacity=np.zeros(16, np.int64), prg_capacity=64),
+            10,
+        )
 
     def test_boot_starts_at_legacy_prg_pressure_not_movie_start(self):
         items = [
@@ -201,6 +224,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=0,
             word_occupancy=[0, 0],
             prg_remaining=0,
+            potential_prg_remaining=128,
+            frame_prg_demand=self._demand(items),
             word_remaining=[0, 0],
             prg_cursor=0,
             word_cursor=[0, 0],
@@ -238,6 +263,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=0,
             word_occupancy=[0, 0],
             prg_remaining=0,
+            potential_prg_remaining=128,
+            frame_prg_demand=self._demand(items),
             word_remaining=[0, 0],
             prg_cursor=0,
             word_cursor=[0, 0],
@@ -278,6 +305,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=0,
             word_occupancy=[0, 0],
             prg_remaining=0,
+            potential_prg_remaining=128,
+            frame_prg_demand=self._demand(items),
             word_remaining=[0, 0],
             prg_cursor=0,
             word_cursor=[0, 0],
@@ -318,6 +347,8 @@ class WordBufRingTest(unittest.TestCase):
             prg_occupancy=70,
             word_occupancy=[0, 0],
             prg_remaining=0,
+            potential_prg_remaining=100,
+            frame_prg_demand=self._demand(items, 4),
             word_remaining=[0, 0],
             prg_cursor=1,
             word_cursor=[0, 0],
