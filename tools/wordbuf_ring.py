@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Sequence
 
@@ -439,6 +440,10 @@ class _State:
     prg_occupancy: int
     word_occupancy: list[int]
     prg_remaining: int
+    # Includes undecided runs; excludes Word assignments and sector padding.
+    potential_prg_remaining: int
+    # Full frame demand, including already delivered Prg patterns.
+    frame_prg_demand: np.ndarray
     word_remaining: list[int]
     prg_cursor: int
     word_cursor: list[int]
@@ -451,10 +456,12 @@ class _Transaction:
         self.state = state
         self.sources: dict[int, int] = {}
         self.delivered: dict[int, int] = {}
+        self.frame_prg_demand: dict[int, int] = {}
         self.scalars = (
             state.prg_occupancy,
             tuple(state.word_occupancy),
             state.prg_remaining,
+            state.potential_prg_remaining,
             tuple(state.word_remaining),
             state.prg_cursor,
             tuple(state.word_cursor),
@@ -469,10 +476,13 @@ class _Transaction:
             self.state.sources[index] = source
         for index, delivered in self.delivered.items():
             self.state.delivered[index] = delivered
+        for frame, demand in self.frame_prg_demand.items():
+            self.state.frame_prg_demand[frame] = demand
         (
             self.state.prg_occupancy,
             word_occupancy,
             self.state.prg_remaining,
+            self.state.potential_prg_remaining,
             word_remaining,
             self.state.prg_cursor,
             word_cursor,
@@ -480,6 +490,11 @@ class _Transaction:
         self.state.word_occupancy[:] = word_occupancy
         self.state.word_remaining[:] = word_remaining
         self.state.word_cursor[:] = word_cursor
+
+    def assign_word(self, frame: int, count: int) -> None:
+        self.frame_prg_demand.setdefault(
+            frame, int(self.state.frame_prg_demand[frame]))
+        self.state.frame_prg_demand[frame] -= count
 
 
 def _build_items(
@@ -645,8 +660,7 @@ def _assign_boot(
         if selected is None:
             continue
         selected_set = set(selected)
-        frontier = max(
-            parity_items[parity].index(index) for index in selected)
+        frontier = bisect_left(parity_items[parity], max(selected))
         for position, index in enumerate(parity_items[parity]):
             if position > frontier:
                 break
@@ -657,6 +671,8 @@ def _assign_boot(
                 continue
             state.sources[index] = WORD
             state.delivered[index] = item.count
+            state.potential_prg_remaining -= item.count
+            state.frame_prg_demand[item.frame] -= item.count
             state.word_occupancy[parity] += item.count
             loaded[parity] += item.count
             end_frames[parity] = max(end_frames[parity], item.frame)
@@ -818,6 +834,7 @@ def _deliver_prg(
         state.delivered[index] += room
         state.prg_occupancy += room
         state.prg_remaining -= room
+        state.potential_prg_remaining -= room
         delivered += room
         if int(state.delivered[index]) == item.count:
             state.prg_cursor += 1
@@ -847,32 +864,28 @@ def _deliver_word(
         if int(state.sources[index]) == UNKNOWN:
             break
         state.word_cursor[parity] += 1
-    candidates = [
-        index
-        for index in indices[state.word_cursor[parity]:]
-        if (
-            int(state.sources[index]) == UNKNOWN
-            and items[index].word_safe
-            and items[index].frame > frame
-            and items[index].count <= amount
-        )
-    ]
-    if not candidates:
+    # Parity indices already follow (frame, index) order. Keep all candidates
+    # through the target, then extend only to the first complete frame that
+    # can fill the batch. The subset score and tie order remain unchanged.
+    pool = []
+    reachable = 1
+    target_bit = 1 << amount
+    mask = (target_bit << 1) - 1
+    previous_frame = None
+    for position in range(state.word_cursor[parity], len(indices)):
+        index = indices[position]
+        item = items[index]
+        if (item.frame > target_frame and item.frame != previous_frame
+                and reachable & target_bit):
+            break
+        previous_frame = item.frame
+        if (int(state.sources[index]) != UNKNOWN or not item.word_safe
+                or item.frame <= frame or not 0 < item.count <= amount):
+            continue
+        pool.append(index)
+        reachable = (reachable | (reachable << item.count)) & mask
+    if not reachable & target_bit:
         return 0
-    before_target = [
-        index for index in candidates
-        if items[index].frame <= target_frame
-    ]
-    if _minimal_exact_horizon(items, before_target, amount) is not None:
-        horizon = int(target_frame)
-    else:
-        horizon = _minimal_exact_horizon(items, candidates, amount)
-        if horizon is None:
-            return 0
-    pool = [
-        index for index in candidates
-        if items[index].frame <= horizon
-    ]
     selected = _best_exact_subset(
         items,
         pool,
@@ -896,11 +909,7 @@ def _deliver_word(
     if not any(items[index].frame <= target_frame for index in selected):
         return 0
     selected_set = set(selected)
-    selected_positions = [
-        indices.index(index, state.word_cursor[parity])
-        for index in selected
-    ]
-    frontier = max(selected_positions)
+    frontier = bisect_left(indices, max(selected), state.word_cursor[parity])
     delivered = 0
     for position in range(state.word_cursor[parity], frontier + 1):
         index = indices[position]
@@ -911,6 +920,8 @@ def _deliver_word(
         if index in selected_set:
             state.sources[index] = WORD
             state.delivered[index] = item.count
+            state.potential_prg_remaining -= item.count
+            transaction.assign_word(item.frame, item.count)
             delivered += item.count
         else:
             state.sources[index] = PRG
@@ -939,19 +950,6 @@ def _remaining_source(
     )
 
 
-def _remaining_potential_prg(
-    items: list[Item],
-    state: _State,
-) -> int:
-    """Count undelivered patterns that are not already committed to WordBuf."""
-
-    return sum(
-        item.count - int(state.delivered[index])
-        for index, item in enumerate(items)
-        if int(state.sources[index]) != WORD
-    )
-
-
 def _next_prg_pressure_frame(
     *,
     frame: int,
@@ -972,15 +970,11 @@ def _next_prg_pressure_frame(
     """
 
     level = int(state.prg_occupancy)
-    remaining_delivery = _remaining_potential_prg(items, state)
+    remaining_delivery = state.potential_prg_remaining
     minimum_level = level
     minimum_frame = frame
     for future in range(frame, len(frame_items)):
-        need = sum(
-            items[index].count
-            for index in frame_items[future]
-            if int(state.sources[index]) != WORD
-        )
+        need = int(state.frame_prg_demand[future])
         if level < need:
             return int(future)
 
@@ -1052,7 +1046,7 @@ def _transfer_runs(
     ))
 
 
-def _transfer_run_trace(
+def _transfer_run_traces(
     per,
     sources,
     prefetch_per,
@@ -1060,9 +1054,10 @@ def _transfer_run_trace(
     transfer_orders,
     *,
     word_capacities: tuple[int, int] | None = None,
-) -> np.ndarray:
-    """Return exact per-frame descriptors, splitting WordBuf ring crossings."""
+) -> tuple[np.ndarray, np.ndarray]:
+    """Count compact and ring-split descriptors from the same run records."""
     word_cursors = [0, 0]
+    compact = np.zeros(len(per), np.int64)
     counts = np.zeros(len(per), np.int64)
     for frame, (
             (_cells, entries, colds),
@@ -1086,6 +1081,7 @@ def _transfer_run_trace(
             frame_dic_indices,
             transfer_order,
         )
+        compact[frame] = len(runs)
         if word_capacities is not None:
             parity = frame & 1
             runs, word_cursors[parity] = pattern_supply.split_word_ring_runs(
@@ -1094,10 +1090,51 @@ def _transfer_run_trace(
                 cursor=word_cursors[parity],
             )
         counts[frame] = len(runs)
-    return counts
+    return compact, counts
 
 
-def plan(
+def _transfer_run_trace(*args, **kwargs) -> np.ndarray:
+    return _transfer_run_traces(*args, **kwargs)[1]
+
+
+@dataclass(frozen=True)
+class PreparedPlan:
+    """Capacity-independent inputs shared by Word-RAM layout trials.
+
+    The caller must keep source decisions unchanged while using this object.
+    Every trial owns its mutable source, delivery and occupancy state.
+    """
+
+    per: Sequence
+    prefetch_per: Sequence
+    transfer_orders: Sequence
+    current_plan: pattern_supply.SupplyPlan
+    n_updates: np.ndarray
+    update_lists: Sequence[bool] | np.ndarray | None
+    frame_types: Sequence[int] | np.ndarray | None
+    fps: float
+    cells: int
+    audio_frame_bytes: int
+    prg_capacity_patterns: int
+    baseline: np.ndarray
+    items: list[Item]
+    frame_items: list[list[int]]
+    parity_items: list[list[int]]
+    current_word_counts: list[int]
+    initial_sources: np.ndarray
+    initial_prg_remaining: int
+    initial_frame_prg_demand: np.ndarray
+    merged_runs: np.ndarray
+    block_lengths: np.ndarray
+    control_sectors: np.ndarray
+    physical_sectors: np.ndarray
+    payload_capacity: np.ndarray
+
+    def plan(self, word_capacities: tuple[int, int]) -> WordBufRingPlan:
+        return _plan(self, word_capacities)
+
+
+def prepare(
     *,
     per,
     prefetch_per,
@@ -1110,10 +1147,9 @@ def plan(
     cells: int,
     audio_frame_bytes: int,
     prg_capacity_patterns: int,
-    word_capacities: tuple[int, int],
     baseline_occupancy: Sequence[int] | np.ndarray,
-) -> WordBufRingPlan:
-    """Return a proven need-driven refill plan or a descriptive failure."""
+) -> PreparedPlan:
+    """Build immutable planning inputs once for repeated capacity trials."""
 
     frame_count = len(per)
     if not (
@@ -1125,25 +1161,89 @@ def plan(
     baseline = np.asarray(baseline_occupancy, np.int64)
     if baseline.shape != (frame_count,):
         raise ValueError("baseline Prg occupancy has the wrong shape")
-    capacities = tuple(int(value) for value in word_capacities)
-    if any(value <= 0 or value % PATTERNS_PER_SECTOR for value in capacities):
-        raise ValueError("WordBuf ring capacities must be positive sectors")
-
     items, frame_items, parity_items, current_word_counts = _build_items(
         per, prefetch_per, transfer_orders, current_plan)
     sources = np.full(len(items), UNKNOWN, np.int8)
     sources[np.asarray(
         [item.mandatory_prg for item in items], bool)] = MANDATORY_PRG
+    frame_prg_demand = np.asarray([
+        sum(items[index].count for index in indices)
+        for indices in frame_items
+    ], np.int64)
+    merged_sources = tuple(
+        tuple(PRG if source == WORD else source for source in frame)
+        for frame in current_plan.sources
+    )
+    merged_runs = _transfer_run_trace(
+        per, merged_sources, prefetch_per, current_plan.dic_indices,
+        transfer_orders)
+    block_lengths = stream_schedule.control_block_lengths(
+        np.asarray(n_updates, np.int64), merged_runs, cells=int(cells),
+        audio_frame_bytes=int(audio_frame_bytes), update_lists=update_lists,
+        frame_types=frame_types)
+    control_sectors = stream_schedule.control_sector_schedule(block_lengths)
+    physical_sectors = stream_schedule.rate_deltas(frame_count, float(fps))
+    # Physical CD time above the routing-byte limit is pad, not payload.
+    payload_capacity = (
+        np.minimum(physical_sectors, MAX_SLOT_SECTORS) - control_sectors)
+    return PreparedPlan(
+        per=per, prefetch_per=prefetch_per, transfer_orders=transfer_orders,
+        current_plan=current_plan, n_updates=np.asarray(n_updates, np.int64),
+        update_lists=update_lists, frame_types=frame_types, fps=float(fps),
+        cells=int(cells), audio_frame_bytes=int(audio_frame_bytes),
+        prg_capacity_patterns=int(prg_capacity_patterns), baseline=baseline,
+        items=items, frame_items=frame_items, parity_items=parity_items,
+        current_word_counts=current_word_counts, initial_sources=sources,
+        initial_prg_remaining=sum(
+            item.count for item in items if item.mandatory_prg),
+        initial_frame_prg_demand=frame_prg_demand, merged_runs=merged_runs,
+        block_lengths=block_lengths, control_sectors=control_sectors,
+        physical_sectors=physical_sectors, payload_capacity=payload_capacity,
+    )
+
+
+def plan(*, word_capacities: tuple[int, int], **kwargs) -> WordBufRingPlan:
+    """Return a proven need-driven refill plan or a descriptive failure."""
+    return prepare(**kwargs).plan(word_capacities)
+
+
+def _plan(
+    prepared: PreparedPlan,
+    word_capacities: tuple[int, int],
+) -> WordBufRingPlan:
+    capacities = tuple(int(value) for value in word_capacities)
+    if any(value <= 0 or value % PATTERNS_PER_SECTOR for value in capacities):
+        raise ValueError("WordBuf ring capacities must be positive sectors")
+    per = prepared.per
+    prefetch_per = prepared.prefetch_per
+    transfer_orders = prepared.transfer_orders
+    current_plan = prepared.current_plan
+    n_updates = prepared.n_updates
+    update_lists = prepared.update_lists
+    frame_types = prepared.frame_types
+    fps = prepared.fps
+    cells = prepared.cells
+    audio_frame_bytes = prepared.audio_frame_bytes
+    prg_capacity_patterns = prepared.prg_capacity_patterns
+    baseline = prepared.baseline
+    items = prepared.items
+    frame_items = prepared.frame_items
+    parity_items = prepared.parity_items
+    current_word_counts = prepared.current_word_counts
+    merged_runs = prepared.merged_runs
+    block_lengths = prepared.block_lengths
+    control_sectors = prepared.control_sectors.copy()
+    physical_sectors = prepared.physical_sectors.copy()
+    payload_capacity = prepared.payload_capacity
+    frame_count = len(per)
     state = _State(
-        sources=sources,
+        sources=prepared.initial_sources.copy(),
         delivered=np.zeros(len(items), np.int64),
         prg_occupancy=0,
         word_occupancy=[0, 0],
-        prg_remaining=sum(
-            item.count
-            for item in items
-            if item.mandatory_prg
-        ),
+        prg_remaining=prepared.initial_prg_remaining,
+        potential_prg_remaining=int(prepared.initial_frame_prg_demand.sum()),
+        frame_prg_demand=prepared.initial_frame_prg_demand.copy(),
         word_remaining=[0, 0],
         prg_cursor=0,
         word_cursor=[0, 0],
@@ -1171,32 +1271,6 @@ def plan(
             f"complete-run boot fill reached {boot}, "
             f"expected {boot_targets}")
 
-    merged_sources = tuple(
-        tuple(PRG if source == WORD else source for source in frame)
-        for frame in current_plan.sources
-    )
-    merged_runs = _transfer_run_trace(
-        per,
-        merged_sources,
-        prefetch_per,
-        current_plan.dic_indices,
-        transfer_orders,
-    )
-    block_lengths = stream_schedule.control_block_lengths(
-        np.asarray(n_updates, np.int64),
-        merged_runs,
-        cells=int(cells),
-        audio_frame_bytes=int(audio_frame_bytes),
-        update_lists=update_lists,
-        frame_types=frame_types,
-    )
-    control_sectors = stream_schedule.control_sector_schedule(block_lengths)
-    physical_sectors = stream_schedule.rate_deltas(frame_count, float(fps))
-    # At 15 fps the physical cadence alternates between five and six sectors,
-    # but the one-byte route can describe at most five useful sectors.  The
-    # sixth sector is physical CD time/pad, not another payload opportunity.
-    routed_capacity = np.minimum(physical_sectors, MAX_SLOT_SECTORS)
-    payload_capacity = routed_capacity - control_sectors
     if np.any(payload_capacity < 0) and not failure:
         frame = int(np.flatnonzero(payload_capacity < 0)[0])
         failure = f"frame {frame}: control exceeds fixed CD time"
@@ -1239,11 +1313,7 @@ def plan(
             for index in frame_items[frame]:
                 item = items[index]
                 if int(state.delivered[index]) != item.count:
-                    frame_prg_need = sum(
-                        items[frame_index].count
-                        for frame_index in frame_items[frame]
-                        if int(state.sources[frame_index]) != WORD
-                    )
+                    frame_prg_need = int(state.frame_prg_demand[frame])
                     failure = (
                         f"frame {frame}: source {int(state.sources[index])} "
                         f"delivered {int(state.delivered[index])}/{item.count}; "
@@ -1265,13 +1335,12 @@ def plan(
                     PATTERNS_PER_SECTOR,
                     transaction,
                 )
-                prg_remaining = _remaining_potential_prg(items, state)
                 if prg_count == PATTERNS_PER_SECTOR:
                     prg_payload_patterns[frame] += prg_count
                     prg_payload_sectors[frame] += 1
                     sector += 1
                     continue
-                if prg_count and prg_remaining == 0:
+                if prg_count and state.potential_prg_remaining == 0:
                     state.prg_occupancy += PATTERNS_PER_SECTOR - prg_count
                     prg_payload_patterns[frame] += prg_count
                     prg_payload_sectors[frame] += 1
@@ -1279,16 +1348,6 @@ def plan(
                     continue
                 transaction.rollback()
 
-                target_frame = _next_prg_pressure_frame(
-                    frame=frame,
-                    items=items,
-                    frame_items=frame_items,
-                    state=state,
-                    payload_capacity=payload_capacity,
-                    prg_capacity=int(prg_capacity_patterns),
-                )
-                if target_frame is None:
-                    break
                 parity = frame & 1
                 available_word_sectors = min(
                     MAX_WORD_STAGE_SECTORS
@@ -1299,6 +1358,18 @@ def plan(
                         - state.word_occupancy[parity]
                     ) // PATTERNS_PER_SECTOR,
                 )
+                if available_word_sectors <= 0:
+                    break
+                target_frame = _next_prg_pressure_frame(
+                    frame=frame,
+                    items=items,
+                    frame_items=frame_items,
+                    state=state,
+                    payload_capacity=payload_capacity,
+                    prg_capacity=int(prg_capacity_patterns),
+                )
+                if target_frame is None:
+                    break
                 accepted_word_patterns = 0
                 for batch_sectors in range(
                         available_word_sectors, 0, -1):
@@ -1356,12 +1427,13 @@ def plan(
             model_sources[item.frame][update] = source
     model_sources_tuple = tuple(
         tuple(frame) for frame in model_sources)
-    model_compact_runs = _transfer_run_trace(
+    model_compact_runs, model_runs = _transfer_run_traces(
         per,
         model_sources_tuple,
         prefetch_per,
         current_plan.dic_indices,
         transfer_orders,
+        word_capacities=capacities,
     )
     if (
         not failure
@@ -1373,14 +1445,6 @@ def plan(
             f"frame {frame}: whole-run source choice changed runs "
             f"{int(merged_runs[frame])}->"
             f"{int(model_compact_runs[frame])}")
-    model_runs = _transfer_run_trace(
-        per,
-        model_sources_tuple,
-        prefetch_per,
-        current_plan.dic_indices,
-        transfer_orders,
-        word_capacities=capacities,
-    )
     model_block_lengths = stream_schedule.control_block_lengths(
         np.asarray(n_updates, np.int64),
         model_runs,

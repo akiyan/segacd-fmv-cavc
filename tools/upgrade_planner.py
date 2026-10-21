@@ -428,12 +428,14 @@ def _first_overloaded_busy_period(
     demand: np.ndarray,
     supply: np.ndarray,
     capacity: int,
+    *,
+    start_frame: int = 0,
 ) -> tuple[int, int] | None:
     """Return the start and peak frame of the first over-capacity burst."""
 
     draw = 0
-    busy_start = 0
-    frame_idx = 0
+    busy_start = start_frame
+    frame_idx = start_frame
     while frame_idx < len(demand):
         draw = max(
             0,
@@ -518,16 +520,21 @@ def build_balanced_reserve_plan(
             "minimum demand is infeasible within the quality-budget capacity")
 
     planned = demand_arr.copy()
+    search_start = 0
     max_passes = max(1, len(planned) * 2)
     for _pass in range(max_passes):
         overloaded = _first_overloaded_busy_period(
-            planned, supply_arr, capacity)
+            planned, supply_arr, capacity, start_frame=search_start)
         if overloaded is None:
             break
         start, peak = overloaded
+        # The unchanged earlier prefix is already feasible and has zero
+        # carried draw at this busy-period boundary.
+        search_start = start
         window_demand = planned[start:peak + 1]
         window_minimum = minimum_arr[start:peak + 1]
         window_supply = supply_arr[start:peak + 1]
+        reducible_demand = (window_demand - window_minimum).astype(np.float64)
 
         low = 0.0
         high = 1.0
@@ -536,8 +543,7 @@ def build_balanced_reserve_plan(
             candidate = (
                 window_minimum
                 + np.floor(
-                    (window_demand - window_minimum).astype(np.float64)
-                    * fraction
+                    reducible_demand * fraction
                 ).astype(np.int64)
             )
             if _peak_buffer_draw(candidate, window_supply) <= capacity:
@@ -547,7 +553,7 @@ def build_balanced_reserve_plan(
         candidate = (
             window_minimum
             + np.floor(
-                (window_demand - window_minimum).astype(np.float64) * low
+                reducible_demand * low
             ).astype(np.int64)
         )
         if np.array_equal(candidate, window_demand):

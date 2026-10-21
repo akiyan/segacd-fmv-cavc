@@ -336,6 +336,35 @@ class PhysicalBudgetPlanTests(unittest.TestCase):
         # ring proof sees that they would need an impossible earlier delivery.
         self.assertEqual(planner.begin_frame(3).prg_patterns, 0)
 
+    def test_online_limits_preserve_sector_boundaries_across_frames(self) -> None:
+        # These public limits come from the original full-prefix scheduler.
+        # Reusing a trial across frames or rounding either stream incorrectly
+        # changes the admitted workload after the initial quiet interval.
+        wanted = [0, 0, 63, 64, 65, 0, 210, 127, 1, 0, 210, 0]
+        control = [0, 2047, 2048, 2049, 16, 0, 2048, 2049, 0, 1, 4096, 0]
+        expected = [0, 128, 192, 193, 129, 128, 210, 46, 128, 210, 210, 45]
+        planner = physical_budget.SharedSectorPlanner(
+            len(wanted),
+            max_prg_patterns=210,
+            max_cold_patterns=210,
+            prebuffer_capacity_patterns=128,
+            frame_sectors=5,
+            fps=24,
+            ring_capacity_patterns=256,
+            maximum_control_block_bytes=control,
+        )
+        for frame, expected_limit in enumerate(expected):
+            limit = planner.begin_frame(frame)
+            self.assertEqual(limit.prg_patterns, expected_limit, frame)
+            actual = min(wanted[frame], limit.prg_patterns)
+            planner.commit_frame(
+                frame, prg_patterns=actual, cold_patterns=actual,
+                control_block_bytes=control[frame])
+        plan = planner.finish(wanted)
+        np.testing.assert_array_equal(
+            plan.realized_prg_patterns,
+            [0, 0, 63, 64, 65, 0, 210, 46, 1, 0, 210, 0])
+
 
 if __name__ == "__main__":
     unittest.main()

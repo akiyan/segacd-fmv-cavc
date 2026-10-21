@@ -59,6 +59,64 @@ contain no scroll detection or guard work.
 | Finalize | 0.9 s | 0.3 ms |
 | **Total** | **216.9 s** | **79.9 ms** |
 
+### Normalized-input planning comparison
+
+The complete Sonic Jam OP profile (2,714 frames, 288x200, 30 fps, cold cap 210)
+was compared on a Core i9-13900KF with common normalized RGB/PCM input and
+independent palette training, quantization and decisions. The native run used
+one CPU worker with GPU acceleration disabled; the browser used Chromium and
+Pyodide. Both retain encoder/player version `20261020.e194.p157` and identical
+output. The reference source is `f751c994fe4ac7f78a3619ac9fc29705bc989d7e`.
+
+| Runtime | Before reuse | Complete reuse | Encode time reduction |
+|---|---:|---:|---:|
+| Native Python, CPU, one worker | 462.0 s | 411.7 s | 10.9% |
+| Browser WebAssembly | 1006.3 s | 856.2 s | 14.9% |
+
+Each timing is one execution. Normalization, runtime download, packing, MP4,
+ISO and ZIP creation are excluded. These are encoder measurements on prepared
+inputs, not ordinary-input Generate latency or GPU CLI throughput. Every
+HEADER/BODY/MOVIE byte, every canonical RGB frame and reconstructed PCM matched.
+`webenc/harness/planning/README.md` records the intermediate measurements,
+stage variation, environment and reproduction procedure.
+
+## Planning work reuse
+
+The online delivery planner checks only the preceding and newly appended
+slots when committing cumulative control/payload prefixes. It still checks
+finite PrgBuf delivery for each trial and performs a complete prefix proof
+at the end. Trials in the same frame reuse feasibility only when both
+cumulative sector counts match; detailed byte counts and margins are not
+cached under that key. Cadence, committed control sectors and cumulative
+Prg/control amounts are retained; each trial replaces only the current
+frame's inputs and cumulative values. Trials omit diagnostic arrays that
+the caller does not use. Backward deadline propagation and finite-ring
+delivery still run for every trial, so repeated prefix replay retains a
+quadratic component in movie length.
+
+WordBuf planning maintains undelivered potential Prg demand through delivery,
+source assignment and rollback, skips pressure forecasts when no WordBuf
+sector can fit, and scans candidates only through the required complete
+frame horizon. Per-frame non-Word demand is updated when sources change,
+including rollback; already delivered Prg patterns remain in that frame's
+consumption demand. The layout loop shares item/frame/parity indexes, merged
+runs and initial control/cadence arrays across capacity trials. Each trial
+owns its mutable boot selection, source, delivery and occupancy state.
+Compact and ring-split descriptor counts share one run construction per
+frame. Subset scores, candidate order and physical replay remain unchanged.
+
+Quality-reserve searches reuse constant demand differences and
+resume from the last changed busy period. Empty boot-prefetch plans reuse
+the baseline prefetch forecast; fallback comparisons reuse the current
+display error within one decision.
+
+`harness/encoder_planning/compare.py` compares the actual reference and current
+planners in separate processes, including per-frame limits, complete routes,
+WordBuf sources, reserves and dictionary order. Its default 512-frame
+synthetic workload measures planning components, not full-encode throughput.
+The end-to-end output and memory qualification remains the separate
+16,384-frame source procedure in `harness/runtime_storage/README.md`.
+
 ---
 
 <a id="jp"></a>
@@ -117,3 +175,55 @@ NVIDIA GeForce RTX 4090によるGPU量子化を使用しています。既存の
 | Decide | 114.3秒 | 42.1 ms |
 | Finalize | 0.9秒 | 0.3 ms |
 | **合計** | **216.9秒** | **79.9 ms** |
+
+### 正規化済み入力による計画処理の比較
+
+Sonic Jam OPの全profile（2,714フレーム、288x200、30 fps、cold cap 210）を、
+Core i9-13900KFで比較しました。正規化済みRGB/PCMを共通入力とし、パレット学習・
+量子化・decisionは独立に計算しています。nativeはGPUを無効にしたCPU 1 worker、
+ブラウザはChromiumとPyodideを使用しました。両版ともencoder/player版は
+`20261020.e194.p157`で、出力は同一です。変更前のsourceは
+`f751c994fe4ac7f78a3619ac9fc29705bc989d7e`です。
+
+| 実行環境 | 再利用の実装前 | 再利用の全項目実装後 | エンコード時間の短縮率 |
+|---|---:|---:|---:|
+| Native Python、CPU 1 worker | 462.0秒 | 411.7秒 | 10.9% |
+| ブラウザ WebAssembly | 1006.3秒 | 856.2秒 | 14.9% |
+
+各時間は1回の実行結果です。正規化、runtimeのdownload、pack、MP4・ISO・ZIP生成は
+含めません。前処理済み入力に対するencoderの計測であり、通常入力でGenerateを
+押してからの時間や、GPUを使ったCLIの処理速度は測っていません。HEADER/BODY/MOVIEの
+全byte、全canonical RGB frame、再構成PCMの一致を確認しました。
+`webenc/harness/planning/README.md`に中間段階の測定、工程別の変動、環境と再現手順を
+記載しています。
+
+## 計画処理の再利用
+
+逐次配送plannerは、累積control/payloadの確定時に直前slotと新しく追加したslotを
+検査します。各候補の有限PrgBuf配送検査と、終了時の全prefix検証は維持します。
+同じframe内では、累積sector数の組が両方一致する場合に可否判定を再利用します。
+詳細なbyte数やmarginは、このkeyでは再利用しません。cadence、確定済みcontrol sector、
+Prg/controlの累積量を保持し、候補評価では現在のframeの入力と累積値だけを更新します。
+呼び出し元が使わない診断用配列の生成は省きます。締切の逆向き伝播と有限PrgBufの
+配送計算は各候補で引き続き行うため、prefix全体の再計算には動画長に対して二次の
+計算量となる部分が残ります。
+
+WordBuf計画は、未配送でPrg供給となり得る需要を、配送・供給元の割当・rollbackに
+合わせて更新します。WordBufに1sectorも配送できない場合は不足予測を省き、
+候補走査は必要なframeまでに限定して、そのframe内の候補はすべて含めます。
+frame別の非Word需要は供給元の変更とrollbackに合わせて更新し、配送済みのPrgも
+そのframeの消費需要に含めます。レイアウト反復ではitem/frame/parity列、merged run、
+初期control/cadence配列を容量試行間で共有します。boot選択、供給元、配送量、残量の
+可変状態は試行ごとに独立させます。分割前とring境界分割後のdescriptor数は、各frameで
+一度作ったrunから計算します。subsetのscore、候補順、物理replayは維持します。
+
+画質予算の探索は不変の需要差を
+再利用し、最後に変更した連続不足区間の先頭から再開します。boot-prefetch計画が
+空の場合はbaselineのprefetch予測を再利用し、fallback比較では1回のdecision内で
+現在表示の誤差を再利用します。
+
+`harness/encoder_planning/compare.py` は、変更前後の実際のplannerを別processで実行し、
+frame別上限、全route、WordBuf供給元、予約量、辞書順を比較します。既定の512フレームの
+合成入力は計画処理単体の測定であり、全編encodeの処理速度は測りません。
+全工程の出力一致とメモリ検証は、`harness/runtime_storage/README.md` の
+16,384フレームのsourceを使う別手順で行います。
