@@ -527,8 +527,6 @@ stream_start:
 .ifdef INCLUDE_AUDIO_FD_DITHER
 	clr.w	audio_fd_phase
 .endif
-	clr.l	prev_msf			/* HEADER first sector establishes the disc MSF base */
-	clr.l	base_msf
 	move.l	header_lba, d0
 	move.l	header_total, d1
 	bsr	issue_file_readn		/* complete startup file */
@@ -881,8 +879,6 @@ pb_done:
 	move.l	body_total, d0
 	cmp.l	d1, d0
 	blo	bad_header
-	clr.l	prev_msf
-	clr.l	base_msf
 	move.l	body_lba, d0
 	bsr	issue_file_readn
 
@@ -965,8 +961,6 @@ timed_suffix_start:
 	move.l	body_total, d1
 	sub.l	d2, d1
 	beq	timed_suffix_armed
-	clr.l	prev_msf
-	clr.l	base_msf
 	bsr	issue_file_readn
 arm_frame1:
 	bsr	pump1_core
@@ -1219,28 +1213,28 @@ movie_end:
 	bne	3b
 	bra	stream_start
 
-/* Start one finite ISO file read. d0=absolute LBA, d1=sector count.  The caller
-   establishes base_msf/prev_msf first so the very first sector is verifiable.
+/* Start one finite ISO file read. d0=absolute LBA, d1=sector count.
+   Initialize the absolute MSF anchor here, including the first sector.
    Callers need no registers preserved. */
 issue_file_readn:
 	lea	bios_packet, a5
 	move.l	d0, read_lba
 	move.l	d1, read_total
-.ifdef MULTIPART
-	/* Check the first sector too: a preceding part can leave buffered CDC data. */
+	/* Anchor the first sector to its requested LBA. A replay or preceding
+	   part can leave buffered CDC data after STOP; it is not a file header. */
 	move.l	d0, d2
 	addi.l	#150, d2
 	move.l	d2, base_msf
 	subq.l	#1, d2
 	move.l	d2, prev_msf
-.endif
 	move.l	d0, (a5)
 	move.l	d1, 4(a5)
 	move.l	#SUB_BANK_1M, 8(a5)
 	movea.l	a5, a0
 	BIOSCALL BIOS_CDC_STOP
 .ifdef MULTIPART
-	/* No timed read or PCM is active at this finite-read boundary. */
+	/* Let STOP retire the preceding CDC request before READN re-arms it.
+	   This finite-file boundary is outside timed delivery, with PCM stopped. */
 	move.w	(GA_STOPWATCH_ABS_W).w, d2
 1:
 	move.w	(GA_STOPWATCH_ABS_W).w, d3
@@ -1248,8 +1242,8 @@ issue_file_readn:
 	andi.w	#0x0FFF, d3
 	cmpi.w	#3256, d3
 	blo.s	1b
-	movea.l	a5, a0
 .endif
+	movea.l	a5, a0
 	BIOSCALL BIOS_ROM_READN
 	move.l	read_total, stream_remaining
 	rts
@@ -1323,6 +1317,18 @@ d1_check:
 	addq.l	#1, d2				/* 期待 = prev_msf+1 */
 	cmp.l	d1, d2
 	beq	d1_ok				/* 連番=OK */
+	/* Before the requested first sector, CDC can still return an older read's
+	   buffered sector. It consumes no sector of this file: discard it without
+	   reseeking or charging a timed delivery loss. An ahead-of-start sector or
+	   a gap after the first accepted sector still takes normal slip recovery. */
+	cmp.l	base_msf, d2
+	bne.s	d1_gap
+	cmp.l	d2, d1
+	bhs.s	d1_gap
+	addq.l	#1, stream_remaining
+	movea.l	dr_dest, a0
+	bra	drain1
+d1_gap:
 	/* MSFギャップ=滑り: 失われたセクタ(prev_msf+1=d2)へ再シークして読み直す(厳密回復)。
 	   apply は total_len 前置きの可変長ストリームで、payloadだけ「穴」を空けても control が
 	   落ちると parse がズレて永久desync(F273フリーズ実測)。かつ再シークの CDC_STOP は CDC を

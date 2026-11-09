@@ -47,8 +47,9 @@ tools/python.sh harness/palette_capacity/verify_trace.py \
   --tsv logs/palette64-15fps/playback.tsv
 ```
 
-Repeat with the 30 fps fixture and its own output directory, adding
-`--min-loops 2` to verify its return to frame 0. The trace verifier
+Repeat with the 30 fps fixture and its own output directory. For loop
+regressions at 15, 24 or 30 fps, use 8,000 emulator frames and
+`--min-loops 3`. The trace verifier
 reconstructs VRAM and CRAM from actual VDP writes. For every displayed movie
 frame it requires the exact palette, every visible cell's palette line and
 32-byte pattern, consecutive frame numbers, and zero slip/desync/audio-resync
@@ -67,11 +68,12 @@ and byte-identical Sub binary reproduce that stop with the sixteen-capacity
 Main player built from a clean baseline worktree. Generic assembly/link checks
 pass, but this fixture does not establish generic runtime qualification.
 
-The 15 fps specialized fixture completes one exact loop but does not restart
-within the 6,000-frame observation window. A sixteen-palette baseline with a
-byte-identical BODY reproduces this result. The 30 fps specialized fixture
-completes two exact loops, including palette 63 to palette 0. Treat the 15 fps
-restart observation separately from palette-capacity qualification.
+The specialized player validates the first sector of each finite read
+against its requested LBA and discards older buffered sectors without consuming
+the new file's count. This permits repeated reloads of HEADER without accepting
+a preceding read's buffered sector as the file header. Loop qualification includes the final
+palette to palette 0 transition, every frame's pixels and all three recovery
+counters. See `harness/loop_playback/README.md` for loop-specific evidence.
 
 These cases prove palette capacity, address separation and playback of the
 synthetic decisions. Source-dependent quality gains and heavy-pattern delivery

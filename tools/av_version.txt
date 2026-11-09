@@ -1381,6 +1381,7 @@
 # e195: exact output-frame ranges for independent CLI multipart encoding.
 # p158: menu-free multipart dispatch, separate specialized player modules,
 #       bounded ISO reads and checked loader memory ownership.
-date=20261021
+# p159: reject stale finite-read prefixes and clear the scroll plane on replay.
+date=20261109
 e=195
-p=158
+p=159

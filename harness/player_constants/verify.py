@@ -34,10 +34,14 @@ class Case:
     trows: int = 28
     cold_cap: int = 200
     frames: int = 600
+    extra_features: int = 0
 
 
 CASES = (
     Case("h40-15", 15, cold_cap=360),
+    Case("h40-15-scroll-ring", 15, True, trows=18, cold_cap=480,
+         extra_features=cavc_routing.FEATURE_SCROLL | cavc_routing.FEATURE_WORDBUF_RING
+         | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS),
     Case("h40-24-supply", 24, True, cold_cap=225),
     Case("h40-30-supply", 30, True),
     Case("h40-30-centered", 30, True, 36, 25),
@@ -65,7 +69,7 @@ def make_header(case: Case) -> bytes:
     trows = case.trows
     cells = tcols * trows
     frames = case.frames
-    features = cavc_routing.FEATURE_COLD_RUNS
+    features = cavc_routing.FEATURE_COLD_RUNS | case.extra_features
     if av_config.uses_vblank_cadence(case.fps):
         features |= cavc_routing.FEATURE_VBLANK_CADENCE
     _rate, audio, _control = av_config.audio_frame_layout(case.fps)
@@ -245,7 +249,7 @@ def verify_flip_control_flow(objdump: Path, obj: Path) -> None:
 
 
 def verify_shared_deadline_vblank(
-    objdump: Path, obj: Path, *, tcols: int, trows: int,
+    objdump: Path, obj: Path, *, tcols: int, trows: int, scroll: bool = False,
 ) -> None:
     """Prove fixed-cadence pattern and display DMAs share one safe blank."""
     disassembly = run([str(objdump), "-dr", str(obj)])
@@ -363,6 +367,8 @@ def verify_shared_deadline_vblank(
     band_words = (trows - 1) * 64 + tcols
     hud_words = screen_cols + (43 - screen_cols) * 4
     normal_reserve = band_words + hud_words + 128
+    if scroll:
+        normal_reserve = trows * 64 + hud_words + 128 + 4 * 4
     if not re.search(rf"\bmovew\s+#{normal_reserve},%d6", publish):
         raise AssertionError(
             f"{obj}: missing exact grid/HUD/guard reserve ({normal_reserve} words)")
@@ -793,7 +799,8 @@ def build_case(
             objdump, ip_obj, tcols=tcols, trows=case.trows)
         if av_config.uses_fixed_n_cadence(case.fps):
             verify_shared_deadline_vblank(
-                objdump, ip_obj, tcols=tcols, trows=case.trows)
+                objdump, ip_obj, tcols=tcols, trows=case.trows,
+                scroll=bool(case.extra_features & cavc_routing.FEATURE_SCROLL))
             verify_runtime_vblank_cadence(
                 objdump, ip_obj)
             release_ip_obj = case_dir / "ip-specialized-release.o"
