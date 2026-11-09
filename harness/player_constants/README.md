@@ -2,7 +2,8 @@
 
 This harness verifies the disc-specific Main/Sub assembly path without
 reusing stale packed movies. It creates current CAVC headers at 15, 24 and
-30 fps on the full 40x28 grid, plus a centered 36x25 case at 30 fps, generates
+30 fps on the full 40x28 grid, plus a centered 36x25 case at 30 fps and a
+15 fps 40x18 scroll/WordBuf-ring build with cold cap 480, generates
 `player_constants.inc`, then assembles and links both the generic and
 specialized DEBUG players.
 
@@ -10,7 +11,9 @@ For every case it requires:
 
 - the full 64-segment PALTAB and 64-entry PALIDX fit the transient IP image,
   with the relocated Main-RAM tables below the unchanged DicBuf;
-- specialized IP and SP binaries do not grow relative to the generic build;
+- specialized IP images retain the generic image size; Sub's scroll/WordBuf
+  combination is checked against the resident limit even when it exceeds the
+  generic reference image;
 - the specialized resident SP binary stays within the 5-KiB disc-system
   allocation and the boot header names its exact linked size;
 - the extension is linked into the boot-only timed-ring tail, its generated

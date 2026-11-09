@@ -208,6 +208,19 @@ untimed BODY arm and expands frame 0; frame 0 and `WORDBUF` may overwrite the
 temporary staging range safely. Dump diagnostics write list-form updates into
 `CTRL-SCR`.
 
+When starting HEADER, the BODY arm, or the timed suffix, Sub sets the expected
+first MSF from the requested LBA plus 150. Buffered sectors older than that
+first sector are acknowledged and discarded without consuming this file's
+remaining count or issuing a recovery seek. They cannot establish a new file's
+anchor, including on replay. A sector ahead of the expected first sector, or
+a gap after an accepted sector, still triggers normal slip recovery. Recovery
+seeks retain the existing file anchor. PCM stays stopped until the first timed
+control arrives, and the timed suffix remains one continuous read.
+
+Main clears its name-table stage at initial boot and every replay. Scroll
+builds clear all 64x32 words, including hidden columns and rows that fine
+scrolling can expose; frame 0 rebuilds the encoded picture afterward.
+
 ## Main RAM Map
 
 Main RAM is `0xFF0000..0xFFFFFF`. This map is completely fixed: it is
@@ -694,6 +707,18 @@ sidecarをpersistentな保存先へcopyしてbankを返します。Subはhandoff
 続いてSubは有限でuntimedなBODY armを読み、frame 0を展開します。その後は
 frame 0と`WORDBUF`がtemporary stage rangeを安全に上書きできます。Dump
 diagnosticはlist形式のupdateを`CTRL-SCR`へ書きます。
+
+HEADER、BODY arm、timed suffixの読取り開始時には、Subが要求LBAに150を足して
+最初の期待MSFを設定します。それより古い残留sectorはACKして破棄し、新しい
+fileの残sector数を減らしたり回復seekを発行したりしません。ループ再生でも、
+残留sectorを新しいfileの基準には使いません。期待する先頭より先のsectorや、
+sectorを受け付けた後の欠落には、従来どおりslip回復を行います。回復seekでは
+既存fileの基準を維持します。最初のtimed controlが届くまでPCMを停止したままに
+し、timed suffixは1本の連続読取りを保ちます。
+
+Mainは初回起動と各ループの再開時にname-table stageをクリアします。scroll
+buildでは64x32 word全体を消し、fine scrollで見える隠れた列や行も初期化します。
+その後、frame 0が符号化された画像を構築します。
 
 ## Main RAM map
 

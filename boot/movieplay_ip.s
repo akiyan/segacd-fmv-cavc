@@ -534,15 +534,7 @@ ip_entry:
 	lsl.w	#5, d2				/* 1 KiB = 32 patterns */
 	move.w	d2, md_prg_buf_cap_patterns
 	.endif
-	/* Main RAM .bss is not initialized by the BIOS. Clear the complete active
-	   stage once so every inter-row word outside the encoded grid stays blank. */
-	lea	nt_stage, a0
-	moveq	#0, d0
-	PC_MOVE_W md_nt_stage_words, NT_STAGE_WORDS, d1
-	subq.w	#1, d1
-1:
-	move.w	d0, (a0)+
-	dbra	d1, 1b
+	bsr	clear_nt_stage
 .ifdef MAIN_CODEGEN
 	/* Generate once, before playback. A failed range/size proof leaves
 	   md_codegen=0 and the per-bit reference path remains active. */
@@ -591,11 +583,6 @@ ip_entry:
 	clr.w	nt_dma_ready_v
 .endif
 .endif
-.ifdef INCLUDE_SCROLL
-	clr.w	scroll_next_h
-	clr.w	scroll_next_v
-	clr.w	scroll_h_dirty
-.endif
 play_loop:
 	/* Feature bit 1 pairs the Main VBlank cadence with the Sub's exact
 	   per-interval CD deadline schedule. */
@@ -641,8 +628,29 @@ movie_end_md:
 	clr.w	swap_request_pending
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
+	bsr	clear_nt_stage
 	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
 	bra	play_loop
+
+/* Initial boot and replay start from the same blank plane. Fine scrolling
+   exposes columns outside the ordinary 40-column band; retaining those words
+   lets a previous loop's hidden tiles leak into the next loop's first pan. */
+clear_nt_stage:
+	lea	nt_stage, a0
+	moveq	#0, d0
+.ifdef INCLUDE_SCROLL
+	move.w	#NT_SCROLL_VBAND_WORDS, d1
+	clr.w	scroll_next_h
+	clr.w	scroll_next_v
+	move.w	#1, scroll_h_dirty		/* frame 0 also resets the VDP's old scroll */
+.else
+	PC_MOVE_W md_nt_stage_words, NT_STAGE_WORDS, d1
+.endif
+	subq.w	#1, d1
+1:
+	move.w	d0, (a0)+
+	dbra	d1, 1b
+	rts
 
 .ifdef MULTIPART
 /* Main owns only the handed-over bank, until its final copy ACK. */
