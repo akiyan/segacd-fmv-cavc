@@ -573,17 +573,18 @@ at the next fresh VBlank head, regardless of run length. After the pattern
 tail, Main restores the withheld reserve and admits the shared
 name-table/HUD/CRAM publication path only if the current phase is still inside
 that same VBlank and its remaining time covers the complete publication
-reserve. VBlank status is checked before and after the V counter. Main excludes
-the current partial line, resolves the repeated NTSC `E5..EA` counter range to
-its later occurrence, and scales the remaining whole lines against the same
-3,200-unit capacity over 38 blank lines. This catches CPU setup and HUD-format
-time that consumes blank time without reducing the residual word counter.
+reserve. VBlank status is checked before and after the V counter, and terminal
+lines `FC..FF` are rejected. Each physical budget also retains its Main-RAM
+stopwatch origin. Main scales its remaining time against 3,200 units over
+76 ticks, conservatively excluding first-line entry uncertainty from the
+38-line NTSC blank. This avoids the repeated V-counter range and catches CPU
+setup time that consumes blank time without reducing the residual word counter.
 If any condition fails, Main waits for a fresh VBlank.
 
-For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
-after the first transfer budget and before waiting for the next fresh VBlank.
+Main formats the stable DEBUG HUD fields before waiting for the first pattern
+budget, including frames that use only one budget.
 After the final pattern word, it patches only the transfer-final fields and
-the resolved palette segment in `dbg_row`. The exact-band movie NT DMA and the
+the resolved palette segment and first-budget exit in `dbg_row`. The exact-band movie NT DMA and the
 Window/SAT HUD DMAs then run as separate members of the same admitted VBlank;
 there is no CPU VDP-port HUD republish. Exact logical pattern
 word counters cover runtime VBlank budgets 1 through 4; they remain separate
@@ -1166,15 +1167,16 @@ DMA runが残budget境界を越える場合はrun長に関係なくそこで正�
 fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
 同じVBlank内にまだいる場合だけname-table/HUD/CRAM publication shared pathを許可します。
 さらに、残り時間がpublication reserve全体を収容できる必要があります。
-VBlank statusはV counterの前後で確認します。進行中のlineを除外し、NTSCで2回現れる
-`E5..EA` counter範囲は遅い側として扱います。残りの完全なline数を、38 blank lineに
-3,200 unitを割り当てる同じcapacityで評価します。これにより、残word counterを
-減らさずにblank時間を消費するCPU setupやHUD formatも検出します。
+VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineを拒否します。
+各physical budgetのstopwatch起点をMain RAMに保持し、残り時間を76 tickあたり
+3,200 unitで評価します。38 lineのNTSC blankから最初のlineへの進入誤差を安全側に
+差し引いた値です。これによりV counterの反復区間を避け、残word counterを減らさずに
+blank時間を消費するCPU setupも検出します。
 どれかを満たさなければfresh VBlankを待ちます。
 
-multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
-VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
-transfer終了時に確定するfieldとpalette segmentだけを`dbg_row`へpatchします。
+Mainは最初のpattern budget待ちより前に、stableなDEBUG HUD fieldをformatします。
+1個のbudgetだけで終わるframeも同じです。最後のpattern word後は、transfer終了時に
+確定するfield、palette segment、最初のbudgetのexitを`dbg_row`へpatchします。
 Exact-band movie NT DMAとWindow/SAT HUD DMAは、同じadmitted VBlankの別々のmember
 として実行します。CPU VDP-portによるHUD republishは行いません。Runtime VBlank budget
 1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、

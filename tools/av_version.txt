@@ -1391,4 +1391,5 @@ e=197
 # p161: repay fixed-cadence display debt without accumulating reader/audio lag.
 # p162: admit shorter fixed intervals only when the whole frame fits one blank.
 # p163: admit shared display writes against actual remaining blank time too.
-p=163
+# p164: time blank admission from its stopwatch origin and preformat HUD early.
+p=164

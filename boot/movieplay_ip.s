@@ -146,6 +146,7 @@
    分ける。 */
 .equ SCREEN_COLS, 40		/* H40 V28 NTSC: 40x28 cell aperture */
 .equ VB_WORDS, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
+.equ VB_BUDGET_TICKS, 76	/* 38 NTSC blank lines minus first-line entry uncertainty */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
 .equ FEATURE_VBLANK_CADENCE_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
@@ -991,6 +992,10 @@ bf_dma:
 8:
 	move.w	d0, pattern_final_reserve_words
 	bsr	pace_admit_fixed_interval
+.ifdef DEBUG
+	/* Single-budget frames have no active-display gap after pattern work. */
+	bsr	prepare_dbg
+.endif
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
@@ -1125,13 +1130,7 @@ bf_flip:
 	bne.s	1f
 	clr.w	frame_vblank_waits		/* its VBlank count is not playback load */
 1:
-	/* A two-VBlank transfer formatted the static HUD after its first budget.
-	   One-/zero-VBlank frames still have the whole inter-flip active interval
-	   available here. Patch only transfer-final fields on the deadline path. */
-	cmpi.w	#2, pattern_transfer_vblanks
-	bhs.s	2f
-	bsr	prepare_dbg
-2:
+	/* Stable HUD fields were prepared before the first pattern budget. */
 	.endif
 	/* The final pattern DMA/repair and every Word-RAM HUD/status read are now
 	   complete. Return the consumed bank without waiting, overlapping Sub's
@@ -1392,12 +1391,14 @@ bf_start_vbudget:
 	cmpi.w	#0x00E0, d0
 	bne	bf_refill_vbudget
 	move.w	#1, vbudget_from_head
+	move.w	(GA_STOPWATCH).l, vbudget_start_tick
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
 	rts
 
 bf_refill_vbudget:
 	bsr	wait_vb_start
 	move.w	#1, vbudget_from_head
+	move.w	(GA_STOPWATCH).l, vbudget_start_tick
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
 	/* Pattern budget N is also the fixed-cadence display deadline. Withhold
 	   its final display work before issuing any pattern transfer. */
@@ -1445,13 +1446,6 @@ bf_debug_snapshot_vbudget:
 /* Finish the current budget snapshot before waiting for the next fresh head. */
 bf_next_vbudget:
 	bsr	bf_debug_snapshot_vbudget
-	/* On the first split only, spend the active-display gap before VBlank 2
-	   formatting every HUD field that is already known. Transfer-final fields
-	   are patched after the last pattern word. */
-	cmpi.w	#1, pattern_transfer_vblanks
-	bne.s	1f
-	bsr	prepare_dbg
-1:
 	suba.l	a1, a1				/* exact logical-word counter for the next budget */
 	addq.w	#1, pattern_transfer_vblanks
 	bra	bf_refill_vbudget
@@ -1477,30 +1471,26 @@ bf_wait_fixed_flip_vblank:
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
 	beq.s	2f
-	/* A residual word counter does not account for CPU time spent formatting
-	   HUD fields or setting up DMA. Require the complete publication reserve
-	   to fit the actual blank time too. NTSC V28 has 38 blank lines; the
-	   V-counter's E5..EA range occurs twice, so use its later occurrence.
-	   Exclude the current partial line and scale the remaining whole lines by
-	   the same conservative 3200-unit full-blank capacity as pattern work. */
-	moveq	#0, d0
 	move.w	(VDP_HV).l, d0
-	lsr.w	#8, d0
-	cmpi.w	#0x00E0, d0
-	blo.s	2f
-	cmpi.w	#0x00E5, d0
-	blo.s	3f
-	addq.w	#6, d0
-3:
+	cmpi.w	#0xFC00, d0
+	bhs.s	2f
+	/* Measure time from the admitted blank head without the repeated NTSC
+	   V-counter range. CPU setup consumes time but no residual d7 words. */
+	moveq	#0, d0
+	move.w	(GA_STOPWATCH).l, d0
+	sub.w	vbudget_start_tick, d0
+	andi.w	#0x0FFF, d0
+	cmpi.w	#VB_BUDGET_TICKS, d0
+	bhs.s	2f
 	neg.w	d0
-	addi.w	#261, d0
+	addi.w	#VB_BUDGET_TICKS, d0
 .ifdef PLAYER_SPECIALIZED
 	mulu.w	#PC_VBUDGET, d0
 .else
 	mulu.w	md_vbudget, d0
 .endif
 	move.w	d6, d1
-	mulu.w	#38, d1
+	mulu.w	#VB_BUDGET_TICKS, d1
 	cmp.l	d1, d0
 	blo.s	2f
 	move.w	(VDP_CTRL).l, d0
@@ -1550,6 +1540,9 @@ bf_patch_dbg_row:
 	move.w	pattern_dma_ready_v, d4
 	DBG_PUT2
 	move.w	nt_dma_ready_v, d4
+	DBG_PUT2
+	lea	dbg_row+25*2, a0		/* first-blank exit is unknown before patterns */
+	move.w	pattern_vblank1_exit_v, d4
 	DBG_PUT2
 	rts
 	.endif
@@ -2721,6 +2714,8 @@ dma_start_tick:
 	.space 2				/* DEBUG stopwatch sample at first pattern transfer */
 vbudget_from_head:
 	.space 2				/* current d7 began at a proven VBlank head */
+vbudget_start_tick:
+	.space 2				/* stopwatch origin of the current physical blank */
 pattern_final_reserve_words:
 	.space 2				/* cadence-final NT/HUD/CRAM/flip DMA-equivalent cost */
 vbudget_held_reserve:
