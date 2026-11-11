@@ -362,6 +362,30 @@ class SharedSectorPlanner:
                 max(0, cumulative_prg_limit - self._cumulative_prg),
             )
 
+            control_ceiling = self._control_limit_for_prg(frame, 0)
+            if self.maximum_control is not None:
+                control_ceiling = min(
+                    control_ceiling, int(self.maximum_control[frame]))
+            # A worst-case control block can itself miss the finite-route
+            # deadline, even with no new payload. Do not interpret that as
+            # proof that payload capacity is zero. Return the excess control
+            # reservation first, at the independently rounded sector edges.
+            while (self.ring_capacity_patterns is not None
+                   and not self._forward_ring_candidate_fits(
+                       frame, 0, control_ceiling)):
+                if control_ceiling == 0:
+                    raise stream_schedule.ScheduleError(
+                        f"frame {frame} has no feasible empty shared-sector route",
+                        kind="shared_sector_control",
+                        details={"failure_frame": frame})
+                control_ceiling = max(
+                    0,
+                    ((self._cumulative_control + control_ceiling - 1)
+                     // stream_schedule.SECTOR_BYTES)
+                    * stream_schedule.SECTOR_BYTES
+                    - self._cumulative_control,
+                )
+
             if self.ring_capacity_patterns is not None and prg_limit:
                 low = 0
                 high = int(prg_limit)
@@ -370,7 +394,8 @@ class SharedSectorPlanner:
                     trial_control_limit = self._control_limit_for_prg(
                         frame, trial)
                     if self._forward_ring_candidate_fits(
-                            frame, trial, trial_control_limit):
+                            frame, trial,
+                            min(trial_control_limit, control_ceiling)):
                         low = trial
                     else:
                         high = trial - 1
@@ -378,9 +403,7 @@ class SharedSectorPlanner:
 
             control_limit = self._control_limit_for_prg(
                 frame, prg_limit)
-            if self.maximum_control is not None:
-                control_limit = min(
-                    control_limit, int(self.maximum_control[frame]))
+            control_limit = min(control_limit, control_ceiling)
             cumulative_control_limit = (
                 self._cumulative_control + control_limit)
             current_capacity = int(

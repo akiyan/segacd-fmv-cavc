@@ -1385,6 +1385,7 @@
 # e196: reserve the first scroll control's guard edge independently of its
 #       ordinary anchor's geometry state.
 date=20261111
-e=196
+# e197: reduce infeasible control-sector reservations before projecting Prg limits.
+e=197
 # p160: blank the movie plane before replay boot-sidecar VRAM writes.
 p=160

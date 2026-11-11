@@ -6128,6 +6128,7 @@ if __name__ == "__main__":
                         _demoted_fade_anchors.add(exc.anchor)
                         import gc as _retry_gc
                         _retry_gc.enable()
+                        print(str(exc), flush=True)
                         print(
                             f"fade preparation infeasible at f{exc.anchor}; "
                             "re-planning without that fade",

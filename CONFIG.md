@@ -380,6 +380,11 @@ the exact cumulative control size through the preceding frame. It rounds
 control and Prg payload independently to physical sectors, reserves every CRAM
 switch and run descriptor, and computes both a Prg ceiling and a control-byte
 ceiling for the current frame.
+If the worst-case control reservation alone misses the finite-route deadline,
+the planner reduces that reservation at sector boundaries before calculating
+pattern capacity. An infeasible control estimate must not erase a feasible
+Prg transfer. Both returned limits still obey the same prefix and finite-buffer
+checks.
 
 The prefix ledger and exact delivery schedule use the normal 374/389/394 KiB
 PrgBuf capacity at 15/24/30 fps. The corresponding 40/25/20 KiB interval up to
@@ -990,6 +995,10 @@ final-VBlank reserveに含まれます。Release buildはHUD wordを省きます
 累積control sizeを知っています。controlとPrg payloadを独立に物理sectorへ丸め、全CRAM
 switchとrun descriptorを予約し、current frameのPrg ceilingとcontrol-byte ceilingを
 計算します。
+最大control予約だけでも有限routeのdeadlineに収まらない場合、plannerはsector境界で
+その予約を減らしてからpattern容量を計算します。成立しないcontrol見積りを理由に、
+成立するPrg転送まで禁止しません。返される両上限には同じprefixと有限bufferの検査を
+適用します。
 
 prefix ledgerと正確なdelivery scheduleは、15/24/30 fpsで通常PrgBuf容量
 374/389/394 KiBを使います。414 KiB観測境界までの40/25/20 KiBはruntime専用の
