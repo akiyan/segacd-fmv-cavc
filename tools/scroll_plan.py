@@ -316,6 +316,28 @@ def position_state(
         window, int(frame), columns=int(columns), rows=int(rows))
 
 
+def guard_load_counts(
+        states: Mapping[int, FrameScrollState],
+        active_frames: Iterable[int],
+) -> dict[int, int]:
+    """Count incoming edges that actual scroll controls must prepare.
+
+    Window anchors have geometry states but are ordinary frames: they never
+    install their hidden guard. Only an active preceding control can carry
+    that edge forward without another preload reservation.
+    """
+
+    active = frozenset(int(frame) for frame in active_frames)
+    return {
+        frame: (
+            0 if frame - 1 in active
+            and states[frame - 1].world_guard == states[frame].world_guard
+            else len(states[frame].guard_cells)
+        )
+        for frame in active
+    }
+
+
 def build_frame_states(
         windows: Sequence[ScrollWindow],
         *,

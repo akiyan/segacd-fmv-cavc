@@ -1382,6 +1382,8 @@
 # p158: menu-free multipart dispatch, separate specialized player modules,
 #       bounded ISO reads and checked loader memory ownership.
 # p159: reject stale finite-read prefixes and clear the scroll plane on replay.
-date=20261109
-e=195
+# e196: reserve the first scroll control's guard edge independently of its
+#       ordinary anchor's geometry state.
+date=20261111
+e=196
 p=159

@@ -1,0 +1,44 @@
+schema_version = 5
+
+[source]
+path = "assets/big-buck-bunny/bbb_sunflower_1080p_30fps_normal.mp4"
+fps = "30"
+# Tune the opening two minutes before extending to the complete film.
+duration = "120"
+start_frame = 0
+end_frame = 3600
+sar = "1:1"
+
+[video]
+width = 320
+height = 224
+# Center-crop the sides to fill the aperture, preserving H40 PAR 32:35.
+# The visible aperture is 64:49, the console's near-4:3 fullscreen geometry.
+fit = "crop"
+
+[output]
+directory = "tmp/big-buck-bunny/sim"
+reuse = true
+emit_decisions = true
+
+[encoder]
+cold_cap = 210
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 224]
+source_par = [32, 35]
+
+[release]
+title = "Big Buck Bunny — Sega CD disc images"
+title_ja = "Big Buck Bunny — Sega CD ディスクイメージ"
+
+[youtube]
+source_label = "Big Buck Bunny, Sunflower version, 1920x1080, 30 fps, 48 kHz audio"
+source_label_ja = "Big Buck Bunny、Sunflower版、1920x1080、30 fps、48 kHz音声"
+source_url = "https://peach.blender.org/download/"
+source_license = "Big Buck Bunny: Copyright 2008, Blender Foundation / www.bigbuckbunny.org. Stereoscopic / 4K / 60 fps / HDRI changes: Copyright 2013, Janus B. Kristensen. Used under CC BY 3.0. This is a modified version, center-cropped and re-encoded for the Sega CD."
+source_license_ja = "Big Buck Bunny: Copyright 2008, Blender Foundation / www.bigbuckbunny.org。立体視・4K・60 fps・HDRIの変更: Copyright 2013, Janus B. Kristensen。CC BY 3.0にもとづいて利用しています。これは左右を中央クロップし、Sega CD向けに再エンコードした改変版です。"
+source_license_url = "https://creativecommons.org/licenses/by/3.0/"

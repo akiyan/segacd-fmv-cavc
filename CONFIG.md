@@ -245,6 +245,9 @@ frame where that edge is fully inside the source viewport, so the guard
 pattern key is independent of runtime plane state and reveal phase. Decide
 reserves each scroll frame's guard-edge cold, WordBuf, and Prg supply, and
 applies the single-run cold/Prg clamp described under Cold cap.
+WordBuf edge reservations start at the first scroll control and each later
+world-edge crossing. The ordinary anchor has a geometry state but does not
+prepare its hidden guard; only a preceding scroll control can carry that edge.
 
 ## Audio
 
@@ -861,6 +864,9 @@ Encoderは持続する単一軸のcamera scrollを検出し、固定gridより�
 window frameから量子化します。これによりguardのpattern keyはruntimeのplane状態や
 reveal位相に依存しません。Decideは各scroll frameのguard辺cold・WordBuf・Prg供給を
 予約し、Cold capの節で述べた単独run前提のcold/Prg clampを適用します。
+WordBufの辺予約は最初のscroll controlと、それ以降にworld上の辺が切り替わるframeへ
+割り当てます。通常frameであるanchorにもgeometry状態はありますが、画面外のguardは
+準備しません。直前のscroll controlだけが同じ辺を準備済みとして引き継げます。
 
 ## Audio
 

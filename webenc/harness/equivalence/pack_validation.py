@@ -3,7 +3,7 @@
 Scroll controls require the list tag to carry their position item, even when
 the nominal bitmap comparison would be faster. This only corrects that pack
 validation predicate. Frozen costs, stream bytes and all delivery checks stay
-unchanged. Keep the repository's other in-progress codec files untouched.
+unchanged. Current native packers already enforce this rule and need no patch.
 """
 import inspect
 import linecache
@@ -18,6 +18,8 @@ def install(pack_stream):
         & (recomputed_list >= recomputed_legacy))
     if np.any(optional_list_regressions):
         frame = int(np.flatnonzero(optional_list_regressions)[0])'''
+    if source.count(corrected) == 1:
+        return  # Current native packer already distinguishes mandatory lists.
     if source.count(marker) != 1:
         raise RuntimeError('Shadow-list validation boundary changed; review the compatibility adapter')
     source = source.replace(marker, corrected)

@@ -20,6 +20,26 @@ def lunar_segment():
 
 
 class ScrollPlanTests(unittest.TestCase):
+    def test_guard_preloads_start_at_first_control_and_each_crossing(self):
+        # The ordinary anchor's geometry includes an offscreen edge, but its
+        # encoded display never installs it. Reserve the complete edge at the
+        # first control, carry it while hidden, then fund each new world edge.
+        for axis, edge_size in (("x", 28), ("y", 40)):
+            with self.subTest(axis=axis):
+                window = scroll_plan.ScrollWindow(
+                    anchor=233, end=249, axis=axis, deltas=(-1,) * 16,
+                    positions=tuple(-frame for frame in range(17)),
+                    detector_start=234, support=1.0,
+                    multiframe_support=1.0, adoption_gain=10.0,
+                    beneficial_fraction=1.0, overlap_rmse_p95=0.0)
+                states = scroll_plan.build_frame_states(
+                    [window], columns=40, rows=28)
+                demand = scroll_plan.guard_load_counts(
+                    states, range(234, 250))
+                self.assertEqual(
+                    {frame: count for frame, count in demand.items() if count},
+                    {234: edge_size, 241: edge_size, 249: edge_size})
+
     def test_normal_plane_mapping_keeps_each_row_on_the_64_cell_stride(self):
         self.assertEqual(
             scroll_plan.normal_plane_cells(3, 2),
