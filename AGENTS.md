@@ -19,6 +19,11 @@ select this workflow. This is also an available option for long-source planning.
 - Reuse completed, matching artifacts. Building an ISO, recording, rendering a
   timeline, or investigating a failure does not itself authorize a fresh encode.
   A request not to re-encode remains binding until the user changes it.
+- If work requires re-encoding the same video and the estimated encode time is
+  30 minutes or longer, explain why the existing encode cannot be reused and
+  give the estimated duration. Ask for confirmation and wait for the user's
+  approval before starting the re-encode, including an automatic retry that
+  restarts encoding from the beginning.
 - Before expensive work, identify the input, required output, expected duration,
   and completion evidence. After a failure, inspect its logs and reuse valid
   upstream results. Do not repeatedly restart an unchanged long experiment.
