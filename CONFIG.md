@@ -337,6 +337,8 @@ slot order while name updates remain in cell order.
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
 | `VB_WORDS` | 3,200 DMA-word equivalents/VBlank | ip | Conservative VBlank work budget. |
+| `VB_BUDGET_TICKS` | 76 stopwatch ticks | ip | Conservative remaining-time admission from a physical blank budget's saved origin; also requires the residual word reserve. |
+| `ACTIVE_PREFIX_WORDS` | at most 512 charged words | ip | Fixed-N timed frames may start protected cold-pattern work before active line 192, at six units per remaining active line; no VBlank budget is granted. |
 | `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU bitmap handlers. |
@@ -956,6 +958,8 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
 | `VB_WORDS` | 3,200 DMA-word相当/VBlank | ip | 安全側のVBlank work budget。 |
+| `VB_BUDGET_TICKS` | 76 stopwatch tick | ip | Physical blank budgetの保存済み起点から残り時間を安全側に判定する。残word reserveも必要。 |
+| `ACTIVE_PREFIX_WORDS` | 最大512 charged word | ip | Fixed-Nのtimed frameはactive line 192より前に、残active lineごとに6 unitを使って保護済みcold-pattern workを開始できる。VBlank budgetは与えない。 |
 | `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。 |
