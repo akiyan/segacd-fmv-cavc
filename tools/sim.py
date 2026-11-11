@@ -34,6 +34,7 @@ import sys
 import time
 import math
 import dataclasses
+import run_budget
 from collections import defaultdict
 from contextlib import contextmanager
 from pathlib import Path
@@ -304,6 +305,7 @@ _COLD_CAP_REQUEST = (
     else None
 )
 MAX_COLD = av_config.cold_cap(_COLD_CAP_REQUEST)
+MAX_RUNS = int(os.environ.get("CBRSIM_RUN_CAP", "0"))
 # Canonical spec string ("225" or "2:170,3:250"). A per-interval spec gives
 # each frame the cap of its own VBlank slot; MAX_COLD stays the reservation
 # ceiling for layout/envelope sizing.
@@ -2842,6 +2844,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             _lp_nested_frame = {name: 0.0 for name in _lp_nested_totals}
             _lp_t = time.perf_counter()
         scroll_state = scroll_states.get(i) if bool(scroll_active[i]) else None
+        if MAX_RUNS and scroll_state is not None:
+            raise SystemExit("run_cap does not yet support adopted hardware-scroll frames")
         update_entry_bytes = (
             shadow_updates.LIST_ITEM_BYTES
             if scroll_state is not None else NAME_BYTES)
@@ -3074,9 +3078,16 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         # temporary union explicitly; otherwise a zero-byte cache hit can
         # still force an unfunded reload at allocation time.
         transition_guard = FrameTransitionGuard(alloc)
+        run_admission = (
+            run_budget.RunAdmission(
+                alloc, i, max(0, MAX_RUNS - 1 - frame_fade_prefetch_patterns),
+                dic_dictionary_index)
+            if MAX_RUNS and i > 0 else None)
 
         def commit_repoint(c, key, pal, rgb):
             transition_guard.commit(c, key)
+            if run_admission is not None:
+                run_admission.commit(allocation_cells[c], key)
             repoint(c, key, pal, rgb, i)
 
         def reserved_variable_spend(
@@ -3112,6 +3123,14 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 funded
                 and control <= visible_control_block_limit
                 and transition
+                and (run_admission is None or cell is None or key is None
+                     or (
+                         cold_spent + extra_cold <= visible_frame_max_cold
+                         and run_admission.fits(
+                             allocation_cells[cell], key, preload_sources,
+                             (preload_source(key) if extra_cold
+                              else pattern_supply.SOURCE_PRG),
+                             cold_spent + extra_cold)))
             )
 
         def current_reserved_spend():
@@ -4197,9 +4216,11 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                         resident = alloc.is_resident(key)
                         if resident and not mandatory:
                             continue
+                        prefetch_alloc = (
+                            run_budget.clone_allocator(alloc) if MAX_RUNS else alloc)
                         if mandatory:
                             block_state = fade_prefetch_slots[int(deadline)]
-                            mandatory_result = alloc.prefetch_mandatory_in_block(
+                            mandatory_result = prefetch_alloc.prefetch_mandatory_in_block(
                                 key,
                                 i,
                                 deadline,
@@ -4216,7 +4237,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                         else:
                             request_relocate = False
                             request_forced = False
-                            result = alloc.prefetch(
+                            result = prefetch_alloc.prefetch(
                                 key,
                                 i,
                                 deadline,
@@ -4225,6 +4246,14 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                         if result is None:
                             continue
                         slot, cold = result
+                        if MAX_RUNS:
+                            candidate_slots = prefetch_cold_slots + ([slot] if cold else [])
+                            if run_budget.count_runs(
+                                    placements, [key for _, key in upd_ck],
+                                    preload_sources, dic_dictionary_index,
+                                    candidate_slots) > MAX_RUNS - 1:
+                                continue
+                            alloc = prefetch_alloc
                         if mandatory:
                             block_start = int(block_state["start"])
                             block_stop = block_start + int(block_state["length"])
@@ -5070,6 +5099,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 row.astype("<u2", copy=False).tobytes())
         dec_category_rows = rewritten_rows
 
+    run_budget.check_run_cap(transfer_runs_log, MAX_RUNS)
+
     # Exact Main-to-VDP workload. Physical run boundaries follow the final
     # WordBuf plan. Keep the one/two-pattern count as a run-shape diagnostic;
     # every run is transferred by DMA.
@@ -5408,7 +5439,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         len(guniq["same"]), len(guniq["near"]), len(guniq["flbk"]),
     ], np.int64)
     np.savez(OUT / "stats.npz", stats=stats, cols=cols, fps=FPS, cells=C_CELLS,
-             active_tiles=ACTIVE_TILES, max_cold=MAX_COLD,
+             active_tiles=ACTIVE_TILES, max_cold=MAX_COLD, run_cap=MAX_RUNS,
              cold_cap_spec=COLD_CAP_SPEC,
              frame_cold_caps=frame_cold_caps,
              raw_prefetch=np.asarray(prefetch_cold_log, np.int64),
@@ -5582,6 +5613,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 "quality_budget_kb": int(QUALITY_BUDGET_KB),
                 "max_cold": int(MAX_COLD),
                 "cold_cap_spec": COLD_CAP_SPEC,
+                "run_cap": int(MAX_RUNS),
             },
             "encoder": {
                 "detail_alpha": float(DETAIL_ALPHA),
@@ -5922,6 +5954,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             # エンコード時の実効パラメータを焼き込む(pack/解析が同一値を使い二重管理を防ぐ)。
             "max_cold": int(MAX_COLD),
             "cold_cap_spec": COLD_CAP_SPEC,
+            "run_cap": int(MAX_RUNS),
             "prg_buf_kb": int(PRG_BUF_CAP_KB),
             "prg_delivery_cap_kb": int(PRG_DELIVERY_CAP_KB),
             "prg_jitter_headroom_kb": int(PRG_JITTER_HEADROOM_KB),
@@ -6128,6 +6161,10 @@ if __name__ == "__main__":
                                 _demoted_fade_anchors), arrays=_arrays)
                         break
                     except FadeDeadlineInfeasible as exc:
+                        if MAX_RUNS:
+                            raise SystemExit(
+                                f"{exc}; run-cap experiment stopped before "
+                                "automatic whole-movie replanning") from exc
                         if exc.anchor in _demoted_fade_anchors:
                             raise
                         _demoted_fade_anchors.add(exc.anchor)

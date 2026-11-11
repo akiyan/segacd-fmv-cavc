@@ -61,6 +61,7 @@ ENV_MAP = {
     ("output", "emit_decisions"): "CBRSIM_EMIT_DEC",
     ("encoder", "raw_prefetch"): "CBRSIM_RAW_PREFETCH",
     ("encoder", "cold_cap"): "CBRSIM_COLD_CAP",
+    ("encoder", "run_cap"): "CBRSIM_RUN_CAP",
     ("encoder", "cram_quality_priority_search_frames"):
         "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES",
     ("palette", "algorithm"): "CBRSIM_PAL_ALGO",
@@ -82,6 +83,7 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_NEAR": "1",
     "CBRSIM_BOOT_VRAM_PREFETCH": "1",
     "CBRSIM_RAW_PREFETCH": "1",
+    "CBRSIM_RUN_CAP": "0",
     "CBRSIM_CRAM_QUALITY_PRIORITY_SEARCH_FRAMES": str(
         av_config.CRAM_QUALITY_PRIORITY_SEARCH_FRAMES),
     "CBRSIM_PAL_MAP_WEIGHT": str(av_config.PALETTE_MAP_WEIGHT),
@@ -359,6 +361,11 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
         raise ValueError(
             f"{profile_path}: encoder.cold_cap {cold_ceiling} exceeds "
             f"the {av_config.VRAM_PATTERN_POOL_TILES}-tile resident pool")
+    run_cap = data["encoder"].get("run_cap")
+    if run_cap is not None and (
+            isinstance(run_cap, bool) or not isinstance(run_cap, int)
+            or run_cap < 1):
+        raise ValueError(f"{profile_path}: encoder.run_cap must be a positive integer")
     cram_priority_search_frames = data.get(
         "encoder", {}).get("cram_quality_priority_search_frames")
     if cram_priority_search_frames is not None:

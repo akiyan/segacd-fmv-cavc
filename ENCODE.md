@@ -29,6 +29,17 @@ The shared source-run builder splits the early/final boundary, and packing
 verifies the complete final publication cost. Decision logs retain per-frame
 `final_vblank_tiles` and the total `final_vblank_reclaims` for measurement.
 
+When the optional run cap is set, Decide trials tentative cell-ordered updates
+through the shared allocator and counts source-aware runs before admission.
+This also checks warm updates whose slot protection can fragment cold loads.
+Prefetch shares the cap. Finalize checks the actual post-plan run counts;
+packing independently reconstructs and enforces them. CONFIG.md owns the
+option's scope and conservative reservations.
+Candidate-by-candidate allocation replay is expensive: the 2,714-frame Sonic
+experiment with cold cap 240 and run cap 40 took 1,909.4 seconds, including
+1,819.3 seconds in Decide. Native-array clock scans preserve allocation order
+and reduce each trial's cost, but do not remove the repeated frame allocations.
+
 ## Working memory
 
 `--array-storage disk` places frame features and quantized numeric caches in
@@ -192,6 +203,16 @@ Pack時にはallocation tearingを拒否し、cold destinationを実際にdecode
 旧表示と新表示の和集合を使う安全側のadmissionは変えません。共有source-run builderは
 前段と最終段の境界で分割し、pack時に最終publication全体のcostを検証します。
 Decision logは計測用にframeごとの`final_vblank_tiles`と総`final_vblank_reclaims`を保持します。
+
+任意のrun capが設定されている場合、Decideはcell順の更新候補を共有allocatorで
+試算し、供給元を考慮したrun数で採否を決めます。slot保護によってcold loadを
+断片化させるwarm更新も検査します。prefetchも同じcapを共有します。
+Finalizeは供給計画後の実run数を検査し、packは独立に再構築して上限を確認します。
+optionの適用範囲と安全側の予約はCONFIG.mdが定義します。
+候補ごとのallocation再実行には大きな計算コストがあります。cold cap 240、run cap 40の
+Sonic全2,714フレームの実験は、全体1,909.4秒、うちDecideが1,819.3秒でした。
+配列演算によるclock探索はallocation順序を保ったまま各試算を軽くしますが、
+フレーム全体のallocationを繰り返す処理そのものは残ります。
 
 ## 作業メモリ
 
