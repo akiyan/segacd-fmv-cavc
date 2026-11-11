@@ -636,6 +636,15 @@ def verify_startup_body_arm(objdump: Path, obj: Path) -> None:
         raise AssertionError(
             f"{obj}: playback start does not follow the completed frame-0 build")
 
+    replay = function_block("movie_end_md")
+    blank_call = re.search(
+        r"\bbsr\w*\s+[^\n]*<show_frame_minus_one>", replay)
+    replay_wait = re.search(
+        r"\bbsr\w*\s+[^\n]*<cmd_wait_ready>", replay)
+    if not blank_call or not replay_wait or blank_call.start() >= replay_wait.start():
+        raise AssertionError(
+            f"{obj}: replay boot-sidecar writes can overwrite the live final display")
+
     start_wait = (
         function_block("cmd_wait_startup")
         if re.search(

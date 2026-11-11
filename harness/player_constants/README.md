@@ -43,6 +43,8 @@ For every case it requires:
   release omits it;
 - generic and specialized builds begin the next bank exchange after their last
   Word-RAM access and before every display-deadline wait;
+- single-movie replay publishes black frame -1 before waiting for the boot
+  stage, whose sidecar writes would otherwise overwrite the live final display;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;
 - all geometry/timing/audio/supply combinations assemble and link

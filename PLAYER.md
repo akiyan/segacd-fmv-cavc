@@ -426,6 +426,11 @@ physical slot before acknowledging the clear, so its remainder and the next
 VBlank form the normal frame-0-to-frame-1 interval. Frame -1 therefore creates
 no unplanned PrgBuf lead, and the CD startup interval does not advance audio.
 
+Single-movie replay retains the final picture for 900 VBlanks, then publishes
+black frame -1 before sending `CMD_STREAM`. HEADER reload can write boot-sidecar
+patterns into VRAM slots referenced by the previous picture, so the movie
+plane stays black throughout that untimed reload and frame-0 preparation.
+
 ```mermaid
 sequenceDiagram
     participant CD as CD / CDC
@@ -1010,6 +1015,11 @@ clearするとtimed BODY serviceを起動します。`ROM_READN` の起動中は
 drainしてからclearをacknowledgeするため、slotの残り時間と次のVBlankが通常の
 frame-0-to-frame-1 intervalになります。したがってframe -1は計画外のPrgBuf先行量を
 作らず、CD起動待ちも音声を進めません。
+
+単一動画のループ復帰では最後の絵を900 VBlank保持し、`CMD_STREAM`を送る前に
+黒いframe -1を表示します。HEADERの読み直しでboot sidecarのpatternをVRAMへ書くと、
+直前の絵が参照していたslotを上書きするため、非計時の読み直しとframe 0の準備が
+終わるまで動画planeを黒く保ちます。
 
 ```mermaid
 sequenceDiagram

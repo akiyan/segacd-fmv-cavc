@@ -48,7 +48,7 @@
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic staging bank is available */
 .equ STAT_READY, 0x8003
-.equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
+.equ STAT_END,   0x8004			/* Sub completed the final movie-frame exchange */
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
@@ -606,7 +606,7 @@ play_loop:
 	addq.l	#1, frame_no
 	bra	play_loop
 
-/* 映画終端: 最終フレームを表示したまま15秒(900vblank)待ち、先頭からループ再生 */
+/* Movie end: hold the final picture, then blank it before reloading. */
 movie_end_md:
 .ifdef MULTIPART
 	/* Execute outside the IP image which the loader will replace. */
@@ -616,9 +616,12 @@ movie_end_md:
 1:
 	bsr	wait_vblank
 	dbra	d2, 1b
+	/* Hide the final display before CMD_STREAM can load the boot sidecar into
+	   resident VRAM slots still referenced by that display. The untimed black
+	   frame remains visible throughout HEADER reload and frame-0 preparation. */
+	bsr	show_frame_minus_one
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
 	bsr	cmd_wait_ready			/* BODY arm + frame0 handoff完了まで待つ */
-	bsr	show_frame_minus_one
 	/* ループ再生: CRAMを区間0へ復帰(最終区間のパレットのままframe0を
 	   表示しない)。frame -1は黒画面なので新VBLANK頭で総入替すれば安全。 */
 	bsr	wait_vb_start
@@ -629,7 +632,7 @@ movie_end_md:
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
 	bsr	clear_nt_stage
-	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
+	bsr	prime_fixed_cadence		/* frame 0 starts a fresh cadence after reload */
 	bra	play_loop
 
 /* Initial boot and replay start from the same blank plane. Fine scrolling

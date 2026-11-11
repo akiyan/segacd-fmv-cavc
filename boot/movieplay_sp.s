@@ -1190,8 +1190,8 @@ xor_acc:
 .endif
 	bra	stream_loop
 
-/* 映画終端: 最終フレームのswap要求に応えて表示→STAT_ENDをMDへ→PCM停止→
-   CMD_STREAM(再開)を待って stream_start へ(=15秒待ちはMD側が数える) */
+/* Finish the final frame exchange, acknowledge END, stop PCM, then wait for
+   Main's next CMD_STREAM to reload the next loop. */
 movie_end:
 1:
 	cmp.w	#CMD_SWAP, (COMCMD0).l

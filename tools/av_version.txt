@@ -1386,4 +1386,5 @@
 #       ordinary anchor's geometry state.
 date=20261111
 e=196
-p=159
+# p160: blank the movie plane before replay boot-sidecar VRAM writes.
+p=160
