@@ -1477,9 +1477,32 @@ bf_wait_fixed_flip_vblank:
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
 	beq.s	2f
+	/* A residual word counter does not account for CPU time spent formatting
+	   HUD fields or setting up DMA. Require the complete publication reserve
+	   to fit the actual blank time too. NTSC V28 has 38 blank lines; the
+	   V-counter's E5..EA range occurs twice, so use its later occurrence.
+	   Exclude the current partial line and scale the remaining whole lines by
+	   the same conservative 3200-unit full-blank capacity as pattern work. */
+	moveq	#0, d0
 	move.w	(VDP_HV).l, d0
-	cmpi.w	#0xFC00, d0
-	bhs.s	2f
+	lsr.w	#8, d0
+	cmpi.w	#0x00E0, d0
+	blo.s	2f
+	cmpi.w	#0x00E5, d0
+	blo.s	3f
+	addq.w	#6, d0
+3:
+	neg.w	d0
+	addi.w	#261, d0
+.ifdef PLAYER_SPECIALIZED
+	mulu.w	#PC_VBUDGET, d0
+.else
+	mulu.w	md_vbudget, d0
+.endif
+	move.w	d6, d1
+	mulu.w	#38, d1
+	cmp.l	d1, d0
+	blo.s	2f
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
 	beq.s	2f

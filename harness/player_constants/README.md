@@ -29,7 +29,8 @@ For every case it requires:
 - every case starts each weighted transfer budget only at a proven
   VBlank head, withholds the cadence-final name-table/HUD/CRAM reserve before
   pattern work, and retains status, terminal-line, and fresh-VBlank fallback
-  guards;
+  guards, and admits publication against the actual remaining blank time,
+  conservatively resolving the repeated NTSC V-counter range;
 - CPU-written VDP words cost four DMA-word units, including Word-RAM DMA
   first-word repairs; every pattern run uses DMA and every run crossing the
   residual budget is split at that boundary;

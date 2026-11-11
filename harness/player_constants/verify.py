@@ -351,7 +351,11 @@ def verify_shared_deadline_vblank(
         (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
         (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
         (r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", "terminal-HV guard"),
-        (r"\bcmpiw\s+#-1024,%d0", "terminal FC00 comparison"),
+        (r"\bcmpiw\s+#224,%d0", "active-line rejection"),
+        (r"\bcmpiw\s+#229,%d0", "repeated NTSC V-counter range"),
+        (r"\baddqw\s+#6,%d0", "conservative V-counter normalization"),
+        (r"\bmulu(?:w)?\s+#38,%d1", "whole-publication blank-time charge"),
+        (r"\bcmpl\s+%d1,%d0", "remaining blank-time admission"),
         (r"\bbsr\w*\s+[^\n]*<wait_vb_start>", "fresh-VBlank fallback"),
     )
     for pattern, description in required:

@@ -572,9 +572,13 @@ A DMA run crossing a residual boundary is split exactly there and continued
 at the next fresh VBlank head, regardless of run length. After the pattern
 tail, Main restores the withheld reserve and admits the shared
 name-table/HUD/CRAM publication path only if the current phase is still inside
-that same VBlank. VBlank status is checked before and after the V counter, and terminal
-lines `FC..FF` are rejected. If any condition fails, Main waits for a fresh
-VBlank.
+that same VBlank and its remaining time covers the complete publication
+reserve. VBlank status is checked before and after the V counter. Main excludes
+the current partial line, resolves the repeated NTSC `E5..EA` counter range to
+its later occurrence, and scales the remaining whole lines against the same
+3,200-unit capacity over 38 blank lines. This catches CPU setup and HUD-format
+time that consumes blank time without reducing the residual word counter.
+If any condition fails, Main waits for a fresh VBlank.
 
 For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
 after the first transfer budget and before waiting for the next fresh VBlank.
@@ -1161,7 +1165,11 @@ scroll frameはinline CRAM imageを運ばないため、palette switch変種は�
 DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
 fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
 同じVBlank内にまだいる場合だけname-table/HUD/CRAM publication shared pathを許可します。
-VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineは拒否します。
+さらに、残り時間がpublication reserve全体を収容できる必要があります。
+VBlank statusはV counterの前後で確認します。進行中のlineを除外し、NTSCで2回現れる
+`E5..EA` counter範囲は遅い側として扱います。残りの完全なline数を、38 blank lineに
+3,200 unitを割り当てる同じcapacityで評価します。これにより、残word counterを
+減らさずにblank時間を消費するCPU setupやHUD formatも検出します。
 どれかを満たさなければfresh VBlankを待ちます。
 
 multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
