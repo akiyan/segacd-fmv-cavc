@@ -30,6 +30,86 @@ unchanged; the late frame has already given the reader the extra physical time
 that the compensating display step consumes. This prevents isolated display
 misses from becoming permanent reader lead and filling the APPLY queue.
 
+## RAM Copy Timing Reference
+
+These are instruction-based estimates for copies among Main RAM, PRG-RAM,
+and Word RAM, not measured hardware throughput or a player scheduling budget.
+Use approximately 7.67 MHz for Main (NTSC) and 12.5 MHz for Sub.
+For other Main clock rates, scale these estimates by the clock ratio.
+MB/s below means 1,000,000 payload bytes/s, counting copied bytes once.
+
+### Instruction cost
+
+With no additional bus waits, aligned `move.l (a0)+,(a1)+` copies four bytes
+in 20 CPU clocks, including instruction fetch, source reads, and destination
+writes. A continuing `dbra` adds 10 clocks per iteration; setup and the final
+iteration are excluded from these steady-state estimates.
+
+| Copy loop | Clocks per payload block | Main MB/s | Sub MB/s |
+|---|---:|---:|---:|
+| Consecutive `move.l`, excluding loop control | 20 / 4 B | 1.534 | 2.500 |
+| One `move.l` followed by `dbra` | 30 / 4 B | 1.023 | 1.667 |
+| Eight `move.l` followed by `dbra` | 170 / 32 B | 1.444 | 2.353 |
+
+The calculation is `bytes * CPU_Hz / clocks`. For a 32-byte pattern, the
+copy instructions alone take 160 clocks: about 20.86 us on Main or 12.80 us
+on Sub. These are baselines for this instruction sequence, not CPU-wide
+maximum rates; a `movem` implementation needs its own accounting.
+
+### Routes and ownership
+
+The rates in this table all use consecutive `move.l` without loop control.
+They assume no additional waits on instruction fetches or data accesses.
+The Sega manual describes non-wait memory access when devices do not compete,
+with Sub access to PRG-RAM and Word RAM as examples.
+
+| Source and destination | Copying CPU | No-wait estimate | Access condition |
+|---|---|---:|---|
+| Main RAM to Main RAM | Main | 1.534 MB/s | Main bus available |
+| PRG-RAM to PRG-RAM | Sub | 2.500 MB/s | Excludes arbitration with refresh/CDC DMA |
+| Word RAM to Word RAM within the owned region | Sub | 2.500 MB/s | Sub owns that region |
+| Word RAM to Word RAM within the owned region | Main | 1.534 MB/s | Main owns that region |
+| PRG-RAM to/from Word RAM | Sub | 2.500 MB/s | Sub owns the target Word RAM region |
+| Main RAM to/from Word RAM | Main | 1.534 MB/s | Main owns the target Word RAM region |
+| Main RAM to/from PRG-RAM | Main | 1.534 MB/s, conditional ceiling | Main must acquire the Sub bus; additional access timing is unqualified |
+| PRG-RAM to/from Word RAM | Main | 1.534 MB/s, conditional ceiling | Main must acquire the Sub bus and own the Word RAM region; additional access timing is unqualified |
+| PRG-RAM to PRG-RAM | Main | 1.534 MB/s, conditional ceiling | Both addresses must be in the selected 128 KiB PRG window; additional access timing is unqualified |
+
+Sub cannot directly access Main RAM. Main access to PRG-RAM requires a Sub
+bus request/reset handshake and prevents concurrent Sub CPU execution.
+Include bus acquisition and PRG window changes separately from payload copies.
+
+In 2M mode, one CPU owns the full 256 KiB Word RAM. In 1M/1M mode, each CPU
+owns a different 128 KiB bank. Swapping banks changes ownership without copying
+their bytes. A CPU cannot directly copy WordBuf0 to WordBuf1 while remaining
+in 1M/1M mode: staging and a bank exchange, or a mode change, are required.
+Ownership covers the physical bank; WordBuf is a pattern sequence
+within that bank, not a separate memory device.
+
+For a design estimate, add loop control, address/index work, interrupts, bus
+arbitration, and ownership waits to the instruction cost. Code location also
+matters because instruction fetches use the bus. Validate the actual assembled
+copy path before using these figures as deadline evidence. This table does not
+describe PCM RAM, backup RAM, Z80 RAM, CDC transfers, or graphics operations.
+
+### VDP DMA boundary
+
+RAM-to-VDP transfers use a separate timing model. Sega's H40 memory-to-VRAM DMA
+table gives 18 bytes per scanline during active display and 205 bytes per
+scanline during VBlank. These are transfer capacities during those intervals,
+not sustained whole-frame rates. The manual specifies words instead of bytes
+for CRAM/VSRAM destinations. Use the player's VBlank budget described
+below for admission. For every Word-RAM DMA chunk, use source `src+2`, full
+length, and the normal destination, then repair the destination's first word
+with the CPU. Main-RAM DMA needs no such repair.
+
+### Sources
+
+- [Motorola M68000 User's Manual](https://www.nxp.com/docs/en/reference-manual/MC68000UM.pdf), section 8, tables 8-3, 8-9, and 8-10: `MOVE.L`, `DBcc`, and `MOVEM` timing.
+- [Sega Mega-CD manual collection](https://www.megadrive.org/elbarto/megacd/Official%20Sega%20CD%20Manual/segacd_toc.html), Outline p.4: CPU clocks.
+- [Sega Mega-CD Hardware Manual](https://segaretro.org/images/5/51/Mega-CD_Hardware_Manual.pdf), printed pp.6–10, 14–18, 22–25, 56–57, and 61: arbitration, mapping, ownership controls, and Word-RAM VDP DMA precautions.
+- [Sega Genesis Technical Overview](https://segaretro.org/images/1/18/GenesisTechnicalOverview.pdf), printed p.45: DMA transfer capacity by display mode.
+
 ## Unallocated Space Summary
 
 These are the only ranges with no live owner data. Guards, reserves, and
@@ -538,6 +618,84 @@ debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合
 変えません。遅れたframeがreaderへ追加の物理時間をすでに与えており、補償display stepは
 その時間を消費します。これにより、単発のdisplay missが恒久的なreader leadとなって
 APPLY queueを満たすことを防ぎます。
+
+## RAM コピー時間の参照値
+
+ここでは Main RAM、PRG-RAM、Word RAM 間のコピーを命令時間から見積もります。
+実機の測定値や player のスケジュール予算ではありません。
+Main は約 7.67 MHz（NTSC）、Sub は 12.5 MHz とします。
+Main のクロックが異なる場合は、その比率で換算します。
+MB/s は 1,000,000 バイト/秒で、コピーしたデータ量を 1 回だけ数えます。
+
+### 命令のコスト
+
+追加のバス待ちがなければ、偶数アドレスの `move.l (a0)+,(a1)+` は 4 バイトを 20 CPU クロックでコピーします。
+この値は命令の読み込み、転送元の読み出し、転送先への書き込みを含みます。
+繰り返しを継続する `dbra` は 1 回につき 10 クロックを加えます。
+以下の定常速度では初期設定と最終反復を除きます。
+
+| コピーのループ | データ量あたりのクロック数 | Main MB/s | Sub MB/s |
+|---|---:|---:|---:|
+| `move.l` の連続実行。ループ制御を除く | 20 / 4 B | 1.534 | 2.500 |
+| `move.l` 1 回の後に `dbra` | 30 / 4 B | 1.023 | 1.667 |
+| `move.l` 8 回の後に `dbra` | 170 / 32 B | 1.444 | 2.353 |
+
+計算式は `バイト数 * CPU_Hz / クロック数` です。
+32 バイトのパターンはコピー命令だけで 160 クロックかかり、Main では約 20.86 us、Sub では 12.80 us です。
+これはこの命令列の基準値で、CPU 全体の最高速度ではありません。
+`movem` を使う実装は、その命令列について別に計算します。
+
+### 経路と所有権
+
+この表ではすべて、ループ制御を除いた `move.l` の連続実行を基準にします。
+命令の読み込みにもデータアクセスにも追加待ちがないと仮定します。
+セガの資料は、他デバイスとの競合がなければメモリアクセスはウェイトなしとし、Sub から PRG-RAM と Word RAM へのアクセスを例示しています。
+
+| 転送元と転送先 | コピーする CPU | ウェイトなしの計算値 | アクセス条件 |
+|---|---|---:|---|
+| Main RAM → Main RAM | Main | 1.534 MB/s | Main のバスが利用可能 |
+| PRG-RAM → PRG-RAM | Sub | 2.500 MB/s | リフレッシュや CDC DMA との調停を除く |
+| 所有領域内の Word RAM → Word RAM | Sub | 2.500 MB/s | Sub が対象領域を所有 |
+| 所有領域内の Word RAM → Word RAM | Main | 1.534 MB/s | Main が対象領域を所有 |
+| PRG-RAM ↔ Word RAM | Sub | 2.500 MB/s | Sub が対象 Word RAM 領域を所有 |
+| Main RAM ↔ Word RAM | Main | 1.534 MB/s | Main が対象 Word RAM 領域を所有 |
+| Main RAM ↔ PRG-RAM | Main | 1.534 MB/s、条件付き上限 | Sub のバス取得が必要。追加のアクセス時間は未検証 |
+| PRG-RAM ↔ Word RAM | Main | 1.534 MB/s、条件付き上限 | Sub のバス取得と Word RAM 領域の所有が必要。追加のアクセス時間は未検証 |
+| PRG-RAM → PRG-RAM | Main | 1.534 MB/s、条件付き上限 | 両アドレスが選択中の 128 KiB PRG ウィンドウ内にあること。追加のアクセス時間は未検証 |
+
+Sub は Main RAM に直接アクセスできません。
+Main が PRG-RAM にアクセスするには、Sub へのバス要求またはリセットによる受け渡しが必要で、その間 Sub CPU は並行実行できません。
+バスの取得と PRG ウィンドウの変更は、データのコピー時間とは別に計上します。
+
+2M モードでは、一方の CPU が 256 KiB の Word RAM 全体を所有します。
+1M/1M モードでは、各 CPU が別々の 128 KiB バンクを所有します。
+バンク交換は所有権の変更であり、データのコピーを伴いません。
+1M/1M モードのまま、一方の CPU が WordBuf0 から WordBuf1 へ直接コピーすることはできません。
+一時領域とバンク交換、またはモード変更が必要です。
+所有権は物理バンク全体に適用され、WordBuf はその中のパターン列です。
+WordBuf 自体が別のメモリデバイスではありません。
+
+設計時は、命令コストにループ制御、アドレスや索引の処理、割り込み、バス調停、所有権の待ち時間を加えます。
+命令の読み込みもバスを使うため、コードの配置も影響します。
+期限内に完了する根拠として使う前に、実際にアセンブルしたコピー経路を検証します。
+この表は PCM RAM、バックアップ RAM、Z80 RAM、CDC 転送、グラフィック処理を扱いません。
+
+### VDP DMA との境界
+
+RAM から VDP への転送には別の時間モデルを使います。
+セガの H40 メモリ → VRAM DMA 表では、表示中は 1 走査線あたり 18 バイト、VBlank 中は 205 バイトです。
+これは各期間内の転送容量で、フレーム全体の持続転送速度ではありません。
+マニュアルでは CRAM/VSRAM 宛ての場合、バイトではなくワード単位としています。
+転送の可否は、後述する player の VBlank 予算で判定します。
+Word RAM からの DMA は各チャンクで転送元を `src+2` とし、全長を通常の宛先へ転送した後、宛先の先頭ワードを CPU で修復します。
+Main RAM からの DMA にはこの修復は不要です。
+
+### 出典
+
+- [Motorola M68000 User's Manual](https://www.nxp.com/docs/en/reference-manual/MC68000UM.pdf)、第 8 章の表 8-3、8-9、8-10：`MOVE.L`、`DBcc`、`MOVEM` の時間。
+- [Sega Mega-CD マニュアル集](https://www.megadrive.org/elbarto/megacd/Official%20Sega%20CD%20Manual/segacd_toc.html)、Outline p.4：CPU クロック。
+- [Sega Mega-CD Hardware Manual](https://segaretro.org/images/5/51/Mega-CD_Hardware_Manual.pdf)、印刷ページ 6–10、14–18、22–25、56–57、61：バス調停、マッピング、所有権の制御、Word RAM からの VDP DMA の注意点。
+- [Sega Genesis Technical Overview](https://segaretro.org/images/1/18/GenesisTechnicalOverview.pdf)、印刷ページ 45：表示モード別の DMA 転送容量。
 
 ## 未割当領域の要約
 
