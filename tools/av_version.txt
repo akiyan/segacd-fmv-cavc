@@ -1384,7 +1384,7 @@
 # p159: reject stale finite-read prefixes and clear the scroll plane on replay.
 # e196: reserve the first scroll control's guard edge independently of its
 #       ordinary anchor's geometry state.
-date=20261111
+date=20261112
 # e197: reduce infeasible control-sector reservations before projecting Prg limits.
 e=198
 # p160: blank the movie plane before replay boot-sidecar VRAM writes.
@@ -1396,4 +1396,5 @@ e=198
 # e198/p166: cadence-aware LAT transfers and a bounded final-only VRAM tail.
 # p167: reserve CPU publication setup time before sharing a VBlank.
 # p168: reserve 256 more resident code bytes inside the checked M-CODE map.
-p=168
+# p169: retain one VBlank of fixed-cadence lateness and recover only excess debt.
+p=169

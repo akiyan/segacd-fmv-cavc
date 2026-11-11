@@ -624,6 +624,10 @@ def verify_runtime_vblank_cadence(
     if not re.search(r"\bsubw\s+%d1,%d2", fixed) or not re.search(
             r"\bmoveq\s+#1,%d2", fixed):
         raise AssertionError(f"{obj}: fixed recovery lacks debt repayment or its one-VBlank floor")
+    if not re.search(
+            r"\bsubqw\s+#1,%d1\n\s*[^\n]*\bble\w*\s+[^\n]*\n"
+            r"\s*[^\n]*\bsubw\s+%d1,%d2", fixed):
+        raise AssertionError(f"{obj}: fixed recovery does not retain one VBlank of lateness")
     start = re.search(
         r"^[0-9a-f]+ <bf_wait_fixed_flip_vblank>:$",
         disassembly, re.MULTILINE)

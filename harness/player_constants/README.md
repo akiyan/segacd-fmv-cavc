@@ -41,8 +41,8 @@ For every case it requires:
   at 30 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
-- fixed-N builds call the assembled debt-repayment path and retain its
-  one-VBlank lower bound; whole-frame admission runs before any shortened
+- fixed-N builds call the assembled debt-repayment path, preserve one VBlank
+  of lateness and retain the one-VBlank minimum interval; whole-frame admission runs before any shortened
   display reservation, and existing DMA admission checks still apply;
 - the DEBUG reserve includes the 52-word Window/SAT HUD workload, while
   release omits it;
