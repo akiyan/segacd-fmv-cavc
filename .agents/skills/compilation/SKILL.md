@@ -25,8 +25,13 @@ tools/python.sh tools/tmpfs_workspace.py run-file \
   ffmpeg -i "$LOSSLESS" \
     -vf "scale=2048:1568:flags=neighbor,setsar=1" \
     -c:v libx264 -crf 10 -preset slow -pix_fmt yuv420p \
+    -fps_mode passthrough -enc_time_base:v -1 \
     -c:a aac -b:a 192k -movflags +faststart '{output}'
 ```
+
+Keep the source frame timestamps and encoder time base. Passthrough alone
+can still round distinct native timestamps into the same encoder tick. Verify
+packet presentation times against the recording as well as frame counts.
 
 Use configured runtime roots and the printed result path. H40's 320x224 PAR
 32:35 becomes 2048x1568 SAR 1:1, DAR 64:49. Horizontal replication varies
