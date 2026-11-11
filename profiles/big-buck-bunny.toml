@@ -36,8 +36,9 @@ title = "Big Buck Bunny — Sega CD disc images"
 title_ja = "Big Buck Bunny — Sega CD ディスクイメージ"
 
 [youtube]
-source_label = "Big Buck Bunny, Sunflower version, 1920x1080, 30 fps, 48 kHz audio"
-source_label_ja = "Big Buck Bunny、Sunflower版、1920x1080、30 fps、48 kHz音声"
+playback_title = "Custom Sega CD FMV Codec Demo — Big Buck Bunny Opening 2 Minutes at 30 FPS"
+source_label = "Big Buck Bunny, Sunflower version, opening 120 seconds, center-cropped, 1920x1080, 30 fps, 48 kHz audio"
+source_label_ja = "Big Buck Bunny、Sunflower版、冒頭120秒、左右中央クロップ、1920x1080、30 fps、48 kHz音声"
 source_url = "https://peach.blender.org/download/"
 source_license = "Big Buck Bunny: Copyright 2008, Blender Foundation / www.bigbuckbunny.org. Stereoscopic / 4K / 60 fps / HDRI changes: Copyright 2013, Janus B. Kristensen. Used under CC BY 3.0. This is a modified version, center-cropped and re-encoded for the Sega CD."
 source_license_ja = "Big Buck Bunny: Copyright 2008, Blender Foundation / www.bigbuckbunny.org。立体視・4K・60 fps・HDRIの変更: Copyright 2013, Janus B. Kristensen。CC BY 3.0にもとづいて利用しています。これは左右を中央クロップし、Sega CD向けに再エンコードした改変版です。"

@@ -266,12 +266,12 @@ def main(argv: list[str] | None = None) -> int:
     for field in URL_FIELDS[args.kind]:
         value = getattr(args, field.replace("_url", "") + "_url")
         if not value:
-            if field == "timeline_url":
+            if field in {"timeline_url", "analysis_url"}:
                 # Optional links occupy their own template line. Remove the
-                # whole line so an unpublished image leaves no empty label.
+                # whole line when the companion artifact is unpublished.
                 template_text = "".join(
                     line for line in template_text.splitlines(keepends=True)
-                    if "{timeline_url}" not in line)
+                    if "{" + field + "}" not in line)
                 continue
             raise SystemExit(f"--{field.replace('_', '-')} is required for "
                              f"--kind {args.kind}")
