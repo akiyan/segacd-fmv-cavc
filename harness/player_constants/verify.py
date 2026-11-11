@@ -285,6 +285,10 @@ def verify_shared_deadline_vblank(
         r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", dma_entry)
     budget_wait = re.search(
         r"\bbsr\w*\s+[^\n]*<bf_start_vbudget>", dma_entry)
+    hud_prepare = re.search(
+        r"\bbsr\w*\s+[^\n]*<prepare_dbg>", dma_entry)
+    if not hud_prepare or not budget_wait or hud_prepare.start() >= budget_wait.start():
+        raise AssertionError(f"{obj}: stable HUD preparation still consumes pattern blank time")
     if (
         not ready_sample
         or not budget_wait
@@ -322,6 +326,13 @@ def verify_shared_deadline_vblank(
             f"{obj}: active and mid-blank budget entries do not refill")
 
     refill = block("bf_refill_vbudget", "bf_debug_snapshot_vbudget")
+    origin_addr = symbol_address(objdump, obj, "vbudget_start_tick")
+    for name, code in (("initial", start_budget), ("refill", refill)):
+        if not re.search(
+                rf"\bmovew\s+(?:00)?a1200c <GA_STOPWATCH>,0 [^\n]*\n"
+                rf"(?:\s+[0-9a-f]+:\s+(?:[0-9a-f]{{4}}\s*)+\n){{0,2}}"
+                rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{origin_addr:x}", code):
+            raise AssertionError(f"{obj}: {name} budget has no fresh stopwatch origin")
     if not re.search(r"\bbsr\w*\s+[^\n]*<wait_vb_start>", refill):
         raise AssertionError(f"{obj}: budget refill lacks a fresh VBlank wait")
     expected_budget = 3200
@@ -347,6 +358,10 @@ def verify_shared_deadline_vblank(
             f"{obj}: split Word-RAM DMA lacks its CPU-repair charge")
 
     shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_row")
+    if not re.search(
+            rf"\bsubw\s+0 [^\n]*,%d0\n"
+            rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{origin_addr:x}", shared):
+        raise AssertionError(f"{obj}: blank-time admission uses no physical budget origin")
     required = (
         (r"\bbsr\w*\s+[^\n]*<wait_fixed_flip>", "fixed cadence arm"),
         (r"\bcmpw\s+%d6,%d7", "residual-word reserve check"),
