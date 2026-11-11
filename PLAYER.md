@@ -577,6 +577,10 @@ Sub wait loops service a pending `CMD_SWAP` before another opportunistic
 sector pump. CD pumping continues while Main is genuinely idle, but future
 payload work cannot delay an already-pending handoff.
 
+The editable slide illustration and its regeneration commands are in
+[`harness/cpu_sequence/`](harness/cpu_sequence/README.md).
+Its task positions are schematic, not measured timing boundaries.
+
 ## Reproducing the Map Measurements
 
 Use the managed Python environment and an explicit profile:
@@ -1145,6 +1149,10 @@ DMAの正確な物理word数をchargeします。
 Sub wait loopは、別のopportunistic sector pumpより先にpending `CMD_SWAP`を
 処理します。Mainが本当にidleな間はCD pumpを続けますが、将来payloadの処理が
 pending handoffを遅らせることはできません。
+
+編集可能なスライド図と再生成コマンドは
+[`harness/cpu_sequence/`](harness/cpu_sequence/README.md) にあります。
+図の処理位置は概略で、実測した時間境界ではありません。
 
 ## Map測定値の再現
 
