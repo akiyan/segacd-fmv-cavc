@@ -553,6 +553,16 @@ new VBlank or while the V counter is still on its first blank line (`E0`).
 Entering an already-running blank later never creates a full budget; Main
 waits for the next head.
 
+Before its first fresh pattern budget, a fixed-N timed frame may transfer a
+cold-pattern prefix during active display. Main admits it only before line 192,
+charges six units per remaining active line, and caps it at 512 units including
+CPU repairs. The lower rate leaves time for run setup beside the nine-word per
+line active DMA capacity. The packer rejects allocation tearing, and its packed
+reader independently rejects cold writes into the preceding display. Frame 0
+and periodic cadence retain their blank-first path. An active prefix grants no
+VBlank capacity: the next refill opens budget 1, and HUD blank counters exclude
+the prefix. The movie table, HUD and CRAM still publish in the admitted blank.
+
 Budgets 1 through the current cadence target minus one are available to
 patterns. Before pattern work enters the target budget, Main withholds the
 complete display reserve: the exact movie band, a 128-unit timing guard, the
@@ -1149,6 +1159,15 @@ Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新し�
 直後、またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
 すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
 待ちます。
+
+Fixed-Nのtimed frameは、最初のfresh pattern budgetより前にactive display中の
+cold-pattern prefixを転送できます。Mainはline 192より前だけ許可し、残りactive line
+ごとに6 unit、CPU補修を含め最大512 unitを与えます。Active DMAの1 lineあたり9 word
+より低いrateにすることで、run setupの時間も確保します。Packerはallocation tearingを
+拒否し、packed readerでも直前表示のslotへのcold writeを独立に拒否します。Frame 0と
+periodic cadenceは従来どおりblankから開始します。Active prefixはVBlankのcapacityを
+与えず、次のrefillがbudget 1を開きます。HUDのblank counterはprefixを数えません。
+Movie table、HUD、CRAMは引き続きadmitted blankでpublishします。
 
 Budget 1からcurrent cadence targetの1つ前まではpatternに使えます。Pattern workが
 target budgetへ入る前に、Mainはdisplay work全体を先に取り置きします。内訳は

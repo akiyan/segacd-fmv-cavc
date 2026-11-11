@@ -147,6 +147,7 @@
 .equ SCREEN_COLS, 40		/* H40 V28 NTSC: 40x28 cell aperture */
 .equ VB_WORDS, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
 .equ VB_BUDGET_TICKS, 76	/* 38 NTSC blank lines minus first-line entry uncertainty */
+.equ ACTIVE_PREFIX_WORDS, 512	/* includes CPU repair cost; capped active-display work */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
 .equ FEATURE_VBLANK_CADENCE_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
@@ -999,7 +1000,6 @@ bf_dma:
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
-	move.w	#1, pattern_transfer_vblanks
 	lea	(PROBE_BANK+O_LOADS_OFF), a2
 .ifdef DEBUG
 	moveq	#0, d0
@@ -1008,10 +1008,10 @@ bf_dma:
 	lsr.w	#8, d0
 	move.w	d0, pattern_dma_ready_v		/* ready phase before waiting for a fresh blank head */
 .endif
-	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
+	bsr	bf_start_pattern_budget
 .ifdef DEBUG
 	move.w	(GA_STOPWATCH).l, d0
-	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
+	move.w	d0, dma_start_tick		/* begin at the first active or blank pattern transfer */
 .endif
 bf_run_lp:
 	/* Pop the Sub-built record straight into the control port. Inline Prg
@@ -1382,6 +1382,43 @@ bf_scroll_rebase_vertical:
    instead of pretending all md_vbudget words remain.  d7 returns the full
    budget and vbudget_from_head records that its time origin is trustworthy.
    Trashes d0. */
+/* Cold destinations are protected from the preceding display by the packer's
+   transition check. Spend a bounded prefix during early active display rather
+   than leaving all of that interval idle. Charge six units per remaining active
+   line, capped at 512 including repairs, and stop admitting at line 192. The
+   active DMA rate is nine words/line; the lower charge also covers run setup.
+   This is not a VBlank budget; the first refill opens budget 1. */
+bf_start_pattern_budget:
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0002) == 0 || PC_CADENCE_PERIOD != 1
+	bra.s	1f
+.endif
+.else
+	cmpi.w	#1, md_cadence_period
+	bne.s	1f
+.endif
+	tst.l	frame_no
+	beq.s	1f
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	cmpi.w	#192, d0
+	bhs.s	1f
+	neg.w	d0
+	addi.w	#224, d0
+	mulu.w	#6, d0
+	cmpi.w	#ACTIVE_PREFIX_WORDS, d0
+	bls.s	2f
+	move.w	#ACTIVE_PREFIX_WORDS, d0
+2:
+	move.w	d0, d7
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	bne.s	1f
+	rts
+1:
+	move.w	#1, pattern_transfer_vblanks
+	bra	bf_start_vbudget
+
 bf_start_vbudget:
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
@@ -1429,6 +1466,7 @@ bf_refill_vbudget:
 bf_debug_snapshot_vbudget:
 	move.l	a1, d0
 	move.w	pattern_transfer_vblanks, d6
+	beq.s	2f				/* active prefix is not a VBlank snapshot */
 	cmpi.w	#4, d6
 	bhi.s	2f
 	subq.w	#1, d6

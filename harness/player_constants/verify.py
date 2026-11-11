@@ -284,7 +284,7 @@ def verify_shared_deadline_vblank(
     ready_sample = re.search(
         r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", dma_entry)
     budget_wait = re.search(
-        r"\bbsr\w*\s+[^\n]*<bf_start_vbudget>", dma_entry)
+        r"\bbsr\w*\s+[^\n]*<bf_start_pattern_budget>", dma_entry)
     hud_prepare = re.search(
         r"\bbsr\w*\s+[^\n]*<prepare_dbg>", dma_entry)
     if not hud_prepare or not budget_wait or hud_prepare.start() >= budget_wait.start():
@@ -315,6 +315,13 @@ def verify_shared_deadline_vblank(
             f"{obj}: CPU-weighted residual split is out of order")
 
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
+    active_prefix = block("bf_start_pattern_budget", "bf_start_vbudget")
+    for pattern in (
+            r"\bcmpiw\s+#192,%d0", r"\bmulu(?:w)?\s+#6,%d0",
+            r"\bcmpiw\s+#512,%d0", r"\bmovew\s+%d0,%d7",
+            r"\bbra\w*\s+[^\n]*<bf_start_vbudget>"):
+        if not re.search(pattern, active_prefix):
+            raise AssertionError(f"{obj}: active prefix lacks a phase/capacity bound or blank fallback")
     if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
         raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")
     if not re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", start_budget):
@@ -589,7 +596,7 @@ def verify_runtime_vblank_cadence(
     admission = re.search(
         r"\bbsr\w*\s+[^\n]*<pace_admit_fixed_interval>", disassembly)
     first_budget = re.search(
-        r"\bbsr\w*\s+[^\n]*<bf_start_vbudget>", disassembly)
+        r"\bbsr\w*\s+[^\n]*<bf_start_pattern_budget>", disassembly)
     if not admission or not first_budget or admission.start() >= first_budget.start():
         raise AssertionError(f"{obj}: early display reservation precedes whole-frame admission")
     fixed_start = re.search(
