@@ -650,6 +650,7 @@ def resolve(log, POOL, mode="lru"):
             raise SystemExit("pack: raw-prefetch cold trace differs from simulation")
     print(
         f"  physical-slot display照合: {nfr}/{nfr} frames exact")
+    print(f"  final-VBlank old-only slot reclaims: {alloc.final_reclaims}")
     return (
         per, prefetch_per, tuple(transfer_orders), n_load, n_upd, pal_w,
         Plist, alloc.tearing)
@@ -1321,6 +1322,7 @@ def decode_verify(
         expected_frame_cram,
         expected_scroll_positions,
     ) = control_arrays(log, len(per))
+    scroll_build = bool(np.any(expected_types == shadow_updates.FRAME_SCROLL))
     active_cram = np.asarray(segment_entries[0], np.uint8).copy()
     n_pay_sec = sc["n_pay_sec"]; blk_len = sc["blk_len"]; B = sc["prebuf_pat"]
     word_stage_sec = np.asarray(
@@ -1503,11 +1505,24 @@ def decode_verify(
             runs_pos += 1
         packed_run_count = struct.unpack_from(">H", blk, runs_pos)[0]
         runs_pos += 2
+        final_targets = set()
+        final_runs = 0
         for _ in range(packed_run_count):
             word0, word1 = struct.unpack_from(">HH", blk, runs_pos)
             runs_pos += 4
             slot, count, source, dic_index = (
                 pattern_supply.decode_run_descriptor(word0, word1))
+            boundary = av_config.FINAL_VBLANK_SLOT
+            if slot < boundary < slot + count:
+                raise ValueError(f"frame {i}: run crosses final-VBlank boundary")
+            if slot >= boundary:
+                final_runs += 1
+                targets = set(range(slot, slot + count))
+                if (slot + count > POOL or targets & final_targets
+                        or len(targets | final_targets)
+                        > av_config.FINAL_VBLANK_TILES):
+                    raise ValueError(f"frame {i}: invalid final-VBlank bundle")
+                final_targets.update(targets)
             if source == pattern_supply.SOURCE_PRG:
                 src = prg_src
             elif source == pattern_supply.SOURCE_WR:
@@ -1524,12 +1539,28 @@ def decode_verify(
                         src[offset] if source == pattern_supply.SOURCE_DIC
                         else src.popleft())
                     target = slot + offset
-                    if (i and target in previous_slots
+                    if (i and target < av_config.FINAL_VBLANK_SLOT
+                            and target in previous_slots
                             and tile[target + BASE] != pattern):
                         raise ValueError(
                             f"frame {i}: cold pattern overwrites preceding "
                             f"display slot {target}")
                     tile[target + BASE] = pattern
+        if i and final_targets:
+            display_words = (TROWS - 1) * 64 + TCOLS
+            if scroll_build:
+                # Main reserves the horizontal plane band and scroll writes
+                # even on ordinary frames in a scroll-capable build.
+                vertical = frame_type == shadow_updates.FRAME_SCROLL and vscroll
+                display_words = (32 if vertical else TROWS) * 64 + 16
+            display_words += 52 + 512  # DEBUG Window/SAT plus CPU publication guard
+            if segment_switch or shadow_updates.has_inline_cram(frame_type):
+                display_words += 256
+            final_cost = len(final_targets) * 16 + final_runs * 96
+            if display_words + final_cost > 3200:
+                raise ValueError(
+                    f"frame {i}: final-VBlank bundle costs "
+                    f"{display_words + final_cost}/3200 units")
         if runs_pos != len(blk):
             raise ValueError(
                 f"frame {i}: run suffix ends at {runs_pos}, "

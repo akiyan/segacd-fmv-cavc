@@ -7,10 +7,20 @@ import unittest
 import numpy as np
 
 import pattern_supply as supply
+import av_config
 from upgrade_planner import DemandPrediction
 
 
 class PatternSupplyEncodingTests(unittest.TestCase):
+    def test_final_vblank_boundary_splits_a_contiguous_source_run(self):
+        boundary = av_config.FINAL_VBLANK_SLOT
+        runs = supply.source_runs(
+            [boundary - 1, boundary, boundary + 1],
+            [supply.SOURCE_DIC] * 3, [20, 21, 22])
+        self.assertEqual(runs, (
+            (boundary - 1, 1, supply.SOURCE_DIC, 20),
+            (boundary, 2, supply.SOURCE_DIC, 21)))
+
     def test_65535_frames_use_64k_route_and_keep_existing_short_allocations(self):
         short = supply.word_ram_layout(16384, 1120, 190)
         long = supply.word_ram_layout(65535, 1120, 190)

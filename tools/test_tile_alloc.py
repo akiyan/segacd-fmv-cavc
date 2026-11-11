@@ -10,9 +10,33 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tile_alloc import FrameTransitionGuard, TileAllocator
+import av_config
 
 
 class TileAllocatorPrefetchTests(unittest.TestCase):
+    def test_final_tail_reclaims_only_old_content_not_next_frame_reuse(self):
+        pool = av_config.VRAM_PATTERN_POOL_TILES
+        tail = av_config.FINAL_VBLANK_SLOT
+        for reuse_old in (False, True):
+            with self.subTest(reuse_old=reuse_old):
+                alloc = TileAllocator(pool - 1, pool)
+                keys = [str(i).encode() for i in range(pool - 1)]
+                alloc.place_frame(list(enumerate(keys)), 0)
+                alloc.prefetch(b"cache", 0, 1)
+                alloc.hand = tail
+                updates = [(tail, keys[0]), (1, b"new")]
+                if reuse_old:
+                    updates.append((2, keys[tail]))
+                # Expire the speculative pin so ordinary clock order applies.
+                placed = alloc.place_frame(updates, 2)
+                if reuse_old:
+                    self.assertNotEqual(placed[1][0], tail)
+                    self.assertEqual(placed[2], (tail, False))
+                else:
+                    self.assertEqual(placed[1], (tail, True))
+                    self.assertEqual(alloc.final_reclaims, 1)
+                self.assertEqual(alloc.tearing, 0)
+
     def test_prefetched_pattern_is_warm_at_its_first_display_use(self) -> None:
         alloc = TileAllocator(2, 4)
         alloc.place_frame([(0, b"shown")], 0)

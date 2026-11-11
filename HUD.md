@@ -79,7 +79,7 @@ the startup sentinel by its position in that sequence.
 | `sub_wait_scanlines` | Main | per frame | Residual blocking wait after Main starts completing the Sub handoff |
 | `vblank_spill` | Main | per frame | Additional VBlank budgets consumed by pattern work |
 | `adpcm_decode_units` | Sub | per frame | ADPCM decode work in 0.12288 ms units |
-| `transfer_ticks` | Main | per frame | Main pattern-transfer time including any active prefix, in 30.72 us ticks, modulo 12 bits |
+| `transfer_ticks` | Main | per frame | Ordinary pattern walk including LAT, before deferred final-tail publication, in 30.72 us ticks, modulo 12 bits |
 | `cold_runs` | Main | per frame | Low byte of the packed cold-run count |
 | `prgbuf_jitter_peak_kib` | Sub | sticky nibble pair | Highest ceil-KiB use of runtime jitter headroom |
 | `flip_vcounter` | Main | per frame | V-counter of the flip that published the preceding frame |
@@ -91,7 +91,7 @@ the startup sentinel by its position in that sequence.
 | `reader_ahead_frames` | Sub | per frame | Complete future frame slots already read |
 | `reader_slot_sector` | Sub | per frame | Sector position inside the current reader slot |
 | `transfer_vblanks` | Main | per frame | Number of fresh VBlank transfer budgets opened; excludes any active prefix |
-| `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+| `transfer_end_vcounter` | Main | per frame | Ordinary pattern-walk exit phase, before deferred final-tail publication |
 | `pattern_dma_ready_vcounter` | Main | per frame | Raw V-counter when Main is ready to consume the first pattern run, immediately before starting an active prefix or waiting for a fresh blank head |
 | `name_table_dma_ready_vcounter` | Main | per frame | Raw V-counter when the single-table DMA path is ready, immediately before waiting for the cadence-final VBlank |
 
@@ -100,6 +100,12 @@ the startup sentinel by its position in that sequence.
 event; a repeated nonzero value is state. Their wrap from 15 to 0 is valid.
 The transport-retry remainder is
 `(sector_slip - msf_gap_recoveries) & 0xF`.
+
+The final-only tail runs in the publication blank after these transfer
+snapshots. Its words and setup are included in publication admission, but not
+in `transfer_ticks`, `transfer_end_vcounter` or the opened pattern-budget
+count. Use the packed final-tail counts and actual LOGVDP writes to check that
+phase; these HUD fields alone do not measure all pattern-transfer work.
 
 `prgbuf_jitter_peak_kib` is a sticky high-water value, not current occupancy.
 `cd_wait_count`, `pump_gap_ticks`, and `apply_backpressure` diagnose why time
@@ -344,7 +350,7 @@ TSV に残しますが、untimed boot staging です。4桁hexは下位16 bitを
 | `sub_wait_scanlines` | Main | per frame | Main が Sub handoff の完了待ちを始めた後に残った blocking wait |
 | `vblank_spill` | Main | per frame | Pattern work が消費した追加 VBlank budget |
 | `adpcm_decode_units` | Sub | per frame | 0.12288 ms 単位の ADPCM decode work |
-| `transfer_ticks` | Main | per frame | Active prefixを含む30.72 us tick 単位の Main pattern-transfer time。12 bit wrap |
+| `transfer_ticks` | Main | per frame | LATを含む通常pattern walkの時間。遅延した最終領域のpublication前まで。30.72 us tick単位、12 bit wrap |
 | `cold_runs` | Main | per frame | Packed cold-run count の low byte |
 | `prgbuf_jitter_peak_kib` | Sub | sticky nibble pair | Runtime jitter headroom の最大 ceil-KiB 使用量 |
 | `flip_vcounter` | Main | per frame | 直前の frame を publish した flip の V-counter |
@@ -356,7 +362,7 @@ TSV に残しますが、untimed boot staging です。4桁hexは下位16 bitを
 | `reader_ahead_frames` | Sub | per frame | Read 済みの complete future frame slot 数 |
 | `reader_slot_sector` | Sub | per frame | Current reader slot 内の sector position |
 | `transfer_vblanks` | Main | per frame | 開いた fresh VBlank transfer budget 数。Active prefixは数えない |
-| `transfer_end_vcounter` | Main | per frame | Final transfer exit phase |
+| `transfer_end_vcounter` | Main | per frame | 通常pattern walkのexit phase。遅延した最終領域のpublication前まで |
 | `pattern_dma_ready_vcounter` | Main | per frame | Main が最初の pattern run を consume 可能になり、active prefixの開始またはfresh blank headの待機の直前の raw V-counter |
 | `name_table_dma_ready_vcounter` | Main | per frame | single-table DMA pathがreadyになり、cadence-final VBlankを待つ直前のraw V-counter |
 
@@ -365,6 +371,12 @@ TSV に残しますが、untimed boot staging です。4桁hexは下位16 bitを
 同じ nonzero value の繰り返しは state です。15 から 0 への wrap は正常です。
 Transport-retry remainder は
 `(sector_slip - msf_gap_recoveries) & 0xF` です。
+
+最終VBlank専用の末尾領域は、この転送snapshotより後のpublication blankで転送します。
+Word数とsetupはpublicationのadmissionに含みますが、`transfer_ticks`、
+`transfer_end_vcounter`、開いたpattern-budget数には含みません。この段階はpackした
+末尾領域の転送数と実際のLOGVDP writeで確認します。これらのHUD fieldだけでは
+すべてのpattern-transfer workを計測できません。
 
 `prgbuf_jitter_peak_kib` は sticky high-water であり current occupancy では
 ありません。`cd_wait_count`、`pump_gap_ticks`、`apply_backpressure` は時間を

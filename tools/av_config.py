@@ -201,6 +201,12 @@ VRAM_MOVIE_NT_TILE = 0xE000 // 32
 VRAM_FIRST_MOVIE_NT_TILE = VRAM_MOVIE_NT_TILE
 VRAM_PATTERN_POOL_TILES = (
     VRAM_HUD_FONT_TILE - VRAM_PATTERN_BASE_TILE)
+# A bounded tail is written only in the publication VBlank. Its old display
+# identities can be reclaimed once no next-frame cell or mandatory pin needs
+# them. The packer separately checks the actual runs and display bundle against
+# the 3,200-unit publication budget.
+FINAL_VBLANK_TILES = 12
+FINAL_VBLANK_SLOT = VRAM_PATTERN_POOL_TILES - FINAL_VBLANK_TILES
 
 # These are pipeline policy, not per-source choices.  Forward fill uses safe
 # physical-slot padding for future Prg payload, while startup audio is clamped

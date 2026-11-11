@@ -74,7 +74,7 @@
 .error "HUD sprite table is outside the free VRAM gap"
 .endif
 
-/* 0xFF2100..0xFF66FF is no longer a tile staging buffer: streamed pattern DMA
+/* 0xFF2200..0xFF66FF is no longer a tile staging buffer: streamed pattern DMA
    reads Word RAM directly and repairs the first destination word on the CPU.
    Keep this range for boot-time Main-CPU code generation. O_LOADS v2 also
    removes the former 0xFF8800 run table. Its first 128 bytes retain one
@@ -89,14 +89,14 @@
      M-DIC    0xFFBA40..0xFFFA3F  512-pattern persistent dictionary
      guard    0xFFFA40..0xFFFAFF  cushion below the stack
      M-STACK  0xFFFB00..0xFFFCFF  / M-TOP 0xFFFD00.. BIOS reserve */
-.equ MAIN_CODEGEN_BASE,  0x00FF2100
+.equ MAIN_CODEGEN_BASE,  0x00FF2200
 .equ MAIN_CODEGEN_LIMIT, 0x00FF6700	/* M-STATE base = end of M-CODE */
 .equ DIC_BUF,            0x00FFBA40	/* persistent dictionary; direct Main-RAM VDP DMA */
 .equ DIC_BUF_END,        0x00FFFA40
 .equ DIC_BUF_PATTERNS,   512
 .equ MAIN_CODEGEN_TABLE_BYTES, 0x0200	/* 256 signed word offsets */
 .equ MAIN_CODEGEN_HANDLER_MAX, 70	/* mask FF: guarded before writing */
-.equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4A00
+.equ MAIN_CODEGEN_EXPECTED_END, 0x00FF4B00
 .equ DIC_STAGE_OFF,      0x6000		/* copied before frame-0 output reuses this area */
 
 /* Exact 68000 words emitted by init_main_codegen. Validate emitter changes
@@ -147,7 +147,10 @@
 .equ SCREEN_COLS, 40		/* H40 V28 NTSC: 40x28 cell aperture */
 .equ VB_WORDS, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
 .equ VB_BUDGET_TICKS, 76	/* 38 NTSC blank lines minus first-line entry uncertainty */
-.equ ACTIVE_PREFIX_WORDS, 512	/* includes CPU repair cost; capped active-display work */
+.equ ACTIVE_PREFIX_WORDS, 672	/* 112 LAT lines at six charged words/line */
+.equ FINAL_PATTERN_SLOTS, 12
+.equ FINAL_PATTERN_ADDR, 0xDA00-FINAL_PATTERN_SLOTS*32
+.equ FINAL_RUN_SETUP_WORDS, 96	/* conservative setup plus CPU first-word repair */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
 .equ FEATURE_VBLANK_CADENCE_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
@@ -200,7 +203,7 @@
    HEADER.DAT at startup. */
 .equ NT_STAGE_PITCH, 64
 .equ NT_STAGE_MAX_WORDS, (28-1)*NT_STAGE_PITCH+SCREEN_COLS
-.equ NT_FLIP_GUARD_WORDS, 128
+.equ NT_FLIP_GUARD_WORDS, 512	/* HUD patch, sprite construction and DMA setup time */
 .ifdef PLAYER_SPECIALIZED
 .equ NT_STAGE_WORDS, (PC_TROWS-1)*NT_STAGE_PITCH+PC_TCOLS
 .equ NT_STAGE_ROW_SKIP, (NT_STAGE_PITCH-PC_TCOLS)*2
@@ -972,6 +975,9 @@ bf_dma:
 	.endif
 	clr.w	pattern_transfer_vblanks
 	clr.w	vbudget_held_reserve
+	clr.w	final_run_count
+	clr.w	final_pattern_words
+	clr.w	lat_used
 	PC_MOVE_W md_nt_flip_reserve_words, NT_FLIP_RESERVE_WORDS, d0
 .ifdef INCLUDE_SCROLL
 	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
@@ -1014,6 +1020,11 @@ bf_dma:
 	move.w	d0, dma_start_tick		/* begin at the first active or blank pattern transfer */
 .endif
 bf_run_lp:
+	tst.l	frame_no
+	beq.s	bf_run_early
+	cmpi.w	#FINAL_PATTERN_ADDR, 10(a2)
+	bhs	bf_defer_final_run
+bf_run_early:
 	/* Pop the Sub-built record straight into the control port. Inline Prg
 	   payload follows its own record; Wr/Dic records are adjacent. */
 	move.w	(a2)+, d1			/* +0 len(語) */
@@ -1145,6 +1156,8 @@ bf_flip:
 	move.l	frame_no, d0
 	PC_CMP_L md_final_frame, PC_FRAMES-1, d0
 	bhs.s	9f
+	tst.w	final_run_count
+	bne.s	9f				/* deferred sources still belong to Main */
 	bsr	swap_begin
 9:
 	/* パレット区間切替: NT DMA、DEBUG HUD、CRAM総入替を同じVBlank内で完結する。
@@ -1197,6 +1210,12 @@ bf_publish_frame:
 	addi.w	#NT_SCROLL_VBAND_WORDS-NT_SCROLL_BAND_WORDS, d6
 2:
 .endif
+	move.w	final_run_count, d0
+	mulu.w	#FINAL_RUN_SETUP_WORDS, d0
+	add.w	final_pattern_words, d0
+	add.w	d6, d0
+	cmpi.w	#VB_WORDS, d0
+	bhi	bf_invalid_final			/* refuse before destroying the old display */
 	.ifdef DEBUG
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
@@ -1217,6 +1236,7 @@ bf_publish_frame:
 	bsr	wait_vb_start
 2:
 	.endif
+	bsr	bf_final_patterns
 	.ifdef DEBUG
 	bsr	bf_patch_dbg_row			/* final counters feed this frame's HUD DMAs */
 	.endif
@@ -1262,6 +1282,67 @@ bf_after_flip:
 1:
 .endif
 	movem.l	(sp)+, d0-d7/a0-a3
+	rts
+
+/* The fixed final-only tail needs at most twelve retained run pointers. No
+   source bytes are copied, and the bank remains Main-owned until publication. */
+bf_invalid_final:
+	bra.s	bf_invalid_final			/* malformed bundle: hold before any destructive DMA */
+
+bf_defer_final_run:
+	move.w	final_run_count, d0
+	cmpi.w	#FINAL_PATTERN_SLOTS, d0
+	bhs.s	bf_invalid_final
+	lsl.w	#2, d0
+	lea	final_run_ptrs(pc), a0
+	move.l	a2, (a0,d0.w)
+	addq.w	#1, final_run_count
+	move.w	(a2), d0
+	beq.s	bf_invalid_final
+	add.w	d0, final_pattern_words
+	bcs.s	bf_invalid_final
+	cmpi.w	#FINAL_PATTERN_SLOTS*16, final_pattern_words
+	bhi.s	bf_invalid_final
+	move.w	d0, d1
+	add.w	d1, d1
+	add.w	10(a2), d1
+	bcs.s	bf_invalid_final
+	cmpi.w	#0xDA00, d1
+	bhi.s	bf_invalid_final
+	movea.l	18(a2), a3
+	adda.w	#22, a2
+	cmpa.l	a2, a3
+	bne.s	1f
+	add.w	d0, d0
+	adda.w	d0, a2
+1:
+	bra	bf_run_done
+
+/* Called only after admitting a fresh publication blank. The checked bundle
+   has no refill or wait path after its first destructive pattern write. */
+bf_final_patterns:
+	move.w	final_run_count, d4
+	beq.s	4f
+	lea	final_run_ptrs(pc), a0
+1:
+	movea.l	(a0)+, a2
+	move.w	(a2), d6
+	move.w	10(a2), d3
+	movea.l	18(a2), a3
+	cmpa.l	#DIC_BUF, a3
+	bcc.s	2f
+	bsr	dma_chunk_wr
+	bra.s	3f
+2:
+	bsr	dma_chunk
+3:
+	subq.w	#1, d4
+	bne.s	1b
+	move.l	frame_no, d0
+	PC_CMP_L md_final_frame, PC_FRAMES-1, d0
+	bhs.s	4f
+	bsr	swap_begin
+4:
 	rts
 
 bf_update_list:
@@ -1382,42 +1463,84 @@ bf_scroll_rebase_vertical:
    instead of pretending all md_vbudget words remain.  d7 returns the full
    budget and vbudget_from_head records that its time origin is trustworthy.
    Trashes d0. */
-/* Cold destinations are protected from the preceding display by the packer's
-   transition check. Spend a bounded prefix during early active display rather
-   than leaving all of that interval idle. Charge six units per remaining active
-   line, capped at 512 including repairs, and stop admitting at line 192. The
-   active DMA rate is nine words/line; the lower charge also covers run setup.
-   This is not a VBlank budget; the first refill opens budget 1. */
+/* Only old-display-safe destinations use LAT. Final-only tail runs remain
+   deferred until publication. Charge six units per remaining active line,
+   capped at 672 including repairs. This grants no VBlank capacity. */
 bf_start_pattern_budget:
-.ifdef PLAYER_SPECIALIZED
-.if (PC_FEATURES & 0x0002) == 0 || PC_CADENCE_PERIOD != 1
-	bra.s	1f
-.endif
-.else
-	cmpi.w	#1, md_cadence_period
-	bne.s	1f
-.endif
-	tst.l	frame_no
+	bsr	bf_try_lat
+	tst.w	d0
 	beq.s	1f
-	move.w	(VDP_HV).l, d0
-	lsr.w	#8, d0
-	cmpi.w	#192, d0
-	bhs.s	1f
-	neg.w	d0
-	addi.w	#224, d0
-	mulu.w	#6, d0
-	cmpi.w	#ACTIVE_PREFIX_WORDS, d0
-	bls.s	2f
-	move.w	#ACTIVE_PREFIX_WORDS, d0
-2:
-	move.w	d0, d7
-	move.w	(VDP_CTRL).l, d0
-	btst	#3, d0
-	bne.s	1f
 	rts
 1:
 	move.w	#1, pattern_transfer_vblanks
 	bra	bf_start_vbudget
+
+/* Admit one bounded transfer window in the last active period before the
+   current cadence deadline. A preceding pattern blank may wait into LAT;
+   earlier blanks remain available. Periodic cadence uses its actual arm.
+   d0 reports admission; d7 receives the active budget. Preserve run state. */
+bf_try_lat:
+	movem.l	d1-d3, -(sp)
+	tst.w	lat_used
+	bne	8f
+	tst.l	frame_no
+	beq	8f
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0002) == 0
+	bra	8f
+.elseif PC_CADENCE_PERIOD == 2
+	move.w	pace_periodic_arm_ticks, d1
+.else
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1
+	subi.w	#PACE_ARM_BIAS_TICKS, d1
+.endif
+.else
+	tst.w	md_cadence_period
+	beq	8f
+	cmpi.w	#2, md_cadence_period
+	bne.s	1f
+	move.w	md_pace_arm_ticks, d1
+	bra.s	2f
+1:
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1
+	subi.w	#PACE_ARM_BIAS_TICKS, d1
+2:
+.endif
+	move.w	(GA_STOPWATCH).l, d0
+	sub.w	pace_flip_tick, d0
+	andi.w	#0x0FFF, d0
+	move.w	d1, d2
+	sub.w	d0, d2
+	ble.s	3f
+	cmpi.w	#PACE_VBLANK_TICKS/2, d2
+	bhi	8f				/* another useful pattern blank precedes LAT */
+	bsr	wait_fixed_flip
+3:
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	bne	8f
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	cmpi.w	#112, d0
+	blo.s	3b				/* spend at most the second half of active */
+	cmpi.w	#208, d0
+	bhs.s	8f
+	neg.w	d0
+	addi.w	#224, d0
+	mulu.w	#6, d0
+	/* line >= 112 proves this is at most ACTIVE_PREFIX_WORDS (672). */
+	move.w	d0, d7
+	clr.w	vbudget_from_head
+	move.w	#1, lat_used
+	moveq	#1, d0
+	bra.s	9f
+8:
+	moveq	#0, d0
+9:
+	movem.l	(sp)+, d1-d3
+	rts
 
 bf_start_vbudget:
 	move.w	(VDP_CTRL).l, d0
@@ -1464,6 +1587,8 @@ bf_refill_vbudget:
    exceed four and makes a physically overloaded fifth transfer blank visible.
    Trashes d0/d6/a0. */
 bf_debug_snapshot_vbudget:
+	tst.w	vbudget_from_head
+	beq.s	2f
 	move.l	a1, d0
 	move.w	pattern_transfer_vblanks, d6
 	beq.s	2f				/* active prefix is not a VBlank snapshot */
@@ -1485,12 +1610,22 @@ bf_debug_snapshot_vbudget:
 bf_next_vbudget:
 	bsr	bf_debug_snapshot_vbudget
 	suba.l	a1, a1				/* exact logical-word counter for the next budget */
+	bsr	bf_try_lat
+	tst.w	d0
+	bne.s	1f
 	addq.w	#1, pattern_transfer_vblanks
 	bra	bf_refill_vbudget
+1:
+	rts
 .else
 bf_next_vbudget:
+	bsr	bf_try_lat
+	tst.w	d0
+	bne.s	1f
 	addq.w	#1, pattern_transfer_vblanks
 	bra	bf_refill_vbudget
+1:
+	rts
 .endif
 
 	/* d6 is the word reserve for NT/HUD/optional CRAM/guard.
@@ -1502,6 +1637,8 @@ bf_next_vbudget:
    Trashes d0. */
 bf_wait_fixed_flip_vblank:
 	bsr	wait_fixed_flip
+	tst.w	final_run_count
+	bne	2f				/* final-only writes always get a complete blank */
 	tst.w	vbudget_from_head
 	beq.s	2f
 	cmp.w	d6, d7
@@ -2801,4 +2938,12 @@ pace_phase:
 pace_cadence_debt:
 	.space 2				/* late VBlanks awaiting long-step recovery */
 .endif
+final_run_ptrs:
+	.space FINAL_PATTERN_SLOTS*4
+final_run_count:
+	.space 2
+final_pattern_words:
+	.space 2
+lat_used:
+	.space 2
 player_bss_end:

@@ -15,11 +15,13 @@ the SAME per-frame update order, the pack's realized cold equals the sim's cap b
 construction. So ``COLD_CAP_REALIZED`` collapses into the single profile cap.
 
 Policy: **contiguous** (a clock hand walks the slot ring), which keeps cold tiles in
-neighbouring VRAM slots so the Main CPU can DMA them in long runs. Displayed tiles
-(referenced by a cell this or last frame) are protected from eviction.
+neighbouring VRAM slots so the Main CPU can DMA them in long runs. Current
+references stay protected. Old-only references may be reclaimed in the bounded
+final-VBlank tail; all other slots retain preceding-display protection.
 """
 
 import numpy as np
+from av_config import FINAL_VBLANK_SLOT
 
 
 def trace_state(alloc, frame):
@@ -164,6 +166,7 @@ class TileAllocator:
         self.free = list(range(self.POOL - 1, -1, -1))       # so pop() hands out 0,1,2… ascending
         self.hand = 0                                        # clock hand (contig)
         self.tearing = 0                                     # evictions forced past protection
+        self.final_reclaims = 0                              # old-only slots reused in final VBlank
         self.cur_slot = np.full(self.C_CELLS, -1, np.int64)  # cell -> slot it currently shows
         self.prev_slot = np.full(self.C_CELLS, -1, np.int64) # cell -> slot last frame (protect)
         self._prev_protect = np.zeros(self.POOL, bool)
@@ -434,10 +437,12 @@ class TileAllocator:
         for _ in range(self.POOL):
             s = self.hand
             self.hand = (self.hand + 1) % self.POOL
-            if self.slot_refs[s] == 0 and not self._prev_protect[s] and \
+            if self.slot_refs[s] == 0 and (not self._prev_protect[s]
+                                         or s >= FINAL_VBLANK_SLOT) and \
                (self._tfp is None or not self._tfp[s]) and not (
                    self.slot_pin_mandatory[s]
                    and self.slot_pin_until[s] >= frame_idx):
+                self.final_reclaims += int(self._prev_protect[s])
                 self._evict(s)
                 return s
         # Keep fade-reference pins ahead of ordinary cache history, but never

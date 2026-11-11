@@ -21,8 +21,13 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Finalize** | Plan the shadow update lists over the exact shared-sector pack route, add each scroll frame's rolling-plane name-table words, verify the complete physical schedule, and write the numeric traces and decision log. |
 
 Packing separately rejects allocation tearing and independently checks decoded
-cold destinations against the preceding display before applying them. This
-permits a bounded active-display prefix without changing encoded decisions.
+cold destinations against the preceding display before applying them. Only
+the bounded final-VBlank tail described in PLAYER.md can reclaim old-only
+identities; next-frame reuse, mandatory pins and real scroll references stay
+protected. The conservative old-plus-new union admission remains unchanged.
+The shared source-run builder splits the early/final boundary, and packing
+verifies the complete final publication cost. Decision logs retain per-frame
+`final_vblank_tiles` and the total `final_vblank_reclaims` for measurement.
 
 ## Working memory
 
@@ -182,8 +187,11 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Finalize** | packと同一の共有sector経路でshadow update listを計画し、scroll frameのrolling plane分のname-table wordを加算したうえで、全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
 
 Pack時にはallocation tearingを拒否し、cold destinationを実際にdecodeして直前表示と
-独立に照合してから反映します。これにより、encode済みの決定を変えずに、上限を
-設けたactive-display prefixを転送できます。
+独立に照合してから反映します。旧表示だけが使うpatternを回収できるのは、PLAYER.mdの
+上限付き最終VBlank領域だけです。次frameの再利用、必須pin、実際のscroll参照は保護し、
+旧表示と新表示の和集合を使う安全側のadmissionは変えません。共有source-run builderは
+前段と最終段の境界で分割し、pack時に最終publication全体のcostを検証します。
+Decision logは計測用にframeごとの`final_vblank_tiles`と総`final_vblank_reclaims`を保持します。
 
 ## 作業メモリ
 
