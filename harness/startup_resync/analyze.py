@@ -176,6 +176,13 @@ def iter_samples(
                 hud = read_frameno.read_hud(image, layout=layout)
                 field_conf = {name: float(hud[name][1]) for name in fields}
                 if min(field_conf.values()) >= confidence:
+                    if capture % 6000 == 0:
+                        print(
+                            f"HUD decode: capture={capture} "
+                            f"frame={int(hud['frame'][0]):04X} "
+                            f"sector_slip={int(hud['sector_slip'][0]):X} "
+                            f"audio_resync={int(hud['audio_resync'][0]):X}",
+                            file=sys.stderr, flush=True)
                     yield Sample(
                         capture=capture,
                         time_s=probe.start_time + capture / float(probe.fps),

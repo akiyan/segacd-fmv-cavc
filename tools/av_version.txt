@@ -1389,4 +1389,5 @@ date=20261111
 e=197
 # p160: blank the movie plane before replay boot-sidecar VRAM writes.
 # p161: repay fixed-cadence display debt without accumulating reader/audio lag.
-p=161
+# p162: admit shorter fixed intervals only when the whole frame fits one blank.
+p=162

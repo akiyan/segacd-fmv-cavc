@@ -42,6 +42,7 @@
 
 .equ PROBE_BANK, 0x00200000
 .equ O_NRUN_OFF, 0x0000
+.equ O_NLOAD_OFF, 0x0002
 .equ O_LOADS_OFF, 0x0004
 
 .equ CMD_STREAM, 0x50
@@ -989,6 +990,7 @@ bf_dma:
 	addi.w	#64*CPU_VDP_WORD_COST, d0
 8:
 	move.w	d0, pattern_final_reserve_words
+	bsr	pace_admit_fixed_interval
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
@@ -1657,6 +1659,42 @@ commit_frame:
 	bsr	pace_fixed_commit
 1:
 .endif
+	rts
+
+/* A shortened fixed interval may reserve the first blank for publication
+   only when all pattern work fits beside that publication. Otherwise an
+   unused first-blank reserve can push a normal two-blank frame into three.
+   W-HDR already counts all transferred patterns and expanded runs. A run
+   that fits this whole-frame bound needs only one CPU first-word repair.
+   Trashes d0-d2. */
+pace_admit_fixed_interval:
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0002) == 0 || PC_CADENCE_PERIOD == 2
+	rts
+.endif
+.else
+	cmpi.w	#1, md_cadence_period
+	bne.s	2f
+.endif
+	PC_MOVE_W md_vsync_n, PC_VSYNC_N, d0
+	cmp.w	pace_target_vblanks, d0
+	beq.s	2f
+	moveq	#0, d1
+	move.w	(PROBE_BANK+O_NLOAD_OFF).l, d1
+	lsl.l	#4, d1
+	moveq	#0, d2
+	move.w	n_runs, d2
+	lsl.l	#2, d2
+	add.l	d1, d2
+	moveq	#0, d1
+	move.w	pattern_final_reserve_words, d1
+	add.l	d1, d2
+	moveq	#0, d1
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d1
+	cmp.l	d1, d2
+	bls.s	2f
+	move.w	d0, pace_target_vblanks
+2:
 	rts
 
 /* Keep fixed-N display time tied to the stream clock. A late publication

@@ -568,6 +568,12 @@ def verify_runtime_vblank_cadence(
     disassembly = run([str(objdump), "-dr", str(obj)])
     if not re.search(r"\bbsr\w*\s+[^\n]*<pace_fixed_commit>", disassembly):
         raise AssertionError(f"{obj}: fixed cadence still discards missed deadlines")
+    admission = re.search(
+        r"\bbsr\w*\s+[^\n]*<pace_admit_fixed_interval>", disassembly)
+    first_budget = re.search(
+        r"\bbsr\w*\s+[^\n]*<bf_start_vbudget>", disassembly)
+    if not admission or not first_budget or admission.start() >= first_budget.start():
+        raise AssertionError(f"{obj}: early display reservation precedes whole-frame admission")
     fixed_start = re.search(
         r"^[0-9a-f]+ <pace_fixed_commit>:$", disassembly, re.MULTILINE)
     if not fixed_start:

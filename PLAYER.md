@@ -27,6 +27,9 @@ Later frames shorten their display interval, never below one VBlank, until
 that debt is repaid. Pattern and final-display DMA admission still use the
 remaining budget of the actual target blank. A frame that cannot finish sooner
 retains its debt; the display cannot advance ahead of the nominal stream clock.
+Before reserving an early publication blank, Main requires all pattern words,
+one CPU repair per run and the final-display reserve to fit one VBlank budget.
+Otherwise it retains the nominal target and avoids wasting an earlier reserve.
 
 The 24 fps display controller remains phase-locked after a missed deadline.
 It counts whole-VBlank lateness as debt and repays that debt only by shortening
@@ -642,6 +645,9 @@ CD-sector allowanceは同じ位相で進みます。実効rateは順に15000/100
 後続frameはdebtを返済するまで表示間隔を短縮しますが、1 VBlank未満にはしません。
 patternと最終表示DMAのadmissionには、実際のtarget blankの残budgetを引き続き使います。
 早く完了できないframeのdebtは残り、名目stream clockより先に表示を進めません。
+早い表示用のblankを予約する前に、Mainは全pattern word、runごとのCPU先頭word補修、
+最終表示の予約分が1 VBlank budgetへ収まることを確認します。収まらなければ名目の
+targetを維持し、早いblankの予約枠を無駄にしません。
 
 24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
 debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
