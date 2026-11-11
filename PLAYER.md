@@ -581,6 +581,13 @@ new VBlank or while the V counter is still on its first blank line (`E0`).
 Entering an already-running blank later never creates a full budget; Main
 waits for the next head.
 
+Within one movie-frame display interval, the final publication VBlank is
+**LVB (Last VBlank)** and its immediately preceding active period is
+**LAT (Last Active Time)**. All earlier active periods in that interval are
+**EAT (Earlier Active Time)**; all earlier VBlanks are
+**EVB (Earlier VBlank)**. EAT and EVB can each contain multiple periods.
+These names identify cadence positions, not Word-RAM banks or transfer budgets.
+
 Timed fixed and periodic cadence can use Last Active Time (LAT), the active
 period immediately before the cadence's publication blank. Main admits one
 window per frame, starting at line 112 or later and before line 208, with six
@@ -1229,6 +1236,13 @@ Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新し�
 直後、またはV counterが最初のblank line（`E0`）にある場合だけbudgetを与えます。
 すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
 待ちます。
+
+動画の1フレームの表示間隔内で、最後に表示を確定するVBlankを
+**LVB（Last VBlank）**、その直前のactive期間を
+**LAT（Last Active Time）**と呼びます。同じ表示間隔の、それより前のactive期間は
+すべて**EAT（Earlier Active Time）**、それより前のVBlankはすべて
+**EVB（Earlier VBlank）**です。EATとEVBはそれぞれ複数回を含むことがあります。
+これらはcadence内の位置を表す用語で、Word RAM bankや転送budgetを表しません。
 
 Timedのfixed / periodic cadenceは、表示を確定するVBlankの直前のactive期間を
 Last Active Time（LAT）として使えます。Mainは1 frameにつき1回、line 112以降かつ
