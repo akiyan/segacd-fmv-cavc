@@ -1388,4 +1388,5 @@ date=20261111
 # e197: reduce infeasible control-sector reservations before projecting Prg limits.
 e=197
 # p160: blank the movie plane before replay boot-sidecar VRAM writes.
-p=160
+# p161: repay fixed-cadence display debt without accumulating reader/audio lag.
+p=161

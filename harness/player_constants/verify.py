@@ -566,6 +566,18 @@ def verify_runtime_vblank_cadence(
 ) -> None:
     """Prove runtime diagnostics follow the current periodic cadence target."""
     disassembly = run([str(objdump), "-dr", str(obj)])
+    if not re.search(r"\bbsr\w*\s+[^\n]*<pace_fixed_commit>", disassembly):
+        raise AssertionError(f"{obj}: fixed cadence still discards missed deadlines")
+    fixed_start = re.search(
+        r"^[0-9a-f]+ <pace_fixed_commit>:$", disassembly, re.MULTILINE)
+    if not fixed_start:
+        raise AssertionError(f"{obj}: missing fixed-cadence recovery")
+    fixed = re.split(
+        r"^[0-9a-f]+ <[^>]+>:$", disassembly[fixed_start.end():],
+        maxsplit=1, flags=re.MULTILINE)[0]
+    if not re.search(r"\bsubw\s+%d1,%d2", fixed) or not re.search(
+            r"\bmoveq\s+#1,%d2", fixed):
+        raise AssertionError(f"{obj}: fixed recovery lacks debt repayment or its one-VBlank floor")
     start = re.search(
         r"^[0-9a-f]+ <bf_wait_fixed_flip_vblank>:$",
         disassembly, re.MULTILINE)

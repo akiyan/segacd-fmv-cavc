@@ -1554,6 +1554,7 @@ wait_vb_start:
    first cadence interval in the past. The next real interval starts with the
    short two-VBlank step for a periodic 24fps stream. Trashes d0. */
 prime_fixed_cadence:
+	clr.w	pace_fixed_debt
 	.ifdef PLAYER_SPECIALIZED
 	.if (PC_FEATURES & 0x0002) != 0
 	move.w	#PC_VSYNC_N, pace_target_vblanks
@@ -1604,10 +1605,22 @@ wait_fixed_flip:
 .if PC_CADENCE_PERIOD == 2
 	cmp.w	pace_periodic_arm_ticks, d0
 .else
-	cmpi.w	#PACE_FIXED_ARM_TICKS, d0
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1
+	subi.w	#PACE_ARM_BIAS_TICKS, d1
+	cmp.w	d1, d0
 .endif
 .else
-	PC_CMP_W md_pace_arm_ticks, PACE_FIXED_ARM_TICKS, d0
+	cmpi.w	#2, md_cadence_period
+	beq.s	3f
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1
+	subi.w	#PACE_ARM_BIAS_TICKS, d1
+	cmp.w	d1, d0
+	bra.s	4f
+3:
+	cmp.w	md_pace_arm_ticks, d0
+4:
 .endif
 	bcc.s	2f
 	bra.s	1b
@@ -1627,10 +1640,10 @@ commit_frame:
 	.endif
 	.ifdef PLAYER_SPECIALIZED
 	.if (PC_FEATURES & 0x0002) != 0
-	.if PC_CADENCE_PERIOD == 2
+.if PC_CADENCE_PERIOD == 2
 	bsr	pace_periodic_commit
-	.else
-	move.w	(GA_STOPWATCH).l, pace_flip_tick	/* exact flip-to-flip deadline */
+.else
+	bsr	pace_fixed_commit
 	.endif
 .endif
 .else
@@ -1641,9 +1654,44 @@ commit_frame:
 	bsr	pace_periodic_commit
 	bra.s	1f
 2:
-	move.w	(GA_STOPWATCH).l, pace_flip_tick	/* exact flip-to-flip deadline */
+	bsr	pace_fixed_commit
 1:
 .endif
+	rts
+
+/* Keep fixed-N display time tied to the stream clock. A late publication
+   accumulates whole-VBlank debt; subsequent frames may use shorter intervals
+   until the debt is repaid. The normal blank admission and DMA word budgets
+   still decide whether that shorter interval is physically possible. Never
+   request fewer than one VBlank or run ahead of the nominal stream clock.
+   Trashes d0-d2. */
+pace_fixed_commit:
+	move.w	(GA_STOPWATCH).l, d0
+	PC_MOVE_W md_vsync_n, PC_VSYNC_N, d2
+	tst.l	frame_no
+	beq.s	3f
+	moveq	#0, d1
+	move.w	d0, d1
+	sub.w	pace_flip_tick, d1
+	andi.l	#0x00000FFF, d1
+	addi.l	#PACE_VBLANK_TICKS/2, d1
+	divu.w	#PACE_VBLANK_TICKS, d1
+	sub.w	d2, d1
+	add.w	pace_fixed_debt, d1
+	bpl.s	1f
+	moveq	#0, d1
+1:
+	cmpi.w	#0x00FF, d1
+	bls.s	2f
+	move.w	#0x00FF, d1
+2:
+	move.w	d1, pace_fixed_debt
+	sub.w	d1, d2
+	bgt.s	3f
+	moveq	#1, d2
+3:
+	move.w	d2, pace_target_vblanks
+	move.w	d0, pace_flip_tick
 	rts
 
 .if PERIODIC_CADENCE_RUNTIME
@@ -2558,6 +2606,8 @@ pace_flip_tick:
 	.space 2				/* GA stopwatch tick at preceding cadence-controlled flip */
 pace_target_vblanks:
 	.space 2				/* current fixed or periodic display-deadline budget index */
+pace_fixed_debt:
+	.space 2				/* fixed-N VBlanks still owed to the stream clock */
 .ifndef PLAYER_SPECIALIZED
 md_tcols:
 	.space 2

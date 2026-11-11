@@ -22,6 +22,12 @@ schedule from the packed header. The 15 fps path repeats `(4)`, 24 fps repeats
 same phase. Their effective rates are 15000/1001, 24000/1001, and 30000/1001
 fps respectively.
 
+The fixed 15/30 fps display controller counts missed whole VBlanks as debt.
+Later frames shorten their display interval, never below one VBlank, until
+that debt is repaid. Pattern and final-display DMA admission still use the
+remaining budget of the actual target blank. A frame that cannot finish sooner
+retains its debt; the display cannot advance ahead of the nominal stream clock.
+
 The 24 fps display controller remains phase-locked after a missed deadline.
 It counts whole-VBlank lateness as debt and repays that debt only by shortening
 a later nominal three-VBlank display step to two. It never shortens a
@@ -631,6 +637,11 @@ Word RAMのWordBufとrouting sizeはprofile（frame数、cell数、cold cap）�
 始まる`(2, 3)`、30 fps pathは`(2)`を反復します。Mainのdisplay deadlineとSubの
 CD-sector allowanceは同じ位相で進みます。実効rateは順に15000/1001、24000/1001、
 30000/1001 fpsです。
+
+固定15/30 fpsのdisplay controllerは、遅れたVBlank数をdebtとして数えます。
+後続frameはdebtを返済するまで表示間隔を短縮しますが、1 VBlank未満にはしません。
+patternと最終表示DMAのadmissionには、実際のtarget blankの残budgetを引き続き使います。
+早く完了できないframeのdebtは残り、名目stream clockより先に表示を進めません。
 
 24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
 debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。

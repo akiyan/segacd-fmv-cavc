@@ -24,6 +24,7 @@ import math
 import statistics
 import subprocess
 import sys
+import tempfile
 from collections import Counter
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -152,36 +153,46 @@ def iter_samples(
         "-map", "0:v:0", "-vf", vf, "-fps_mode", "passthrough",
         "-f", "rawvideo", "-pix_fmt", "gray", "-",
     ]
-    try:
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    except FileNotFoundError as exc:
-        raise SystemExit("ffmpeg was not found") from exc
-    assert process.stdout is not None
-    frame_size = crop_w * crop_h
-    capture = 0
-    while True:
-        raw = _read_exact(process.stdout, frame_size)
-        if not raw:
-            break
-        if len(raw) != frame_size:
-            process.kill()
-            raise SystemExit(
-                f"ffmpeg returned a partial raw frame: {len(raw)} / {frame_size} bytes"
-            )
-        image = np.frombuffer(raw, np.uint8).reshape(crop_h, crop_w)
-        hud = read_frameno.read_hud(image, layout=layout)
-        field_conf = {name: float(hud[name][1]) for name in fields}
-        if min(field_conf.values()) >= confidence:
-            yield Sample(
-                capture=capture,
-                time_s=probe.start_time + capture / float(probe.fps),
-                values={name: int(hud[name][0]) for name in fields},
-                confidence=field_conf,
-            )
-        capture += 1
-
-    stderr = process.stderr.read().decode("utf-8", "replace") if process.stderr else ""
-    return_code = process.wait()
+    # A long recording can emit more diagnostics than a pipe holds. Keep
+    # reading frame bytes while FFmpeg writes diagnostics independently.
+    with tempfile.TemporaryFile() as errors:
+        try:
+            process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=errors)
+        except FileNotFoundError as exc:
+            raise SystemExit("ffmpeg was not found") from exc
+        assert process.stdout is not None
+        frame_size = crop_w * crop_h
+        capture = 0
+        try:
+            while True:
+                raw = _read_exact(process.stdout, frame_size)
+                if not raw:
+                    break
+                if len(raw) != frame_size:
+                    raise SystemExit(
+                        f"ffmpeg returned a partial raw frame: {len(raw)} / {frame_size} bytes"
+                    )
+                image = np.frombuffer(raw, np.uint8).reshape(crop_h, crop_w)
+                hud = read_frameno.read_hud(image, layout=layout)
+                field_conf = {name: float(hud[name][1]) for name in fields}
+                if min(field_conf.values()) >= confidence:
+                    yield Sample(
+                        capture=capture,
+                        time_s=probe.start_time + capture / float(probe.fps),
+                        values={name: int(hud[name][0]) for name in fields},
+                        confidence=field_conf,
+                    )
+                capture += 1
+            return_code = process.wait()
+        finally:
+            process.stdout.close()
+            if process.poll() is None:
+                process.kill()
+                process.wait()
+        errors.seek(0)
+        stderr = errors.read().decode("utf-8", "replace")
+    if stderr and not return_code:
+        print(stderr, file=sys.stderr, end="" if stderr.endswith("\n") else "\n")
     if return_code:
         raise SystemExit(stderr.strip() or f"ffmpeg failed with exit code {return_code}")
 

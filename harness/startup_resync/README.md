@@ -1,7 +1,10 @@
 # Startup audio re-sync HUD extractor
 
 This harness reads a native DEBUG playback recording sequentially and finds the
-first `audio_resync` transition without seeking by eye. It uses the player's
+first `audio_resync` transition without seeking by eye. FFmpeg diagnostics use
+a temporary file while frame bytes are streamed, so a full diagnostic pipe
+cannot deadlock a long capture; nonempty diagnostics are retained in the log.
+It uses the player's
 fixed 43-digit values-only HUD, which wraps after 40 digits onto a second row.
 The physical order and widths are:
 
