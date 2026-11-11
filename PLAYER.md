@@ -38,6 +38,17 @@ Use approximately 7.67 MHz for Main (NTSC) and 12.5 MHz for Sub.
 For other Main clock rates, scale these estimates by the clock ratio.
 MB/s below means 1,000,000 payload bytes/s, counting copied bytes once.
 
+The per-frame and per-scanline columns use the project's nominal NTSC
+display timebase: `60000/1001` display frames/s and 262 scanlines/display frame
+(including blanking). One display frame is about 16.6833 ms and one scanline
+about 63.6768 us. Calculate `B/display frame = B/s * 1001/60000` and
+`B/scanline = B/display frame / 262` from the unrounded instruction rate,
+then round to one decimal place. These are continuous-copy time equivalents,
+not guaranteed whole-instruction completion counts, crystal-accurate timings,
+or VBlank-only budgets. They inherit every no-wait/conditional-ceiling limit
+of their source rate. A movie frame spanning N display frames provides N times
+this time interval, before other work is deducted.
+
 ### Instruction cost
 
 With no additional bus waits, aligned `move.l (a0)+,(a1)+` copies four bytes
@@ -45,11 +56,11 @@ in 20 CPU clocks, including instruction fetch, source reads, and destination
 writes. A continuing `dbra` adds 10 clocks per iteration; setup and the final
 iteration are excluded from these steady-state estimates.
 
-| Copy loop | Clocks per payload block | Main MB/s | Sub MB/s |
-|---|---:|---:|---:|
-| Consecutive `move.l`, excluding loop control | 20 / 4 B | 1.534 | 2.500 |
-| One `move.l` followed by `dbra` | 30 / 4 B | 1.023 | 1.667 |
-| Eight `move.l` followed by `dbra` | 170 / 32 B | 1.444 | 2.353 |
+| Copy loop | Clocks per payload block | Main MB/s | Main B/display frame | Main B/scanline | Sub MB/s | Sub B/display frame | Sub B/scanline |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Consecutive `move.l`, excluding loop control | 20 / 4 B | 1.534 | 25,592.2 | 97.7 | 2.500 | 41,708.3 | 159.2 |
+| One `move.l` followed by `dbra` | 30 / 4 B | 1.023 | 17,061.5 | 65.1 | 1.667 | 27,805.6 | 106.1 |
+| Eight `move.l` followed by `dbra` | 170 / 32 B | 1.444 | 24,086.8 | 91.9 | 2.353 | 39,254.9 | 149.8 |
 
 The calculation is `bytes * CPU_Hz / clocks`. For a 32-byte pattern, the
 copy instructions alone take 160 clocks: about 20.86 us on Main or 12.80 us
@@ -63,17 +74,17 @@ They assume no additional waits on instruction fetches or data accesses.
 The Sega manual describes non-wait memory access when devices do not compete,
 with Sub access to PRG-RAM and Word RAM as examples.
 
-| Source and destination | Copying CPU | No-wait estimate | Access condition |
-|---|---|---:|---|
-| Main RAM to Main RAM | Main | 1.534 MB/s | Main bus available |
-| PRG-RAM to PRG-RAM | Sub | 2.500 MB/s | Excludes arbitration with refresh/CDC DMA |
-| Word RAM to Word RAM within the owned region | Sub | 2.500 MB/s | Sub owns that region |
-| Word RAM to Word RAM within the owned region | Main | 1.534 MB/s | Main owns that region |
-| PRG-RAM to/from Word RAM | Sub | 2.500 MB/s | Sub owns the target Word RAM region |
-| Main RAM to/from Word RAM | Main | 1.534 MB/s | Main owns the target Word RAM region |
-| Main RAM to/from PRG-RAM | Main | 1.534 MB/s, conditional ceiling | Main must acquire the Sub bus; additional access timing is unqualified |
-| PRG-RAM to/from Word RAM | Main | 1.534 MB/s, conditional ceiling | Main must acquire the Sub bus and own the Word RAM region; additional access timing is unqualified |
-| PRG-RAM to PRG-RAM | Main | 1.534 MB/s, conditional ceiling | Both addresses must be in the selected 128 KiB PRG window; additional access timing is unqualified |
+| Source and destination | Copying CPU | No-wait estimate | B/display frame | B/scanline | Access condition |
+|---|---|---:|---:|---:|---|
+| Main RAM to Main RAM | Main | 1.534 MB/s | 25,592.2 | 97.7 | Main bus available |
+| PRG-RAM to PRG-RAM | Sub | 2.500 MB/s | 41,708.3 | 159.2 | Excludes arbitration with refresh/CDC DMA |
+| Word RAM to Word RAM within the owned region | Sub | 2.500 MB/s | 41,708.3 | 159.2 | Sub owns that region |
+| Word RAM to Word RAM within the owned region | Main | 1.534 MB/s | 25,592.2 | 97.7 | Main owns that region |
+| PRG-RAM to/from Word RAM | Sub | 2.500 MB/s | 41,708.3 | 159.2 | Sub owns the target Word RAM region |
+| Main RAM to/from Word RAM | Main | 1.534 MB/s | 25,592.2 | 97.7 | Main owns the target Word RAM region |
+| Main RAM to/from PRG-RAM | Main | 1.534 MB/s, conditional ceiling | 25,592.2 | 97.7 | Main must acquire the Sub bus; additional access timing is unqualified |
+| PRG-RAM to/from Word RAM | Main | 1.534 MB/s, conditional ceiling | 25,592.2 | 97.7 | Main must acquire the Sub bus and own the Word RAM region; additional access timing is unqualified |
+| PRG-RAM to PRG-RAM | Main | 1.534 MB/s, conditional ceiling | 25,592.2 | 97.7 | Both addresses must be in the selected 128 KiB PRG window; additional access timing is unqualified |
 
 Sub cannot directly access Main RAM. Main access to PRG-RAM requires a Sub
 bus request/reset handshake and prevents concurrent Sub CPU execution.
@@ -627,6 +638,14 @@ Main は約 7.67 MHz（NTSC）、Sub は 12.5 MHz とします。
 Main のクロックが異なる場合は、その比率で換算します。
 MB/s は 1,000,000 バイト/秒で、コピーしたデータ量を 1 回だけ数えます。
 
+フレームあたりと走査線あたりの列には、プロジェクトの公称 NTSC 表示時間を使います。
+表示周期は `60000/1001` フレーム/秒、1 表示フレームはブランキングを含む 262 走査線です。
+1 表示フレームは約 16.6833 ms、1 走査線は約 63.6768 us です。
+丸める前の命令速度から `B/表示フレーム = B/秒 * 1001/60000`、`B/走査線 = B/表示フレーム / 262` を計算し、小数第 1 位に丸めます。
+これは連続コピーの時間換算値で、命令単位の完了量を保証する値、水晶発振器に基づく厳密な時間、VBlank のみの予算ではありません。
+換算後も、元の速度のウェイトなしという仮定や条件付き上限の制約を引き継ぎます。
+動画の 1 フレームが N 表示フレームにまたがる場合、他の処理時間を差し引く前の時間枠は N 倍になります。
+
 ### 命令のコスト
 
 追加のバス待ちがなければ、偶数アドレスの `move.l (a0)+,(a1)+` は 4 バイトを 20 CPU クロックでコピーします。
@@ -634,11 +653,11 @@ MB/s は 1,000,000 バイト/秒で、コピーしたデータ量を 1 回だけ
 繰り返しを継続する `dbra` は 1 回につき 10 クロックを加えます。
 以下の定常速度では初期設定と最終反復を除きます。
 
-| コピーのループ | データ量あたりのクロック数 | Main MB/s | Sub MB/s |
-|---|---:|---:|---:|
-| `move.l` の連続実行。ループ制御を除く | 20 / 4 B | 1.534 | 2.500 |
-| `move.l` 1 回の後に `dbra` | 30 / 4 B | 1.023 | 1.667 |
-| `move.l` 8 回の後に `dbra` | 170 / 32 B | 1.444 | 2.353 |
+| コピーのループ | データ量あたりのクロック数 | Main MB/s | Main B/表示フレーム | Main B/走査線 | Sub MB/s | Sub B/表示フレーム | Sub B/走査線 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| `move.l` の連続実行。ループ制御を除く | 20 / 4 B | 1.534 | 25,592.2 | 97.7 | 2.500 | 41,708.3 | 159.2 |
+| `move.l` 1 回の後に `dbra` | 30 / 4 B | 1.023 | 17,061.5 | 65.1 | 1.667 | 27,805.6 | 106.1 |
+| `move.l` 8 回の後に `dbra` | 170 / 32 B | 1.444 | 24,086.8 | 91.9 | 2.353 | 39,254.9 | 149.8 |
 
 計算式は `バイト数 * CPU_Hz / クロック数` です。
 32 バイトのパターンはコピー命令だけで 160 クロックかかり、Main では約 20.86 us、Sub では 12.80 us です。
@@ -651,17 +670,17 @@ MB/s は 1,000,000 バイト/秒で、コピーしたデータ量を 1 回だけ
 命令の読み込みにもデータアクセスにも追加待ちがないと仮定します。
 セガの資料は、他デバイスとの競合がなければメモリアクセスはウェイトなしとし、Sub から PRG-RAM と Word RAM へのアクセスを例示しています。
 
-| 転送元と転送先 | コピーする CPU | ウェイトなしの計算値 | アクセス条件 |
-|---|---|---:|---|
-| Main RAM → Main RAM | Main | 1.534 MB/s | Main のバスが利用可能 |
-| PRG-RAM → PRG-RAM | Sub | 2.500 MB/s | リフレッシュや CDC DMA との調停を除く |
-| 所有領域内の Word RAM → Word RAM | Sub | 2.500 MB/s | Sub が対象領域を所有 |
-| 所有領域内の Word RAM → Word RAM | Main | 1.534 MB/s | Main が対象領域を所有 |
-| PRG-RAM ↔ Word RAM | Sub | 2.500 MB/s | Sub が対象 Word RAM 領域を所有 |
-| Main RAM ↔ Word RAM | Main | 1.534 MB/s | Main が対象 Word RAM 領域を所有 |
-| Main RAM ↔ PRG-RAM | Main | 1.534 MB/s、条件付き上限 | Sub のバス取得が必要。追加のアクセス時間は未検証 |
-| PRG-RAM ↔ Word RAM | Main | 1.534 MB/s、条件付き上限 | Sub のバス取得と Word RAM 領域の所有が必要。追加のアクセス時間は未検証 |
-| PRG-RAM → PRG-RAM | Main | 1.534 MB/s、条件付き上限 | 両アドレスが選択中の 128 KiB PRG ウィンドウ内にあること。追加のアクセス時間は未検証 |
+| 転送元と転送先 | コピーする CPU | ウェイトなしの計算値 | B/表示フレーム | B/走査線 | アクセス条件 |
+|---|---|---:|---:|---:|---|
+| Main RAM → Main RAM | Main | 1.534 MB/s | 25,592.2 | 97.7 | Main のバスが利用可能 |
+| PRG-RAM → PRG-RAM | Sub | 2.500 MB/s | 41,708.3 | 159.2 | リフレッシュや CDC DMA との調停を除く |
+| 所有領域内の Word RAM → Word RAM | Sub | 2.500 MB/s | 41,708.3 | 159.2 | Sub が対象領域を所有 |
+| 所有領域内の Word RAM → Word RAM | Main | 1.534 MB/s | 25,592.2 | 97.7 | Main が対象領域を所有 |
+| PRG-RAM ↔ Word RAM | Sub | 2.500 MB/s | 41,708.3 | 159.2 | Sub が対象 Word RAM 領域を所有 |
+| Main RAM ↔ Word RAM | Main | 1.534 MB/s | 25,592.2 | 97.7 | Main が対象 Word RAM 領域を所有 |
+| Main RAM ↔ PRG-RAM | Main | 1.534 MB/s、条件付き上限 | 25,592.2 | 97.7 | Sub のバス取得が必要。追加のアクセス時間は未検証 |
+| PRG-RAM ↔ Word RAM | Main | 1.534 MB/s、条件付き上限 | 25,592.2 | 97.7 | Sub のバス取得と Word RAM 領域の所有が必要。追加のアクセス時間は未検証 |
+| PRG-RAM → PRG-RAM | Main | 1.534 MB/s、条件付き上限 | 25,592.2 | 97.7 | 両アドレスが選択中の 128 KiB PRG ウィンドウ内にあること。追加のアクセス時間は未検証 |
 
 Sub は Main RAM に直接アクセスできません。
 Main が PRG-RAM にアクセスするには、Sub へのバス要求またはリセットによる受け渡しが必要で、その間 Sub CPU は並行実行できません。
