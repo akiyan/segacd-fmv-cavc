@@ -38,5 +38,3 @@ cold_cap = 230
 
 [palette]
 algorithm = "mosaic-gm"
-
-
