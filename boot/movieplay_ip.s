@@ -819,7 +819,7 @@ bf_upd:
 	move.l	(a0)+, (a1)+
 	move.l	(a0)+, (a1)+
 	dbra	d0, 2b
-	clr.w	d7				/* every special type is update-free */
+	/* A fade may append ordinary shadow-list pairs after its CRAM image. */
 1:
 	andi.w	#SHADOW_UPDATE_COUNT_MASK, d7
 	beq	bf_stage_nt

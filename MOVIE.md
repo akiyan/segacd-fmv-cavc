@@ -489,7 +489,8 @@ payload.
 | 2 | n_upd/format | bit 15 selects a completed list; bits 14-13 are frame type; bits 12-0 are the update count (for type 3 the complete item count including the position item, never above 2,048) |
 | variable | normal shadow updates | type 0: bitmap + optional alignment byte + 2-byte entries, or 4-byte completed items |
 | variable | scroll updates | type 3: one 4-byte position item (`>h` absolute HScroll, `>h` absolute VScroll; exactly one axis nonzero), then 4-byte completed items addressing the 64x32 plane |
-| 128 | inline CRAM | type 1/2: four complete 16-word CRAM lines; replaces the shadow-update field |
+| 128 | inline CRAM | type 1/2: four complete 16-word CRAM lines; no bitmap |
+| `n_upd * 4` | fade shadow updates | type 1/2: optional completed items immediately after CRAM; nonzero count requires the list bit |
 | `4 + audio_bytes/2` | audio | checkpoint then low-nibble-first IMA codes |
 | 0/1 | audio pad | zero byte when needed for word alignment |
 | 2 | n_runs | cold-run count |
@@ -500,10 +501,14 @@ at the reader; a gap causes re-seek and exact re-read. A remaining sequence
 mismatch holds the previous frame and increments the desync counter.
 
 Frame type 0 is normal, 1 is fade-in, 2 is fade-out, and 3 is a scroll
-control. Types 1 and 2 require an update count of zero and a clear list
-bit. They leave the name table unchanged while replacing all 64 CRAM words
-from the inline image. Audio decoding and the cold-run suffix still run, so
-future patterns can be prefetched during a static fade. The two fade
+control. Types 1 and 2 replace all 64 CRAM words from the inline image.
+They may append completed shadow-list items to continue unfinished reference
+preparation during the fade. A nonzero update count requires the list bit;
+the count excludes CRAM. A zero count needs neither a bitmap nor a list.
+Audio begins after CRAM plus four bytes per update. Pattern transfers retain
+the ordinary protection of the preceding display, and the updated name table
+and CRAM publish together. Audio decoding and the cold-run suffix still run,
+so future patterns can also be prefetched during a static fade. The two fade
 directions have the same player operation; the tag preserves the encoder's
 detected direction for validation and analysis.
 
@@ -1053,7 +1058,8 @@ payload patternは32-byteの `pack_key` です。8行×4 byteで、各byteは4-b
 | 2 | n_upd/format | bit 15はcompleted list、bits 14-13はframe type、bits 12-0はupdate数（type 3ではposition itemを含む全item数。2,048以下） |
 | variable | 通常shadow updates | type 0: bitmap + optional alignment byte + 2-byte entry、または4-byte completed item |
 | variable | scroll updates | type 3: 先頭に4-byte position item（`>h` 絶対HScroll、`>h` 絶対VScroll。非ゼロは常に片軸だけ）、続けて64x32 planeを指す4-byte completed item |
-| 128 | inline CRAM | type 1/2: 完全な16-word CRAM line×4。shadow-update fieldの代わりに置く |
+| 128 | inline CRAM | type 1/2: 完全な16-word CRAM line×4。bitmapなし |
+| `n_upd * 4` | fade shadow updates | type 1/2: CRAM直後のoptional completed item。countが非ゼロならlist bitが必須 |
 | `4 + audio_bytes/2` | audio | checkpointとlow-nibble-first IMA code |
 | 0/1 | audio pad | word alignmentに必要なzero byte |
 | 2 | n_runs | cold-run数 |
@@ -1064,9 +1070,12 @@ gapがあればre-seekして正確に読み直します。それでもsequence�
 前frameを保持し、desync counterを増やします。
 
 frame type 0はnormal、1はfade-in、2はfade-out、3はscroll controlです。
-Type 1と2はupdate数0かつlist bit clearが必須です。Name tableは変えず、inline image
-からCRAMの64 word全てを入れ替えます。Audio decodeとcold-run suffixは続くため、
-static fade中に将来patternをprefetchできます。2つのfade方向のplayer操作は同じで、
+Type 1と2はinline imageからCRAMの64 word全てを入れ替えます。続けてcompleted
+shadow-list itemを置き、fade中も未完了のreference準備を進められます。update数が
+非ゼロならlist bitが必須で、countにCRAMは含めません。countが0ならbitmapもlistも
+不要です。AudioはCRAMとupdateごとの4 byteの直後から始まります。Pattern転送は
+通常どおり直前表示を保護し、更新したname tableとCRAMを一緒にpublishします。
+Audio decodeとcold-run suffixも続くため、static fade中に将来patternをprefetchできます。2つのfade方向のplayer操作は同じで、
 tagはencoderが検出した方向をvalidationとanalysisのために保存します。
 
 Type 3はcompleted-list bitと`FEATURE_SCROLL`が必須です。Item数は先頭のposition

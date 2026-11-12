@@ -100,14 +100,11 @@ def control_block_lengths(
         shadow_updates.FRAME_FADE_OUT,
     ))
     scroll = types == shadow_updates.FRAME_SCROLL
-    if np.any(fade & (n_upd != 0)):
-        frame = int(np.flatnonzero(fade & (n_upd != 0))[0])
-        raise ValueError(f"fade frame {frame} carries shadow updates")
-    if np.any(fade & use_lists):
-        frame = int(np.flatnonzero(fade & use_lists)[0])
-        raise ValueError(f"fade frame {frame} uses a shadow update list")
+    fade_updates = fade & (n_upd != 0)
     if update_lists is None:
-        use_lists = use_lists | scroll
+        use_lists = use_lists | scroll | fade_updates
+    elif np.any(fade_updates & ~use_lists):
+        raise ValueError("fade shadow updates require a list")
     elif np.any(scroll & ~use_lists):
         frame = int(np.flatnonzero(scroll & ~use_lists)[0])
         raise ValueError(f"scroll frame {frame} requires a shadow update list")
@@ -117,7 +114,7 @@ def control_block_lengths(
         shadow_updates.aligned_bitmap_bytes(cells)
         + n_upd * shadow_updates.SHADOW_ENTRY_BYTES,
     )
-    update_bytes = np.where(fade, 0, update_bytes)
+    update_bytes = np.where(fade & ~use_lists, 0, update_bytes)
     inline_cram = fade.astype(np.int64) * shadow_updates.INLINE_CRAM_BYTES
     scroll_position = (
         scroll.astype(np.int64) * shadow_updates.SCROLL_POSITION_BYTES)
@@ -317,19 +314,19 @@ def select_shadow_update_lists(
         )
         for index, frame in enumerate(frames)
     )
-    forced_lists = scroll.copy()
     fade = np.isin(types, (
         shadow_updates.FRAME_FADE_IN,
         shadow_updates.FRAME_FADE_OUT,
     ))
+    forced_lists = scroll | (fade & (n_upd != 0))
     legacy_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
         update_lists=forced_lists, frame_types=types)
-    # Fade controls are update-free and may never carry a list, so they are
-    # excluded from both the exploratory all-list estimate and eligibility.
+    # Fade updates require lists; only ordinary controls choose an optional
+    # list by its CPU/sector tradeoff. Empty fades retain their compact form.
     all_list_lengths = control_block_lengths(
         n_upd, n_runs, cells=cells, audio_frame_bytes=audio_frame_bytes,
-        update_lists=~fade, frame_types=types)
+        update_lists=~fade | forced_lists, frame_types=types)
     eligible = np.asarray([
         bool(forced_lists[index]) or (
         index > 0 and not bool(fade[index]) and cost.saved_cycles > 0

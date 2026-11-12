@@ -543,10 +543,6 @@ def resolve(log, POOL, mode="lru"):
             entries.append((int(pal) << 13) | (BASE + slot))
             colds.append(cold)
             n_upd[i] += 1
-        if (shadow_updates.has_inline_cram(int(frame_types[i]))
-                and n_upd[i] != 0):
-            raise SystemExit(
-                f"pack: fade frame {i} carries {int(n_upd[i])} name updates")
         Plist.extend(pack_key(fr[index][2]) for index in transfer_order)
         for index in transfer_order:
             physical_patterns[results[index][0]] = fr[index][2]
@@ -1153,8 +1149,6 @@ def build_control(
         body += struct.pack(">H", i & 0xFFFF)
         use_list = bool(update_lists[i])
         frame_type = int(frame_types[i])
-        if shadow_updates.has_inline_cram(frame_type) and use_list:
-            raise ValueError(f"fade frame {i} cannot use a shadow update list")
         body += struct.pack(">H", shadow_updates.encode_count(
             n_upd[i], use_list, frame_type))
         if shadow_updates.has_scroll_position(frame_type):
@@ -1166,18 +1160,15 @@ def build_control(
                 e, source if cold else pattern_supply.SOURCE_PRG)
             sourced_entries.append((0x8000 if cold else 0) | sourced_entry)
         if shadow_updates.has_inline_cram(frame_type):
-            if cells or entries or colds:
-                raise ValueError(
-                    f"fade frame {i} must not carry name-table updates")
             body += pals_to_bytes_128(frame_cram[i])
-        elif use_list:
+        if use_list:
             list_cells = (
                 shadow_updates.SCROLL_PLANE_CELLS
                 if shadow_updates.has_scroll_position(frame_type)
                 else C_CELLS)
             body += shadow_updates.build_update_list(
                 cells, sourced_entries, list_cells)
-        else:
+        elif not shadow_updates.has_inline_cram(frame_type):
             body += build_bitmap(cells)
             # CAVC keeps the 16-bit entry array word-aligned even when
             # ceil(cells/8) is odd (for example H40 40x19 = 95 bytes).
@@ -1221,9 +1212,10 @@ def control_audio_bounds(block):
     n_upd, use_list = shadow_updates.decode_count(raw_count)
     frame_type = shadow_updates.decode_frame_type(raw_count)
     if shadow_updates.has_inline_cram(frame_type):
-        if n_upd or use_list:
-            raise ValueError("fade control carries shadow updates")
-        update_bytes = shadow_updates.INLINE_CRAM_BYTES
+        if n_upd and not use_list:
+            raise ValueError("fade shadow updates require a list")
+        update_bytes = (shadow_updates.INLINE_CRAM_BYTES
+                        + n_upd * shadow_updates.LIST_ITEM_BYTES)
     else:
         if shadow_updates.has_scroll_position(frame_type) and not use_list:
             raise ValueError("scroll control does not use an update list")
@@ -1464,16 +1456,15 @@ def decode_verify(
             scroll_state = None
 
         if shadow_updates.has_inline_cram(frame_type):
-            if nupd or use_list:
-                raise ValueError(f"fade frame {i} carries shadow updates")
+            if nupd and not use_list:
+                raise ValueError("fade shadow updates require a list")
             inline_end = p + shadow_updates.INLINE_CRAM_BYTES
             active_cram = bytes_128_to_pals(blk[p:inline_end])
             p = inline_end
             if not np.array_equal(active_cram, expected_frame_cram[i]):
                 raise ValueError(
                     f"frame {i}: packed inline CRAM differs from simulation")
-            update_items = []
-        elif use_list:
+        if use_list:
             update_items = []
             update_cells = (
                 shadow_updates.SCROLL_PLANE_CELLS
@@ -1484,6 +1475,8 @@ def decode_verify(
                 if offset & 1 or offset >= update_cells * 2:
                     raise ValueError(f"invalid shadow offset {offset} in frame {i}")
                 update_items.append((offset // 2, ent))
+        elif shadow_updates.has_inline_cram(frame_type):
+            update_items = []
         else:
             bmbytes = (C_CELLS + 7) // 8
             bm = blk[p:p + bmbytes]; p += bmbytes
@@ -2291,11 +2284,12 @@ def main():
         shadow_updates.FRAME_FADE_IN,
         shadow_updates.FRAME_FADE_OUT,
     ))
-    if np.any(update_lists & fade_controls):
+    missing_fade_lists = fade_controls & (n_upd != 0) & ~update_lists
+    if np.any(missing_fade_lists):
         frame = int(np.flatnonzero(
-            update_lists & fade_controls)[0])
+            missing_fade_lists)[0])
         raise SystemExit(
-            f"pack: fade frame {frame} cannot use a shadow update list")
+            f"pack: fade frame {frame} requires a shadow update list")
     missing_scroll_lists = (
         (frame_types == shadow_updates.FRAME_SCROLL) & ~update_lists)
     if np.any(missing_scroll_lists):

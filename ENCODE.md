@@ -17,8 +17,18 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Palette** | Divide the movie into palette segments, train each segment's CRAM palettes, and automatically detect spatially static shots with a black-bounded fade on one or both sides, without source-time inputs. |
 | **Quantize** | Convert every frame into palette assignments and indexed 8x8 patterns; automatically detect source-wide hardware-scroll segments without source-time inputs, select the adopted scroll windows and their per-frame plane states, and quantize each window's world-mosaic guard edges; selected fades freeze one exact reference image and derive their inline CRAM steps. |
 | **Forecast** | Calculate one-pass future demand, physical delivery limits, quality reserves, boot-preload use split between the frame-0 inline staging area and the boot-VRAM sidecar backside, and mandatory reference-prefetch room for one-sided fade-outs. |
-| **Decide** | Select each frame's exact or reused patterns, keep the preceding display's slots live until the final name-table DMA and reject choices whose temporary old-plus-new pattern union would overflow VRAM, allocate slots, retain resident one-sided fade references and collect their cold preloads into a contiguous edge block, catch up any reclaimed entries, reserve each adopted scroll frame's guard-edge supply and clamp its cold and Prg ceilings to the single-run limit, assign pattern sources, and commit the physical budget. A fade preparation deadline that cannot complete demotes its shot to ordinary frames and restarts the encode without that fade. |
+| **Decide** | Select each frame's exact or reused patterns, keep the preceding display's slots live until the final name-table DMA and reject choices whose temporary old-plus-new pattern union would overflow VRAM, allocate slots, retain resident one-sided fade references and collect their cold preloads into a contiguous edge block, catch up any reclaimed entries, reserve each adopted scroll frame's guard-edge supply and clamp its cold and Prg ceilings to the single-run limit, assign pattern sources, and commit the physical budget. Unfinished fade-reference updates continue within each following frame's physical limits while CRAM follows its planned brightness; current-reference preparation takes priority over future fade prefetch. Completed preprocessing and decision prefixes are retained. |
 | **Finalize** | Plan the shadow update lists over the exact shared-sector pack route, add each scroll frame's rolling-plane name-table words, verify the complete physical schedule, and write the numeric traces and decision log. |
+
+Fade preparation records a `fade-preparation` TSV in `logs/` and the same
+records in `decisions.pkl`. Remaining cells and RGB errors describe the final
+committed display against the ideal quantized reference under that frame's
+CRAM; they are not source-image quality scores. Decision-pass blockers and
+visible/total limits explain admission, while `final_*` fields include later
+upgrades and prefetch work. A black frame can have many unfinished cells with
+zero RGB error. Progressive updates cost four control bytes per cell and can
+be visible once the fade brightens; completion does not prove acceptable
+quality. Keep raster, cadence, cold cap and palette policy fixed when comparing.
 
 Packing separately rejects allocation tearing and independently checks decoded
 cold destinations against the preceding display before applying them. Only
@@ -183,8 +193,16 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Palette** | 映像をパレット区間に分け、区間ごとのCRAMパレットを学習し、sourceのtime指定なしで片側または両側が黒に接するfadeのうち、空間的に静止したshotを自動検出します。 |
 | **Quantize** | 全フレームをパレット割り当てとインデックス形式の8x8パターンへ変換し、sourceのtime指定なしでハードウェアscroll区間を自動検出して採用windowと各frameのplane状態を決め、windowごとのworld-mosaic guard辺を量子化します。選択したfadeは1枚の正確なreference imageを固定してinline CRAMの段階を決めます。 |
 | **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用（frame 0のinline staging領域とboot-VRAM sidecarのbacksideへの振り分けを含む）、片側fade-outに必須のreference prefetch容量を1パスで計算します。 |
-| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、最後のname-table DMAまで直前表示のslotを維持し、一時的な旧表示と新表示のpattern和集合がVRAMを越える選択を退けてslotを割り当て、片側fade referenceのresident分を維持しながらcold preloadを端の連続blockへ集約して回収されたentryを取り戻し、採用したscroll frameではguard辺の供給分を予約して単独runを前提にcoldとPrgの上限をクランプし、パターン供給元と物理予算を確定します。準備deadlineを完了できないfadeはそのshotを通常frameへ降格し、そのfadeを除いてencodeを再実行します。 |
+| **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、最後のname-table DMAまで直前表示のslotを維持し、一時的な旧表示と新表示のpattern和集合がVRAMを越える選択を退けてslotを割り当て、片側fade referenceのresident分を維持しながらcold preloadを端の連続blockへ集約して回収されたentryを取り戻し、採用したscroll frameではguard辺の供給分を予約して単独runを前提にcoldとPrgの上限をクランプし、パターン供給元と物理予算を確定します。fade referenceの準備がdeadlineに間に合わなくても、CRAMは予定の明るさへ進めながら、次frame以降の物理上限内で残りの更新を続けます。現在のreference準備は後続fadeのprefetchより優先し、完了済みの前処理とDecideのprefixは保持します。 |
 | **Finalize** | packと同一の共有sector経路でshadow update listを計画し、scroll frameのrolling plane分のname-table wordを加算したうえで、全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
+
+Fade準備は`logs/`の`fade-preparation` TSVと`decisions.pkl`に同じ診断を記録します。
+未完成cellとRGB誤差は、そのframeのCRAMで描く理想の量子化referenceに対する最終
+確定表示の値であり、source画像との画質指標ではありません。Decide時点の阻害要因と
+visible/total上限は更新可否を示し、`final_*`には後続のupgradeとprefetchも含めます。
+黒いframeでは未完成cellが多くてもRGB誤差は0になりえます。段階的更新はcellごとに
+4 byteのcontrolを使い、明るくなると更新が見える場合があります。完走だけでは画質を
+許容できるとは判断できません。比較時はraster、cadence、cold cap、palette policyを固定します。
 
 Pack時にはallocation tearingを拒否し、cold destinationを実際にdecodeして直前表示と
 独立に照合してから反映します。旧表示だけが使うpatternを回収できるのは、PLAYER.mdの

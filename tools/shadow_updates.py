@@ -70,10 +70,8 @@ def encode_count(
     if kind not in (
             FRAME_NORMAL, FRAME_FADE_IN, FRAME_FADE_OUT, FRAME_SCROLL):
         raise ValueError(f"unsupported frame type: {frame_type}")
-    if has_inline_cram(kind) and value:
-        raise ValueError("fade frames cannot carry shadow updates")
-    if has_inline_cram(kind) and use_list:
-        raise ValueError("fade frames cannot use a shadow update list")
+    if has_inline_cram(kind) and value and not use_list:
+        raise ValueError("fade shadow updates require a list")
     if kind == FRAME_SCROLL and not use_list:
         raise ValueError("scroll frames require a shadow update list")
     # A scroll control stores the absolute HScroll/VScroll pair as its first

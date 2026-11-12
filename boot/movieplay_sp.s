@@ -2143,7 +2143,7 @@ fc_copy_even:
 
 /* Expand one linear control block into the Main-facing Word-RAM bank.
    block = >H total_len >H frame_seq >H type|n_upd
-           normal: bitmap n_upd*(entry); fade: 128-byte inline CRAM
+           normal: bitmap n_upd*(entry); fade: 128-byte CRAM + optional list
            h_audio_bytes audio [even pad]   (MOVIE.md 準拠)
    O_LOADS v2 interleaves one 22-byte VDP-ready record per run with only that
    run's inline Prg payload. Wr/Dic records point at persistent storage. Main
@@ -2175,10 +2175,17 @@ expand_frame:
 1:
 ef_bm:
 .equ ISO_DUMP_OFF, 0
+	move.w	d7, d0
+	andi.w	#FRAME_TYPE_MASK, d0
+	beq.s	1f
+	cmpi.w	#FRAME_TYPE_MASK, d0		/* scroll has its own position/list */
+	beq.s	1f
+	adda.w	#INLINE_CRAM_BYTES, a0
+	/* Fade entries follow CRAM; empty fades need no bitmap. */
+	bra.s	ef_list_audio
+1:
 	btst	#SHADOW_UPDATE_LIST_BIT, d7
 	bne.s	ef_list_audio
-	cmpi.w	#FRAME_TYPE_FADE_IN, d7		/* first non-normal type */
-	bhs.s	ef_inline_audio
 	/* CAVC retains the word-aligned 16-bit entry array after an odd-sized bitmap. The
 	   specialized player folds that alignment into the immediate and adds no
 	   runtime branch or code-size cost to the resident Sub image. */
@@ -2202,13 +2209,10 @@ ef_bm:
 	add.w	d0, d0				/* two bytes per entry */
 	adda.w	d0, a5				/* audio start */
 	bra.s	ef_audio_positioned
-ef_inline_audio:
-	moveq	#INLINE_CRAM_BYTES/4, d0		/* shared list offset path: 32*4=128 */
-	bra.s	ef_list_offset
 ef_list_audio:
 	move.w	d5, d0
 ef_list_offset:
-	movea.l	a0, a5				/* completed pairs or complete inline CRAM */
+	movea.l	a0, a5				/* completed pairs (after CRAM for a fade) */
 	lsl.w	#2, d0				/* four bytes per list item */
 	adda.w	d0, a5				/* audio start */
 ef_audio_positioned:

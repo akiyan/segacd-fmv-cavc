@@ -29,6 +29,7 @@
 - 音声: 22.05kHz mono IMA ADPCM。Plane B オーバーレイは無し。
 """
 import json
+import csv
 import os
 import sys
 import time
@@ -51,6 +52,7 @@ CONFIG_PROFILE = consume_config_arg(
     sys.argv, required=__name__ == "__main__")
 import av_config  # noqa: E402
 import fade_frames  # noqa: E402
+import analysis_logs  # noqa: E402
 import ima_adpcm  # noqa: E402
 import palette_segments  # noqa: E402
 import pattern_supply  # noqa: E402
@@ -1322,12 +1324,10 @@ def precompute_quant(frames, seg_pals, frame_seg, frame_cache=None,
 
 
 class FadeDeadlineInfeasible(SystemExit):
-    """A fade preparation deadline could not complete in the decision replay.
+    """Compatibility exception for external callers of older encoder runners.
 
-    The runner treats this as a re-plan request: the failed shot's anchor is
-    demoted and the encode restarts without that fade. Deriving from
-    SystemExit keeps a non-retrying caller failing loudly with the full
-    diagnostics.
+    Current encoding carries unfinished preparation forward and never raises
+    this exception. Explicit comparison callers can still demote a shot.
     """
 
     def __init__(self, anchor, message):
@@ -2088,7 +2088,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
 
     # A black anchor is an ordinary full-refresh frame whose hidden indexed
     # image is the following shot's bright reference.  Every fade frame then
-    # reuses that exact image and changes only CRAM.  P0/index15 remains
+    # targets that exact image while CRAM advances. Unfinished updates may
+    # continue after the black anchor. P0/index15 remains
     # reserved for DEBUG text, so fade references remap its movie pixels to the
     # nearest other P0 colour before any frame is frozen to the reference.
     fade_references = {}
@@ -2102,14 +2103,9 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             np.asarray(Q_assign[reference], np.int8).copy(),
             np.asarray(Q_detail[reference]).copy(),
         )
-    # Fade feasibility is proved by the decision replay itself: when a
-    # preparation deadline cannot complete, the runner re-plans with that
-    # shot's anchor demoted to ordinary frames. Static estimates cannot
-    # separate a survivable window from a churning one (a moving detailed
-    # shot keeps reclaiming the advance pins), so no planning-side estimator
-    # decides adoption. The palette segment tables keep the demoted shot's
-    # boundaries; its entry palette is unscaled, so ordinary frames simply
-    # play through them.
+    # Explicit shot demotion remains available to comparison callers. Normal
+    # encoding carries unfinished reference work forward through the fade;
+    # it never restarts preprocessing or the committed decision prefix.
     demoted_fade_shots = [
         shot for shot in fade_layout.shots
         if int(shot.anchor) in demoted_fade_anchors]
@@ -2121,8 +2117,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             print(
                 "  fade demotion: "
                 f"anchor=f{int(shot.anchor)} kind={shot.kind} "
-                "(decision replay proved its preparation deadline "
-                "infeasible)",
+                "(explicit comparison override)",
                 flush=True,
             )
         (fade_reference_frames, fade_desired_scales, fade_phases,
@@ -2601,14 +2596,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             len(state.guard_cells),
         )
     maximum_control_blocks = stream_schedule.control_block_lengths(
-        np.where(
-            np.isin(control_frame_types, (
-                shadow_updates.FRAME_FADE_IN,
-                shadow_updates.FRAME_FADE_OUT,
-            )),
-            0,
-            C_CELLS,
-        ).astype(np.int64),
+        np.full(n, C_CELLS, np.int64),
         frame_cold_caps,
         cells=C_CELLS,
         audio_frame_bytes=AUDIO_CONTROL_BYTES,
@@ -2830,11 +2818,31 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         _gc.collect()
         _gc.disable()
 
-    fade_prepare_frames = frozenset(
-        int(frame) for frame in fade_layout.preparation_frames)
     fade_prepare_deadlines = frozenset(
         int(frame) for frame in fade_layout.preparation_deadlines)
     fade_prefetch_slots = {}
+    fade_preparation_log = []
+    fade_owner = np.full(n, -1, np.int32)
+    for shot_index, shot in enumerate(fade_layout.shots):
+        fade_owner[shot.anchor:shot.display_end + 1] = shot_index
+    fade_diagnostic_path = (analysis_logs.unique_tsv_path(
+        CONFIG_PROFILE, kind="fade-preparation")
+        if CONFIG_PROFILE is not None else None)
+    fade_diagnostic_fields = (
+        "frame", "anchor", "deadline", "remaining", "remaining_cells",
+        "decision_remaining", "final_cold", "final_prg", "final_control_bytes",
+        "rgb_mae", "rgb_max_error", "cold", "cold_total_limit",
+        "cold_visible_limit", "prg", "prg_total_limit", "prg_visible_limit",
+        "future_reserved_patterns", "work_bytes", "work_limit_bytes",
+        "control_bytes", "control_limit_bytes", "guard_used", "guard_capacity",
+        "blocked_funded", "blocked_control", "blocked_transition",
+        "blocked_prg_source", "blocked_cold_limit",
+    )
+    if fade_diagnostic_path is not None:
+        with fade_diagnostic_path.open("w", encoding="utf-8", newline="") as target:
+            csv.DictWriter(target, fade_diagnostic_fields, delimiter="\t",
+                           lineterminator="\n").writeheader()
+        print(f"fade preparation diagnostics: {fade_diagnostic_path}", flush=True)
     cur_pals = np.asarray(segment_entry_cram[0], np.uint8).copy()
     for i in range(n):
         if _loop_profile:
@@ -2844,7 +2852,9 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         scroll_state = scroll_states.get(i) if bool(scroll_active[i]) else None
         update_entry_bytes = (
             shadow_updates.LIST_ITEM_BYTES
-            if scroll_state is not None else NAME_BYTES)
+            if (scroll_state is not None
+                or shadow_updates.has_inline_cram(int(frame_types[i])))
+            else NAME_BYTES)
         if scroll_state is not None:
             if previous_scroll_state is None:
                 if not allocator_expanded:
@@ -2926,12 +2936,6 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         pal_changed = assign.astype(np.int16) != cur_pal
         changed = key_changed | pal_changed
 
-        if (int(frame_types[i]) != shadow_updates.FRAME_NORMAL
-                and changed.any()):
-            raise SystemExit(
-                f"automatic fade frame {i} was not fully prepared on its "
-                f"black anchor ({int(changed.sum())} cells still differ)")
-
         diff = np.abs(plain_rgb.astype(np.int32) - cur_rgb.astype(np.int32)).sum(axis=(1, 2, 3))
         detail_norm = detail / (detail.max() + 1e-6)
         # Miss/Flbkだけが前フレームまでに積んだ、距離加重圧力で
@@ -2981,9 +2985,15 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         else:
             decision_budget = frame_cd
         frame_total_budget = int(decision_budget)
-        frame_fade_prefetch_patterns = int(
-            fade_prefetch_plan.get(i, (None, None, None, None, 0))[4])
-        frame_fade_prefetch_bytes = int(fade_prefetch_demand[i])
+        # Complete the current reference before reserving scarce cold/Prg
+        # slots for a later shot. Later prefetch may still use actual spare
+        # capacity below, and an unfinished future reference can carry forward.
+        preparing_reference = int(fade_layout.reference_frames[i]) >= 0
+        current_reference_pending = preparing_reference and bool(changed.any())
+        frame_fade_prefetch_patterns = (0 if current_reference_pending else int(
+            fade_prefetch_plan.get(i, (None, None, None, None, 0))[4]))
+        frame_fade_prefetch_bytes = (0 if current_reference_pending else int(
+            fade_prefetch_demand[i]))
         decision_budget = max(
             0, frame_total_budget - frame_fade_prefetch_bytes)
         frame_visible_decision_budget = int(decision_budget)
@@ -3614,12 +3624,11 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         if i == 0:
             for c in range(C_CELLS):
                 commit_frame0_exact(c)
-        elif i in fade_prepare_frames and MIDFAR_ON:
-            # The hidden reference can be larger than one frame's cold-load
-            # cap.  Spend every black frame in the detected run preparing it,
-            # and require exact completion only on that run's final frame.
-            # Retry blocked cells because a later cell can load a shared key
-            # that makes an earlier name-only update affordable.
+        elif preparing_reference and MIDFAR_ON:
+            # Keep every exact reference update within the current physical
+            # limits, including during visible CRAM steps. Never treat the
+            # unfinished reference as complete or replay the decision prefix.
+            # A later shared-key load may make an earlier name update fit.
             resident_before = sum(
                 1 for c in order
                 if alloc.is_resident(plain_keys[c]))
@@ -3645,57 +3654,6 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                     f"remaining={len(pending)}",
                     flush=True,
                 )
-            if pending and i in fade_prepare_deadlines:
-                c = int(pending[0])
-                blocked = {
-                    "funded": 0, "control": 0, "transition": 0,
-                    "prg_source": 0, "cold_limit": 0,
-                }
-                for probe in pending:
-                    key = plain_keys[probe]
-                    source = preload_source(key)
-                    cost = update_entry_bytes + (
-                        0 if source != pattern_supply.SOURCE_PRG
-                        else PATTERN_BYTES)
-                    if reserved_variable_spend(
-                            spent_tiles + cost,
-                            cold_spent + 1) > decision_budget:
-                        blocked["funded"] += 1
-                    ctrl = (
-                        int(body_fixed_control_bytes[i])
-                        + (name_recs + 1) * update_entry_bytes
-                        + (cold_spent + 1)
-                        * stream_schedule.RUN_DESCRIPTOR_BYTES)
-                    if ctrl > visible_control_block_limit:
-                        blocked["control"] += 1
-                    if not transition_guard.fits(probe, key):
-                        blocked["transition"] += 1
-                    if not prg_source_fits(source, probe):
-                        blocked["prg_source"] += 1
-                    if (cold_limit_active
-                            and cold_spent >= visible_frame_max_cold):
-                        blocked["cold_limit"] += 1
-                deadline_shot = next(
-                    shot for shot in fade_layout.shots
-                    if int(shot.preparation_end) == i)
-                raise FadeDeadlineInfeasible(
-                    int(deadline_shot.anchor),
-                    f"automatic fade preparation deadline {i} cannot "
-                    f"prepare exact cell {c} within its frozen "
-                    f"quality/cold limits "
-                    f"(remaining={len(pending)}, "
-                    f"cold={cold_spent}/{frame_max_cold}, "
-                    f"Prg={prg_spent}/{frame_max_prg}, "
-                    f"work={current_reserved_spend()}/{decision_budget}B, "
-                    f"control={int(body_fixed_control_bytes[i]) + name_recs * update_entry_bytes + cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES}/"
-                    f"{frame_control_block_limit}B; "
-                    f"blocked_by funded={blocked['funded']} "
-                    f"control={blocked['control']} "
-                    f"transition={blocked['transition']} "
-                    f"prg_source={blocked['prg_source']} "
-                    f"cold_limit={blocked['cold_limit']}; "
-                    f"guard_used={transition_guard.used}/"
-                    f"{transition_guard.capacity})")
         elif MIDFAR_ON:
             # Phase 1: establish every free/cheap result without allowing a
             # cold load to consume a later cell's fallback entry.
@@ -3723,6 +3681,46 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         else:
             for c in order:
                 commit_plain(c)
+        if preparing_reference:
+            remaining = [c for c in range(C_CELLS)
+                         if cur_key[c] != plain_keys[c]
+                         or int(cur_pal[c]) != int(assign[c])]
+            blocked = dict.fromkeys(("funded", "control", "transition",
+                                     "prg_source", "cold_limit"), 0)
+            for probe in remaining:
+                key = plain_keys[probe]
+                cold = int(not (alloc.is_resident(key) or key in loaded_keys))
+                source = preload_source(key) if cold else pattern_supply.SOURCE_PRG
+                cost = update_entry_bytes + (
+                    PATTERN_BYTES if cold and source == pattern_supply.SOURCE_PRG else 0)
+                blocked["funded"] += int(reserved_variable_spend(
+                    spent_tiles + cost, cold_spent + cold) > decision_budget)
+                blocked["control"] += int(
+                    int(body_fixed_control_bytes[i])
+                    + (name_recs + 1) * update_entry_bytes
+                    + (cold_spent + cold) * stream_schedule.RUN_DESCRIPTOR_BYTES
+                    > visible_control_block_limit)
+                blocked["transition"] += int(not transition_guard.fits(probe, key))
+                blocked["prg_source"] += int(bool(cold) and not prg_source_fits(source, probe))
+                blocked["cold_limit"] += int(bool(cold) and cold_limit_active
+                                             and cold_spent >= visible_frame_max_cold)
+            shot = fade_layout.shots[int(fade_owner[i])]
+            diagnostic = dict(
+                frame=i, anchor=int(shot.anchor), deadline=int(shot.preparation_end),
+                decision_remaining=len(remaining),
+                cold=cold_spent, cold_total_limit=frame_max_cold,
+                cold_visible_limit=visible_frame_max_cold,
+                prg=prg_spent, prg_total_limit=frame_max_prg,
+                prg_visible_limit=visible_frame_max_prg,
+                future_reserved_patterns=frame_fade_prefetch_patterns,
+                work_bytes=current_reserved_spend(), work_limit_bytes=decision_budget,
+                control_bytes=int(body_fixed_control_bytes[i])
+                    + name_recs * update_entry_bytes
+                    + cold_spent * stream_schedule.RUN_DESCRIPTOR_BYTES,
+                control_limit_bytes=visible_control_block_limit,
+                guard_used=transition_guard.used, guard_capacity=transition_guard.capacity,
+                **{f"blocked_{key}": value for key, value in blocked.items()},
+            )
         if _loop_profile:
             _lp_t = _lp_mark("decision_commit", _lp_t, _lp_frame)
 
@@ -4430,6 +4428,29 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         # CRAMエミュ: このフレームの全更新を反映した最終表示を、現区間パレットで引き直す。
         # プレビュー/カテゴリマップ/miss繰越は全てこの実表示色(=実機と同じ)で描く。
         cur_rgb[:] = render_cells(disp_idx, disp_pal, cur_pals)
+        if preparing_reference:
+            # Blockers and visible limits describe the exact decision pass;
+            # remaining cells and RGB describe the final committed display,
+            # after upgrades and prefetch catch-up have also been applied.
+            remaining = [c for c in range(C_CELLS)
+                         if cur_key[c] != plain_keys[c]
+                         or int(cur_pal[c]) != int(assign[c])]
+            error = np.abs(plain_rgb.astype(np.int16) - cur_rgb.astype(np.int16))
+            diagnostic.update(
+                remaining=len(remaining), remaining_cells=remaining,
+                rgb_mae=float(error.mean()), rgb_max_error=int(error.max()),
+                final_cold=dma_tiles, final_prg=prg_used,
+                final_control_bytes=exact_control_block_bytes)
+            fade_preparation_log.append(diagnostic)
+            if fade_diagnostic_path is not None:
+                with fade_diagnostic_path.open("a", encoding="utf-8", newline="") as target:
+                    csv.DictWriter(target, fade_diagnostic_fields, delimiter="\t",
+                                   lineterminator="\n").writerow({
+                        **diagnostic, "remaining_cells": ",".join(map(str, remaining))})
+            if remaining and i in fade_prepare_deadlines:
+                summary = {key: value for key, value in diagnostic.items()
+                           if key != "remaining_cells"}
+                print(f"  fade preparation continues: {summary}", flush=True)
 
         # 実機決定ログ: このフレームで実際に書き換えたセルの (cell, パレット, 表示パターンkey)。
         # keyは64バイト(idx 1..15)を内包=pack_streamがそこから32Bパターンを復元できる。
@@ -4665,7 +4686,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         np.asarray(body_fixed_control_bytes, np.int64)
         + np.asarray(name_records_log, np.int64)
         * np.where(
-            control_frame_types == shadow_updates.FRAME_SCROLL,
+            control_frame_types != shadow_updates.FRAME_NORMAL,
             shadow_updates.LIST_ITEM_BYTES,
             NAME_BYTES,
         )
@@ -5233,10 +5254,14 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         prg_raw_flags.extend(
             False for item in frame_prefetch if bool(item[1]))
 
-    prg_flag_cursor = (
+    if len(prg_raw_flags) != int(np.sum(prg_loads)):
+        raise AssertionError("Prg raw-funding trace differs from physical loads")
+    # The boot prebuffer occupies whole sectors. A short stream may fit
+    # entirely in that preload; its final sector padding has no funding flag.
+    prg_flag_cursor = min(len(prg_raw_flags), (
         int(transfer_tiles_log[0])
         + int(physical_schedule["prebuf_pat"])
-    )
+    ))
     word_flag_cursors = [
         (
             int(ring_plan.boot_patterns[parity])
@@ -5620,6 +5645,9 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             "fade": {
                 "schema_version": 1,
                 "automatic": True,
+                "preparation_log": fade_preparation_log,
+                "preparation_tsv": (str(fade_diagnostic_path)
+                                    if fade_diagnostic_path is not None else None),
                 "frame_types": np.asarray(frame_types, np.uint8),
                 "frame_cram": np.asarray(frame_cram, np.uint8),
                 "active_frame_cram": np.asarray(
@@ -6120,25 +6148,8 @@ if __name__ == "__main__":
         _standalone_completed = False
         try:
             if _standalone_lease is None or not _standalone_lease.reused:
-                _demoted_fade_anchors = set()
-                while True:
-                    try:
-                        with ArrayStorage() as _arrays:
-                            main(demoted_fade_anchors=frozenset(
-                                _demoted_fade_anchors), arrays=_arrays)
-                        break
-                    except FadeDeadlineInfeasible as exc:
-                        if exc.anchor in _demoted_fade_anchors:
-                            raise
-                        _demoted_fade_anchors.add(exc.anchor)
-                        import gc as _retry_gc
-                        _retry_gc.enable()
-                        print(str(exc), flush=True)
-                        print(
-                            f"fade preparation infeasible at f{exc.anchor}; "
-                            "re-planning without that fade",
-                            flush=True,
-                        )
+                with ArrayStorage() as _arrays:
+                    main(arrays=_arrays)
                 _standalone_completed = True
             else:
                 print(
