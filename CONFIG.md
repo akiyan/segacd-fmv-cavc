@@ -216,27 +216,6 @@ allocation and requires realized cold to remain within each frame's own cap.
 Frame 0 is exempt because the untimed BODY arm installs it before timed
 playback.
 
-### Optional run cap
-
-`[encoder].run_cap` is an optional positive integer limiting packed pattern
-transfer records per timed frame independently of `cold_cap`. Omission keeps
-the existing behavior; no numeric default is imposed on profiles. Frame 0 is
-untimed and exempt. The limit includes VRAM gaps, source switches, DicBuf block
-boundaries, the final-only tail boundary, prefetch, and WordBuf ring-end splits;
-it does not count additional DMA calls caused by runtime VBlank-budget splits.
-
-The native encoder trials cell-ordered allocation before accepting an optional
-update. A rejected exact update can still use resident approximation. Admission
-reserves one record for a later WordBuf ring-end split and conservatively
-reserves each mandatory fade-prefetch pattern as a possible run. Final source
-planning and the packer's independent run reconstruction must both satisfy the
-configured cap. Adopted hardware-scroll frames are currently unsupported with
-this option and fail explicitly. A failed fade-preparation deadline also stops
-the experiment instead of automatically restarting the whole encode.
-This experimental control can preserve many
-contiguous loads while reducing fragmented updates; it is not a playback deadline
-guarantee. The Sonic comparison profile uses `cold_cap = 240`, `run_cap = 40`.
-
 ## Scroll adoption
 
 Hardware-scroll adoption is fully automatic: there is no profile key and no
@@ -866,24 +845,6 @@ qualificationが前提としたblank時間予算をそのままでは超過し�
 simとpackerは `tools/tile_alloc.py` を共有します。packerは固定済みallocationを再生し、
 realized coldが各フレーム自身のcap内にあることを要求します。frame 0はtimed playback前に
 untimed BODY armが構築するため対象外です。
-
-### 任意のrun cap
-
-`[encoder].run_cap`はtimed frameごとのpattern転送record数を、`cold_cap`とは独立に
-制限する任意の正整数です。省略時は従来動作を維持し、profileに数値の既定値を
-強制しません。時間制限のないframe 0は対象外です。VRAMの不連続、供給元の切り替え、
-DicBuf block境界、最終専用領域の境界、prefetch、WordBuf ring末尾での分割を数えます。
-再生時のVBlank budget境界による追加DMA呼び出しは数えません。
-
-Native encoderは任意の更新を採用する前に、cell順のallocationを試算します。
-正確更新を拒否してもresidentによる近似は選べます。後段のWordBuf ring末尾分割に
-1 recordを予約し、必須fade-prefetchは各patternを1 runとして安全側に予約します。
-最終供給計画とpackerによる独立したrun再構築の両方が設定capを満たす必要があります。
-このoptionと採用済みhardware-scroll frameの併用は現在未対応で、明示的に失敗します。
-fade準備のdeadlineに失敗した場合も全編を自動再実行せず、実験を停止します。
-連続した大量のloadを維持しながら断片化した更新を抑える実験用の制御であり、
-再生deadlineを保証するものではありません。Sonic比較用profileは
-`cold_cap = 240`、`run_cap = 40`を使います。
 
 ## Scroll採用
 

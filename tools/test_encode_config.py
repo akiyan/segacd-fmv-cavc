@@ -161,22 +161,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                     ValueError, r"missing \[encoder\] keys: cold_cap"):
                 load_profile(path)
 
-    def test_run_cap_does_not_leak_to_an_uncapped_profile(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "run-cap.toml"
-            path.write_text(PROFILE.replace(
-                "cold_cap = 200", "cold_cap = 200\nrun_cap = 40"))
-            env = {}
-            apply_profile_env(load_profile(path), env)
-            self.assertEqual(env["CBRSIM_RUN_CAP"], "40")
-            path.write_text(PROFILE)
-            apply_profile_env(load_profile(path), env)
-            self.assertEqual(env["CBRSIM_RUN_CAP"], "0")
-            path.write_text(PROFILE.replace(
-                "cold_cap = 200", "cold_cap = 200\nrun_cap = 0"))
-            with self.assertRaisesRegex(ValueError, "run_cap must be a positive"):
-                load_profile(path)
-
     def test_profile_cold_cap_must_be_an_integer(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "invalid-cold-cap.toml"

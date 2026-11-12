@@ -67,8 +67,8 @@ intervals. Frame 0 and the terminal hold are excluded from that histogram.
 The Sonic transfer peak rises from 210 to 240 patterns (+14.3%); 44 timed
 frames actually reach 240. Its source, 288x200 raster, 30 fps, source-dither
 filter and palette policy are unchanged. The final-only tail carries 2,207
-patterns, with 13 old-only slot reclaims. The baseline profile remains at 210;
-the separate `sonic-jam-op-lat.toml` selects 240 explicitly.
+patterns, with 13 old-only slot reclaims. The current standard Sonic profile selects 230;
+the separate `sonic-jam-op-lat.toml` retains the 240 comparison setting.
 
 | Sonic encoder / cap | Req mean | Miss mean | Miss median | Miss p95 | Miss max |
 |---|---:|---:|---:|---:|---:|
@@ -85,3 +85,32 @@ The persistent local receipt is
 gate/trace receipts, capture paths, ISO hashes and per-loop counters. Matching
 before/after mixline layout receipts and the source TSVs are also in `logs/`.
 No hardware qualification or listening result is claimed by these checks.
+
+## Sonic cold cap 230 with p169
+
+The standard `sonic-jam-op.toml` profile uses cold cap 230. Matching source,
+raster, cadence, filters and palette settings were qualified with
+`sonic-jam-op-cold230.toml`: 2,714 frames, verified packing, and two complete
+loops in a 230-second native FFV1/FLAC capture. The source encode took 185.7
+seconds. The HUD gate passes with cadence/spill warnings; sector slip,
+control desync and audio resync remain zero in both loops.
+
+There are four irregular display intervals per loop, versus six with cold
+cap 240 on the same p169 player. Loop 1 is one VBlank late at new frames 2,
+1315 and 2713 and catches up at 1326. Loop 2 is late at 218, 1315 and 2713
+and catches up at 1326. Interior irregular intervals total two and three,
+respectively. The delay at 1377 disappears, but cadence is not uniform.
+
+The actual cold maximum is 230 and the packed run maximum is 86. Request
+mean is 613.96; Miss mean/median/p95/max are 86.21/44/287/526. At frame 1315,
+Miss rises from 23 to 41; at 1377, from 135 to 147. Aggregate Miss alone does
+not establish better picture quality.
+
+`harness/lat_transfer/summarize_cadence.py` compares complete 30 fps SIM/HUD
+loops using `--baseline-sim`, `--candidate-sim`, `--baseline-hud`,
+`--candidate-hud` and `--json`. It reports request/Miss distributions and
+long/short display intervals, excluding frame 0 and the terminal hold while
+retaining startup/end transitions. The matching HUD gate owns qualification.
+Local evidence is in `logs/sonic-cold230-experiment-20261112.json`,
+`logs/sonic-cold230-comparison-20261112.json` and
+`logs/sonic-cold230-p169-hud-20261112_gate.json`.

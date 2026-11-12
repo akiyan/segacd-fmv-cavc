@@ -1386,8 +1386,8 @@
 #       ordinary anchor's geometry state.
 date=20261112
 # e197: reduce infeasible control-sector reservations before projecting Prg limits.
-# e199: optional source-aware transfer-run admission without lowering cold cap.
-e=199
+# e200: restore cold-only admission and allocation.
+e=200
 # p160: blank the movie plane before replay boot-sidecar VRAM writes.
 # p161: repay fixed-cadence display debt without accumulating reader/audio lag.
 # p162: admit shorter fixed intervals only when the whole frame fits one blank.

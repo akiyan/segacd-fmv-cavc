@@ -28,8 +28,7 @@ def summarize(sim, hud):
         stats = data["stats"]
         frames = len(stats)
         result = dict(sim=str(sim.resolve()), frames=frames,
-                      cold_cap=int(data["max_cold"]),
-                      run_cap=int(data["run_cap"]) if "run_cap" in data else None)
+                      cold_cap=int(data["max_cold"]))
         result["timed_distributions"] = {
             key: distribution(stats[1:, columns.index(key)])
             for key in ("want", "miss", "dma_tiles", "dma_runs")}

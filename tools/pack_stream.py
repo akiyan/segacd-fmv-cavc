@@ -2264,17 +2264,6 @@ def main():
             f"pack: internal cold tile mismatch at frame {frame}: "
             f"runs={int(packed_tiles[frame])} resolve={int(n_load[frame])}")
     verify_sim_pattern_transfers(log, packed_tiles, packed_runs, supply_plan)
-    from run_budget import check_run_cap
-    recorded_run_cap = int(log.get("run_cap", 0))
-    requested_run_cap = (
-        int(profile.section("encoder").get("run_cap", 0))
-        if profile is not None else recorded_run_cap)
-    if requested_run_cap != recorded_run_cap:
-        raise SystemExit("pack: run_cap differs from the frozen encoder decisions")
-    check_run_cap(packed_runs, requested_run_cap)
-    if requested_run_cap:
-        print(f"  realized runs: max={int(max(packed_runs[1:], default=0))} "
-              f"<= profile run_cap {requested_run_cap}")
     inline_prg = np.asarray(supply_plan.prg_loads, np.int64).copy()
     inline_prg[0] -= len(boot_sidecar)
     if inline_prg[0] < 0:

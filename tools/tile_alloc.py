@@ -417,68 +417,59 @@ class TileAllocator:
         self.slot_pin_until[s] = -1
         self.slot_pin_mandatory[s] = False
 
-    def _first_clock_slot(self, eligible):
-        """Find the first eligible slot in clock order with a native array scan.
-
-        A failed full revolution leaves the hand unchanged, just as the scalar
-        scan does. This matters when the next allocation tier gets a turn.
-        """
-        candidates = np.flatnonzero(eligible)
-        if not len(candidates):
-            return None
-        index = int(np.searchsorted(candidates, self.hand))
-        slot = int(candidates[index if index < len(candidates) else 0])
-        self.hand = (slot + 1) % self.POOL
-        return slot
-
     def _alloc_slot_contig(self, frame_idx):
         # Clock hand: free slot first. A visible update then reclaims a
         # speculative prefetch before evicting any ordinary resident cache
         # entry, so speculation cannot make the baseline cache smaller.
         if self.free:
             return self.free.pop()
-        unreferenced = self.slot_refs == 0
-        unprotected = unreferenced & ~self._prev_protect
-        if self._tfp is not None:
-            unprotected &= ~self._tfp
-        pinned = self.slot_pin_until >= frame_idx
         if self.pinned_count:
-            s = self._first_clock_slot(
-                unprotected & pinned & ~self.slot_pin_mandatory)
-            if s is not None:
-                self.prefetch_evictions += 1
+            for _ in range(self.POOL):
+                s = self.hand
+                self.hand = (self.hand + 1) % self.POOL
+                if self.slot_refs[s] == 0 and not self._prev_protect[s] and \
+                   (self._tfp is None or not self._tfp[s]) and \
+                   self.slot_pin_until[s] >= frame_idx and \
+                   not self.slot_pin_mandatory[s]:
+                    self.prefetch_evictions += 1
+                    self._evict(s)
+                    return s
+        for _ in range(self.POOL):
+            s = self.hand
+            self.hand = (self.hand + 1) % self.POOL
+            if self.slot_refs[s] == 0 and (not self._prev_protect[s]
+                                         or s >= FINAL_VBLANK_SLOT) and \
+               (self._tfp is None or not self._tfp[s]) and not (
+                   self.slot_pin_mandatory[s]
+                   and self.slot_pin_until[s] >= frame_idx):
+                self.final_reclaims += int(self._prev_protect[s])
                 self._evict(s)
                 return s
-        ordinary = unreferenced & ~(
-            self.slot_pin_mandatory & pinned)
-        if self._tfp is not None:
-            ordinary &= ~self._tfp
-        ordinary[:FINAL_VBLANK_SLOT] &= ~self._prev_protect[:FINAL_VBLANK_SLOT]
-        s = self._first_clock_slot(ordinary)
-        if s is not None:
-            self.final_reclaims += int(self._prev_protect[s])
-            self._evict(s)
-            return s
         # Keep fade-reference pins ahead of ordinary cache history, but never
         # sacrifice a visible update or a key reused later in this same frame.
         # If the moving display temporarily needs the whole pool, release one
         # pin and let the fade catch-up queue restore it after the visible
         # updates have finalized.
         if self.pinned_count:
-            mandatory = unreferenced & self.slot_pin_mandatory & pinned
-            if self._tfp is not None:
-                mandatory &= ~self._tfp
-            s = self._first_clock_slot(mandatory)
-            if s is not None:
-                self.mandatory_prefetch_evictions += 1
+            for _ in range(self.POOL):
+                s = self.hand
+                self.hand = (self.hand + 1) % self.POOL
+                if self.slot_refs[s] == 0 and \
+                   (self._tfp is None or not self._tfp[s]) and \
+                   self.slot_pin_mandatory[s] and \
+                   self.slot_pin_until[s] >= frame_idx:
+                    self.mandatory_prefetch_evictions += 1
+                    self._evict(s)
+                    return s
+        self.tearing += 1
+        for _ in range(self.POOL):
+            s = self.hand
+            self.hand = (self.hand + 1) % self.POOL
+            if self.slot_refs[s] == 0 and not (
+                    self.slot_pin_mandatory[s]
+                    and self.slot_pin_until[s] >= frame_idx):
                 self._evict(s)
                 return s
-        self.tearing += 1
-        s = self._first_clock_slot(
-            unreferenced & ~(self.slot_pin_mandatory & pinned))
-        if s is not None:
-            self._evict(s)
-            return s
         candidates = np.flatnonzero(np.logical_not(np.logical_and(
             self.slot_pin_mandatory,
             self.slot_pin_until >= frame_idx,

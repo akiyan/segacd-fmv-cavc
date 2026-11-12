@@ -19,6 +19,49 @@ Each removed-feature entry records:
 Entries describe the feature as a self-contained design. They do not present a
 release history or narrate transitions between versions.
 
+## Per-frame transfer-run admission
+
+### Boundary and algorithm
+
+An optional `[encoder].run_cap` limited packed pattern-transfer records per
+frame independently of `cold_cap`. `CBRSIM_RUN_CAP` carried the setting;
+frame 0 was exempt. Each tentative cell update replayed the real allocator
+from a cloned state in cell order, then counted source-aware contiguous runs.
+Warm updates also required checks because resident-slot protection can split
+cold loads. Prefetch shared the limit, with one record reserved for a possible
+WordBuf ring-end split. Finalize and the packer checked actual planned runs.
+Adopted hardware-scroll frames were unsupported. Fade admission failure
+stopped the experiment instead of automatically restarting the movie.
+
+### Dependencies and limits
+
+The feature involved `encode_config.py`, `sim.py`, `pack_stream.py`, a
+`run_budget.py` helper, stats/decision metadata, profile and admission tests,
+a Sonic experiment profile, and CONFIG/ENCODE documentation. Its dedicated
+allocator-replay harness also used native-array clock scans that preserved
+placement order. The run-admission helper, dedicated tests/profile and that
+optimization are absent; the ordinary allocator and cold-only selection are
+active. Recorded measurements remain valid for their original build.
+
+With Sonic cold cap 240 and run cap 40, actual runs peaked at 39 and two
+playback loops had zero interior cadence irregularities. Heavy frames lost
+updates: frame 1315 Miss rose from 23 to 122. Encoding took 1,909.4 seconds,
+including 1,819.3 seconds selecting updates, versus roughly 170 seconds
+without run admission. Repeated full allocation per candidate dominated even
+after the slot scan itself became about 25 times faster.
+
+### Reimplementation requirements
+
+Preserve real allocation order, source boundaries, prefetch, WordBuf wraps,
+old-display protection and final-only slot ownership. Packed record counts
+and executed DMA chunks are different costs; per-Time limits must account
+for actual EAT/EVB/LAT/LVB placement, including each earlier VBlank.
+Avoid replaying full allocations per candidate. Validate source splits,
+warm-protection fragmentation, phase boundaries and malformed streams with
+independent packed readers, then compare full-movie encode time, request/Miss
+distributions and matching player captures. No run ceiling alone proves a
+hardware display deadline.
+
 ## Movie-wide slot locality
 
 ### Repository reference
@@ -249,6 +292,43 @@ recorder's native-size lookup.
 
 各項目は、機能単体で理解できる設計情報として記述します。release historyやversion間の
 移行経緯は記述しません。
+
+## フレーム単位の転送run admission
+
+### 境界とalgorithm
+
+任意の`[encoder].run_cap`は`cold_cap`とは独立に、frameごとのpacked pattern転送record数を
+制限する設定でした。`CBRSIM_RUN_CAP`で設定を渡し、frame 0は対象外とします。
+各cell更新候補についてallocator状態を複製し、実際のallocatorをcell順に再実行して、
+供給元を考慮した連続run数を数えます。resident slotの保護がcold loadを分割するため、
+warm更新も検査対象です。prefetchも同じ上限を共有し、WordBuf ring末尾の分割用に
+1 recordを予約します。Finalizeとpackerは供給計画後の実run数を確認します。
+採用されたhardware-scroll frameには未対応で、fade admission失敗時は全編を自動で
+やり直さず、実験を停止します。
+
+### 依存関係と限界
+
+関係する実装は`encode_config.py`、`sim.py`、`pack_stream.py`、`run_budget.py` helper、
+stats/decision metadata、profile/admission test、Sonic実験profile、CONFIG/ENCODEです。
+専用のallocator再実行harnessでは、配置順を維持する配列演算のclock探索も使いました。
+run admission helper、専用test/profileとこの最適化は存在せず、通常のallocatorと
+cold制限による選択が現行動作です。記録済みの計測結果は、元のbuildについて有効です。
+
+Sonicのcold cap 240・run cap 40では実run最大39となり、2周とも本編途中の表示間隔の
+揺れが0でした。一方、重いframeでは更新が減り、frame 1315のMissは23から122へ
+増加しました。encodeは1,909.4秒、うち更新選択が1,819.3秒で、run admissionなしの
+約170秒を大きく上回りました。slot探索自体を約25倍速くしても、候補ごとに全配置を
+繰り返す処理が主なコストとして残ります。
+
+### 再実装時の要件
+
+実際の配置順、供給元境界、prefetch、WordBuf wrap、旧表示の保護、最終段限定slotの
+所有を維持します。packed record数と実行されるDMA chunk数は異なる費用です。
+Time別の上限はEAT/EVB/LAT/LVBへの実際の配置を扱い、各EVBも個別に計算する必要が
+あります。候補ごとの全配置の再実行を避けてください。供給元分割、warm保護による
+断片化、phase境界、不正streamを独立したpacked readerで検証したうえで、全編の
+encode時間、要求量とMiss分布、対応するplayer録画を比較します。run上限だけでは
+hardwareの表示deadlineを保証できません。
 
 ## 全編slot locality
 
