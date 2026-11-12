@@ -87,3 +87,27 @@ Persistent local evidence is in `logs/sonic-run40-experiment-20261112.json`,
 `logs/sonic-run40-comparison-20261112.json`,
 `logs/sonic-run40-p169-hud-20261112_gate.json`, and
 `logs/sonic-run40-p169-vdp-20261112.json`.
+
+## Cold cap 230 without a run cap
+
+`profiles/sonic-jam-op-cold230.toml` keeps the same Sonic source, raster,
+cadence and filters, disables the run cap, and lowers only the cold cap to
+230. The e199 encode completed 2,714 frames in 185.7 seconds (94.4 in Decide).
+Verified packing and a native 230-second p169 capture completed successfully.
+The HUD gate passed with cadence/spill warnings; both complete loops retained
+zero sector-slip, control-desync and audio-resync counters.
+
+Each loop has four non-two-VBlank intervals, compared with six at cold cap
+240 without a run cap. Loop 1 is late at new frames 2, 1315 and 2713 and
+catches up at 1326. Loop 2 is late at 218, 1315 and 2713 and catches up at
+1326. Every irregular interval differs by one VBlank. The previous delay at
+1377 disappears, but 230 does not eliminate cadence variation. Counting only
+interior transitions gives two in loop 1 and three in loop 2.
+
+The actual cold maximum is 230, while the maximum packed run count rises
+from 79 to 86. Request mean is 613.96; Miss mean/median/p95/max are
+86.21/44/287/526. At frame 1315, Miss rises from 23 to 41; at 1377, from 135
+to 147. Aggregate Miss alone therefore does not establish better picture
+quality. Evidence is in `logs/sonic-cold230-experiment-20261112.json`,
+`logs/sonic-cold230-comparison-20261112.json`, and
+`logs/sonic-cold230-p169-hud-20261112_gate.json`.
