@@ -1,0 +1,41 @@
+schema_version = 5
+
+[source]
+path = "assets/mina-tipsy/tipsy-original.webm"
+fps = "30"
+duration = "193.36"
+sar = "1:1"
+
+[video]
+width = 320
+height = 224
+fit = "crop"
+# Remove the fixed letterbox, then center-crop using H40 PAR 32:35.
+# Confirmed at 15, 60, 120 and 170 seconds in the original 4K master.
+master_filter = "crop=3840:1944:0:110,setsar=1,crop=2538:1944:651:0,scale=640:448:flags=lanczos,hqdn3d=6:6:8:8,gblur=sigma=1.6,scale=320:224:flags=lanczos"
+raw_filter = "crop=3840:1944:0:110,setsar=1,crop=2538:1944:651:0,scale=320:224:flags=lanczos"
+
+[output]
+directory = "tmp/mina-tipsy/sim"
+reuse = true
+emit_decisions = true
+
+[encoder]
+cold_cap = 210
+
+[palette]
+algorithm = "mosaic-gm"
+
+[analysis]
+source_canvas = [320, 224]
+source_par = [32, 35]
+
+[youtube]
+analysis_title = "Sega CD FMV at 30 FPS – MINA TIPSY Visual Analysis & Encoding Breakdown"
+playback_title = "Custom Sega CD FMV Codec Demo – MINA TIPSY at 30 FPS"
+source_label = "MINA – TIPSY, complete music video by K've Entertainment, 3840x2160, approximately 29.97 fps, 48 kHz stereo audio"
+source_label_ja = "MINA – TIPSY、K've Entertainmentのミュージックビデオ全編、3840x2160、約29.97 fps、48 kHzステレオ音声"
+source_url = "https://commons.wikimedia.org/wiki/File:MINA_-_%E2%80%98TIPSY%E2%80%99_Official_Music_Video.webm"
+source_license = "K've Entertainment. Used under Creative Commons Attribution 3.0 Unported (CC BY 3.0), as stated on Wikimedia Commons. Modified: letterbox removed, sides center-cropped, resized and re-encoded for the Sega CD."
+source_license_ja = "K've Entertainment。Wikimedia Commonsに記載のクリエイティブ・コモンズ 表示 3.0 非移植 (CC BY 3.0) にもとづいて利用。上下の黒帯を除去し、左右を中央クロップ、縮小してSega CD向けに再エンコードした改変版です。"
+source_license_url = "https://creativecommons.org/licenses/by/3.0/"
