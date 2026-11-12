@@ -321,8 +321,8 @@ def verify_shared_deadline_vblank(
     active_prefix = block("bf_start_pattern_budget", "bf_start_vbudget")
     for pattern in (
             r"\bcmpiw\s+#208,%d0", r"\bcmpiw\s+#672,%d0",
-            r"\bcmpw\s+%d2,%d0", r"\bcmpw\s+%d1,%d0",
-            r"\bsubiw\s+#543,%d2",
+            r"\bcmpw\s+%d1,%d0", r"\bdivuw\s+#543,%d2",
+            r"\baddqw\s+#1,%d2",
             r"\bmulu(?:w)?\s+#6,%d0",
             r"\baddiw\s+#224,%d0", r"\bmovew\s+%d0,%d7",
             r"\bbra\w*\s+[^\n]*<bf_start_vbudget>"):
@@ -330,8 +330,19 @@ def verify_shared_deadline_vblank(
             raise AssertionError(f"{obj}: active prefix lacks a phase/capacity bound or blank fallback")
     if re.search(r"<wait_fixed_flip>|\bcmpiw\s+#112,%d0", active_prefix):
         raise AssertionError(f"{obj}: LAT still waits for the flip arm or active midpoint")
-    for label, end in (("bf_start_pattern_budget", "bf_try_lat"),
-                       ("bf_try_lat", "bf_start_vbudget")):
+    used_period = symbol_address(objdump, obj, "active_used_period")
+    for opcode, operands in (("cmpw", r"0 [^\n]*,%d2"),
+                             ("movew", r"%d2,0 [^\n]*")):
+        instruction = re.search(
+                rf"\b{opcode}\s+{operands}\n"
+                rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{used_period:x}", active_prefix)
+        if not instruction:
+            raise AssertionError(f"{obj}: active allowance lacks a per-period guard/update")
+        if opcode == "cmpw" and not re.match(
+                r"\s+[^\n]*\bbls\w*\s", active_prefix[instruction.end():]):
+            raise AssertionError(f"{obj}: used active period does not reject a repeated grant")
+    for label, end in (("bf_start_pattern_budget", "bf_try_active"),
+                       ("bf_try_active", "bf_start_vbudget")):
         if not re.search(r"\bcmpiw\s+#224,%d0", block(label, end)):
             raise AssertionError(f"{obj}: {label} loses the blank-head/active-edge guard")
     lat_origin = symbol_address(objdump, obj, "pace_blank_tick")

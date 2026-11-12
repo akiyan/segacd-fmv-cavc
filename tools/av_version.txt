@@ -1400,4 +1400,5 @@ e=200
 # p169: retain one VBlank of fixed-cadence lateness and recover only excess debt.
 # p170: start bounded LAT transfers from the active edge using a physical blank origin.
 # p171: retain a usable blank head and wait through the active-edge counter wrap.
-p=171
+# p172: admit a bounded protected-pattern transfer in each EAT and LAT.
+p=172

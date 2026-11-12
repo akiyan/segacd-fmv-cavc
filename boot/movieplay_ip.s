@@ -977,7 +977,7 @@ bf_dma:
 	clr.w	vbudget_held_reserve
 	clr.w	final_run_count
 	clr.w	final_pattern_words
-	clr.w	lat_used
+	clr.w	active_used_period
 	PC_MOVE_W md_nt_flip_reserve_words, NT_FLIP_RESERVE_WORDS, d0
 .ifdef INCLUDE_SCROLL
 	cmpi.w	#FRAME_TYPE_SCROLL, frame_type
@@ -1457,17 +1457,11 @@ bf_scroll_rebase_vertical:
 	rts
 .endif
 
-/* Start Pass2 with one honest VBlank word budget.  An already-active display
-   waits for the next blank.  An already-entered blank may keep the full budget
-   only on its first V-counter line; later entry waits for the following head
-   instead of pretending all md_vbudget words remain.  d7 returns the full
-   budget and vbudget_from_head records that its time origin is trustworthy.
-   Trashes d0. */
-/* Only old-display-safe destinations use LAT. Final-only tail runs remain
+/* Only old-display-safe destinations use EAT/LAT. Final-only tail runs remain
    deferred until publication. Charge six units per remaining active line,
    capped at 672 including repairs. This grants no VBlank capacity. */
 bf_start_pattern_budget:
-	/* A usable EVB head must not be traded for the smaller LAT allowance. */
+	/* A usable EVB head must not be traded for the smaller active allowance. */
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
 	beq.s	2f
@@ -1476,7 +1470,7 @@ bf_start_pattern_budget:
 	cmpi.w	#224, d0
 	beq.s	1f
 2:
-	bsr	bf_try_lat
+	bsr	bf_try_active
 	tst.w	d0
 	beq.s	1f
 	rts
@@ -1484,16 +1478,14 @@ bf_start_pattern_budget:
 	move.w	#1, pattern_transfer_vblanks
 	bra	bf_start_vbudget
 
-/* Admit one bounded transfer window as soon as the last active period starts.
+/* Admit one bounded transfer window in each EAT/LAT while data remains.
    The preceding publication's physical blank head is the phase origin;
-   the later commit/flip arm must not delay transfers. The last EVB may wait
-   into LAT, while earlier blanks remain available. An expired deadline must
-   not authorize a transfer in a subsequent active period.
+   the later commit/flip arm must not delay transfers. A consumed EVB may wait
+   into the next active period, while blank heads remain available. An expired
+   deadline must not authorize a transfer in a subsequent active period.
    d0 reports admission; d7 receives the active budget. Preserve run state. */
-bf_try_lat:
+bf_try_active:
 	movem.l	d1-d3, -(sp)
-	tst.w	lat_used
-	bne	8f
 	tst.l	frame_no
 	beq	8f
 .ifdef PLAYER_SPECIALIZED
@@ -1506,19 +1498,21 @@ bf_try_lat:
 .endif
 	move.w	pace_target_vblanks, d1
 	mulu.w	#PACE_VBLANK_TICKS, d1	/* deadline blank head */
-	move.w	d1, d2
-	subi.w	#PACE_VBLANK_TICKS, d2	/* last EVB head */
 3:
 	move.w	(GA_STOPWATCH).l, d0
 	sub.w	pace_blank_tick, d0
 	andi.w	#0x0FFF, d0
-	cmp.w	d2, d0
-	blo.s	8f				/* earlier transfer blanks remain usable */
 	cmp.w	d1, d0
-	bhs.s	8f				/* never reuse a missed LAT in a later period */
+	bhs.s	8f				/* no active grant beyond the display deadline */
+	moveq	#0, d2
+	move.w	d0, d2
+	divu.w	#PACE_VBLANK_TICKS, d2
+	addq.w	#1, d2				/* physical active ordinal: 1..target */
+	cmp.w	active_used_period, d2
+	bls.s	8f				/* never replenish the same active period */
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
-	bne.s	3b				/* last EVB: start at the following active edge */
+	bne.s	3b				/* consumed blank: wait for the active edge */
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
 	cmpi.w	#224, d0
@@ -1534,7 +1528,7 @@ bf_try_lat:
 4:
 	move.w	d0, d7
 	clr.w	vbudget_from_head
-	move.w	#1, lat_used
+	move.w	d2, active_used_period
 	moveq	#1, d0
 	bra.s	9f
 8:
@@ -1543,6 +1537,10 @@ bf_try_lat:
 	movem.l	(sp)+, d1-d3
 	rts
 
+/* Open an honest VBlank budget, only at its first V-counter line. Later entry
+   waits for the following head instead of pretending all md_vbudget words
+   remain. d7 returns the full budget; vbudget_from_head marks a trustworthy
+   time origin. Trashes d0. */
 bf_start_vbudget:
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
@@ -1611,7 +1609,7 @@ bf_debug_snapshot_vbudget:
 bf_next_vbudget:
 	bsr	bf_debug_snapshot_vbudget
 	suba.l	a1, a1				/* exact logical-word counter for the next budget */
-	bsr	bf_try_lat
+	bsr	bf_try_active
 	tst.w	d0
 	bne.s	1f
 	addq.w	#1, pattern_transfer_vblanks
@@ -1620,7 +1618,7 @@ bf_next_vbudget:
 	rts
 .else
 bf_next_vbudget:
-	bsr	bf_try_lat
+	bsr	bf_try_active
 	tst.w	d0
 	bne.s	1f
 	addq.w	#1, pattern_transfer_vblanks
@@ -2952,6 +2950,6 @@ final_run_count:
 	.space 2
 final_pattern_words:
 	.space 2
-lat_used:
+active_used_period:
 	.space 2
 player_bss_end:

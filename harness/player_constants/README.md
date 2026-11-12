@@ -49,8 +49,9 @@ For every case it requires:
 - generic and specialized builds begin the next bank exchange after their last
   Word-RAM access; final-only runs retain the bank through their publication
   blank, and the empty final path never reads a bank already returned early;
-- fixed and periodic LAT admission uses the physical publication-blank origin,
-  rejects earlier/expired intervals, starts without a flip-arm/midpoint wait,
+- fixed and periodic EAT/LAT admission uses the physical publication-blank origin,
+  rejects expired intervals and repeated grants in one physical active period,
+  starts without a flip-arm/midpoint wait,
   and retains the 672-unit cap and late-line cutoff;
   the deferred tail has no refill/wait path after destructive writes begin;
 - single-movie replay publishes black frame -1 before waiting for the boot
