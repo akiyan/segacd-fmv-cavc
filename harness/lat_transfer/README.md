@@ -114,3 +114,43 @@ retaining startup/end transitions. The matching HUD gate owns qualification.
 Local evidence is in `logs/sonic-cold230-experiment-20261112.json`,
 `logs/sonic-cold230-comparison-20261112.json` and
 `logs/sonic-cold230-p169-hud-20261112_gate.json`.
+
+## Early LAT admission
+
+The player anchors LAT to the physical head of the preceding publication
+VBlank and the current cadence target. It can begin at line 0 as soon as the
+source is ready, retains a usable EVB head, and waits through the VBlank-flag
+and line-counter transition. It rejects expired intervals. The limit remains
+672 DMA-word-equivalent units including repairs, additionally bounded by six
+units per remaining active line; entry at or after line 208 is rejected.
+PLAYER.md owns the byte/pattern conversion and state allocation.
+
+`check_trace.py` distinguishes actual DMA command starts from scanline
+continuations and CPU repair writes. Its `active_dma_start_line_histogram`
+and `early_active_dma_start_frames` must be read alongside matched-frame
+comparisons: early active writes or starts alone can also follow a VBlank
+transfer and do not establish the LAT admission path. `test_trace.py` uses an
+independent log fixture to catch this misclassification and interrupted DMA
+continuations. Actual assembled instructions and matching captures establish
+player behavior; the fixture is not an assembly model.
+
+The p171 qualification reuses the existing encoded streams byte-for-byte:
+Sonic cold cap 230 (e199), Lunar 24 fps (e198), and Machi 15 fps (e198).
+All three complete captures pass the HUD gate with cadence warnings, zero
+sector-slip/control-desync/audio-resync, and matching final-tail writes with
+zero final-tail/NT/HUD/CRAM writes outside VBlank or on ambiguous edges.
+Representative startup, content and tail stills were inspected. Sonic has
+two complete loops; Lunar and Machi each have one complete loop.
+
+For Sonic, 39 matched frames move their first active DMA command from line
+112 or later to before line 112; frames 201, 218 and 845 move from line 113
+to line 1. Its two loops retain four irregular intervals each, as with p169;
+the startup/218 delay changes loop assignment. Lunar's interior cadence
+warning count falls from 247 (p168) to 113. Machi's count rises from three
+(p169) to ten. Early admission is established, but improved cadence is not
+a universal result and the Machi regression remains visible. These checks
+are emulator evidence, not real-hardware DMA timing proof.
+
+The receipt `logs/lat-early-p171-20261112.json` links the capture identities,
+unchanged-stream hashes, matched-frame start comparison, HUD/VDP checks and
+fresh still manifests. No source re-encode is part of this qualification.

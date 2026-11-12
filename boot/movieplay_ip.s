@@ -147,7 +147,7 @@
 .equ SCREEN_COLS, 40		/* H40 V28 NTSC: 40x28 cell aperture */
 .equ VB_WORDS, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
 .equ VB_BUDGET_TICKS, 76	/* 38 NTSC blank lines minus first-line entry uncertainty */
-.equ ACTIVE_PREFIX_WORDS, 672	/* 112 LAT lines at six charged words/line */
+.equ ACTIVE_PREFIX_WORDS, 672	/* fixed LAT ceiling, including CPU repairs */
 .equ FINAL_PATTERN_SLOTS, 12
 .equ FINAL_PATTERN_ADDR, 0xDA00-FINAL_PATTERN_SLOTS*32
 .equ FINAL_RUN_SETUP_WORDS, 96	/* conservative setup plus CPU first-word repair */
@@ -1467,6 +1467,15 @@ bf_scroll_rebase_vertical:
    deferred until publication. Charge six units per remaining active line,
    capped at 672 including repairs. This grants no VBlank capacity. */
 bf_start_pattern_budget:
+	/* A usable EVB head must not be traded for the smaller LAT allowance. */
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	beq.s	2f
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	cmpi.w	#224, d0
+	beq.s	1f
+2:
 	bsr	bf_try_lat
 	tst.w	d0
 	beq.s	1f
@@ -1475,9 +1484,11 @@ bf_start_pattern_budget:
 	move.w	#1, pattern_transfer_vblanks
 	bra	bf_start_vbudget
 
-/* Admit one bounded transfer window in the last active period before the
-   current cadence deadline. A preceding pattern blank may wait into LAT;
-   earlier blanks remain available. Periodic cadence uses its actual arm.
+/* Admit one bounded transfer window as soon as the last active period starts.
+   The preceding publication's physical blank head is the phase origin;
+   the later commit/flip arm must not delay transfers. The last EVB may wait
+   into LAT, while earlier blanks remain available. An expired deadline must
+   not authorize a transfer in a subsequent active period.
    d0 reports admission; d7 receives the active budget. Preserve run state. */
 bf_try_lat:
 	movem.l	d1-d3, -(sp)
@@ -1488,49 +1499,39 @@ bf_try_lat:
 .ifdef PLAYER_SPECIALIZED
 .if (PC_FEATURES & 0x0002) == 0
 	bra	8f
-.elseif PC_CADENCE_PERIOD == 2
-	move.w	pace_periodic_arm_ticks, d1
-.else
-	move.w	pace_target_vblanks, d1
-	mulu.w	#PACE_VBLANK_TICKS, d1
-	subi.w	#PACE_ARM_BIAS_TICKS, d1
 .endif
 .else
 	tst.w	md_cadence_period
 	beq	8f
-	cmpi.w	#2, md_cadence_period
-	bne.s	1f
-	move.w	md_pace_arm_ticks, d1
-	bra.s	2f
-1:
-	move.w	pace_target_vblanks, d1
-	mulu.w	#PACE_VBLANK_TICKS, d1
-	subi.w	#PACE_ARM_BIAS_TICKS, d1
-2:
 .endif
-	move.w	(GA_STOPWATCH).l, d0
-	sub.w	pace_flip_tick, d0
-	andi.w	#0x0FFF, d0
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1	/* deadline blank head */
 	move.w	d1, d2
-	sub.w	d0, d2
-	ble.s	3f
-	cmpi.w	#PACE_VBLANK_TICKS/2, d2
-	bhi	8f				/* another useful pattern blank precedes LAT */
-	bsr	wait_fixed_flip
+	subi.w	#PACE_VBLANK_TICKS, d2	/* last EVB head */
 3:
+	move.w	(GA_STOPWATCH).l, d0
+	sub.w	pace_blank_tick, d0
+	andi.w	#0x0FFF, d0
+	cmp.w	d2, d0
+	blo.s	8f				/* earlier transfer blanks remain usable */
+	cmp.w	d1, d0
+	bhs.s	8f				/* never reuse a missed LAT in a later period */
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
-	bne	8f
+	bne.s	3b				/* last EVB: start at the following active edge */
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
-	cmpi.w	#112, d0
-	blo.s	3b				/* spend at most the second half of active */
+	cmpi.w	#224, d0
+	bhs.s	3b				/* VBlank flag clears before the counter wraps to line 0 */
 	cmpi.w	#208, d0
 	bhs.s	8f
 	neg.w	d0
 	addi.w	#224, d0
 	mulu.w	#6, d0
-	/* line >= 112 proves this is at most ACTIVE_PREFIX_WORDS (672). */
+	cmpi.w	#ACTIVE_PREFIX_WORDS, d0
+	bls.s	4f
+	move.w	#ACTIVE_PREFIX_WORDS, d0
+4:
 	move.w	d0, d7
 	clr.w	vbudget_from_head
 	move.w	#1, lat_used
@@ -1682,10 +1683,12 @@ bf_wait_fixed_flip_vblank:
 	beq.s	1f
 	subq.w	#1, frame_vblank_waits
 1:
-.endif
+	.endif
+	move.w	vbudget_start_tick, pace_blank_tick
 	rts
 2:
 	bsr	wait_vb_start
+	move.w	(GA_STOPWATCH).l, pace_blank_tick
 	rts
 
 .ifdef DEBUG
@@ -2836,6 +2839,8 @@ vsync_acc:
 	.space 2				/* v4: 現コマで消費したVBLANK数(ペーシング用) */
 pace_flip_tick:
 	.space 2				/* GA stopwatch tick at preceding cadence-controlled flip */
+pace_blank_tick:
+	.space 2				/* physical head of the preceding publication blank */
 pace_target_vblanks:
 	.space 2				/* current fixed or periodic display-deadline budget index */
 pace_fixed_debt:

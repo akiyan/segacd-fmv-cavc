@@ -590,8 +590,20 @@ These names identify cadence positions, not Word-RAM banks or transfer budgets.
 
 Timed fixed and periodic cadence can use Last Active Time (LAT), the active
 period immediately before the cadence's publication blank. Main admits one
-window per frame, starting at line 112 or later and before line 208, with six
-units per remaining active line: at most 672 units including CPU repairs.
+window per frame as soon as the target active period and source preparation
+are ready, before line 208. Its budget is the smaller of 672 units and six
+units per remaining active line, including CPU repairs. The physical head
+of the preceding publication blank, recorded for both shared and fresh blanks,
+anchors the target interval. The last earlier blank may wait into LAT; an
+expired interval cannot authorize a later active period. A usable EVB head
+is retained; the VBlank flag clearing ahead of the line-counter wrap does not
+skip LAT. Transfer admission
+does not wait for the display flip arm or line 112.
+672 units represent 1,344 DMA-equivalent bytes, not a pattern-count cap.
+A single Word-RAM chunk pays four units for repair, leaving at most 1,336
+payload bytes (41 complete 32-byte patterns plus 24 bytes of the next).
+Each additional repaired chunk consumes four more units. A split DicBuf DMA
+needs no repair and may use all 1,344 bytes (42 patterns).
 Earlier pattern blanks remain usable. The cadence deadline selects LAT, not
 frame parity or Word-RAM bank parity. Frame 0 remains blank-first. LAT grants
 no additional VBlank budget, and HUD blank counters exclude it.
@@ -602,7 +614,8 @@ references have disappeared and no next-frame reuse or mandatory pin needs it.
 All other cold destinations remain protected from the preceding display;
 the packed reader independently checks that rule. Runs split at the tail
 boundary. Main retains at most twelve pointers (48 bytes), two word counters,
-and a word LAT flag: 54 bytes within the existing `M-STATE` allocation.
+and a word LAT flag, plus a word publication-blank timestamp: 56 bytes within
+the existing `M-STATE` allocation.
 
 Final-only runs keep their Word-RAM bank until a fresh publication blank.
 Before any destructive write, both packing verification and Main require the
@@ -1245,9 +1258,19 @@ Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新し�
 これらはcadence内の位置を表す用語で、Word RAM bankや転送budgetを表しません。
 
 Timedのfixed / periodic cadenceは、表示を確定するVBlankの直前のactive期間を
-Last Active Time（LAT）として使えます。Mainは1 frameにつき1回、line 112以降かつ
-208より前に開始を許可し、残active lineごとに6 unit、CPU補修を含め最大672 unitを
-与えます。それより前のpattern用VBlankも使えます。LATはcadenceのdeadlineで決め、
+Last Active Time（LAT）として使えます。Mainは1 frameにつき1回、対象active期間に入り、
+転送元の準備ができ次第、line 208より前に開始を許可します。予算は672 unitと
+残active line数×6 unitの小さい方で、CPU補修を含みます。共有／新規の両方の
+表示VBlankで保存する物理的な開始時刻を、次の対象期間の起点に使います。最後のEVBから
+LAT開始を待つことはできますが、期限切れの期間で後続activeへの転送を許可しません。
+使用できるEVB先頭を優先し、VBlank flag解除からline counterが0に戻るまでの境界で
+LATを飛ばさないようにします。
+転送開始は表示用のflip armやline 112を待ちません。
+672 unitはDMA換算1,344 byteで、pattern数を直接制限する値ではありません。
+Word-RAMの1 chunkでは補修に4 unitを使い、実データは最大1,336 byte
+（32 byte pattern 41個と次の24 byte）です。補修するchunkが増えるごとに4 unitを
+追加で使います。分割したDicBuf DMAは補修不要で、1,344 byte（42 pattern）を使えます。
+それより前のpattern用VBlankも使えます。LATはcadenceのdeadlineで決め、
 frameやWord RAM bankの偶奇では決めません。Frame 0はblankから開始します。
 LATはVBlank budgetを増やさず、HUDのblank counterにも数えません。
 
@@ -1255,7 +1278,8 @@ Slot 1731..1742（VRAM `0xD880..0xD9FF`）を最終VBlank専用の末尾領域�
 Allocatorは現在の参照がなくなり、次frameの再利用や必須pinにも不要となった場合だけ、
 この領域の旧表示patternを回収できます。他のcold destinationは直前表示から保護し、
 packed readerでも独立に照合します。Runは末尾領域との境界で分割します。Mainは
-最大12本のpointer（48 byte）、word counter 2個、word LAT flag 1個、計54 byteを
+最大12本のpointer（48 byte）、word counter 2個、word LAT flag 1個、
+wordの表示VBlank開始時刻1個、計56 byteを
 既存の`M-STATE`内に保持します。
 
 最終VBlank専用runは、新しいpublication blankまでWord RAM bankを保持します。
