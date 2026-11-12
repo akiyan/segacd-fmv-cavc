@@ -19,7 +19,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import pickle
 import re
 import string
 import sys
@@ -28,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import encode_config  # noqa: E402
+from cram_switches import counts as cram_counts  # noqa: E402
 
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "youtube"
 VERSION_FILE = Path(__file__).resolve().parent / "av_version.txt"
@@ -117,12 +117,6 @@ def comparison_template(profile) -> str:
     english = data["description_en"].strip()
     japanese = data["description_ja"].strip()
     return f"{english}\n\n{link_lines}\nBuild: {{build}}\n\n----\n\n{japanese}\n"
-
-
-def cram_counts(sim_out: Path) -> tuple[int, int]:
-    decisions = pickle.loads((sim_out / "decisions.pkl").read_bytes())
-    segments = len(set(int(v) for v in decisions["frame_seg"]))
-    return segments, segments - 1
 
 
 def band_kib(timeline_tsv: Path) -> int:

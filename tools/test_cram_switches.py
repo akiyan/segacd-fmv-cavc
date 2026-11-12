@@ -9,6 +9,7 @@ import unittest
 from pathlib import Path
 
 import cram_switches
+import youtube_description
 
 
 class CountTests(unittest.TestCase):
@@ -39,7 +40,7 @@ class CountTests(unittest.TestCase):
             [0, 0, 0, 1, 1],
             [0, 1, 2, 0, 1],
         )
-        self.assertEqual(cram_switches.counts(out_dir), (5, 4))
+        self.assertEqual(youtube_description.cram_counts(out_dir), (5, 4))
 
 
 if __name__ == "__main__":
