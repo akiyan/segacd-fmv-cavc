@@ -67,3 +67,19 @@ cadence, cold cap, filters and palette policy. Compare before/during/after the
 fade, measure visible pending cells and completion time, and verify the exact
 packed player. The existing full-movie result can serve as the ordinary-frame
 fallback comparison. New source encoding requires the user's authorization.
+
+Render selected comparison windows from either completed simulation without
+encoding or modifying its stored decisions:
+
+```sh
+tools/python.sh harness/fade_preparation/render_windows.py \
+  /path/to/completed-sim /path/to/comparison/baseline \
+  --range 9070:9180 --range 13910:14020
+```
+
+Ranges are half-open diagnostic selections, not encoder adoption ranges. The
+script leases the completed input, uses the production display reader, and
+writes preview/category PNGs plus `windows.json` outside the source artifact.
+Choose identical windows for baseline/current, and compare the previews with
+their matching `raw/` source frames. These simulated images do not replace
+actual packed-player capture evidence.
