@@ -338,10 +338,11 @@ slot order while name updates remain in cell order.
 |---|---:|---|---|
 | `VB_WORDS` | 3,200 DMA-word equivalents/VBlank | ip | Conservative VBlank work budget. |
 | `VB_BUDGET_TICKS` | 76 stopwatch ticks | ip | Conservative remaining-time admission from a physical blank budget's saved origin; also requires the residual word reserve. |
-| `ACTIVE_PREFIX_WORDS` | at most 512 charged words | ip | Fixed-N timed frames may start protected cold-pattern work before active line 192, at six units per remaining active line; no VBlank budget is granted. |
+| `ACTIVE_PREFIX_WORDS` | at most 672 charged words | ip | Cadence-aware LAT starts at line 112..207, at six units per remaining active line; no VBlank budget is granted. |
+| `FINAL_VBLANK_TILES` / `FINAL_PATTERN_SLOTS` | 12 patterns | allocator / ip | Final-only VRAM tail; actual runs and display updates must fit the publication budget, including 96 setup/repair units per final run. |
 | `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
-| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU bitmap handlers. |
+| `MAIN_CODEGEN_BASE..LIMIT` | 17.25 KiB, `0xFF2200..0xFF66FF` | ip | Generated Main-CPU bitmap handlers; checked generated end is `0xFF4B00`. |
 | movie name-table DMA | `(rows - 1) * 64 + cols` words/frame | ip / analysis | One statically trimmed 64-pitch band into the single table at `0xE000`. |
 | scroll-frame name-table DMA | `rows * 64` words (horizontal) or `32 * 64` = 2,048 words (vertical), plus the HScroll/VScroll pair at CPU word cost | ip / analysis | A scroll build publishes the full 64-column rolling-plane band instead of the trimmed grid band. |
 | DEBUG HUD DMA | 52 words/frame | ip / analysis | One Window-row word per screen column (40) plus one four-word sprite record per spill digit (3). |
@@ -959,10 +960,11 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 |---|---:|---|---|
 | `VB_WORDS` | 3,200 DMA-word相当/VBlank | ip | 安全側のVBlank work budget。 |
 | `VB_BUDGET_TICKS` | 76 stopwatch tick | ip | Physical blank budgetの保存済み起点から残り時間を安全側に判定する。残word reserveも必要。 |
-| `ACTIVE_PREFIX_WORDS` | 最大512 charged word | ip | Fixed-Nのtimed frameはactive line 192より前に、残active lineごとに6 unitを使って保護済みcold-pattern workを開始できる。VBlank budgetは与えない。 |
+| `ACTIVE_PREFIX_WORDS` | 最大672 charged word | ip | Cadenceを考慮したLATはline 112..207で開始し、残active lineごとに6 unitを使う。VBlank budgetは与えない。 |
+| `FINAL_VBLANK_TILES` / `FINAL_PATTERN_SLOTS` | 12 pattern | allocator / ip | 最終VBlank専用のVRAM末尾領域。最終runごとのsetup・補修用96 unitを含め、実際のrunと表示更新がpublication budgetに収まる必要がある。 |
 | `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
-| `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。 |
+| `MAIN_CODEGEN_BASE..LIMIT` | 17.25 KiB、`0xFF2200..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。検査する生成終端は`0xFF4B00`。 |
 | movie name-table DMA | `(rows - 1) * 64 + cols` word/frame | ip / analysis | `0xE000`の単一tableへ送る、静的にtrimした1本の64-pitch band。 |
 | scroll-frame name-table DMA | horizontalは`rows * 64` word、verticalは`32 * 64` = 2,048 word。加えてHScroll/VScroll対をCPU word costで送る | ip / analysis | scroll buildはtrim済みgrid bandの代わりに64列rolling plane band全体を送る。 |
 | DEBUG HUD DMA | 52 word/frame | ip / analysis | screen columnごとのWindow-row word（40）と、spill digitごとの4-word sprite record（3）。 |

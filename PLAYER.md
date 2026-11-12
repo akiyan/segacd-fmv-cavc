@@ -348,12 +348,15 @@ build-time checked against the `M-STATE` base.
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stack and interrupt reserve |
 | `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | area above stack top / BIOS reserve |
 
-The realized generated-code end inside `M-CODE` and the realized `.bss` end
-inside `M-STATE` vary per build and profile; build-time assertions keep each
-inside its fixed range. A scroll DEBUG build fills the `M-STATE` reservation
-completely, with zero spare bytes. Main keeps no run-plan cursor or WordBuf
-read cursor: Sub owns both parity cursors and hands off already-resolved
-records.
+Permanent text/data ends before `0xFF2200`;
+the generated handlers occupy `0xFF2200..0xFF4AFF`, leaving the rest of
+`M-CODE` below `0xFF6700` available as its existing guard. The linker keeps
+boot-only startup assets inside that generated-code area until initialization.
+The realized `.bss` end inside `M-STATE` varies per build and profile;
+build-time assertions keep it inside its fixed range. The full scroll DEBUG
+24 fps build ends at `0xFF87FC`, leaving four reserved bytes. Main retains the bounded
+final-run pointers but no WordBuf read cursor: Sub owns both parity cursors
+and hands off already-resolved records.
 
 ## VRAM Map
 
@@ -561,25 +564,43 @@ new VBlank or while the V counter is still on its first blank line (`E0`).
 Entering an already-running blank later never creates a full budget; Main
 waits for the next head.
 
-Before its first fresh pattern budget, a fixed-N timed frame may transfer a
-cold-pattern prefix during active display. Main admits it only before line 192,
-charges six units per remaining active line, and caps it at 512 units including
-CPU repairs. The lower rate leaves time for run setup beside the nine-word per
-line active DMA capacity. The packer rejects allocation tearing, and its packed
-reader independently rejects cold writes into the preceding display. Frame 0
-and periodic cadence retain their blank-first path. An active prefix grants no
-VBlank capacity: the next refill opens budget 1, and HUD blank counters exclude
-the prefix. The movie table, HUD and CRAM still publish in the admitted blank.
+Timed fixed and periodic cadence can use Last Active Time (LAT), the active
+period immediately before the cadence's publication blank. Main admits one
+window per frame, starting at line 112 or later and before line 208, with six
+units per remaining active line: at most 672 units including CPU repairs.
+Earlier pattern blanks remain usable. The cadence deadline selects LAT, not
+frame parity or Word-RAM bank parity. Frame 0 remains blank-first. LAT grants
+no additional VBlank budget, and HUD blank counters exclude it.
+
+Slots 1731..1742 (VRAM `0xD880..0xD9FF`) are a bounded final-only tail.
+The allocator may reclaim an old display identity there only after current
+references have disappeared and no next-frame reuse or mandatory pin needs it.
+All other cold destinations remain protected from the preceding display;
+the packed reader independently checks that rule. Runs split at the tail
+boundary. Main retains at most twelve pointers (48 bytes), two word counters,
+and a word LAT flag: 54 bytes within the existing `M-STATE` allocation.
+
+Final-only runs keep their Word-RAM bank until a fresh publication blank.
+Before any destructive write, both packing verification and Main require the
+whole bundle to fit 3,200 units: actual pattern words, 96 units per final run
+for setup/repair, and the complete NT/HUD/CRAM reserve. Main checks pointer
+count, total words and destination end bounds. Invalid bundles stop before
+overwriting old patterns. Once admitted, the tail, name table and display
+updates run without a refill or additional VBlank wait. Main returns the bank
+after the final tail DMA/repair; frames without tail runs retain the earlier
+handoff. No CD service, PrgBuf, APPLY or WordBuf capacity is added by LAT.
 
 Budgets 1 through the current cadence target minus one are available to
 patterns. Before pattern work enters the target budget, Main withholds the
-complete display reserve: the exact movie band, a 128-unit timing guard, the
+complete display reserve: the exact movie band, a 512-unit CPU timing guard, the
 physical DEBUG HUD DMAs when present, and an optional CRAM replacement. CRAM
 is written by the CPU, so its 64 words reserve 256 units. Full-height H40 uses
-1,896 units in release or 1,948 in DEBUG; a palette switch raises those values
-to 2,152 and 2,204. Thus an N2 DEBUG full-height H40 frame has 3,200 units in
-VBlank 1 and 1,252 pattern units in VBlank 2, or 996 on a palette switch. A
-40x19 DEBUG frame reserves only 1,372 units, or 1,628 with a palette switch.
+2,280 units in release or 2,332 in DEBUG; a palette switch raises those values
+to 2,536 and 2,588. Thus an N2 DEBUG full-height H40 frame has 3,200 units in
+VBlank 1 and 868 pattern units in VBlank 2, or 612 on a palette switch. A
+40x19 DEBUG frame reserves 1,756 units, or 2,012 with a palette switch.
+The guard covers HUD field patching, sprite construction and DMA command setup;
+charging only the 52 HUD data words does not cover that CPU time.
 A scroll build adds the fixed scroll term — the full-band excess over the
 trimmed band plus 16 units for the CPU-written HScroll/VScroll pairs (40
 units at full-height H40) — and a vertical window adds a further 256 units
@@ -972,11 +993,13 @@ build-time checkされます。
 | `M-STACK` | `0xFFFB00..0xFFFCFF` | 512 B | stackとinterrupt reserve |
 | `M-TOP` | `0xFFFD00..0xFFFFFF` | 768 B | stack topより上 / BIOS reserve |
 
-`M-CODE`内の実generated-code末尾と`M-STATE`内の実`.bss`末尾はbuildとprofile
-ごとに変わり、build-time assertionが各固定rangeの内側に保ちます。scroll DEBUG
-buildは`M-STATE`予約を余りゼロで使い切ります。Mainは
-run-plan cursorもWordBuf read cursorも持たず、Subが両parity cursorを所有して
-解決済みrecordを渡します。
+Permanent text/dataは`0xFF2200`より前で終わります。生成handlerは
+`0xFF2200..0xFF4AFF`を使い、`0xFF6700`までの残りを既存のguardとして残します。
+Linkerはboot専用startup assetを初期化完了まで、この生成コード領域内に置きます。
+`M-STATE`内の実`.bss`末尾はbuildとprofileごとに変わり、build-time assertionが
+固定rangeの内側に保ちます。Full scroll DEBUG 24 fps buildの終端は`0xFF87FC`で、予約内の
+余りは4 byteです。Mainは上限付きの最終run pointerを保持しますがWordBuf read cursorは
+持たず、Subが両parity cursorを所有して解決済みrecordを渡します。
 
 ## VRAM map
 
@@ -1175,23 +1198,39 @@ Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新し�
 すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
 待ちます。
 
-Fixed-Nのtimed frameは、最初のfresh pattern budgetより前にactive display中の
-cold-pattern prefixを転送できます。Mainはline 192より前だけ許可し、残りactive line
-ごとに6 unit、CPU補修を含め最大512 unitを与えます。Active DMAの1 lineあたり9 word
-より低いrateにすることで、run setupの時間も確保します。Packerはallocation tearingを
-拒否し、packed readerでも直前表示のslotへのcold writeを独立に拒否します。Frame 0と
-periodic cadenceは従来どおりblankから開始します。Active prefixはVBlankのcapacityを
-与えず、次のrefillがbudget 1を開きます。HUDのblank counterはprefixを数えません。
-Movie table、HUD、CRAMは引き続きadmitted blankでpublishします。
+Timedのfixed / periodic cadenceは、表示を確定するVBlankの直前のactive期間を
+Last Active Time（LAT）として使えます。Mainは1 frameにつき1回、line 112以降かつ
+208より前に開始を許可し、残active lineごとに6 unit、CPU補修を含め最大672 unitを
+与えます。それより前のpattern用VBlankも使えます。LATはcadenceのdeadlineで決め、
+frameやWord RAM bankの偶奇では決めません。Frame 0はblankから開始します。
+LATはVBlank budgetを増やさず、HUDのblank counterにも数えません。
+
+Slot 1731..1742（VRAM `0xD880..0xD9FF`）を最終VBlank専用の末尾領域にします。
+Allocatorは現在の参照がなくなり、次frameの再利用や必須pinにも不要となった場合だけ、
+この領域の旧表示patternを回収できます。他のcold destinationは直前表示から保護し、
+packed readerでも独立に照合します。Runは末尾領域との境界で分割します。Mainは
+最大12本のpointer（48 byte）、word counter 2個、word LAT flag 1個、計54 byteを
+既存の`M-STATE`内に保持します。
+
+最終VBlank専用runは、新しいpublication blankまでWord RAM bankを保持します。
+破壊的な書き込みの前に、pack検証とMainの両方で、pattern word、最終runごとの
+setup・補修用96 unit、NT/HUD/CRAMの全reserveが3,200 unit以内か確認します。
+Mainはpointer数、総word数、destination終端も検査し、不正なら旧patternを上書きする
+前に停止します。許可後は末尾patternとname tableなどの表示更新を、refillや追加の
+VBlank待ちを挟まず実行します。Mainは末尾の最終DMAと補修の後にbankを返し、
+末尾runがないframeは従来の早期handoffを使います。LATによってCD供給、PrgBuf、
+APPLY、WordBufの容量が増えることはありません。
 
 Budget 1からcurrent cadence targetの1つ前まではpatternに使えます。Pattern workが
 target budgetへ入る前に、Mainはdisplay work全体を先に取り置きします。内訳は
-exact movie band、128-unit timing guard、存在する場合の物理DEBUG HUD DMA、任意の
+exact movie band、512-unit CPU timing guard、存在する場合の物理DEBUG HUD DMA、任意の
 CRAM replacementです。CRAMはCPU writeなので64 wordに256 unitを予約します。
-Full-height H40のreserveはreleaseで1,896 unit、DEBUGで1,948 unit、palette switch時は
-それぞれ2,152と2,204です。したがってN2 DEBUG full-height H40 frameはVBlank 1に
-3,200 unit、VBlank 2にpattern用1,252 unit、palette switch時は996 unitを持ちます。
-40x19 DEBUG frameのreserveは1,372 unit、palette switch時は1,628 unitだけです。
+Full-height H40のreserveはreleaseで2,280 unit、DEBUGで2,332 unit、palette switch時は
+それぞれ2,536と2,588です。したがってN2 DEBUG full-height H40 frameはVBlank 1に
+3,200 unit、VBlank 2にpattern用868 unit、palette switch時は612 unitを持ちます。
+40x19 DEBUG frameのreserveは1,756 unit、palette switch時は2,012 unitです。
+GuardはHUD fieldのpatch、sprite構築、DMA command設定を含みます。
+HUDのdata 52 wordだけをchargeしても、このCPU時間は含まれません。
 scroll buildは固定のscroll項 — trim済みbandに対するfull bandの超過分と、CPU
 writeするHScroll/VScroll対の16 unit（full-height H40では計40 unit）— を加え、
 vertical windowはwrapするplane行の分としてさらに256 unitをruntimeで加えます。

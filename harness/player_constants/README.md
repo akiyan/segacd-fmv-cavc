@@ -3,7 +3,8 @@
 This harness verifies the disc-specific Main/Sub assembly path without
 reusing stale packed movies. It creates current CAVC headers at 15, 24 and
 30 fps on the full 40x28 grid, plus a centered 36x25 case at 30 fps and a
-15 fps 40x18 scroll/WordBuf-ring build with cold cap 480, generates
+15 fps 40x18 scroll/WordBuf-ring build with cold cap 480 and a full-height
+24 fps scroll/WordBuf-ring build, generates
 `player_constants.inc`, then assembles and links both the generic and
 specialized DEBUG players.
 
@@ -46,7 +47,10 @@ For every case it requires:
 - the DEBUG reserve includes the 52-word Window/SAT HUD workload, while
   release omits it;
 - generic and specialized builds begin the next bank exchange after their last
-  Word-RAM access and before every display-deadline wait;
+  Word-RAM access; final-only runs retain the bank through their publication
+  blank, and the empty final path never reads a bank already returned early;
+- fixed and periodic LAT admission preserves the last-active phase bounds;
+  the deferred tail has no refill/wait path after destructive writes begin;
 - single-movie replay publishes black frame -1 before waiting for the boot
   stage, whose sidecar writes would otherwise overwrite the live final display;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,

@@ -13,18 +13,17 @@ SECTIONS
     *(.data)
   }
 
-  ASSERT(. <= 0xFF2100, "Main IP permanent text/data overlaps transient codegen area")
+  ASSERT(. <= 0xFF2200, "Main IP permanent text/data overlaps transient codegen area")
 
-  /* Keep the former startup-asset region as an explicit boundary for the
-     generated Main-CPU code area. The minimal preload counter now reuses the
-     permanent hexadecimal HUD font, so this section is normally empty. */
-  .startup 0xFF2100 :
+  /* Boot-only routines and preload tables occupy the generated-code region
+     until Main copies their persistent data and initializes its handlers. */
+  .startup 0xFF2200 :
   {
     *(.startup)
     . = ALIGN(0x10);
   }
 
-  ASSERT(. <= 0xFF4A00, "startup section exceeds generated-code area")
+  ASSERT(. <= 0xFF4B00, "startup section exceeds generated-code area")
 
   /* Runtime state (M-STATE) sits in its fixed 8.25 KiB reservation right
      after the generated-handler range (M-CODE ends at 0xFF6700).

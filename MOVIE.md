@@ -353,7 +353,12 @@ A Prg record is followed immediately by `count * 32` inline pattern bytes,
 and its raw source points to those bytes in Main's Word-RAM view. Wr and Dic
 records carry no inline payload and point directly at WordBuf or DicBuf.
 Main consumes this single cursor in place, including split DMA continuation;
-it does not construct a Main-RAM run table.
+it retains only up to twelve pointers for final-only runs, without copying
+their records or pattern bytes into Main RAM. Physical slots 1731..1742 are
+written only in the publication VBlank on timed frames. Writers split runs at
+slot 1731, so no descriptor crosses the early/final boundary. The destination
+identifies the phase; compact four-byte descriptors and expanded 22-byte
+records retain their layouts. Frame 0 may load either range during boot.
 
 ## BODY arm audio
 
@@ -924,7 +929,12 @@ Main向けrun計画ではありません。Subはframe展開時にbank offset `+
 Prg recordの直後には`count * 32` byteのinline patternが続き、raw sourceはMainの
 Word-RAM viewでそのbyte列を指します。WrとDic recordはinline payloadを持たず、
 WordBufまたはDicBufを直接指します。Mainはsplit DMA継続を含め、この単一cursorを
-in-placeで消費し、Main-RAM run tableを構築しません。
+in-placeで消費し、最終VBlank専用runについて最大12本のpointerだけを保持します。
+Recordやpattern本体をMain RAMへcopyしません。Timed frameの物理slot 1731..1742は
+publication VBlankだけで書き込みます。Writerはslot 1731でrunを分割し、前段と最終段の
+境界をまたぐdescriptorを作りません。Destinationで段階を区別するため、compactな
+4-byte descriptorと展開後の22-byte recordのlayoutは変えません。
+Frame 0はboot中に両方の範囲へloadできます。
 
 ## BODY arm音声
 

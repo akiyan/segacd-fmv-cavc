@@ -18,6 +18,7 @@ from typing import Sequence
 import numpy as np
 
 import cavc_routing
+import av_config
 
 
 PATTERN_BYTES = 32
@@ -384,6 +385,7 @@ def source_runs(
         if source not in (SOURCE_PRG, SOURCE_WR, SOURCE_DIC):
             raise ValueError(f"invalid pattern source: {source}")
         if (previous_slot is None or slot != previous_slot + 1
+                or slot == av_config.FINAL_VBLANK_SLOT
                 or source != previous_source
                 or (source == SOURCE_DIC
                     and (dic_index != previous_dic + 1

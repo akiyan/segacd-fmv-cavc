@@ -1898,6 +1898,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
     dec_cats = []              # per-frame カテゴリ数[raw,same,near,flbk,buf,miss,scrl](デバッグ欄用)
     dec_category_rows = []     # analysis: 2-byte/cell overlapping category masks
     transfer_tiles_log = []    # pack/player照合用: cold pattern tile数
+    final_tiles_log = []       # bounded final-VBlank-only pattern tail
     transfer_runs_log = []     # pack/player照合用: packed cold-run record数
     supply_sources_log = []    # per-frame update-aligned Prg/Wr/Dic source codes
     ring_per_log = []          # resolved cells/entries/cold flags for ring planning
@@ -4322,6 +4323,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 f"frame {i}: physical cold tiles={dma_tiles} exceed "
                 f"construction limit {frame_max_cold}")
         transfer_tiles_log.append(dma_tiles)
+        final_tiles_log.append(sum(
+            slot >= av_config.FINAL_VBLANK_SLOT for slot in dma_slots))
         transfer_runs_log.append(dma_runs)
         supply_sources_log.append(np.asarray(frame_sources, np.uint8))
         ring_per_log.append((
@@ -5818,6 +5821,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             },
             # simが決めた値をpackで全frame再計算し、descriptor/HUD cold_runsとのズレを即時検出する。
             "pattern_transfers": {
+                "final_vblank_tiles": np.asarray(final_tiles_log, np.int64),
+                "final_vblank_reclaims": int(alloc.final_reclaims),
                 "schema_version": 3,
                 "tiles": np.asarray(transfer_tiles_log, np.uint16),
                 "runs": np.asarray(transfer_runs_log, np.uint16),

@@ -43,6 +43,9 @@ CASES = (
          extra_features=cavc_routing.FEATURE_SCROLL | cavc_routing.FEATURE_WORDBUF_RING
          | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS),
     Case("h40-24-supply", 24, True, cold_cap=225),
+    Case("h40-24-scroll-ring", 24, True, cold_cap=230,
+         extra_features=cavc_routing.FEATURE_SCROLL | cavc_routing.FEATURE_WORDBUF_RING
+         | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS),
     Case("h40-30-supply", 30, True),
     Case("h40-30-centered", 30, True, 36, 25),
     Case("h40-24-16385", 24, True, cold_cap=225, frames=16385),
@@ -317,8 +320,9 @@ def verify_shared_deadline_vblank(
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
     active_prefix = block("bf_start_pattern_budget", "bf_start_vbudget")
     for pattern in (
-            r"\bcmpiw\s+#192,%d0", r"\bmulu(?:w)?\s+#6,%d0",
-            r"\bcmpiw\s+#512,%d0", r"\bmovew\s+%d0,%d7",
+            r"\bcmpiw\s+#112,%d0", r"\bcmpiw\s+#208,%d0",
+            r"\bmulu(?:w)?\s+#6,%d0",
+            r"\baddiw\s+#224,%d0", r"\bmovew\s+%d0,%d7",
             r"\bbra\w*\s+[^\n]*<bf_start_vbudget>"):
         if not re.search(pattern, active_prefix):
             raise AssertionError(f"{obj}: active prefix lacks a phase/capacity bound or blank fallback")
@@ -391,9 +395,9 @@ def verify_shared_deadline_vblank(
     screen_cols = 40
     band_words = (trows - 1) * 64 + tcols
     hud_words = screen_cols + (43 - screen_cols) * 4
-    normal_reserve = band_words + hud_words + 128
+    normal_reserve = band_words + hud_words + 512
     if scroll:
-        normal_reserve = trows * 64 + hud_words + 128 + 4 * 4
+        normal_reserve = trows * 64 + hud_words + 512 + 4 * 4
     if not re.search(rf"\bmovew\s+#{normal_reserve},%d6", publish):
         raise AssertionError(
             f"{obj}: missing exact grid/HUD/guard reserve ({normal_reserve} words)")
@@ -455,7 +459,7 @@ def verify_early_nonblocking_swap(
     if not pending_test.start() < synchronous_begin.start() < finish.start():
         raise AssertionError(f"{obj}: play-loop swap begin/finish order is wrong")
 
-    frame_tail = block("bf_flip", "bf_update_list")
+    frame_tail = block("bf_flip", "bf_defer_final_run")
     early_calls = list(re.finditer(
         r"\bbsr\w*\s+[^\n]*<swap_begin>", frame_tail))
     if len(early_calls) != 1:
@@ -463,6 +467,16 @@ def verify_early_nonblocking_swap(
             f"{obj}: expected one early swap request, found {len(early_calls)}")
     early = early_calls[0]
     guarded_prefix = frame_tail[:early.start()]
+    if not bss_reference(guarded_prefix, r"\btstw\s+0 ", "final_run_count"):
+        raise AssertionError(f"{obj}: early bank return ignores deferred pattern sources")
+    final = block("bf_final_patterns", "bf_update_list")
+    if not re.search(r"\bbeqs?\s+", final.split("%a2@", 1)[0]):
+        raise AssertionError(f"{obj}: empty final path can read a returned bank")
+    if ("<dma_chunk_wr>" not in final or "<dma_chunk>" not in final
+            or "<swap_begin>" not in final):
+        raise AssertionError(f"{obj}: deferred transfer/source return path is incomplete")
+    if re.search(r"<.*(?:wait_vb|refill).*>", final):
+        raise AssertionError(f"{obj}: destructive final bundle can cross a blank")
     frame_zero_guard = bss_reference(
         guarded_prefix, r"\btstl\s+0 ", "frame_no")
     # objdump prints a word immediate as signed even though the following
@@ -501,6 +515,7 @@ def verify_early_nonblocking_swap(
         raise AssertionError(
             f"{obj}: Main still references Word RAM after early bank exchange")
     allowed_calls = {
+        "bf_final_patterns",  # zero deferred count returns before Word-RAM reads
         "bf_wait_fixed_flip_vblank",
         "wait_vb_start",
         "bf_patch_dbg_row",
