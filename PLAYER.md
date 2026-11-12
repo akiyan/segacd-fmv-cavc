@@ -23,8 +23,13 @@ same phase. Their effective rates are 15000/1001, 24000/1001, and 30000/1001
 fps respectively.
 
 The fixed 15/30 fps display controller counts missed whole VBlanks as debt.
-Later frames shorten their display interval, never below one VBlank, until
-that debt is repaid. Pattern and final-display DMA admission still use the
+It retains up to one VBlank of lateness as preparation headroom. Later frames
+shorten their display interval, never below one VBlank, to recover only debt
+above that allowance. Full debt remains counted, including the retained unit;
+the allowance resets at each movie start and does not grow with each stall.
+The retained unit can shift video by about 16.7 ms relative to the original
+display schedule; it does not move or replace audio samples.
+Pattern and final-display DMA admission still use the
 remaining budget of the actual target blank. A frame that cannot finish sooner
 retains its debt; the display cannot advance ahead of the nominal stream clock.
 Before reserving an early publication blank, Main requires all pattern words,
@@ -32,12 +37,24 @@ one CPU repair per run and the final-display reserve to fit one VBlank budget.
 Otherwise it retains the nominal target and avoids wasting an earlier reserve.
 
 Fixed cadence is a target, not a guarantee of uniform display intervals. In
-the e197/p165 DEBUG emulator qualification of the 2,714-frame Sonic Jam opening,
-each of two complete loops had 14 three-VBlank intervals and 14 compensating
-one-VBlank intervals; the other 2,684 measured intervals were two VBlanks.
+the e198/p169 DEBUG emulator qualification of the 2,714-frame Sonic Jam opening
+at cold cap 240, each of two complete loops had four three-VBlank intervals
+and two compensating one-VBlank intervals; the other 2,706 measured intervals
+were two VBlanks. Two long intervals were at the movie edges. Relative to the
+frame-1 schedule, lateness stayed at one VBlank after the first stall except
+for temporary two-VBlank excursions, including the last frame. Each new loop
+reset the allowance. The streamed PRG jitter reserve peaked at 2 KiB, with no
+APPLY backpressure.
 Every movie frame appeared, with zero sector slips, control desynchronizations
 or audio resynchronizations. This result qualifies transport and completeness,
 but retains a display-cadence warning and is not a hardware measurement.
+
+The matching 15 fps Machi opening qualification completed all 2,293 frames.
+Of 2,291 measured interior intervals, 2,288 were four VBlanks, two were five,
+and one was three. Synchronization error counters and APPLY backpressure
+stayed zero; the streamed PRG jitter reserve peaked at 3 KiB. These bounded
+captures establish the observed behavior, not a worst-case lateness bound for
+arbitrary streams.
 
 The 24 fps display controller remains phase-locked after a missed deadline.
 It counts whole-VBlank lateness as debt and repays that debt only by shortening
@@ -686,7 +703,11 @@ CD-sector allowanceは同じ位相で進みます。実効rateは順に15000/100
 30000/1001 fpsです。
 
 固定15/30 fpsのdisplay controllerは、遅れたVBlank数をdebtとして数えます。
-後続frameはdebtを返済するまで表示間隔を短縮しますが、1 VBlank未満にはしません。
+準備の余裕として最大1 VBlankの遅れを残し、後続frameはその許容分を超えたdebtだけを
+表示間隔の短縮で返済します。表示間隔は1 VBlank未満にはしません。
+残した1 VBlankも含めてdebtの全量を記録します。許容分はmovie開始ごとにresetし、
+stallのたびに増やしません。残した1 VBlankによって映像は元の表示予定から約16.7 ms
+後ろへずれ得ますが、音声sampleの位置や内容は変えません。
 patternと最終表示DMAのadmissionには、実際のtarget blankの残budgetを引き続き使います。
 早く完了できないframeのdebtは残り、名目stream clockより先に表示を進めません。
 早い表示用のblankを予約する前に、Mainは全pattern word、runごとのCPU先頭word補修、
@@ -694,11 +715,22 @@ patternと最終表示DMAのadmissionには、実際のtarget blankの残budget�
 targetを維持し、早いblankの予約枠を無駄にしません。
 
 固定cadenceは目標であり、均一な表示間隔を保証するものではありません。
-e197/p165のDEBUG emulatorで全2,714 frameのSonic Jam openingを2周検証したところ、
-各周に3 VBlankの表示間隔が14回、その遅れを取り戻す1 VBlankの間隔が14回あり、
-残りの計測対象2,684間隔は2 VBlankでした。全movie frameを表示し、sector slip、
+e198/p169のDEBUG emulatorでcold cap 240、全2,714 frameのSonic Jam openingを
+2周検証したところ、各周に3 VBlankの表示間隔が4回、その超過分を取り戻す
+1 VBlankの間隔が2回あり、残りの計測対象2,706間隔は2 VBlankでした。
+長い間隔のうち2回はmovieの端です。frame 1を基準とする表示予定に対して、
+最初のstall後は1 VBlankの遅れを維持し、最終frameを含む一時的な箇所で
+2 VBlankになりました。各周の開始時に許容分をresetしています。
+streamed PRGのjitter reserve使用量は最大2 KiB、APPLY backpressureは0でした。
+全movie frameを表示し、sector slip、
 control desynchronization、audio resynchronizationはすべて0でした。この結果は
 配送と全frameの表示を確認するもので、表示cadenceの警告は残り、実機計測ではありません。
+
+同じ版の15 fps Machi opening検証では、全2,293 frameを完走しました。
+計測対象の内部2,291間隔のうち、4 VBlankが2,288回、5 VBlankが2回、
+3 VBlankが1回でした。同期error counterとAPPLY backpressureは0、streamed PRGの
+jitter reserve使用量は最大3 KiBでした。この有限長の録画は観測した動作を確認する
+ものであり、任意のstreamでの最大遅延を保証するものではありません。
 
 24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
 debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。

@@ -1888,9 +1888,10 @@ pace_admit_fixed_interval:
 2:
 	rts
 
-/* Keep fixed-N display time tied to the stream clock. A late publication
-   accumulates whole-VBlank debt; subsequent frames may use shorter intervals
-   until the debt is repaid. The normal blank admission and DMA word budgets
+/* Keep fixed-N display time tied to the stream clock with one VBlank of
+   retained lateness. Count the full debt, but shorten subsequent intervals
+   only to repay the excess above one VBlank. This preserves preparation
+   headroom after an isolated late publication. Normal admission and DMA budgets
    still decide whether that shorter interval is physically possible. Never
    request fewer than one VBlank or run ahead of the nominal stream clock.
    Trashes d0-d2. */
@@ -1915,6 +1916,8 @@ pace_fixed_commit:
 	move.w	#0x00FF, d1
 2:
 	move.w	d1, pace_fixed_debt
+	subq.w	#1, d1				/* retain one VBlank; do not erase it from accounting */
+	ble.s	3f				/* zero/one debt keeps the nominal interval */
 	sub.w	d1, d2
 	bgt.s	3f
 	moveq	#1, d2
