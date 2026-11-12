@@ -1,0 +1,42 @@
+schema_version = 5
+
+# Optional CLI multipart encoding: uncomment both lines to default to 3 parts.
+# Parts play in order without a menu, pause while loading, and loop.
+# tools/python.sh --gpu tools/multipart.py profiles/sonic-jam-op.toml --part 2
+# Override the count: append --parts 4 (part numbers are 1-based).
+# See README.md: Multipart encoding (CLI).
+# [multipart]
+# parts = 3
+
+[source]
+path = "assets/sonic-jam-op/original-sonic-jam-op.avi"
+fps = "30"
+duration = "90.466667"
+sar = "32:35"
+# Loudness-match the quiet source master to Bad Apple's level
+# (measured mono I=-15.15 LUFS; gain into tanh soft clip and a
+# -1 dB limiter lands near -12 LUFS integrated).
+audio_filter = "aformat=channel_layouts=mono,volume=6.2dB,asoftclip=type=tanh,alimiter=limit=0.891:attack=5:release=100:level=false"
+
+[video]
+width = 288
+height = 200
+fit = "pad"
+master_denoise = false
+# Preserve the qualified Sonic Jam source-dither removal. The codec's normal
+# position-fixed Bayer output dither remains enabled.
+master_filter = "setsar=1,guided=radius=1:eps=0.002:planes=15"
+raw_filter = "setsar=1"
+
+[output]
+directory = "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold230/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+cold_cap = 230
+
+[palette]
+algorithm = "mosaic-gm"
+
+

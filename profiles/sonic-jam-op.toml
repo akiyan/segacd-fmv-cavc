@@ -29,12 +29,12 @@ master_filter = "setsar=1,guided=radius=1:eps=0.002:planes=15"
 raw_filter = "setsar=1"
 
 [output]
-directory = "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold210/sim"
+directory = "tmpfs/SonicJamOp_H40_288x200_adpcm22_cold230/sim"
 reuse = false
 emit_decisions = true
 
 [encoder]
-cold_cap = 210
+cold_cap = 230
 
 [palette]
 algorithm = "mosaic-gm"
