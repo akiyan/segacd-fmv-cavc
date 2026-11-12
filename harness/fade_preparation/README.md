@@ -108,7 +108,7 @@ around frame 9104 has flatter gray shadow gradations than the earlier
 ordinary-frame fallback. Zero error against the planned reference does not
 mean unchanged source fidelity.
 
-Full playback qualification remains pending. Independent packing rejected
+Independent e201 packing rejected
 frame 235: display reserve 2,372 + 11 patterns * 16 + 7 runs * 96 = 3,220,
 above 3,200 units. Exactly one frame failed that cost audit. This exposed a
 missing construction-time final-publication constraint, separately from fade
@@ -117,5 +117,55 @@ Finalize checks final source runs, while the independent packed-reader check
 remains unchanged. Replaying the actual pre-frame-235 state preserved all 515
 visible updates and their 197 cold loads, moving four of the 11 tail loads to
 ordinary slots without tearing. That isolated replay excludes subsequent
-prefetch and is not evidence for the full changed movie. A new full encode
-and exact-player qualification are still required.
+prefetch and is not evidence for the full changed movie.
+
+The e202 natural-footage series encoded Sonic OP, Lunar, Machi OP, Machi ED,
+then full Big Buck Bunny without changing their source profiles. Every encode
+used one physical planning pass and had zero whole-movie replanning restarts.
+This count excludes internal WordBuf layout convergence. BBB completed in
+3,653.6 seconds; its independent packed reader passed all 19,038 frames,
+including frame 235. All seven fade preparation deadlines had zero pending
+cells. Its 411 fade diagnostic frames still matched the ideal quantized fade
+reference, which does not prove unchanged source fidelity.
+
+The BBB DEBUG build exposed a separate resident Sub size failure: 5,130 bytes
+of text exceeded the fixed 5,120-byte allocation. p174 folds the constant boot
+WordBuf cursor wrap at assembly time; the actual linked BBB image is 5,104
+bytes. The memory map and timed transfer routines are unchanged. The assembly
+matrix now includes long routing, audio-rate dithering and scroll/WordBuf-ring
+features together, so this combination must fit before recording.
+
+All five completed e202 encodes were reused for fresh p174 DEBUG captures in
+the same order. Each capture contains every first-loop frame. The counts below
+are abnormal display intervals, not independent stalls; ordinary 24fps cadence
+alternates two and three VSyncs. Edge exceptions are kept separately, and
+untimed frame zero and the terminal hold are outside the interval measurement.
+
+| Movie | Encode seconds | Interior irregular intervals | Edge irregular intervals | Playback gate |
+|---|---:|---:|---:|---|
+| Sonic OP | 175.2 | 0 | 1 | PASS / NONE |
+| Lunar | 386.1 | 249 | 0 | PASS / WARNING |
+| Machi OP | 215.9 | 0 | 0 | PASS / NONE |
+| Machi ED | 337.4 | 1 | 1 | PASS / WARNING |
+| Big Buck Bunny | 3653.6 | 3895 | 2 | FAIL |
+
+Lunar has 237 two/three-VSync phase deviations, eleven four-VSync holds and
+one five-VSync hold. Its earlier p173 capture of the same e202 encode had 89
+irregular intervals; the increase is retained as an unresolved playback result.
+Machi ED's interior deviation is frame 416 held for two rather than four VSyncs.
+The first four movies have zero sector slip, control desync and audio resync.
+
+BBB has sector-slip peak six, control-desync peak zero and audio-resync peak
+two. APPLY backpressure first appears at frame 9359; the first sector-gap
+recovery and audio resync appear at frame 9361, capture time 329.379 seconds.
+Frames 9360, 9362, 9365, 9367 and 9369 each hold for fifteen VSyncs (about
+250 ms). Most other cadence deviations occur in the late scrolling section.
+These observations locate a playback failure but do not establish its root
+cause. The failed HUD gate remains failed; no further source encode was run.
+
+Actual VDP traces pass for all five movies: final-tail, name-table and display
+control writes have zero active-display or boundary-crossing words. That proves
+this transfer-safety check, not successful CD/audio playback. BBB is therefore
+not qualified for publication. Matching logs, gates, recordings and disc hashes
+are retained in `logs/issue127-e202p174-series.json`; the compact result table is
+`logs/issue127-e202p174-summary.tsv` with detailed JSON beside it.
