@@ -29,7 +29,8 @@ For every case it requires:
 - every case starts each weighted transfer budget only at a proven
   VBlank head, withholds the cadence-final name-table/HUD/CRAM reserve before
   pattern work, and retains status, terminal-line, and fresh-VBlank fallback
-  guards;
+  guards, and admits publication against the actual remaining blank time
+  measured from the physical budget's stopwatch origin;
 - CPU-written VDP words cost four DMA-word units, including Word-RAM DMA
   first-word repairs; every pattern run uses DMA and every run crossing the
   residual budget is split at that boundary;
@@ -39,10 +40,15 @@ For every case it requires:
   at 30 fps, and the
   DEBUG snapshot preserves contiguous runtime word counters for transfer
   VBlanks 1 through 4;
+- fixed-N builds call the assembled debt-repayment path and retain its
+  one-VBlank lower bound; whole-frame admission runs before any shortened
+  display reservation, and existing DMA admission checks still apply;
 - the DEBUG reserve includes the 52-word Window/SAT HUD workload, while
   release omits it;
 - generic and specialized builds begin the next bank exchange after their last
   Word-RAM access and before every display-deadline wait;
+- single-movie replay publishes black frame -1 before waiting for the boot
+  stage, whose sidecar writes would otherwise overwrite the live final display;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
   while the 30 fps decoder contains no such call or counter overhead;
 - all geometry/timing/audio/supply combinations assemble and link

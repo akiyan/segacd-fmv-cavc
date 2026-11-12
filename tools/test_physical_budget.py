@@ -336,6 +336,33 @@ class PhysicalBudgetPlanTests(unittest.TestCase):
         # ring proof sees that they would need an impossible earlier delivery.
         self.assertEqual(planner.begin_frame(3).prg_patterns, 0)
 
+    def test_worst_control_deadline_does_not_erase_feasible_pattern_work(self) -> None:
+        # A full scroll-plane control estimate needs more sectors than this
+        # cadence permits. Its failure must reduce the control reservation,
+        # rather than forbid an otherwise deliverable incoming guard edge.
+        planner = physical_budget.SharedSectorPlanner(
+            4, max_prg_patterns=210, max_cold_patterns=210,
+            prebuffer_capacity_patterns=4096, frame_sectors=5, fps=30,
+            ring_capacity_patterns=5376,
+            maximum_control_block_bytes=[0, 6000, 6000, 6000])
+        loads = [0, 150, 150, 40]
+        controls = [0, 900, 900, 900]
+        for frame, load in enumerate(loads):
+            limit = planner.begin_frame(frame)
+            self.assertGreaterEqual(limit.prg_patterns, load, frame)
+            self.assertGreaterEqual(limit.control_block_bytes, controls[frame])
+            planner.commit_frame(
+                frame, prg_patterns=load, cold_patterns=load,
+                control_block_bytes=controls[frame])
+        schedule = stream_schedule.schedule_payload_ring(
+            loads, controls, fps=30, frame_sectors=5,
+            ring_capacity_patterns=5376, prebuffer_capacity_patterns=4096)
+        self.assertTrue(schedule["feasible"])
+        self.assertEqual(schedule["rate_lead_peak"], 0)
+        physical_budget.verify_shared_sector_prefix(
+            loads, controls, fps=30, frame_sectors=5,
+            prebuffer_capacity_patterns=4096)
+
     def test_online_limits_preserve_sector_boundaries_across_frames(self) -> None:
         # These public limits come from the original full-prefix scheduler.
         # Reusing a trial across frames or rounding either stream incorrectly

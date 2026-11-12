@@ -22,6 +22,15 @@ schedule from the packed header. The 15 fps path repeats `(4)`, 24 fps repeats
 same phase. Their effective rates are 15000/1001, 24000/1001, and 30000/1001
 fps respectively.
 
+The fixed 15/30 fps display controller counts missed whole VBlanks as debt.
+Later frames shorten their display interval, never below one VBlank, until
+that debt is repaid. Pattern and final-display DMA admission still use the
+remaining budget of the actual target blank. A frame that cannot finish sooner
+retains its debt; the display cannot advance ahead of the nominal stream clock.
+Before reserving an early publication blank, Main requires all pattern words,
+one CPU repair per run and the final-display reserve to fit one VBlank budget.
+Otherwise it retains the nominal target and avoids wasting an earlier reserve.
+
 The 24 fps display controller remains phase-locked after a missed deadline.
 It counts whole-VBlank lateness as debt and repays that debt only by shortening
 a later nominal three-VBlank display step to two. It never shortens a
@@ -426,6 +435,11 @@ physical slot before acknowledging the clear, so its remainder and the next
 VBlank form the normal frame-0-to-frame-1 interval. Frame -1 therefore creates
 no unplanned PrgBuf lead, and the CD startup interval does not advance audio.
 
+Single-movie replay retains the final picture for 900 VBlanks, then publishes
+black frame -1 before sending `CMD_STREAM`. HEADER reload can write boot-sidecar
+patterns into VRAM slots referenced by the previous picture, so the movie
+plane stays black throughout that untimed reload and frame-0 preparation.
+
 ```mermaid
 sequenceDiagram
     participant CD as CD / CDC
@@ -539,6 +553,16 @@ new VBlank or while the V counter is still on its first blank line (`E0`).
 Entering an already-running blank later never creates a full budget; Main
 waits for the next head.
 
+Before its first fresh pattern budget, a fixed-N timed frame may transfer a
+cold-pattern prefix during active display. Main admits it only before line 192,
+charges six units per remaining active line, and caps it at 512 units including
+CPU repairs. The lower rate leaves time for run setup beside the nine-word per
+line active DMA capacity. The packer rejects allocation tearing, and its packed
+reader independently rejects cold writes into the preceding display. Frame 0
+and periodic cadence retain their blank-first path. An active prefix grants no
+VBlank capacity: the next refill opens budget 1, and HUD blank counters exclude
+the prefix. The movie table, HUD and CRAM still publish in the admitted blank.
+
 Budgets 1 through the current cadence target minus one are available to
 patterns. Before pattern work enters the target budget, Main withholds the
 complete display reserve: the exact movie band, a 128-unit timing guard, the
@@ -558,14 +582,19 @@ A DMA run crossing a residual boundary is split exactly there and continued
 at the next fresh VBlank head, regardless of run length. After the pattern
 tail, Main restores the withheld reserve and admits the shared
 name-table/HUD/CRAM publication path only if the current phase is still inside
-that same VBlank. VBlank status is checked before and after the V counter, and terminal
-lines `FC..FF` are rejected. If any condition fails, Main waits for a fresh
-VBlank.
+that same VBlank and its remaining time covers the complete publication
+reserve. VBlank status is checked before and after the V counter, and terminal
+lines `FC..FF` are rejected. Each physical budget also retains its Main-RAM
+stopwatch origin. Main scales its remaining time against 3,200 units over
+76 ticks, conservatively excluding first-line entry uncertainty from the
+38-line NTSC blank. This avoids the repeated V-counter range and catches CPU
+setup time that consumes blank time without reducing the residual word counter.
+If any condition fails, Main waits for a fresh VBlank.
 
-For a multi-budget DEBUG pattern transfer, Main formats the stable HUD fields
-after the first transfer budget and before waiting for the next fresh VBlank.
+Main formats the stable DEBUG HUD fields before waiting for the first pattern
+budget, including frames that use only one budget.
 After the final pattern word, it patches only the transfer-final fields and
-the resolved palette segment in `dbg_row`. The exact-band movie NT DMA and the
+the resolved palette segment and first-budget exit in `dbg_row`. The exact-band movie NT DMA and the
 Window/SAT HUD DMAs then run as separate members of the same admitted VBlank;
 there is no CPU VDP-port HUD republish. Exact logical pattern
 word counters cover runtime VBlank budgets 1 through 4; they remain separate
@@ -626,6 +655,14 @@ Word RAMのWordBufとrouting sizeはprofile（frame数、cell数、cold cap）�
 始まる`(2, 3)`、30 fps pathは`(2)`を反復します。Mainのdisplay deadlineとSubの
 CD-sector allowanceは同じ位相で進みます。実効rateは順に15000/1001、24000/1001、
 30000/1001 fpsです。
+
+固定15/30 fpsのdisplay controllerは、遅れたVBlank数をdebtとして数えます。
+後続frameはdebtを返済するまで表示間隔を短縮しますが、1 VBlank未満にはしません。
+patternと最終表示DMAのadmissionには、実際のtarget blankの残budgetを引き続き使います。
+早く完了できないframeのdebtは残り、名目stream clockより先に表示を進めません。
+早い表示用のblankを予約する前に、Mainは全pattern word、runごとのCPU先頭word補修、
+最終表示の予約分が1 VBlank budgetへ収まることを確認します。収まらなければ名目の
+targetを維持し、早いblankの予約枠を無駄にしません。
 
 24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
 debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
@@ -1011,6 +1048,11 @@ drainしてからclearをacknowledgeするため、slotの残り時間と次のV
 frame-0-to-frame-1 intervalになります。したがってframe -1は計画外のPrgBuf先行量を
 作らず、CD起動待ちも音声を進めません。
 
+単一動画のループ復帰では最後の絵を900 VBlank保持し、`CMD_STREAM`を送る前に
+黒いframe -1を表示します。HEADERの読み直しでboot sidecarのpatternをVRAMへ書くと、
+直前の絵が参照していたslotを上書きするため、非計時の読み直しとframe 0の準備が
+終わるまで動画planeを黒く保ちます。
+
 ```mermaid
 sequenceDiagram
     participant CD as CD / CDC
@@ -1118,6 +1160,15 @@ Word-RAM DMAは必須のCPU先頭word補修に4 unitを追加します。新し�
 すでに進行中のblankへそれより遅く入った場合はfull budgetを作らず、次のheadを
 待ちます。
 
+Fixed-Nのtimed frameは、最初のfresh pattern budgetより前にactive display中の
+cold-pattern prefixを転送できます。Mainはline 192より前だけ許可し、残りactive line
+ごとに6 unit、CPU補修を含め最大512 unitを与えます。Active DMAの1 lineあたり9 word
+より低いrateにすることで、run setupの時間も確保します。Packerはallocation tearingを
+拒否し、packed readerでも直前表示のslotへのcold writeを独立に拒否します。Frame 0と
+periodic cadenceは従来どおりblankから開始します。Active prefixはVBlankのcapacityを
+与えず、次のrefillがbudget 1を開きます。HUDのblank counterはprefixを数えません。
+Movie table、HUD、CRAMは引き続きadmitted blankでpublishします。
+
 Budget 1からcurrent cadence targetの1つ前まではpatternに使えます。Pattern workが
 target budgetへ入る前に、Mainはdisplay work全体を先に取り置きします。内訳は
 exact movie band、128-unit timing guard、存在する場合の物理DEBUG HUD DMA、任意の
@@ -1134,12 +1185,17 @@ scroll frameはinline CRAM imageを運ばないため、palette switch変種は�
 DMA runが残budget境界を越える場合はrun長に関係なくそこで正確に分割し、次の
 fresh VBlank headから続きを行います。Pattern tail後に取り置いたreserveを戻し、
 同じVBlank内にまだいる場合だけname-table/HUD/CRAM publication shared pathを許可します。
-VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineは拒否します。
+さらに、残り時間がpublication reserve全体を収容できる必要があります。
+VBlank statusはV counterの前後で確認し、terminalの`FC..FF` lineを拒否します。
+各physical budgetのstopwatch起点をMain RAMに保持し、残り時間を76 tickあたり
+3,200 unitで評価します。38 lineのNTSC blankから最初のlineへの進入誤差を安全側に
+差し引いた値です。これによりV counterの反復区間を避け、残word counterを減らさずに
+blank時間を消費するCPU setupも検出します。
 どれかを満たさなければfresh VBlankを待ちます。
 
-multi-budget DEBUG pattern transferでは、Mainは最初のtransfer budget後、次のfresh
-VBlank待ちより前にstableなHUD fieldをformatします。最後のpattern word後は、
-transfer終了時に確定するfieldとpalette segmentだけを`dbg_row`へpatchします。
+Mainは最初のpattern budget待ちより前に、stableなDEBUG HUD fieldをformatします。
+1個のbudgetだけで終わるframeも同じです。最後のpattern word後は、transfer終了時に
+確定するfield、palette segment、最初のbudgetのexitを`dbg_row`へpatchします。
 Exact-band movie NT DMAとWindow/SAT HUD DMAは、同じadmitted VBlankの別々のmember
 として実行します。CPU VDP-portによるHUD republishは行いません。Runtime VBlank budget
 1〜4のexact logical pattern word counterはweighted capacity chargeと分離して保持し、

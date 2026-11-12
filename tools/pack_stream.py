@@ -1376,6 +1376,15 @@ def decode_verify(
     scroll_transfer_cells = scroll_plan.PLANE_COLUMNS * TROWS
     diffs = []; ring_peak = len(ring); bad = 0
     for i in range(len(per)):
+        # Cold patterns may transfer before VBlank. Check their destinations
+        # against the actual preceding name table, independently of allocation.
+        if scrolling:
+            previous_cells = scroll_state.primary_cells
+            if scroll_position % TILE:
+                previous_cells += scroll_state.guard_cells
+            previous_slots = set(int(plane_nt_slot[c]) for c in previous_cells)
+        else:
+            previous_slots = set(int(slot) for slot in nt_slot)
         segment_switch = bool(
             i and int(frame_seg[i]) != int(frame_seg[i - 1]))
         if segment_switch:
@@ -1510,10 +1519,17 @@ def decode_verify(
             for offset in range(count):
                 if not src or slot + offset >= POOL:
                     bad += 1
-                elif source == pattern_supply.SOURCE_DIC:
-                    tile[slot + offset + BASE] = src[offset]
                 else:
-                    tile[slot + offset + BASE] = src.popleft()
+                    pattern = (
+                        src[offset] if source == pattern_supply.SOURCE_DIC
+                        else src.popleft())
+                    target = slot + offset
+                    if (i and target in previous_slots
+                            and tile[target + BASE] != pattern):
+                        raise ValueError(
+                            f"frame {i}: cold pattern overwrites preceding "
+                            f"display slot {target}")
+                    tile[target + BASE] = pattern
         if runs_pos != len(blk):
             raise ValueError(
                 f"frame {i}: run suffix ends at {runs_pos}, "
@@ -2102,6 +2118,9 @@ def main():
     inline_prefetch_per, boot_sidecar = split_boot_prefetch(
         log, prefetch_per)
     print(f"resolve[{args.alloc}]: tearing={tearing} M(payload)={len(Plist)} frames={len(per)}")
+    if tearing:
+        raise SystemExit(
+            "pack: cold-pattern destinations must preserve the preceding display")
     supply_meta = log.get("pattern_supply") or {}
     supply_enabled = bool(supply_meta.get("enabled", False))
     if not supply_enabled:
@@ -2278,8 +2297,13 @@ def main():
             or frozen_list.shape != recomputed_list.shape
             or not np.array_equal(frozen_list, recomputed_list)):
         raise SystemExit("pack: shadow update cycle model differs from frozen sim decision")
-    if np.any(update_lists & (recomputed_list >= recomputed_legacy)):
-        frame = int(np.flatnonzero(update_lists & (recomputed_list >= recomputed_legacy))[0])
+    # Scroll controls require a position/list item regardless of the nominal
+    # bitmap speed. Only optional ordinary-frame lists must save Main cycles.
+    optional_list_regressions = (
+        update_lists & (frame_types == shadow_updates.FRAME_NORMAL)
+        & (recomputed_list >= recomputed_legacy))
+    if np.any(optional_list_regressions):
+        frame = int(np.flatnonzero(optional_list_regressions)[0])
         raise SystemExit(f"pack: selected shadow list is not faster at frame {frame}")
     blocks, source_pcm_chunks = build_control(
         log, per, n_upd, audio_path, supply_plan.sources, update_lists,

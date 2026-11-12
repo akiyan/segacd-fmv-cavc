@@ -42,13 +42,14 @@
 
 .equ PROBE_BANK, 0x00200000
 .equ O_NRUN_OFF, 0x0000
+.equ O_NLOAD_OFF, 0x0002
 .equ O_LOADS_OFF, 0x0004
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic staging bank is available */
 .equ STAT_READY, 0x8003
-.equ STAT_END,   0x8004			/* SPからの映画終端通知(15秒待って再ループ) */
+.equ STAT_END,   0x8004			/* Sub completed the final movie-frame exchange */
 
 .equ MOVIE_NT,        0xE000
 .equ HUD_WINDOW_NT,   0xF000
@@ -145,6 +146,8 @@
    分ける。 */
 .equ SCREEN_COLS, 40		/* H40 V28 NTSC: 40x28 cell aperture */
 .equ VB_WORDS, 3200		/* H40 V28 NTSC: setup/CPU work込みの安全側 */
+.equ VB_BUDGET_TICKS, 76	/* 38 NTSC blank lines minus first-line entry uncertainty */
+.equ ACTIVE_PREFIX_WORDS, 512	/* includes CPU repair cost; capped active-display work */
 .equ CPU_VDP_WORD_COST, 4	/* one CPU-written VDP word in DMA-word equivalents */
 .equ FEATURE_VBLANK_CADENCE_BIT, 1	/* header features bit 1 */
 .equ FEATURE_PATTERN_SUPPLY_BIT, 3
@@ -606,7 +609,7 @@ play_loop:
 	addq.l	#1, frame_no
 	bra	play_loop
 
-/* 映画終端: 最終フレームを表示したまま15秒(900vblank)待ち、先頭からループ再生 */
+/* Movie end: hold the final picture, then blank it before reloading. */
 movie_end_md:
 .ifdef MULTIPART
 	/* Execute outside the IP image which the loader will replace. */
@@ -616,9 +619,12 @@ movie_end_md:
 1:
 	bsr	wait_vblank
 	dbra	d2, 1b
+	/* Hide the final display before CMD_STREAM can load the boot sidecar into
+	   resident VRAM slots still referenced by that display. The untimed black
+	   frame remains visible throughout HEADER reload and frame-0 preparation. */
+	bsr	show_frame_minus_one
 	move.w	#CMD_STREAM, d0			/* SPを再ストリーム開始させる */
 	bsr	cmd_wait_ready			/* BODY arm + frame0 handoff完了まで待つ */
-	bsr	show_frame_minus_one
 	/* ループ再生: CRAMを区間0へ復帰(最終区間のパレットのままframe0を
 	   表示しない)。frame -1は黒画面なので新VBLANK頭で総入替すれば安全。 */
 	bsr	wait_vb_start
@@ -629,7 +635,7 @@ movie_end_md:
 	clr.w	dbg_seg
 	move.l	#PALIDX_RAM, palidx_ptr		/* ループ再生: 切替表を先頭へ巻き戻す */
 	bsr	clear_nt_stage
-	bsr	prime_fixed_cadence		/* 15s tail already satisfies frame0 cadence */
+	bsr	prime_fixed_cadence		/* frame 0 starts a fresh cadence after reload */
 	bra	play_loop
 
 /* Initial boot and replay start from the same blank plane. Fine scrolling
@@ -986,10 +992,14 @@ bf_dma:
 	addi.w	#64*CPU_VDP_WORD_COST, d0
 8:
 	move.w	d0, pattern_final_reserve_words
+	bsr	pace_admit_fixed_interval
+.ifdef DEBUG
+	/* Single-budget frames have no active-display gap after pattern work. */
+	bsr	prepare_dbg
+.endif
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
-	move.w	#1, pattern_transfer_vblanks
 	lea	(PROBE_BANK+O_LOADS_OFF), a2
 .ifdef DEBUG
 	moveq	#0, d0
@@ -998,10 +1008,10 @@ bf_dma:
 	lsr.w	#8, d0
 	move.w	d0, pattern_dma_ready_v		/* ready phase before waiting for a fresh blank head */
 .endif
-	bsr	bf_start_vbudget		/* full budget only from a proven blank head */
+	bsr	bf_start_pattern_budget
 .ifdef DEBUG
 	move.w	(GA_STOPWATCH).l, d0
-	move.w	d0, dma_start_tick		/* begin inside the first fresh VBlank budget */
+	move.w	d0, dma_start_tick		/* begin at the first active or blank pattern transfer */
 .endif
 bf_run_lp:
 	/* Pop the Sub-built record straight into the control port. Inline Prg
@@ -1120,13 +1130,7 @@ bf_flip:
 	bne.s	1f
 	clr.w	frame_vblank_waits		/* its VBlank count is not playback load */
 1:
-	/* A two-VBlank transfer formatted the static HUD after its first budget.
-	   One-/zero-VBlank frames still have the whole inter-flip active interval
-	   available here. Patch only transfer-final fields on the deadline path. */
-	cmpi.w	#2, pattern_transfer_vblanks
-	bhs.s	2f
-	bsr	prepare_dbg
-2:
+	/* Stable HUD fields were prepared before the first pattern budget. */
 	.endif
 	/* The final pattern DMA/repair and every Word-RAM HUD/status read are now
 	   complete. Return the consumed bank without waiting, overlapping Sub's
@@ -1378,6 +1382,43 @@ bf_scroll_rebase_vertical:
    instead of pretending all md_vbudget words remain.  d7 returns the full
    budget and vbudget_from_head records that its time origin is trustworthy.
    Trashes d0. */
+/* Cold destinations are protected from the preceding display by the packer's
+   transition check. Spend a bounded prefix during early active display rather
+   than leaving all of that interval idle. Charge six units per remaining active
+   line, capped at 512 including repairs, and stop admitting at line 192. The
+   active DMA rate is nine words/line; the lower charge also covers run setup.
+   This is not a VBlank budget; the first refill opens budget 1. */
+bf_start_pattern_budget:
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0002) == 0 || PC_CADENCE_PERIOD != 1
+	bra.s	1f
+.endif
+.else
+	cmpi.w	#1, md_cadence_period
+	bne.s	1f
+.endif
+	tst.l	frame_no
+	beq.s	1f
+	move.w	(VDP_HV).l, d0
+	lsr.w	#8, d0
+	cmpi.w	#192, d0
+	bhs.s	1f
+	neg.w	d0
+	addi.w	#224, d0
+	mulu.w	#6, d0
+	cmpi.w	#ACTIVE_PREFIX_WORDS, d0
+	bls.s	2f
+	move.w	#ACTIVE_PREFIX_WORDS, d0
+2:
+	move.w	d0, d7
+	move.w	(VDP_CTRL).l, d0
+	btst	#3, d0
+	bne.s	1f
+	rts
+1:
+	move.w	#1, pattern_transfer_vblanks
+	bra	bf_start_vbudget
+
 bf_start_vbudget:
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
@@ -1387,12 +1428,14 @@ bf_start_vbudget:
 	cmpi.w	#0x00E0, d0
 	bne	bf_refill_vbudget
 	move.w	#1, vbudget_from_head
+	move.w	(GA_STOPWATCH).l, vbudget_start_tick
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
 	rts
 
 bf_refill_vbudget:
 	bsr	wait_vb_start
 	move.w	#1, vbudget_from_head
+	move.w	(GA_STOPWATCH).l, vbudget_start_tick
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d7
 	/* Pattern budget N is also the fixed-cadence display deadline. Withhold
 	   its final display work before issuing any pattern transfer. */
@@ -1423,6 +1466,7 @@ bf_refill_vbudget:
 bf_debug_snapshot_vbudget:
 	move.l	a1, d0
 	move.w	pattern_transfer_vblanks, d6
+	beq.s	2f				/* active prefix is not a VBlank snapshot */
 	cmpi.w	#4, d6
 	bhi.s	2f
 	subq.w	#1, d6
@@ -1440,13 +1484,6 @@ bf_debug_snapshot_vbudget:
 /* Finish the current budget snapshot before waiting for the next fresh head. */
 bf_next_vbudget:
 	bsr	bf_debug_snapshot_vbudget
-	/* On the first split only, spend the active-display gap before VBlank 2
-	   formatting every HUD field that is already known. Transfer-final fields
-	   are patched after the last pattern word. */
-	cmpi.w	#1, pattern_transfer_vblanks
-	bne.s	1f
-	bsr	prepare_dbg
-1:
 	suba.l	a1, a1				/* exact logical-word counter for the next budget */
 	addq.w	#1, pattern_transfer_vblanks
 	bra	bf_refill_vbudget
@@ -1475,6 +1512,25 @@ bf_wait_fixed_flip_vblank:
 	move.w	(VDP_HV).l, d0
 	cmpi.w	#0xFC00, d0
 	bhs.s	2f
+	/* Measure time from the admitted blank head without the repeated NTSC
+	   V-counter range. CPU setup consumes time but no residual d7 words. */
+	moveq	#0, d0
+	move.w	(GA_STOPWATCH).l, d0
+	sub.w	vbudget_start_tick, d0
+	andi.w	#0x0FFF, d0
+	cmpi.w	#VB_BUDGET_TICKS, d0
+	bhs.s	2f
+	neg.w	d0
+	addi.w	#VB_BUDGET_TICKS, d0
+.ifdef PLAYER_SPECIALIZED
+	mulu.w	#PC_VBUDGET, d0
+.else
+	mulu.w	md_vbudget, d0
+.endif
+	move.w	d6, d1
+	mulu.w	#VB_BUDGET_TICKS, d1
+	cmp.l	d1, d0
+	blo.s	2f
 	move.w	(VDP_CTRL).l, d0
 	btst	#3, d0
 	beq.s	2f
@@ -1523,6 +1579,9 @@ bf_patch_dbg_row:
 	DBG_PUT2
 	move.w	nt_dma_ready_v, d4
 	DBG_PUT2
+	lea	dbg_row+25*2, a0		/* first-blank exit is unknown before patterns */
+	move.w	pattern_vblank1_exit_v, d4
+	DBG_PUT2
 	rts
 	.endif
 
@@ -1551,6 +1610,7 @@ wait_vb_start:
    first cadence interval in the past. The next real interval starts with the
    short two-VBlank step for a periodic 24fps stream. Trashes d0. */
 prime_fixed_cadence:
+	clr.w	pace_fixed_debt
 	.ifdef PLAYER_SPECIALIZED
 	.if (PC_FEATURES & 0x0002) != 0
 	move.w	#PC_VSYNC_N, pace_target_vblanks
@@ -1601,10 +1661,22 @@ wait_fixed_flip:
 .if PC_CADENCE_PERIOD == 2
 	cmp.w	pace_periodic_arm_ticks, d0
 .else
-	cmpi.w	#PACE_FIXED_ARM_TICKS, d0
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1
+	subi.w	#PACE_ARM_BIAS_TICKS, d1
+	cmp.w	d1, d0
 .endif
 .else
-	PC_CMP_W md_pace_arm_ticks, PACE_FIXED_ARM_TICKS, d0
+	cmpi.w	#2, md_cadence_period
+	beq.s	3f
+	move.w	pace_target_vblanks, d1
+	mulu.w	#PACE_VBLANK_TICKS, d1
+	subi.w	#PACE_ARM_BIAS_TICKS, d1
+	cmp.w	d1, d0
+	bra.s	4f
+3:
+	cmp.w	md_pace_arm_ticks, d0
+4:
 .endif
 	bcc.s	2f
 	bra.s	1b
@@ -1624,10 +1696,10 @@ commit_frame:
 	.endif
 	.ifdef PLAYER_SPECIALIZED
 	.if (PC_FEATURES & 0x0002) != 0
-	.if PC_CADENCE_PERIOD == 2
+.if PC_CADENCE_PERIOD == 2
 	bsr	pace_periodic_commit
-	.else
-	move.w	(GA_STOPWATCH).l, pace_flip_tick	/* exact flip-to-flip deadline */
+.else
+	bsr	pace_fixed_commit
 	.endif
 .endif
 .else
@@ -1638,9 +1710,80 @@ commit_frame:
 	bsr	pace_periodic_commit
 	bra.s	1f
 2:
-	move.w	(GA_STOPWATCH).l, pace_flip_tick	/* exact flip-to-flip deadline */
+	bsr	pace_fixed_commit
 1:
 .endif
+	rts
+
+/* A shortened fixed interval may reserve the first blank for publication
+   only when all pattern work fits beside that publication. Otherwise an
+   unused first-blank reserve can push a normal two-blank frame into three.
+   W-HDR already counts all transferred patterns and expanded runs. A run
+   that fits this whole-frame bound needs only one CPU first-word repair.
+   Trashes d0-d2. */
+pace_admit_fixed_interval:
+.ifdef PLAYER_SPECIALIZED
+.if (PC_FEATURES & 0x0002) == 0 || PC_CADENCE_PERIOD == 2
+	rts
+.endif
+.else
+	cmpi.w	#1, md_cadence_period
+	bne.s	2f
+.endif
+	PC_MOVE_W md_vsync_n, PC_VSYNC_N, d0
+	cmp.w	pace_target_vblanks, d0
+	beq.s	2f
+	moveq	#0, d1
+	move.w	(PROBE_BANK+O_NLOAD_OFF).l, d1
+	lsl.l	#4, d1
+	moveq	#0, d2
+	move.w	n_runs, d2
+	lsl.l	#2, d2
+	add.l	d1, d2
+	moveq	#0, d1
+	move.w	pattern_final_reserve_words, d1
+	add.l	d1, d2
+	moveq	#0, d1
+	PC_MOVE_W md_vbudget, PC_VBUDGET, d1
+	cmp.l	d1, d2
+	bls.s	2f
+	move.w	d0, pace_target_vblanks
+2:
+	rts
+
+/* Keep fixed-N display time tied to the stream clock. A late publication
+   accumulates whole-VBlank debt; subsequent frames may use shorter intervals
+   until the debt is repaid. The normal blank admission and DMA word budgets
+   still decide whether that shorter interval is physically possible. Never
+   request fewer than one VBlank or run ahead of the nominal stream clock.
+   Trashes d0-d2. */
+pace_fixed_commit:
+	move.w	(GA_STOPWATCH).l, d0
+	PC_MOVE_W md_vsync_n, PC_VSYNC_N, d2
+	tst.l	frame_no
+	beq.s	3f
+	moveq	#0, d1
+	move.w	d0, d1
+	sub.w	pace_flip_tick, d1
+	andi.l	#0x00000FFF, d1
+	addi.l	#PACE_VBLANK_TICKS/2, d1
+	divu.w	#PACE_VBLANK_TICKS, d1
+	sub.w	d2, d1
+	add.w	pace_fixed_debt, d1
+	bpl.s	1f
+	moveq	#0, d1
+1:
+	cmpi.w	#0x00FF, d1
+	bls.s	2f
+	move.w	#0x00FF, d1
+2:
+	move.w	d1, pace_fixed_debt
+	sub.w	d1, d2
+	bgt.s	3f
+	moveq	#1, d2
+3:
+	move.w	d2, pace_target_vblanks
+	move.w	d0, pace_flip_tick
 	rts
 
 .if PERIODIC_CADENCE_RUNTIME
@@ -2555,6 +2698,8 @@ pace_flip_tick:
 	.space 2				/* GA stopwatch tick at preceding cadence-controlled flip */
 pace_target_vblanks:
 	.space 2				/* current fixed or periodic display-deadline budget index */
+pace_fixed_debt:
+	.space 2				/* fixed-N VBlanks still owed to the stream clock */
 .ifndef PLAYER_SPECIALIZED
 md_tcols:
 	.space 2
@@ -2607,6 +2752,8 @@ dma_start_tick:
 	.space 2				/* DEBUG stopwatch sample at first pattern transfer */
 vbudget_from_head:
 	.space 2				/* current d7 began at a proven VBlank head */
+vbudget_start_tick:
+	.space 2				/* stopwatch origin of the current physical blank */
 pattern_final_reserve_words:
 	.space 2				/* cadence-final NT/HUD/CRAM/flip DMA-equivalent cost */
 vbudget_held_reserve:

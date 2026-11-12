@@ -20,6 +20,10 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Decide** | Select each frame's exact or reused patterns, keep the preceding display's slots live until the final name-table DMA and reject choices whose temporary old-plus-new pattern union would overflow VRAM, allocate slots, retain resident one-sided fade references and collect their cold preloads into a contiguous edge block, catch up any reclaimed entries, reserve each adopted scroll frame's guard-edge supply and clamp its cold and Prg ceilings to the single-run limit, assign pattern sources, and commit the physical budget. A fade preparation deadline that cannot complete demotes its shot to ordinary frames and restarts the encode without that fade. |
 | **Finalize** | Plan the shadow update lists over the exact shared-sector pack route, add each scroll frame's rolling-plane name-table words, verify the complete physical schedule, and write the numeric traces and decision log. |
 
+Packing separately rejects allocation tearing and independently checks decoded
+cold destinations against the preceding display before applying them. This
+permits a bounded active-display prefix without changing encoded decisions.
+
 ## Working memory
 
 `--array-storage disk` places frame features and quantized numeric caches in
@@ -176,6 +180,10 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 | **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用（frame 0のinline staging領域とboot-VRAM sidecarのbacksideへの振り分けを含む）、片側fade-outに必須のreference prefetch容量を1パスで計算します。 |
 | **Decide** | 各フレームの正確パターンまたは再利用パターンを選び、最後のname-table DMAまで直前表示のslotを維持し、一時的な旧表示と新表示のpattern和集合がVRAMを越える選択を退けてslotを割り当て、片側fade referenceのresident分を維持しながらcold preloadを端の連続blockへ集約して回収されたentryを取り戻し、採用したscroll frameではguard辺の供給分を予約して単独runを前提にcoldとPrgの上限をクランプし、パターン供給元と物理予算を確定します。準備deadlineを完了できないfadeはそのshotを通常frameへ降格し、そのfadeを除いてencodeを再実行します。 |
 | **Finalize** | packと同一の共有sector経路でshadow update listを計画し、scroll frameのrolling plane分のname-table wordを加算したうえで、全編の物理スケジュールを検証し、数値ログと決定ログを書き出します。 |
+
+Pack時にはallocation tearingを拒否し、cold destinationを実際にdecodeして直前表示と
+独立に照合してから反映します。これにより、encode済みの決定を変えずに、上限を
+設けたactive-display prefixを転送できます。
 
 ## 作業メモリ
 

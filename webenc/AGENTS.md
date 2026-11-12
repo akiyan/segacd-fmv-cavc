@@ -150,6 +150,7 @@ padding; require zero timed pattern payload and exact 64-pattern rounding. It
 must not change decisions, physical schedules, packed bytes or target quality.
 
 The pack_validation adapter corrects only the optional-list speed predicate.
+It is a no-op when the native packer already enforces the corrected predicate.
 Scroll controls require a shadow list to carry their position item, including
 dense or zero-update frames whose list is not faster than a bitmap. Keep the
 speed-gain requirement for FRAME_NORMAL, frozen cycle equality, required-scroll

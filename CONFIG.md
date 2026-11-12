@@ -245,6 +245,9 @@ frame where that edge is fully inside the source viewport, so the guard
 pattern key is independent of runtime plane state and reveal phase. Decide
 reserves each scroll frame's guard-edge cold, WordBuf, and Prg supply, and
 applies the single-run cold/Prg clamp described under Cold cap.
+WordBuf edge reservations start at the first scroll control and each later
+world-edge crossing. The ordinary anchor has a geometry state but does not
+prepare its hidden guard; only a preceding scroll control can carry that edge.
 
 ## Audio
 
@@ -334,6 +337,8 @@ slot order while name updates remain in cell order.
 | Name | Value | Where | Meaning |
 |---|---:|---|---|
 | `VB_WORDS` | 3,200 DMA-word equivalents/VBlank | ip | Conservative VBlank work budget. |
+| `VB_BUDGET_TICKS` | 76 stopwatch ticks | ip | Conservative remaining-time admission from a physical blank budget's saved origin; also requires the residual word reserve. |
+| `ACTIVE_PREFIX_WORDS` | at most 512 charged words | ip | Fixed-N timed frames may start protected cold-pattern work before active line 192, at six units per remaining active line; no VBlank budget is granted. |
 | `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB, `0xFF2100..0xFF66FF` | ip | Generated Main-CPU bitmap handlers. |
@@ -377,6 +382,11 @@ the exact cumulative control size through the preceding frame. It rounds
 control and Prg payload independently to physical sectors, reserves every CRAM
 switch and run descriptor, and computes both a Prg ceiling and a control-byte
 ceiling for the current frame.
+If the worst-case control reservation alone misses the finite-route deadline,
+the planner reduces that reservation at sector boundaries before calculating
+pattern capacity. An infeasible control estimate must not erase a feasible
+Prg transfer. Both returned limits still obey the same prefix and finite-buffer
+checks.
 
 The prefix ledger and exact delivery schedule use the normal 374/389/394 KiB
 PrgBuf capacity at 15/24/30 fps. The corresponding 40/25/20 KiB interval up to
@@ -861,6 +871,9 @@ Encoderは持続する単一軸のcamera scrollを検出し、固定gridより�
 window frameから量子化します。これによりguardのpattern keyはruntimeのplane状態や
 reveal位相に依存しません。Decideは各scroll frameのguard辺cold・WordBuf・Prg供給を
 予約し、Cold capの節で述べた単独run前提のcold/Prg clampを適用します。
+WordBufの辺予約は最初のscroll controlと、それ以降にworld上の辺が切り替わるframeへ
+割り当てます。通常frameであるanchorにもgeometry状態はありますが、画面外のguardは
+準備しません。直前のscroll controlだけが同じ辺を準備済みとして引き継げます。
 
 ## Audio
 
@@ -945,6 +958,8 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 | Name | 値 | 場所 | 意味 |
 |---|---:|---|---|
 | `VB_WORDS` | 3,200 DMA-word相当/VBlank | ip | 安全側のVBlank work budget。 |
+| `VB_BUDGET_TICKS` | 76 stopwatch tick | ip | Physical blank budgetの保存済み起点から残り時間を安全側に判定する。残word reserveも必要。 |
+| `ACTIVE_PREFIX_WORDS` | 最大512 charged word | ip | Fixed-Nのtimed frameはactive line 192より前に、残active lineごとに6 unitを使って保護済みcold-pattern workを開始できる。VBlank budgetは与えない。 |
 | `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.5 KiB、`0xFF2100..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。 |
@@ -984,6 +999,10 @@ final-VBlank reserveに含まれます。Release buildはHUD wordを省きます
 累積control sizeを知っています。controlとPrg payloadを独立に物理sectorへ丸め、全CRAM
 switchとrun descriptorを予約し、current frameのPrg ceilingとcontrol-byte ceilingを
 計算します。
+最大control予約だけでも有限routeのdeadlineに収まらない場合、plannerはsector境界で
+その予約を減らしてからpattern容量を計算します。成立しないcontrol見積りを理由に、
+成立するPrg転送まで禁止しません。返される両上限には同じprefixと有限bufferの検査を
+適用します。
 
 prefix ledgerと正確なdelivery scheduleは、15/24/30 fpsで通常PrgBuf容量
 374/389/394 KiBを使います。414 KiB観測境界までの40/25/20 KiBはruntime専用の

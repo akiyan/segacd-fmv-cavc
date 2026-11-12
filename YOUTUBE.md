@@ -143,6 +143,9 @@ describe the build absolutely rather than as a changelog, they carry no
 build-system vocabulary, they name what the RAM is used for instead of the
 internal buffer names, and they keep every URL in the English section. A
 playback template never mentions analysis panels, because that video has none.
+For a standalone playback upload without a matching analysis video, omit
+`--analysis-url`; its cross-link line is omitted. Validate that description
+with `--allow-missing-cross-link`.
 
 `harness/youtube_description/check_upload_text.py` re-checks a rendered file
 before upload. It is a safety net for a hand-edited or legacy description, not
@@ -381,6 +384,8 @@ profile、CRAM切り替えはsimのdecisions、配送レートは解析TSV、bui
 changelogではなく絶対的に述べること、buildの用語を持たないこと、内部buffer名
 ではなくそのRAMの用途を書くこと、URLを英語節へ集約すること。playback templateは
 解析panelに触れません。その動画には無いからです。
+対応する解析動画のない単体再生動画では`--analysis-url`を省略し、cross-link行を
+出力しません。その説明文は`--allow-missing-cross-link`を付けて検査します。
 
 upload前に`harness/youtube_description/check_upload_text.py`で再確認します。
 これは手編集や過去の説明文に対する安全網であって、主経路ではありません。

@@ -2524,13 +2524,8 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         # edges from the boot preload in chronological order; the heaviest
         # scroll frames can then never depend on same-frame Prg payload for
         # their mandatory guards.
-        def _guard_need(frame):
-            state = scroll_states[frame]
-            previous = scroll_states.get(frame - 1)
-            if previous is not None and (
-                    previous.guard_cells == state.guard_cells):
-                return 0
-            return len(state.guard_cells)
+        guard_need = scroll_plan.guard_load_counts(
+            scroll_states, np.flatnonzero(scroll_active))
 
         for parity, capacity in enumerate(capacities):
             frames_for_scroll = [
@@ -2539,7 +2534,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             ]
             remaining = int(capacity)
             for frame in frames_for_scroll:
-                count = min(_guard_need(frame), remaining)
+                count = min(guard_need[frame], remaining)
                 reserved_wr[frame] = count
                 remaining -= count
                 if remaining <= 0:
@@ -6133,6 +6128,7 @@ if __name__ == "__main__":
                         _demoted_fade_anchors.add(exc.anchor)
                         import gc as _retry_gc
                         _retry_gc.enable()
+                        print(str(exc), flush=True)
                         print(
                             f"fade preparation infeasible at f{exc.anchor}; "
                             "re-planning without that fade",
