@@ -31,6 +31,14 @@ Before reserving an early publication blank, Main requires all pattern words,
 one CPU repair per run and the final-display reserve to fit one VBlank budget.
 Otherwise it retains the nominal target and avoids wasting an earlier reserve.
 
+Fixed cadence is a target, not a guarantee of uniform display intervals. In
+the e197/p165 DEBUG emulator qualification of the 2,714-frame Sonic Jam opening,
+each of two complete loops had 14 three-VBlank intervals and 14 compensating
+one-VBlank intervals; the other 2,684 measured intervals were two VBlanks.
+Every movie frame appeared, with zero sector slips, control desynchronizations
+or audio resynchronizations. This result qualifies transport and completeness,
+but retains a display-cadence warning and is not a hardware measurement.
+
 The 24 fps display controller remains phase-locked after a missed deadline.
 It counts whole-VBlank lateness as debt and repays that debt only by shortening
 a later nominal three-VBlank display step to two. It never shortens a
@@ -663,6 +671,13 @@ patternと最終表示DMAのadmissionには、実際のtarget blankの残budget�
 早い表示用のblankを予約する前に、Mainは全pattern word、runごとのCPU先頭word補修、
 最終表示の予約分が1 VBlank budgetへ収まることを確認します。収まらなければ名目の
 targetを維持し、早いblankの予約枠を無駄にしません。
+
+固定cadenceは目標であり、均一な表示間隔を保証するものではありません。
+e197/p165のDEBUG emulatorで全2,714 frameのSonic Jam openingを2周検証したところ、
+各周に3 VBlankの表示間隔が14回、その遅れを取り戻す1 VBlankの間隔が14回あり、
+残りの計測対象2,684間隔は2 VBlankでした。全movie frameを表示し、sector slip、
+control desynchronization、audio resynchronizationはすべて0でした。この結果は
+配送と全frameの表示を確認するもので、表示cadenceの警告は残り、実機計測ではありません。
 
 24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
 debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
