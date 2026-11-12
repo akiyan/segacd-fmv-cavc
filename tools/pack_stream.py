@@ -40,6 +40,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import av_config
+import final_vblank
 import ima_adpcm
 import player_constants
 import pattern_supply
@@ -423,6 +424,9 @@ def resolve(log, POOL, mode="lru"):
     nfr = len(frames)
     frame_types, _frame_cram, scroll_positions = control_arrays(log, nfr)
     scroll_active = frame_types == shadow_updates.FRAME_SCROLL
+    publication_policy = (log.get("pattern_transfers") or {}).get("final_vblank_policy")
+    if publication_policy not in (None, final_vblank.POLICY):
+        raise ValueError(f"unknown final-VBlank allocation policy: {publication_policy}")
     allocator_cells = (
         shadow_updates.SCROLL_PLANE_CELLS
         if np.any(scroll_active) else C_CELLS
@@ -460,6 +464,12 @@ def resolve(log, POOL, mode="lru"):
     previous_scroll_position = 0
 
     for i in range(nfr):
+        if publication_policy is not None:
+            alloc.final_pattern_limit = (None if i == 0 else final_vblank.pattern_limit(
+                TCOLS, TROWS, scroll_build=bool(np.any(scroll_active)),
+                vertical=bool(scroll_active[i] and scroll_positions[i][1]),
+                cram=bool(frame_seg[i] != frame_seg[i - 1]
+                          or shadow_updates.has_inline_cram(int(frame_types[i])))))
         fr = sorted(frames[i], key=lambda t: t[0])
         if bool(scroll_active[i]):
             if not domain_expanded:

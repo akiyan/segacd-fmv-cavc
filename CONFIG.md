@@ -339,7 +339,7 @@ slot order while name updates remain in cell order.
 | `VB_WORDS` | 3,200 DMA-word equivalents/VBlank | ip | Conservative VBlank work budget. |
 | `VB_BUDGET_TICKS` | 76 stopwatch ticks | ip | Conservative remaining-time admission from a physical blank budget's saved origin; also requires the residual word reserve. |
 | `ACTIVE_PREFIX_WORDS` | at most 672 charged words per active period | ip | Each EAT/LAT may start at line 0..207, at six units per remaining active line; one allowance per physical period, with no additional VBlank budget. |
-| `FINAL_VBLANK_TILES` / `FINAL_PATTERN_SLOTS` | 12 patterns | allocator / ip | Final-only VRAM tail; actual runs and display updates must fit the publication budget, including 96 setup/repair units per final run. |
+| `FINAL_VBLANK_TILES` / `FINAL_PATTERN_SLOTS` | 12 resident slots | allocator / ip | Final-only VRAM tail. Per-frame cold admission is `min(12, floor((3200 - display reserve) / 112))`, reserving 16 transfer plus 96 setup units per pattern against any later source fragmentation. Warm references remain usable; the movie cold cap is unchanged. |
 | `CPU_VDP_WORD_COST` | 4 DMA-word equivalents/word | ip | Cost charged for every CPU-written VDP data word, including DMA first-word repair and CRAM. |
 | runtime transfer windows | cadence N | ip | Up to N fixed-cadence VBlanks; a fifth transfer blank at N=4 or a third at N=2 is reported as a warning. |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.25 KiB, `0xFF2200..0xFF66FF` | ip | Generated Main-CPU bitmap handlers; checked generated end is `0xFF4B00`. |
@@ -961,7 +961,7 @@ Allocator slotは物理VRAM slotで、pattern loadはslot昇順、name updateは
 | `VB_WORDS` | 3,200 DMA-word相当/VBlank | ip | 安全側のVBlank work budget。 |
 | `VB_BUDGET_TICKS` | 76 stopwatch tick | ip | Physical blank budgetの保存済み起点から残り時間を安全側に判定する。残word reserveも必要。 |
 | `ACTIVE_PREFIX_WORDS` | 各active期間で最大672 charged word | ip | 各EAT/LATはline 0..207で開始し、残active lineごとに6 unitを使う。物理期間ごとに1回だけ予算を与え、VBlank budgetは増やさない。 |
-| `FINAL_VBLANK_TILES` / `FINAL_PATTERN_SLOTS` | 12 pattern | allocator / ip | 最終VBlank専用のVRAM末尾領域。最終runごとのsetup・補修用96 unitを含め、実際のrunと表示更新がpublication budgetに収まる必要がある。 |
+| `FINAL_VBLANK_TILES` / `FINAL_PATTERN_SLOTS` | resident slot 12個 | allocator / ip | 最終VBlank専用のVRAM末尾領域。frameごとのcold admissionは`min(12, floor((3200 - display reserve) / 112))`。後段のsource分割に備えてpatternごとに転送16＋開始処理96 unitを予約する。warm参照は維持し、動画のcold capは変更しない。 |
 | `CPU_VDP_WORD_COST` | 4 DMA-word相当/word | ip | DMA先頭word補修とCRAMを含む、CPUがVDP dataへ書く各wordのcharge。 |
 | runtime transfer windows | cadence N | ip | fixed cadenceの最大N VBlank。N=4の5本目、N=2の3本目はwarningとして報告する。 |
 | `MAIN_CODEGEN_BASE..LIMIT` | 17.25 KiB、`0xFF2200..0xFF66FF` | ip | 生成するMain-CPU bitmap handler。検査する生成終端は`0xFF4B00`。 |

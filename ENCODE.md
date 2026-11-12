@@ -34,9 +34,18 @@ Packing separately rejects allocation tearing and independently checks decoded
 cold destinations against the preceding display before applying them. Only
 the bounded final-VBlank tail described in PLAYER.md can reclaim old-only
 identities; next-frame reuse, mandatory pins and real scroll references stay
-protected. The conservative old-plus-new union admission remains unchanged.
-The shared source-run builder splits the early/final boundary, and packing
-verifies the complete final publication cost. Decision logs retain per-frame
+protected. Before selecting updates, the encoder reserves the NT, HUD, CPU
+publication guard, optional CRAM and scroll work within 3,200 units. Each cold
+tail pattern reserves 16 transfer units plus 96 setup units, allowing even
+singleton source runs after WordBuf selection and wrap splitting. Placement
+redirects excess cold loads to ordinary slots; warm tail references remain
+usable. Transition admission also excludes the unavailable cold-tail capacity,
+and visible updates and prefetch share one reservation per frame. This is
+conservative: a long contiguous run could fit more tail patterns. The profile
+cold cap is unchanged, but allocation and later reuse can change.
+The shared source-run builder splits the early/final boundary. Finalize checks
+the realized publication cost before completing the artifact, and packing
+independently checks the packed descriptors. Decision logs retain per-frame
 `final_vblank_tiles` and the total `final_vblank_reclaims` for measurement.
 
 ## Working memory
@@ -207,8 +216,15 @@ visible/total上限は更新可否を示し、`final_*`には後続のupgradeと
 Pack時にはallocation tearingを拒否し、cold destinationを実際にdecodeして直前表示と
 独立に照合してから反映します。旧表示だけが使うpatternを回収できるのは、PLAYER.mdの
 上限付き最終VBlank領域だけです。次frameの再利用、必須pin、実際のscroll参照は保護し、
-旧表示と新表示の和集合を使う安全側のadmissionは変えません。共有source-run builderは
-前段と最終段の境界で分割し、pack時に最終publication全体のcostを検証します。
+更新選択前に、encoderはNT、HUD、CPU publication guard、必要なCRAMとscroll処理を
+3,200 unit内に予約します。末尾領域のcold patternごとに転送16 unitと開始処理96 unitを
+予約するため、後段のWordBuf選択やwrap分割で1 patternずつのrunになっても収まります。
+超過するcoldは通常slotへ配置し、末尾領域のwarm参照は利用できます。Transition admissionも
+利用できないcold用末尾容量を除外し、表示更新とprefetchは同じframeの予約を共有します。
+これは安全側の制限で、長い連続runなら実際にはより多くの末尾patternを転送できます。
+profileのcold capは変えませんが、配置と後続frameの再利用は変わる可能性があります。
+共有source-run builderは前段と最終段の境界で分割します。Finalizeで実際のpublication costを
+検証してからartifactを完了扱いにし、packでもpacked descriptorを独立に検証します。
 Decision logは計測用にframeごとの`final_vblank_tiles`と総`final_vblank_reclaims`を保持します。
 
 ## 作業メモリ

@@ -83,3 +83,39 @@ writes preview/category PNGs plus `windows.json` outside the source artifact.
 Choose identical windows for baseline/current, and compare the previews with
 their matching `raw/` source frames. These simulated images do not replace
 actual packed-player capture evidence.
+
+Compare matching windows against their correctly aligned extracted source:
+
+```sh
+tools/python.sh harness/fade_preparation/compare_windows.py \
+  /path/to/comparison/baseline /path/to/comparison/current \
+  --tsv logs/fade-comparison.tsv --montage /path/to/comparison/selected.png \
+  --frames 9097,9104,13955
+```
+
+The e201/p173 full Big Buck Bunny encode completed 19,038 frames in 3,437.3
+seconds with no replanning. The previous failing fade deadline at frame 9097
+completed its reference with 190 visible cold loads rather than reserving 94
+loads for a later reference first. Across 411 fade diagnostic frames, the
+committed display matched its ideal quantized fade reference exactly; seven
+black preparation frames still had pending cells. This movie did not need
+visible catch-up beyond a reference deadline.
+
+Across 590 selected source-aligned frames, mean RGB MAE was 10.164 for e197
+and 10.149 for e201 (0..255 channels). This is not a clean parent-only A/B:
+intervening encoder changes also affect placement. The newly adopted fade
+around frame 9104 has flatter gray shadow gradations than the earlier
+ordinary-frame fallback. Zero error against the planned reference does not
+mean unchanged source fidelity.
+
+Full playback qualification remains pending. Independent packing rejected
+frame 235: display reserve 2,372 + 11 patterns * 16 + 7 runs * 96 = 3,220,
+above 3,200 units. Exactly one frame failed that cost audit. This exposed a
+missing construction-time final-publication constraint, separately from fade
+preparation. The e202 allocator reserves singleton costs before placement;
+Finalize checks final source runs, while the independent packed-reader check
+remains unchanged. Replaying the actual pre-frame-235 state preserved all 515
+visible updates and their 197 cold loads, moving four of the 11 tail loads to
+ordinary slots without tearing. That isolated replay excludes subsequent
+prefetch and is not evidence for the full changed movie. A new full encode
+and exact-player qualification are still required.

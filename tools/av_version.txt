@@ -1387,7 +1387,7 @@
 date=20261112
 # e197: reduce infeasible control-sector reservations before projecting Prg limits.
 # e200: restore cold-only admission and allocation.
-e=201
+e=202
 # p160: blank the movie plane before replay boot-sidecar VRAM writes.
 # p161: repay fixed-cadence display debt without accumulating reader/audio lag.
 # p162: admit shorter fixed intervals only when the whole frame fits one blank.
@@ -1404,3 +1404,5 @@ e=201
 p=173
 
 # e201/p173: carry unfinished reference updates through inline CRAM fades.
+# e202: reserve the final publication bundle during placement, including
+#       worst-case source fragmentation, and verify final realized runs.

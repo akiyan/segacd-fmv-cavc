@@ -99,6 +99,10 @@ class FrameTransitionGuard:
         self._allocator = allocator
         self.capacity = int(
             allocator.POOL - np.count_nonzero(allocator.slot_refs))
+        if allocator.final_pattern_limit is not None:
+            unused_tail = np.count_nonzero(
+                allocator.slot_refs[FINAL_VBLANK_SLOT:] == 0)
+            self.capacity -= max(0, unused_tail - allocator.final_pattern_limit)
         self._cell_key = {}
         self._extra_refs = {}
 
@@ -167,6 +171,8 @@ class TileAllocator:
         self.hand = 0                                        # clock hand (contig)
         self.tearing = 0                                     # evictions forced past protection
         self.final_reclaims = 0                              # old-only slots reused in final VBlank
+        self.final_pattern_limit = None                       # None only for boot/legacy replay
+        self.final_pattern_loads = 0
         self.cur_slot = np.full(self.C_CELLS, -1, np.int64)  # cell -> slot it currently shows
         self.prev_slot = np.full(self.C_CELLS, -1, np.int64) # cell -> slot last frame (protect)
         self._prev_protect = np.zeros(self.POOL, bool)
@@ -297,6 +303,8 @@ class TileAllocator:
         frame_idx = int(frame_idx)
         if not 0 <= slot < self.POOL:
             raise ValueError("forced prefetch slot is outside the pool")
+        if not self._cold_slot_available(slot):
+            return False
         if slot in self.free:
             return True
         if not isinstance(avoid_keys, (set, frozenset)):
@@ -406,6 +414,24 @@ class TileAllocator:
         self._prev_protect[:] = False
         ps = self.prev_slot[self.prev_slot >= 0]
         self._prev_protect[ps] = True
+        self.final_pattern_loads = 0
+
+    def _cold_slot_available(self, slot):
+        return (slot < FINAL_VBLANK_SLOT or self.final_pattern_limit is None
+                or self.final_pattern_loads < self.final_pattern_limit)
+
+    def _pop_free_slot(self):
+        if self.free and self._cold_slot_available(self.free[-1]):
+            return self.free.pop()
+        for index in range(len(self.free) - 1, -1, -1):
+            if self._cold_slot_available(self.free[index]):
+                return self.free.pop(index)
+        return None
+
+    def _record_cold_slot(self, slot):
+        if not self._cold_slot_available(slot):
+            raise AssertionError("cold placement exceeds the final-VBlank reservation")
+        self.final_pattern_loads += int(slot >= FINAL_VBLANK_SLOT)
 
     def _evict(self, s):
         k = self.slot_key[s]
@@ -421,12 +447,15 @@ class TileAllocator:
         # Clock hand: free slot first. A visible update then reclaims a
         # speculative prefetch before evicting any ordinary resident cache
         # entry, so speculation cannot make the baseline cache smaller.
-        if self.free:
-            return self.free.pop()
+        free_slot = self._pop_free_slot()
+        if free_slot is not None:
+            return free_slot
         if self.pinned_count:
             for _ in range(self.POOL):
                 s = self.hand
                 self.hand = (self.hand + 1) % self.POOL
+                if not self._cold_slot_available(s):
+                    continue
                 if self.slot_refs[s] == 0 and not self._prev_protect[s] and \
                    (self._tfp is None or not self._tfp[s]) and \
                    self.slot_pin_until[s] >= frame_idx and \
@@ -437,6 +466,8 @@ class TileAllocator:
         for _ in range(self.POOL):
             s = self.hand
             self.hand = (self.hand + 1) % self.POOL
+            if not self._cold_slot_available(s):
+                continue
             if self.slot_refs[s] == 0 and (not self._prev_protect[s]
                                          or s >= FINAL_VBLANK_SLOT) and \
                (self._tfp is None or not self._tfp[s]) and not (
@@ -454,6 +485,8 @@ class TileAllocator:
             for _ in range(self.POOL):
                 s = self.hand
                 self.hand = (self.hand + 1) % self.POOL
+                if not self._cold_slot_available(s):
+                    continue
                 if self.slot_refs[s] == 0 and \
                    (self._tfp is None or not self._tfp[s]) and \
                    self.slot_pin_mandatory[s] and \
@@ -465,6 +498,8 @@ class TileAllocator:
         for _ in range(self.POOL):
             s = self.hand
             self.hand = (self.hand + 1) % self.POOL
+            if not self._cold_slot_available(s):
+                continue
             if self.slot_refs[s] == 0 and not (
                     self.slot_pin_mandatory[s]
                     and self.slot_pin_until[s] >= frame_idx):
@@ -474,6 +509,7 @@ class TileAllocator:
             self.slot_pin_mandatory,
             self.slot_pin_until >= frame_idx,
         )))
+        candidates = np.asarray([s for s in candidates if self._cold_slot_available(s)], dtype=np.int64)
         if not len(candidates):
             raise RuntimeError(
                 "VRAM has no slot outside mandatory fade prefetch")
@@ -487,6 +523,7 @@ class TileAllocator:
         cold = key not in self.key_slot
         if cold:
             slot = self._alloc_slot_contig(frame_idx)
+            self._record_cold_slot(slot)
             self.key_slot[key] = slot
             self.slot_key[slot] = key
         else:
@@ -559,9 +596,9 @@ class TileAllocator:
                 # organic clock scan would have: one past the chosen slot.
                 if not relocate:
                     self.hand = (slot + 1) % self.POOL
-        elif self.free:
-            slot = self.free.pop()
         else:
+            slot = self._pop_free_slot()
+        if forced_slot is None and slot is None:
             # A full resident cache may still have a safe speculative victim:
             # it must be unreferenced now and in the previous display, must
             # not be another pending prefetch, and must not be needed by the
@@ -572,6 +609,8 @@ class TileAllocator:
                 candidate = self.hand
                 self.hand = (self.hand + 1) % self.POOL
                 candidate_key = self.slot_key[candidate]
+                if not self._cold_slot_available(candidate):
+                    continue
                 if self.slot_refs[candidate] != 0:
                     continue
                 # Pattern transfers can span multiple VBlanks.  The preceding
@@ -608,6 +647,7 @@ class TileAllocator:
             self.slot_pin_until[resident] = -1
             self.slot_pin_mandatory[resident] = False
 
+        self._record_cold_slot(slot)
         self.key_slot[key] = slot
         self.slot_key[slot] = key
         self.slot_lastuse[slot] = frame_idx

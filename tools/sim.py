@@ -51,6 +51,7 @@ from encode_config import consume_config_arg, profile_identity  # noqa: E402
 CONFIG_PROFILE = consume_config_arg(
     sys.argv, required=__name__ == "__main__")
 import av_config  # noqa: E402
+import final_vblank  # noqa: E402
 import fade_frames  # noqa: E402
 import analysis_logs  # noqa: E402
 import ima_adpcm  # noqa: E402
@@ -2894,6 +2895,10 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 if allocator_expanded else tuple(range(C_CELLS)))
 
         pal_swap = SEGPAL_ON and i > 0 and int(frame_seg[i]) != int(frame_seg[i - 1])
+        alloc.final_pattern_limit = (None if i == 0 else final_vblank.pattern_limit(
+            TCOLS, TROWS, scroll_build=scroll_plane_enabled,
+            vertical=bool(scroll_state is not None and scroll_state.vscroll),
+            cram=bool(pal_swap or shadow_updates.has_inline_cram(int(frame_types[i])))))
         if pal_swap:
             cur_pal[:] = -1                                     # CRAM総入替→全セルを再評価(暗転中で安価)
             cur_pals = np.asarray(
@@ -5146,6 +5151,14 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         )
         if frame == 0:
             continue
+        try:
+            final_vblank.verify_runs(
+                runs, TCOLS, TROWS, scroll_build=scroll_plane_enabled,
+                vertical=bool(scroll_active[frame] and scroll_positions[frame][1]),
+                cram=bool(frame_seg[frame] != frame_seg[frame - 1]
+                          or shadow_updates.has_inline_cram(int(frame_types[frame]))))
+        except ValueError as exc:
+            raise AssertionError(f"frame {frame}: {exc}") from exc
         lengths = tuple(
             count for _slot, count, _source, _dic_index in runs)
         if len(lengths) != int(transfer_runs_log[frame]):
@@ -5849,6 +5862,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             },
             # simが決めた値をpackで全frame再計算し、descriptor/HUD cold_runsとのズレを即時検出する。
             "pattern_transfers": {
+                "final_vblank_policy": final_vblank.POLICY,
                 "final_vblank_tiles": np.asarray(final_tiles_log, np.int64),
                 "final_vblank_reclaims": int(alloc.final_reclaims),
                 "schema_version": 3,
