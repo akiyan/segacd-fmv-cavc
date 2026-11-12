@@ -4,8 +4,10 @@ This harness verifies the disc-specific Main/Sub assembly path without
 reusing stale packed movies. It creates current CAVC headers at 15, 24 and
 30 fps on the full 40x28 grid, plus a centered 36x25 case at 30 fps and a
 15 fps 40x18 scroll/WordBuf-ring build with cold cap 480 and a full-height
-24 fps scroll/WordBuf-ring build, generates
-`player_constants.inc`, then assembles and links both the generic and
+24 fps scroll/WordBuf-ring build, and a 19,038-frame 30 fps scroll/WordBuf-ring
+build combining long routing with audio-rate dithering. The long combined case
+catches resident Sub overflow missed by testing those features separately.
+The harness generates `player_constants.inc`, then assembles and links both the generic and
 specialized DEBUG players.
 
 For every case it requires:

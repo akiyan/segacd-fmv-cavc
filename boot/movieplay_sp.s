@@ -779,19 +779,21 @@ header_accepted:
 	bsr	swap_settle
 .endif
 	/* WordBuf boot contents are the first ring turn. The timed writer starts
-	   immediately after them and normalizes an exactly-full preload to base. */
+	   immediately after them and normalizes an exactly-full preload to base.
+	   Both addresses are assembly constants; fold the wrap before linking to
+	   keep long-route builds inside the fixed resident Sub allocation. */
 .ifdef INCLUDE_WORDBUF_RING
+.if WORD_BUF0+(PC_WR0_PATTERNS*32) < WORD_BUF0_END
 	move.l	#WORD_BUF0+(PC_WR0_PATTERNS*32), d0
-	cmpi.l	#WORD_BUF0_END, d0
-	blo.s	1f
+.else
 	move.l	#WORD_BUF0, d0
-1:
+.endif
 	move.l	d0, word_write_ptr0
+.if WORD_BUF1+(PC_WR1_PATTERNS*32) < WORD_BUF1_END
 	move.l	#WORD_BUF1+(PC_WR1_PATTERNS*32), d0
-	cmpi.l	#WORD_BUF1_END, d0
-	blo.s	1f
+.else
 	move.l	#WORD_BUF1, d0
-1:
+.endif
 	move.l	d0, word_write_ptr1
 	move.w	#PC_WR0_PATTERNS, word_level0
 	move.w	#PC_WR1_PATTERNS, word_level1

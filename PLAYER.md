@@ -229,6 +229,8 @@ at Sub PRG `0x06000`; it is not limited to one 4 KiB sector pair. The image
 is profile-specialized (`PLAYER_SPECIALIZE`) and the linker enforces the hard
 end at `0x07400`. Continuous-read marker qualification covers the reclaimed
 `0x07400..0x07FFF` interval before `ADP-IDX` uses its leading 2,848 bytes.
+Boot WordBuf write-cursor wrapping uses assembly-time constants, preserving
+space for long-route builds without changing timed playback or this map.
 
 The packer places the exact 1,108-byte hash-bound extension after the
 8,800-byte ADPCM table in its existing five-sector padding. Sub stages that
@@ -926,6 +928,8 @@ Supplyになることはありません。
 （`PLAYER_SPECIALIZE`）で、linkerがhard end `0x07400`を強制します。
 `ADP-IDX`が先頭2,848 byteを使う前に、回収した`0x07400..0x07FFF`全体を
 continuous-read markerで検証します。
+起動時のWordBuf書き込み位置の折り返しはアセンブル時に確定し、再生中の処理や
+このメモリ配置を変えずに、長いroutingを使うビルドの領域を確保します。
 
 Packerはhashで固定した1,108-byte extensionを8,800-byte ADPCM table直後の既存
 5-sector paddingへ配置します。Subはそのimageを`SP-STAGE`（`0x7B000`）へ

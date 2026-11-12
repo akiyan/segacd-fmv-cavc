@@ -1401,8 +1401,10 @@ e=202
 # p170: start bounded LAT transfers from the active edge using a physical blank origin.
 # p171: retain a usable blank head and wait through the active-edge counter wrap.
 # p172: admit a bounded protected-pattern transfer in each EAT and LAT.
-p=173
+p=174
 
 # e201/p173: carry unfinished reference updates through inline CRAM fades.
 # e202: reserve the final publication bundle during placement, including
 #       worst-case source fragmentation, and verify final realized runs.
+# p174: fold constant boot WordBuf write-cursor wraps at assembly time so
+#       long-route DEBUG builds fit the unchanged 5 KiB resident Sub map.
