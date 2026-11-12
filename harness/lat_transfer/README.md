@@ -114,3 +114,87 @@ retaining startup/end transitions. The matching HUD gate owns qualification.
 Local evidence is in `logs/sonic-cold230-experiment-20261112.json`,
 `logs/sonic-cold230-comparison-20261112.json` and
 `logs/sonic-cold230-p169-hud-20261112_gate.json`.
+
+## Early LAT admission
+
+The p171 player anchors LAT to the physical head of the preceding publication
+VBlank and the current cadence target. It can begin at line 0 as soon as the
+source is ready, retains a usable EVB head, and waits through the VBlank-flag
+and line-counter transition. It rejects expired intervals. The limit remains
+672 DMA-word-equivalent units including repairs, additionally bounded by six
+units per remaining active line; entry at or after line 208 is rejected.
+PLAYER.md owns the byte/pattern conversion and state allocation.
+
+`check_trace.py` distinguishes actual DMA command starts from scanline
+continuations and CPU repair writes. Its `active_dma_start_line_histogram`
+and `early_active_dma_start_frames` must be read alongside matched-frame
+comparisons: early active writes or starts alone can also follow a VBlank
+transfer and do not establish the LAT admission path. `test_trace.py` uses an
+independent log fixture to catch this misclassification and interrupted DMA
+continuations. Actual assembled instructions and matching captures establish
+player behavior; the fixture is not an assembly model.
+
+The p171 qualification reuses the existing encoded streams byte-for-byte:
+Sonic cold cap 230 (e199), Lunar 24 fps (e198), and Machi 15 fps (e198).
+All three complete captures pass the HUD gate with cadence warnings, zero
+sector-slip/control-desync/audio-resync, and matching final-tail writes with
+zero final-tail/NT/HUD/CRAM writes outside VBlank or on ambiguous edges.
+Representative startup, content and tail stills were inspected. Sonic has
+two complete loops; Lunar and Machi each have one complete loop.
+
+For Sonic, 39 matched frames move their first active DMA command from line
+112 or later to before line 112; frames 201, 218 and 845 move from line 113
+to line 1. Its two loops retain four irregular intervals each, as with p169;
+the startup/218 delay changes loop assignment. Lunar's interior cadence
+warning count falls from 247 (p168) to 113. Machi's count rises from three
+(p169) to ten. Early admission is established, but improved cadence is not
+a universal result and the Machi regression remains visible. These checks
+are emulator evidence, not real-hardware DMA timing proof.
+
+The receipt `logs/lat-early-p171-20261112.json` links the capture identities,
+unchanged-stream hashes, matched-frame start comparison, HUD/VDP checks and
+fresh still manifests. No source re-encode is part of this qualification.
+
+## EAT and LAT admission
+
+The current player admits protected pattern work in each EAT as well as LAT.
+It derives a one-based physical active-period ordinal from the preceding
+publication blank and rejects an ordinal already used by this movie frame.
+Each period retains the 672-unit maximum and remaining-line limit; the actual
+cadence target bounds all grants. A usable blank head still takes precedence,
+and final-only destinations remain deferred to LVB. This changes player timing
+without changing the encoded cold cap, payload, allocation or stream format.
+
+The p172 qualification reuses the same Sonic, Lunar and Machi streams as p171.
+The HEADER, BODY and palette hashes match. Native 320x224 FFV1/FLAC captures
+use the same LOGVDP core, with two complete Sonic loops and one complete Lunar
+and Machi loop. All captures pass the HUD gate with zero sector slip, control
+desync and audio resync. Actual final-tail words match the SIM. Final-tail,
+movie-table, HUD and CRAM active/ambiguous-edge write counts are all zero.
+Fresh startup, content and tail stills were inspected.
+
+| Source | Complete frames | p171 interior cadence warnings | p172 interior cadence warnings | p172 alert |
+|---|---:|---:|---:|---|
+| Machi, 15 fps | 2,293 | 10 | 0 | NONE |
+| Lunar, 24 fps | 2,535 | 113 | 50 | WARNING |
+| Sonic cold cap 230, 30 fps | 2 x 2,714 | 3 in first loop | 0 in both loops | NONE |
+
+Machi's 2,291 observed intervals excluding frame 0 and the terminal hold are
+all four VBlanks. Sonic retains two long edge intervals per loop (new frames
+2 and 2713), compared with four irregular intervals per loop in p171. Lunar's
+periodic cadence still has timing irregularities; this is an improvement,
+not perfect cadence or real-hardware qualification.
+
+The assembled Machi admission HVC read returns at PC `0xFF1006`. Matching
+full LOGVDP reads at that PC with returned V-counter below 208 establish
+actual grants, rather than DMA continuations from VBlank. Among 2,292 timed
+frames, 322 receive one grant, 1,830 receive two and 38 receive three; 102
+receive none. These are grant counts, not absolute EAT ordinal measurements.
+The disassembly and per-frame samples are retained in
+`logs/eat-p172-machi-disassembly-20261112.txt` and
+`logs/eat-p172-machi-admissions-20261112.json`.
+
+`logs/eat-p172-20261112.json` links exact inputs, output identities, exit
+statuses, gates, traces, still manifests and the assembled-player matrix.
+The matrix checks both the physical ordinal comparison and its rejection
+branch, guarding against repeated active-budget grants.

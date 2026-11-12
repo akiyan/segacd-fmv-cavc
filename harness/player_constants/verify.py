@@ -320,12 +320,36 @@ def verify_shared_deadline_vblank(
     start_budget = block("bf_start_vbudget", "bf_refill_vbudget")
     active_prefix = block("bf_start_pattern_budget", "bf_start_vbudget")
     for pattern in (
-            r"\bcmpiw\s+#112,%d0", r"\bcmpiw\s+#208,%d0",
+            r"\bcmpiw\s+#208,%d0", r"\bcmpiw\s+#672,%d0",
+            r"\bcmpw\s+%d1,%d0", r"\bdivuw\s+#543,%d2",
+            r"\baddqw\s+#1,%d2",
             r"\bmulu(?:w)?\s+#6,%d0",
             r"\baddiw\s+#224,%d0", r"\bmovew\s+%d0,%d7",
             r"\bbra\w*\s+[^\n]*<bf_start_vbudget>"):
         if not re.search(pattern, active_prefix):
             raise AssertionError(f"{obj}: active prefix lacks a phase/capacity bound or blank fallback")
+    if re.search(r"<wait_fixed_flip>|\bcmpiw\s+#112,%d0", active_prefix):
+        raise AssertionError(f"{obj}: LAT still waits for the flip arm or active midpoint")
+    used_period = symbol_address(objdump, obj, "active_used_period")
+    for opcode, operands in (("cmpw", r"0 [^\n]*,%d2"),
+                             ("movew", r"%d2,0 [^\n]*")):
+        instruction = re.search(
+                rf"\b{opcode}\s+{operands}\n"
+                rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{used_period:x}", active_prefix)
+        if not instruction:
+            raise AssertionError(f"{obj}: active allowance lacks a per-period guard/update")
+        if opcode == "cmpw" and not re.match(
+                r"\s+[^\n]*\bbls\w*\s", active_prefix[instruction.end():]):
+            raise AssertionError(f"{obj}: used active period does not reject a repeated grant")
+    for label, end in (("bf_start_pattern_budget", "bf_try_active"),
+                       ("bf_try_active", "bf_start_vbudget")):
+        if not re.search(r"\bcmpiw\s+#224,%d0", block(label, end)):
+            raise AssertionError(f"{obj}: {label} loses the blank-head/active-edge guard")
+    lat_origin = symbol_address(objdump, obj, "pace_blank_tick")
+    if not re.search(
+            rf"\bsubw\s+0 [^\n]*,%d0\n"
+            rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{lat_origin:x}", active_prefix):
+        raise AssertionError(f"{obj}: LAT phase lacks the physical publication origin")
     if not re.search(r"\bmovew\s+(?:00)?c00004 <VDP_CTRL>,%d0", start_budget):
         raise AssertionError(f"{obj}: initial VBlank budget lacks status guard")
     if not re.search(r"\bmovew\s+(?:00)?c00008 <VDP_HV>,%d0", start_budget):
@@ -369,6 +393,8 @@ def verify_shared_deadline_vblank(
             f"{obj}: split Word-RAM DMA lacks its CPU-repair charge")
 
     shared = block("bf_wait_fixed_flip_vblank", "bf_patch_dbg_row")
+    if len(re.findall(rf"R_68K_32\s+\.bss\+0x{lat_origin:x}\b", shared)) != 2:
+        raise AssertionError(f"{obj}: shared/fresh publication must both retain the blank head")
     if not re.search(
             rf"\bsubw\s+0 [^\n]*,%d0\n"
             rf"\s+[^\n]*R_68K_32\s+\.bss\+0x{origin_addr:x}", shared):

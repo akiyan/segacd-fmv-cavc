@@ -23,6 +23,37 @@ from tmpfs_workspace import lease_managed_path
 # LOGVDP prints address before 'write ->', followed by the data word.
 WRITE = re.compile(r"\[\d+\((\d+)\)\]\[\d+\(\d+\)\] "
                    r"(VRAM|CRAM) 0x([0-9a-fA-F]+) write ->")
+DMA_LINE = re.compile(r"\[(\d+)\(\d+\)\]\[\d+\(\d+\)\] DMA type")
+
+
+def active_dma_starts(compact, nt_pc, nt_lengths):
+    """Count command starts, not scanline continuations or CPU repair writes."""
+    upcoming, pending = 0, None
+    starts = []
+    for line in log_lines(compact):
+        match = DMA_RE.search(line)
+        if not match:
+            continue
+        kind, _, _, access, remaining = map(int, match.groups()[:5])
+        pc = int(match[6], 16) & 0xFFFF
+        if kind != 1:
+            pending = None
+            continue
+        continuation = pending is not None
+        if continuation and pending != (pc, remaining):
+            raise ValueError("discontinuous DMA trace while a command is incomplete")
+        pending = (pc, remaining - access) if remaining > access else None
+        if continuation:
+            continue
+        if pc == nt_pc and remaining == nt_lengths[min(upcoming, len(nt_lengths)-1)]:
+            upcoming += 1
+            if upcoming >= len(nt_lengths):
+                break
+            continue
+        phase = DMA_LINE.search(line)
+        if phase and 0 < upcoming < len(nt_lengths) and int(phase[1]) < 224:
+            starts.append(dict(frame=upcoming, line=int(phase[1]), words=remaining))
+    return starts
 
 
 def main():
@@ -66,12 +97,14 @@ def check(args):
         _, nt_pc, nt_words, _ = infer_dma_pcs(events, args.frames)
         nt_lengths = np.full(args.frames, nt_words)
     fields = ("frame", "pattern_active_words", "pattern_blank_words",
+              "pattern_early_active_words", "pattern_first_active_line",
               "final_active_words", "final_blank_words", "final_edge_words",
               "nt_active_words", "nt_blank_words", "nt_edge_words",
               "display_active_words", "display_blank_words", "display_edge_words")
     rows = [dict.fromkeys(fields, 0) for _ in range(args.frames)]
     for i, row in enumerate(rows):
         row["frame"] = i
+        row["pattern_first_active_line"] = -1
     upcoming, displayed, nt_written = 0, -1, 0
     with gzip.open(args.full, "rt", errors="replace") as source:
         for line in source:
@@ -103,6 +136,10 @@ def check(args):
                 row = rows[upcoming]
                 if phase != "edge":
                     row[f"pattern_{phase}_words"] += 1
+                if phase == "active":
+                    row["pattern_early_active_words"] += int(v < 112)
+                    if row["pattern_first_active_line"] < 0:
+                        row["pattern_first_active_line"] = v
                 if addr >= 0xD880:
                     row[f"final_{phase}_words"] += 1
             elif 0xE000 <= addr < 0xF000 and 0 <= displayed < args.frames:
@@ -122,7 +159,8 @@ def check(args):
         writer = csv.DictWriter(target, fields, delimiter="\t", lineterminator="\n")
         writer.writeheader()
         writer.writerows(rows)
-    totals = {key: sum(row[key] for row in rows[1:]) for key in fields[1:]}
+    totals = {key: sum(row[key] for row in rows[1:]) for key in fields[1:]
+              if key != "pattern_first_active_line"}
     # Ambiguous edge writes cannot establish a complete publication blank.
     bad = [row for row in rows[1:] if any(row[key] for key in (
         "final_active_words", "final_edge_words", "nt_active_words", "nt_edge_words",
@@ -130,6 +168,14 @@ def check(args):
     receipt = dict(compact=str(args.compact.resolve()), full=str(args.full.resolve()),
                    frames=args.frames, nt_pc=nt_pc, nt_words=nt_words,
                    totals=totals, failing_frames=bad, passed=not bad)
+    receipt["first_active_line_histogram"] = dict(sorted(Counter(
+        row["pattern_first_active_line"] for row in rows[1:]
+        if row["pattern_first_active_line"] >= 0).items()))
+    starts = active_dma_starts(args.compact, nt_pc, nt_lengths)
+    receipt["active_dma_start_line_histogram"] = dict(sorted(Counter(
+        event["line"] for event in starts).items()))
+    receipt["early_active_dma_start_frames"] = sorted({
+        event["frame"] for event in starts if event["line"] < 112})
     if args.sim_out:
         receipt["sim_out"] = str(args.sim_out.resolve())
         with (args.sim_out / "decisions.pkl").open("rb") as source:
