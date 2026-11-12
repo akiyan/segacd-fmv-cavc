@@ -90,16 +90,36 @@ class PackFadeTests(unittest.TestCase):
         )
         self.assertEqual(len(block), int(expected[0]))
 
-    def test_fade_control_rejects_name_updates(self):
-        key = bytes([1] * 64)
+    def test_progressive_fade_preserves_updates_audio_and_runs(self):
         with tempfile.TemporaryDirectory() as tmp:
-            with self.assertRaisesRegex(ValueError, "fade frames cannot carry"):
+            audio = self.audio_path(tmp)
+            per = [([], [], []), ([0], [0x2001], [True])]
+            blocks, _ = pack_stream.build_control(
+                self.fade_log(), per, np.asarray([0, 1]), audio,
+                update_lists=[False, True])
+            plain, _ = pack_stream.build_control(
+                self.fade_log(), [([], [], []), ([], [], [])],
+                np.asarray([0, 0]), audio)
+            with self.assertRaisesRegex(ValueError, "require a list"):
                 pack_stream.build_control(
-                    self.fade_log(),
-                    [([], [], []), ([0], [1], [False])],
-                    np.asarray([0, 1]),
-                    self.audio_path(tmp),
-                )
+                    self.fade_log(), per, np.asarray([0, 1]), audio)
+        block = blocks[1]
+        self.assertEqual(struct.unpack_from(">H", block, 4)[0], 0xA001)
+        self.assertEqual(block[6:134], pack_stream.pals_to_bytes_128(self.fade_palette))
+        self.assertEqual(struct.unpack_from(">2H", block, 134), (0, 0x2001))
+        start, end = pack_stream.control_audio_bounds(block)
+        old_start, old_end = pack_stream.control_audio_bounds(plain[1])
+        self.assertEqual(start, 138)
+        self.assertEqual(block[start:end], plain[1][old_start:old_end])
+        self.assertEqual(struct.unpack_from(">H", block, end)[0], 1)
+        lengths = stream_schedule.control_block_lengths(
+            [1], [1], cells=1, audio_frame_bytes=pack_stream.AUDIO_CONTROL,
+            update_lists=[True], frame_types=[shadow_updates.FRAME_FADE_IN])
+        self.assertEqual(len(block), int(lengths[0]))
+        malformed = bytearray(block)
+        struct.pack_into(">H", malformed, 4, 0x2001)
+        with self.assertRaisesRegex(ValueError, "require a list"):
+            pack_stream.control_audio_bounds(malformed)
 
 
 if __name__ == "__main__":

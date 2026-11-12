@@ -92,9 +92,13 @@ class ControlLengthTests(unittest.TestCase):
         # Normal zero-update H40/760 carries a 96-byte aligned bitmap.  A fade
         # omits it, adds the complete 128-byte CRAM image, and retains runs.
         self.assertEqual(lengths.tolist(), [1576, 1616, 1608])
-        with self.assertRaisesRegex(ValueError, "carries shadow updates"):
+        self.assertEqual(schedule.control_block_lengths(
+            [1], [0], cells=760, audio_frame_bytes=1472,
+            frame_types=[shadow_updates.FRAME_FADE_IN]).tolist(), [1612])
+        with self.assertRaisesRegex(ValueError, "require a list"):
             schedule.control_block_lengths(
                 [1], [0], cells=760, audio_frame_bytes=1472,
+                update_lists=[False],
                 frame_types=[shadow_updates.FRAME_FADE_IN],
             )
 

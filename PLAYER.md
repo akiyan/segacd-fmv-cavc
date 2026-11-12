@@ -229,6 +229,8 @@ at Sub PRG `0x06000`; it is not limited to one 4 KiB sector pair. The image
 is profile-specialized (`PLAYER_SPECIALIZE`) and the linker enforces the hard
 end at `0x07400`. Continuous-read marker qualification covers the reclaimed
 `0x07400..0x07FFF` interval before `ADP-IDX` uses its leading 2,848 bytes.
+Boot WordBuf write-cursor wrapping uses assembly-time constants, preserving
+space for long-route builds without changing timed playback or this map.
 
 The packer places the exact 1,108-byte hash-bound extension after the
 8,800-byte ADPCM table in its existing five-sector padding. Sub stages that
@@ -547,7 +549,10 @@ sequenceDiagram
 A zero residual wait means Sub completed the exchange during Main's remaining
 display work. It does not mean that the exchange itself was free. Inline fade
 CRAM is copied to `M-FCRAM` before the request, so Main makes no further access
-to the returned bank after asserting `CMD_SWAP`. Frame 0 keeps
+to the returned bank after asserting `CMD_SWAP`. If a fade carries shadow
+updates, Main consumes their list after copying CRAM and stages the updated
+name table before returning the bank. Sub locates audio after the 128-byte
+CRAM image and four bytes per update. Frame 0 keeps
 the startup `CMD_STREAM` ownership through its publication, so frame 1 is
 acquired by the ordinary synchronous request. The final frame is also excluded: Main
 requests `STAT_END` only after that frame has become visible.
@@ -923,6 +928,8 @@ Supplyになることはありません。
 （`PLAYER_SPECIALIZE`）で、linkerがhard end `0x07400`を強制します。
 `ADP-IDX`が先頭2,848 byteを使う前に、回収した`0x07400..0x07FFF`全体を
 continuous-read markerで検証します。
+起動時のWordBuf書き込み位置の折り返しはアセンブル時に確定し、再生中の処理や
+このメモリ配置を変えずに、長いroutingを使うビルドの領域を確保します。
 
 Packerはhashで固定した1,108-byte extensionを8,800-byte ADPCM table直後の既存
 5-sector paddingへ配置します。Subはそのimageを`SP-STAGE`（`0x7B000`）へ
@@ -1226,7 +1233,9 @@ sequenceDiagram
 残り待ちがゼロなら、Mainの残るdisplay work中にSubの交換が完了したという
 意味です。交換自体の所要時間がゼロという意味ではありません。Inline fade
 CRAMはrequest前に`M-FCRAM`へcopyするため、Mainは`CMD_SWAP` assert後、返却した
-bankへアクセスしません。Frame 0はpublicationまで
+bankへアクセスしません。fadeがshadow updateを持つ場合、MainはCRAMをcopyした後に
+listを読み、更新したname tableをstageしてからbankを返します。Subは128-byteの
+CRAM imageとupdateごとの4 byteを飛ばしてaudio位置を求めます。Frame 0はpublicationまで
 startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期requestで
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
 requestします。Non-specialized、periodic-cadence、feature-clear pathも、

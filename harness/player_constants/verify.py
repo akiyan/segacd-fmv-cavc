@@ -48,6 +48,9 @@ CASES = (
          | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS),
     Case("h40-30-supply", 30, True),
     Case("h40-30-centered", 30, True, 36, 25),
+    Case("h40-30-long-scroll-ring", 30, True, cold_cap=210, frames=19038,
+         extra_features=cavc_routing.FEATURE_SCROLL | cavc_routing.FEATURE_WORDBUF_RING
+         | cavc_routing.FEATURE_SHADOW_UPDATE_LISTS),
     Case("h40-24-16385", 24, True, cold_cap=225, frames=16385),
     Case("h40-24-32768", 24, True, cold_cap=225, frames=32768),
     Case("h40-24-65535", 24, True, cold_cap=225, frames=65535),

@@ -213,7 +213,9 @@ uploads a new one and the previous video stays unlisted.
 Every codec video, analysis and playback alike, must state how many times the
 palette (CRAM) switches, as part of the output spec section in both languages.
 Read the count with `tools/cram_switches.py SIM_OUT`, which prints
-`cram_segments=N cram_switches=N-1` from the sim's `frame_seg`. The count
+`cram_segments=N cram_switches=N-1` from the sim's palette-segment boundaries
+and inline fade controls. Each CRAM replacement counts once, including when
+both occur in the same frame; the initial palette is not a switch. The count
 belongs to the encode, so the analysis render and its playback recording report
 the same numbers.
 
@@ -445,7 +447,9 @@ uploadし、以前の動画はunlistedのまま残ります。
 
 analysisもplaybackも、すべてのcodec動画は palette (CRAM) が何回切り替わるかを
 出力spec節へ英日とも記載します。`tools/cram_switches.py SIM_OUT` で読み、
-simの`frame_seg`から`cram_segments=N cram_switches=N-1`を出力します。回数は
+simのpalette segment境界とinline fade controlから
+`cram_segments=N cram_switches=N-1`を出力します。同じframeで両方が発生する場合も
+CRAM置換は1回として数え、初期paletteはswitchに含めません。回数は
 encodeの性質なので、analysis renderとそのplayback recordingは同じ値を報告
 します。
 
