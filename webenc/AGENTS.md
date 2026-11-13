@@ -78,6 +78,12 @@ Near/Flbk decisions, quality accounting, PrgBuf, WordBuf0/WordBuf1, DicBuf,
 boot/raw VRAM prefetch and the complete delivery/packing policy stay enabled.
 Let the original encoder decide allocations and choose its safe scheduling
 fallbacks; do not lower target geometry/fps/cold cap to make an encode pass.
+Use the shared incremental fade preparation without a browser-side restart or
+automatic fade-shot demotion loop. Surface planning errors with their traceback.
+Production builds must verify bundled codec/player sources against the current
+checkout and retain the build version in download metadata and Activity log.
+Run long browser qualifications against a fixed production preview; editing
+sources served by a live development server can interrupt an active encode.
 
 Playback must be materialized by the canonical display portion of
 render_analysis.py on the actual decisions and active CRAM, including scroll.

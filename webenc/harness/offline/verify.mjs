@@ -18,7 +18,12 @@ try {
   const page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => dialog.dismiss());
-  const analyticsRequest = url => ['www.googletagmanager.com', 'www.google-analytics.com', 'region1.google-analytics.com'].includes(new URL(url).hostname);
+  const analyticsRequest = value => {
+    const url = new URL(value);
+    return ['www.googletagmanager.com', 'www.google-analytics.com', 'region1.google-analytics.com'].includes(url.hostname)
+      || (url.hostname === 'www.google.com' && url.pathname === '/g/collect'
+          && url.searchParams.get('tid') === 'G-0PR7D6YPX6');
+  };
   context.on('requestfailed', request => {
     if (disconnected && request.url().startsWith('http')) (analyticsRequest(request.url()) ? analyticsFailures : failed).push({url: request.url(), error: request.failure()?.errorText});
   });

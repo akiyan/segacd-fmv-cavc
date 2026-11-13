@@ -154,6 +154,12 @@ qualification workloads and are not part of the UI suite.
 A narrowly bounded diagnostic adapter handles unused whole-sector padding when
 the entire Prg stream fits in the boot prebuffer. It changes no encoding choices
 or physical schedule; existing stream checks remain active.
+The browser uses the shared incremental fade-preparation planner and surfaces
+planning failures without restarting the movie with demoted fade shots. Runtime
+metadata in the download and Activity log identifies the encoder/player build.
+Every production build verifies bundled Python, player and linker sources
+against the current checkout before generating the offline cache. See
+`harness/runtime_sync/README.md` for bundle and native/Wasm player checks.
 A separate pack-validation adapter distinguishes mandatory scroll lists from
 optional normal-frame list optimizations. Scroll controls retain their required
 position/list format regardless of nominal bitmap speed; optional lists must
