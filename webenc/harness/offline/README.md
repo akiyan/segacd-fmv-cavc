@@ -15,6 +15,8 @@ It checks that offline HTTP responses are served by the service worker, that no
 required runtime request fails and that the Licenses modal works offline with
 project MIT terms. Unavailable optional GA4 requests are recorded separately
 as `analyticsFailures`; they are not encoding dependencies.
+This includes the configured GA4 tag's `www.google.com/g/collect` endpoint;
+other requests to that host remain required failures.
 The persistent receipt is `logs/webenc_offline_verification.json`.
 Use `WEBENC_URL` to target a deployed build. Input media is leased through the
 project's managed tmpfs workflow; no generated media is kept in this directory.

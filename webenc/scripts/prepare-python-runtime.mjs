@@ -33,7 +33,10 @@ for(const name of (await readdir(path.join(repo,'tools'))).filter(n=>n.endsWith(
  const bytes=await readFile(path.join(repo,'tools',name));entries[`tools/${name}`]=bytes;fingerprint.update(name);fingerprint.update(bytes);
 }
 entries['tools/av_version.txt']=await readFile(path.join(repo,'tools/av_version.txt'));
-entries['manifest.json']=strToU8(JSON.stringify({schema:1,encoderSha256:fingerprint.digest('hex'),runtime:version,python:lock.info.python,numpy:lock.packages.numpy.version,numericSha256}));
+const versions=Object.fromEntries(entries['tools/av_version.txt'].toString().split('\n').filter(line=>/^(date|e|p)=/.test(line)).map(line=>line.trim().split('=')));
+if(!['date','e','p'].every(key=>/^\d+$/.test(versions[key]||'')))throw new Error('Invalid encoder/player build version');
+const buildVersion=`${versions.date}.e${versions.e}.p${versions.p}`;
+entries['manifest.json']=strToU8(JSON.stringify({schema:1,buildVersion,encoderSha256:fingerprint.digest('hex'),runtime:version,python:lock.info.python,numpy:lock.packages.numpy.version,numericSha256}));
 await writeFile(path.join(root,'public/python-codec.zip'),zipSync(entries,{level:6}));
 console.log(`Prepared self-hosted Python/Wasm ${version}, NumPy ${lock.packages.numpy.version}, Pillow ${lock.packages.pillow.version}; no media or BIOS included.`);
 

@@ -28,6 +28,7 @@ self.onmessage=async({data})=>{
   await py.loadPackage(['numpy','pillow']);
   const sources=unzipSync(new Uint8Array(await(await fetch('/python-codec.zip')).arrayBuffer()));
   const runtime=JSON.parse(strFromU8(sources['manifest.json']));
+  log(`Original CAVC build ${runtime.buildVersion}.`);
   py.FS.mkdirTree('/codec/tools');py.FS.mkdirTree('/work/master');py.FS.mkdirTree('/work/raw');
   for(const [name,bytes]of Object.entries(sources))if(/^tools\/[a-zA-Z0-9_]+\.(py|txt)$/.test(name))py.FS.writeFile('/codec/'+name,bytes);
   const bootSources=await playerSources();

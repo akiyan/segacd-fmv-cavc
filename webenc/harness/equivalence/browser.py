@@ -44,15 +44,10 @@ if Path('/codec/tools/progress.py').exists():
     emit_progress=install_progress(sim,globals().get('__webenc_progress'),globals().get('__webenc_features'))
 from stages import install
 install(sim,Path('/work'),cache=False)
-anchors=set()
-while True:
-    try:sim.main(demoted_fade_anchors=frozenset(anchors));break
-    except sim.FadeDeadlineInfeasible as error:
-        if error.anchor in anchors:raise
-        anchors.add(error.anchor)
-        import gc;gc.enable()
-        print(f'Fade planning retry at frame {error.anchor}',flush=True)
-Path('/work/demoted-fade-anchors.json').write_text(json.dumps(sorted(anchors))+'\n')
+# The shared planner prepares fade transitions incrementally. A planning
+# failure must surface instead of silently restarting with different shots.
+sim.main()
+Path('/work/demoted-fade-anchors.json').write_text('[]\n')
 import pack_stream
 from pack_validation import install as install_pack_validation
 install_pack_validation(pack_stream)
