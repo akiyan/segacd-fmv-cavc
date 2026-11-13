@@ -18,7 +18,9 @@ control sectors and advances the consumer by each control block's exact
 - queued APPLY data is at or above the player's 30 KiB pump guard; and
 - the next physical BODY sector is control.
 
-With a HUD TSV, the default replay uses the measured extra emulator scanouts.
+With a HUD TSV, the default replay uses the measured extra emulator scanouts
+from loop 0. Use `--loop N` to select another loop; repeated frame indices
+from later loops never replace the selected loop's clock anchor.
 It converts each extra NTSC scanout to `1001/800` CD sectors and subtracts the
 schedule's current rate debt. `--schedule-only` instead uses the conservative
 `peak debt - current debt` producer lead and needs no HUD.
