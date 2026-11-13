@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -19,6 +20,21 @@ SPEC.loader.exec_module(ANALYZE)
 
 
 class AnalyzeTest(unittest.TestCase):
+    def test_partial_second_loop_cannot_replace_first_loop_anchor(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "hud.tsv"
+            path.write_text(
+                "loop\tframe\tcapture_first\tsector_slip\tapply_backpressure\n"
+                "0\t1\t100\t0\t0\n"
+                "0\t2\t105\t0\t1\n"
+                "1\t1\t1000\t0\t0\n", encoding="utf-8")
+            hud = ANALYZE.read_hud(path)
+            self.assertEqual(ANALYZE.cumulative_extra_scanouts(
+                hud, anchor_frame=1, normal_scanouts=2), {1: 0, 2: 3})
+            second = ANALYZE.read_hud(path, loop=1)
+            self.assertEqual(list(second), [1])
+            self.assertEqual(second[1].capture_first, 1000)
+
     def test_repaid_rate_debt_becomes_irreversible_producer_lead(
         self,
     ) -> None:

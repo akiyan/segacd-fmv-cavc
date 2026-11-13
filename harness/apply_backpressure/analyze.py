@@ -62,9 +62,11 @@ def _read_tsv(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle, delimiter="\t"))
 
 
-def read_hud(path: Path) -> dict[int, HudRow]:
+def read_hud(path: Path, *, loop: int = 0) -> dict[int, HudRow]:
     result: dict[int, HudRow] = {}
     for raw in _read_tsv(path):
+        if int(raw.get("loop") or 0) != loop:
+            continue
         frame = int(raw["frame"])
         capture = raw.get("capture_first", "").strip()
         blocked = raw.get("apply_backpressure", "").strip()
@@ -432,6 +434,8 @@ def main() -> None:
     )
     parser.add_argument("decisions", type=Path)
     parser.add_argument("--hud-tsv", type=Path)
+    parser.add_argument("--loop", type=int, default=0,
+                        help="HUD loop to replay (default: 0); never mix loop clocks")
     parser.add_argument("--output-tsv", type=Path, required=True)
     parser.add_argument("--anchor-frame", type=int)
     parser.add_argument("--normal-scanouts", type=int)
@@ -456,7 +460,7 @@ def main() -> None:
     rate_sectors = stream_schedule.rate_deltas(
         len(block_lengths), fps
     )
-    hud = read_hud(args.hud_tsv) if args.hud_tsv else None
+    hud = read_hud(args.hud_tsv, loop=args.loop) if args.hud_tsv else None
     normal_scanouts = (
         args.normal_scanouts
         if args.normal_scanouts is not None
