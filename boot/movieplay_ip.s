@@ -779,7 +779,7 @@ palette_next_frame:
 	rts
 
 build_frame:
-	movem.l	d0-d7/a0-a3, -(sp)
+	movem.l	d0-d7/a0-a4, -(sp)
 .ifdef DEBUG
 	clr.w	vsync_acc			/* per-frame VBlank-start waits shown as Mxx */
 	clr.w	frame_vblank_waits
@@ -1006,6 +1006,12 @@ bf_dma:
 	clr.w	vbudget_from_head		/* no stale budget may authorize a shared flip */
 	move.w	n_runs, d4
 	beq	bf_flip
+	lea	(VDP_CTRL).l, a4
+	move.w	#FINAL_PATTERN_ADDR, d5
+	tst.l	frame_no
+	bne.s	8f
+	move.w	#0xFFFF, d5			/* frame 0 constructs every destination immediately */
+8:
 	lea	(PROBE_BANK+O_LOADS_OFF), a2
 .ifdef DEBUG
 	moveq	#0, d0
@@ -1020,10 +1026,8 @@ bf_dma:
 	move.w	d0, dma_start_tick		/* begin at the first active or blank pattern transfer */
 .endif
 bf_run_lp:
-	tst.l	frame_no
-	beq.s	bf_run_early
-	cmpi.w	#FINAL_PATTERN_ADDR, 10(a2)
-	bhs	bf_defer_final_run
+	cmp.w	10(a2), d5
+	bls	bf_defer_final_run
 bf_run_early:
 	/* Pop the Sub-built record straight into the control port. Inline Prg
 	   payload follows its own record; Wr/Dic records are adjacent. */
@@ -1034,19 +1038,20 @@ bf_run_early:
 	bls.s	1f
 	bra	bf_split_run			/* fill this budget before continuing the run */
 1:
-	move.w	#0x8F02, (VDP_CTRL).l		/* autoinc=2 (reassert before every DMA) */
-	move.w	(a2)+, (VDP_CTRL).l		/* +2 reg93 */
-	move.w	(a2)+, (VDP_CTRL).l		/* +4 reg94 */
+	move.w	#0x8F02, (a4)			/* autoinc=2 (reassert before every DMA) */
+	move.l	(a2)+, (a4)			/* +2 reg93, +4 reg94; ordered control-port words */
 	move.l	(a2)+, d0			/* +6 cmd */
 	addq.l	#2, a2				/* skip +10 dst */
-	move.w	(a2)+, (VDP_CTRL).l		/* +12 reg95 */
-	move.w	(a2)+, (VDP_CTRL).l		/* +14 reg96 */
-	move.w	(a2)+, (VDP_CTRL).l		/* +16 reg97 */
+	move.l	(a2)+, (a4)			/* +12 reg95, +14 reg96 */
+	move.w	(a2)+, (a4)			/* +16 reg97 */
 	move.l	d0, d2
 	ori.w	#0x0080, d0			/* CD5 in the second control word */
-	move.l	d0, (VDP_CTRL).l		/* high word, then CD5 trigger word */
-	bsr	wait_dma_done
-	move.l	d2, (VDP_CTRL).l		/* restore ordinary destination */
+	move.l	d0, (a4)				/* high word, then CD5 trigger word */
+2:
+	move.w	(a4), d0
+	btst	#1, d0
+	bne.s	2b
+	move.l	d2, (a4)				/* restore ordinary destination */
 	movea.l	(a2)+, a3			/* +18 src */
 	cmpa.l	a2, a3				/* Prg raw source equals the inline payload cursor */
 	bne.s	1f
@@ -1054,7 +1059,7 @@ bf_run_early:
 	add.w	d0, d0				/* DMA words -> inline bytes */
 	adda.w	d0, a2
 1:
-	move.w	(a3), (VDP_DATA).l		/* repair dst[0] (redundant-correct for DicBuf) */
+	move.w	(a3), -4(a4)			/* repair dst[0] (redundant-correct for DicBuf) */
 .ifdef DEBUG
 	adda.w	d1, a1
 .endif
@@ -1216,6 +1221,7 @@ bf_publish_frame:
 	add.w	d6, d0
 	cmpi.w	#VB_WORDS, d0
 	bhi	bf_invalid_final			/* refuse before destroying the old display */
+	move.w	d0, d6				/* shared blank must fit the entire destructive bundle */
 	.ifdef DEBUG
 	move.w	(VDP_HV).l, d0
 	lsr.w	#8, d0
@@ -1281,7 +1287,7 @@ bf_after_flip:
 	move.w	#0x000E, (VDP_DATA).l
 1:
 .endif
-	movem.l	(sp)+, d0-d7/a0-a3
+	movem.l	(sp)+, d0-d7/a0-a4
 	rts
 
 /* The fixed final-only tail needs at most twelve retained run pointers. No
@@ -1318,7 +1324,7 @@ bf_defer_final_run:
 1:
 	bra	bf_run_done
 
-/* Called only after admitting a fresh publication blank. The checked bundle
+/* Called only after admitting the complete publication bundle. The bundle
    has no refill or wait path after its first destructive pattern write. */
 bf_final_patterns:
 	move.w	final_run_count, d4
@@ -1627,7 +1633,7 @@ bf_next_vbudget:
 	rts
 .endif
 
-	/* d6 is the word reserve for NT/HUD/optional CRAM/guard.
+	/* d6 includes final patterns/setup and NT/HUD/optional CRAM/guard.
 	   If Pass2 ended inside a VBlank whose budget began at its head, and the
 	   residual word budget covers all flip work, keep that exact cadence VBlank.
 	   Otherwise take a fresh target VBlank. The target blank is display
@@ -1636,8 +1642,6 @@ bf_next_vbudget:
    Trashes d0. */
 bf_wait_fixed_flip_vblank:
 	bsr	wait_fixed_flip
-	tst.w	final_run_count
-	bne	2f				/* final-only writes always get a complete blank */
 	tst.w	vbudget_from_head
 	beq.s	2f
 	cmp.w	d6, d7
@@ -1854,10 +1858,12 @@ commit_frame:
 	rts
 
 /* A shortened fixed interval may reserve the first blank for publication
-   only when all pattern work fits beside that publication. Otherwise an
-   unused first-blank reserve can push a normal two-blank frame into three.
-   W-HDR already counts all transferred patterns and expanded runs. A run
-   that fits this whole-frame bound needs only one CPU first-word repair.
+   when pattern work fits in its active window and beside that publication.
+   This is a workload admission estimate; bf_try_active still bounds the
+   actual grant by entry phase, and publication checks remaining blank time.
+   An unused first-blank reserve can push a normal two-blank frame into three.
+   W-HDR already counts all transferred patterns and expanded runs. The
+   transfer loop charges additional repairs when a run crosses a window.
    Trashes d0-d2. */
 pace_admit_fixed_interval:
 .ifdef PLAYER_SPECIALIZED
@@ -1883,6 +1889,7 @@ pace_admit_fixed_interval:
 	add.l	d1, d2
 	moveq	#0, d1
 	PC_MOVE_W md_vbudget, PC_VBUDGET, d1
+	addi.l	#ACTIVE_PREFIX_WORDS, d1
 	cmp.l	d1, d2
 	bls.s	2f
 	move.w	d0, pace_target_vblanks

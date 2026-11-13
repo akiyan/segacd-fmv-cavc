@@ -33,8 +33,12 @@ Pattern and final-display DMA admission still use the
 remaining budget of the actual target blank. A frame that cannot finish sooner
 retains its debt; the display cannot advance ahead of the nominal stream clock.
 Before reserving an early publication blank, Main requires all pattern words,
-one CPU repair per run and the final-display reserve to fit one VBlank budget.
-Otherwise it retains the nominal target and avoids wasting an earlier reserve.
+one CPU repair per run and the final-display reserve to fit one VBlank budget
+plus one bounded active transfer allowance (at most 672 word-cost units).
+This workload estimate does not grant transfer capacity: active entry still
+uses the actual scanline limit, and publication must fit the actual remaining
+blank time. Otherwise Main retains the nominal target and avoids wasting an
+earlier reserve.
 
 Fixed cadence is a target, not a guarantee of uniform display intervals. In
 the e198/p169 DEBUG emulator qualification of the 2,714-frame Sonic Jam opening
@@ -576,6 +580,13 @@ bounded but raises a HUD warning. A light N4 frame may open only one or two
 budgets and leave the remaining cadence windows empty. These counters record
 explicit budget openings.
 
+The whole-run Main path retains the VDP control-port address and final-tail
+threshold across the loop. It writes adjacent length registers 93/94 and
+source registers 95/96 as ordered word pairs with longword instructions.
+Every DMA still rewrites its length and autoincrement, polls completion and
+repairs the first destination word. This reduces CPU setup work per run
+without changing the stream layout or transfer budgets.
+
 For fixed-cadence playback, one transfer deadline can serve both
 the final cold-run tail and display publication. The Main CPU uses a
 conservative
@@ -627,7 +638,10 @@ boundary. Main retains at most twelve pointers (48 bytes), two word counters,
 and a word active-period ordinal, plus a word publication-blank timestamp:
 56 bytes within the existing `M-STATE` allocation.
 
-Final-only runs keep their Word-RAM bank until a fresh publication blank.
+Final-only runs keep their Word-RAM bank until the publication blank.
+A shared blank must have enough residual word budget and measured time for
+the entire final pattern/setup and display bundle; otherwise Main waits for
+a fresh blank before any destructive write.
 Before any destructive write, both packing verification and Main require the
 whole bundle to fit 3,200 units: actual pattern words, 96 units per final run
 for setup/repair, and the complete NT/HUD/CRAM reserve. Main checks pointer
@@ -741,8 +755,10 @@ stallのたびに増やしません。残した1 VBlankによって映像は元�
 patternと最終表示DMAのadmissionには、実際のtarget blankの残budgetを引き続き使います。
 早く完了できないframeのdebtは残り、名目stream clockより先に表示を進めません。
 早い表示用のblankを予約する前に、Mainは全pattern word、runごとのCPU先頭word補修、
-最終表示の予約分が1 VBlank budgetへ収まることを確認します。収まらなければ名目の
-targetを維持し、早いblankの予約枠を無駄にしません。
+最終表示の予約分が1 VBlank budgetと1回分のActiveTime転送枠（最大672 word-cost単位）
+へ収まることを確認します。この負荷見積もり自体は転送容量を許可しません。ActiveTime
+の転送枠は実際の走査線で制限し、表示処理はblankの実際の残り時間に収まる必要があります。
+見積もりが収まらなければ名目のtargetを維持し、早いblankの予約枠を無駄にしません。
 
 固定cadenceは目標であり、均一な表示間隔を保証するものではありません。
 e198/p169のDEBUG emulatorでcold cap 240、全2,714 frameのSonic Jam openingを
@@ -1256,6 +1272,12 @@ budgetを開く処理はboundedのままですがHUD warningになります。�
 1〜2 budgetだけを開き、残るcadence windowを空きにできます。このcounterは
 explicitなbudget openingを記録します。
 
+Mainのrun全体を転送する経路は、VDP control portのaddressと最終tailの判定境界を
+loop中に保持します。隣接するlength register 93/94とsource register 95/96は、
+longword命令で順序を保ったword対として書き込みます。DMAごとのlength・autoincrement
+設定、完了poll、destination先頭wordの補修は維持します。Stream layoutや転送budgetを
+変えずに、runごとのCPU設定処理を減らします。
+
 Fixed-cadence再生では、1個のtransfer deadlineを最後のcold-run tailと
 display publicationで共有できます。Main CPUは各VBlankに、安全側の
 3,200 DMA-word相当budgetを使います。DMA wordは1 unitで、全pattern runがDMAを使います。
@@ -1300,7 +1322,10 @@ packed readerでも独立に照合します。Runは末尾領域との境界で�
 wordの表示VBlank開始時刻1個、計56 byteを
 既存の`M-STATE`内に保持します。
 
-最終VBlank専用runは、新しいpublication blankまでWord RAM bankを保持します。
+最終VBlank専用runはpublication blankまでWord RAM bankを保持します。
+blankを共有するときは、最終pattern転送とsetup、表示処理の全量が残word budgetと
+計測した残り時間に収まる必要があります。収まらなければ、旧表示を書き換える前に
+新しいblankを待ちます。
 破壊的な書き込みの前に、pack検証とMainの両方で、pattern word、最終runごとの
 setup・補修用96 unit、NT/HUD/CRAMの全reserveが3,200 unit以内か確認します。
 Mainはpointer数、総word数、destination終端も検査し、不正なら旧patternを上書きする

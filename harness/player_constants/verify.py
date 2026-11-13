@@ -421,6 +421,15 @@ def verify_shared_deadline_vblank(
             f"{obj}: shared deadline path lacks its two status reads")
 
     publish = block("bf_publish_frame", "bf_after_flip")
+    # Sharing a blank after destructive tail writes is safe only if its time
+    # admission receives the pattern/setup cost as well as the display cost.
+    if not re.search(
+            r"\bmulu(?:w)?\s+#96,%d0.*?\baddw\s+[^\n]*,%d0\n"
+            r"(?:[^\n]*\n)*?[^\n]*\baddw\s+%d6,%d0\n"
+            r"[^\n]*\bcmpiw\s+#3200,%d0\n"
+            r"[^\n]*\bbhi\w*\s+[^\n]*<bf_invalid_final>\n"
+            r"[^\n]*\bmovew\s+%d0,%d6", publish, re.DOTALL):
+        raise AssertionError(f"{obj}: shared publication omits the final pattern/setup cost")
     screen_cols = 40
     band_words = (trows - 1) * 64 + tcols
     hud_words = screen_cols + (43 - screen_cols) * 4

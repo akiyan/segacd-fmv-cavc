@@ -165,7 +165,13 @@ cause. The failed HUD gate remains failed; no further source encode was run.
 
 Actual VDP traces pass for all five movies: final-tail, name-table and display
 control writes have zero active-display or boundary-crossing words. That proves
-this transfer-safety check, not successful CD/audio playback. BBB is therefore
-not qualified for publication. Matching logs, gates, recordings and disc hashes
+this transfer-safety check, not successful CD/audio playback. The p174 BBB
+capture is therefore not qualified for publication. Matching logs, gates, recordings and disc hashes
 are retained in `logs/issue127-e202p174-series.json`; the compact result table is
 `logs/issue127-e202p174-summary.tsv` with detailed JSON beside it.
+
+
+The subsequent player-only BBB qualification is documented in
+[the player constants harness](../player_constants/README.md#full-bbb-playback-qualification).
+It reuses this e202 encode and resolves the observed CD/audio failures in
+p176; the p174 failed recording and gate above remain unchanged.

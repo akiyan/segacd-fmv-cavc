@@ -45,7 +45,8 @@ For every case it requires:
   VBlanks 1 through 4;
 - fixed-N builds call the assembled debt-repayment path, preserve one VBlank
   of lateness and retain the one-VBlank minimum interval; whole-frame admission runs before any shortened
-  display reservation, and existing DMA admission checks still apply;
+  display reservation, includes one bounded active allowance, and existing
+  DMA admission checks still apply;
 - the DEBUG reserve includes the 52-word Window/SAT HUD workload, while
   release omits it;
 - generic and specialized builds begin the next bank exchange after their last
@@ -55,7 +56,8 @@ For every case it requires:
   rejects expired intervals and repeated grants in one physical active period,
   starts without a flip-arm/midpoint wait,
   and retains the 672-unit cap and late-line cutoff;
-  the deferred tail has no refill/wait path after destructive writes begin;
+  shared-blank time admission includes the complete deferred pattern/setup
+  cost, and the deferred tail has no refill/wait path after destructive writes begin;
 - single-movie replay publishes black frame -1 before waiting for the boot
   stage, whose sidecar writes would otherwise overwrite the live final display;
 - the specialized 15 fps ADPCM decoder services the CDC during its long decode,
@@ -87,3 +89,44 @@ real packed cold runs but deliberately excludes variable extra savings from
 CDC polling, wave-chunk boundaries, DMA-budget refills and palette switches.
 The result is therefore a lower bound for the current player, not the stale
 1,400-cycles-per-frame estimate from before Main code generation was added.
+
+
+## Full BBB playback qualification
+
+The e202/p176 DEBUG player reuses the same 19,038-frame Big Buck Bunny stream
+as p174: 320x224, 30 fps, cold cap 210. No source encode or transfer-budget
+increase was used. BODY.DAT is byte-identical
+(`3446d5edd6762b2688895e1f21000aa66f8cb3bfb329fb62da8fbb37a7e0bcf3`).
+
+The p174 display accumulated 37 VBlanks of lateness before APPLY blocked the
+continuous CD reader at frame 9359. Sector slip followed at frame 9361.
+Including active capacity in recovery admission and sharing a sufficiently
+large final blank alone did not fix this: the p175 trial still slipped.
+Reducing Main's repeated run setup in p176 keeps the maximum observed debt at
+11 VBlanks and returns it to one by the final frame. The physical CD schedule
+has zero cumulative rate lead; no buffer capacity was increased.
+
+| Complete first-loop result | p174 | p176 |
+|---|---:|---:|
+| Sector-slip peak | 6 | 0 |
+| Control-desync peak | 0 | 0 |
+| Audio-resync peak | 2 | 0 |
+| APPLY backpressure observed | Yes | No |
+| Interior irregular display intervals | 3895 | 191 |
+| Edge irregular display intervals | 2 | 0 |
+| HUD gate | FAIL | PASS / WARNING |
+
+The remaining 191 intervals consist of 96 three-VBlank holds and 95
+one-VBlank recovery steps. This is not uniform two-VBlank cadence. The exact
+recording's LOGVDP trace covers all 19,038 frames and matches the encoded final
+tail loads. Final-tail, movie-table, HUD and CRAM writes have zero active or
+ambiguous-boundary words. Native FFV1/FLAC capture, frame counts and
+representative startup/content/credits/loop frames were checked; this does not
+establish real-hardware timing.
+
+Local evidence is indexed by `logs/bbb-p176-result.json`, with the untouched
+failed p175 gate alongside the successful p176 gate. The p176 recording wrapper
+was interrupted during post-capture frame counting after a normal emulator
+shutdown. Its existing native capture was verified and remuxed with stream
+copy; the recovery receipt preserves both the interruption and completed
+checks. No second capture or source encode was needed for that recovery.

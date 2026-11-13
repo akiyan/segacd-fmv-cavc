@@ -1384,7 +1384,7 @@
 # p159: reject stale finite-read prefixes and clear the scroll plane on replay.
 # e196: reserve the first scroll control's guard edge independently of its
 #       ordinary anchor's geometry state.
-date=20261112
+date=20261113
 # e197: reduce infeasible control-sector reservations before projecting Prg limits.
 # e200: restore cold-only admission and allocation.
 e=202
@@ -1401,10 +1401,14 @@ e=202
 # p170: start bounded LAT transfers from the active edge using a physical blank origin.
 # p171: retain a usable blank head and wait through the active-edge counter wrap.
 # p172: admit a bounded protected-pattern transfer in each EAT and LAT.
-p=174
+p=176
 
 # e201/p173: carry unfinished reference updates through inline CRAM fades.
 # e202: reserve the final publication bundle during placement, including
 #       worst-case source fragmentation, and verify final realized runs.
 # p174: fold constant boot WordBuf write-cursor wraps at assembly time so
 #       long-route DEBUG builds fit the unchanged 5 KiB resident Sub map.
+# p175: include active transfer capacity in fixed-cadence recovery admission
+#       and admit the entire final bundle against remaining publication time.
+# p176: batch adjacent VDP register words and retain the control-port pointer
+#       and final-tail threshold across Main's pattern run loop.
