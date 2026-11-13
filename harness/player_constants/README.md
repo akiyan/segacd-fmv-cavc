@@ -130,3 +130,42 @@ was interrupted during post-capture frame counting after a normal emulator
 shutdown. Its existing native capture was verified and remuxed with stream
 copy; the recovery receipt preserves both the interruption and completed
 checks. No second capture or source encode was needed for that recovery.
+
+## Other full-movie playback qualifications
+
+The e202/p176 DEBUG player was also checked against the existing p174 streams
+below. Each BODY.DAT is byte-identical to its baseline; raster, cadence, cold
+cap, filters and palette policy remain unchanged. No source was re-encoded.
+
+| Movie | Frames | Interior irregular intervals, p174 → p176 | Edge irregular intervals, p174 → p176 | p176 HUD gate |
+|---|---:|---:|---:|---|
+| Sonic OP | 2714 | 0 → 0 | 1 → 1 | PASS / NONE |
+| Lunar | 2535 | 249 → 86 | 0 → 0 | PASS / WARNING |
+| Machi OP | 2293 | 0 → 0 | 0 → 0 | PASS / NONE |
+| Machi ED | 3998 | 1 → 3 | 1 → 0 | PASS / WARNING |
+| TIPSY | 5799 | 1 → 1 | 0 → 0 | PASS / WARNING |
+
+All five complete first loops have zero sector slip, control desync, audio
+resync and APPLY backpressure. Their matching LOGVDP traces cover every frame,
+match the encoded final-tail loads, and show zero active or ambiguous-boundary
+words for final-tail, movie-table, HUD and CRAM writes. Native recording counts,
+audio presence, normal emulator shutdown and representative stills were checked.
+These are emulator measurements, not real-hardware qualification or an audio
+listening assessment.
+
+Lunar's remaining 86 irregular intervals are 43 adjacent pairs where the
+scheduled two/three-VBlank order becomes three/two. Its previous eleven
+four-VBlank holds and one five-VBlank hold are absent. Machi ED retains a
+cadence regression: frames 365 and 416 hold for three VBlanks and frame 403
+holds for five, against the expected four. The baseline had a two-VBlank hold
+at frame 416 and an edge-exempt five-VBlank hold at frame 1. TIPSY retains the
+same three-VBlank hold at frame 170 against its expected two. Zero slip does
+not establish uniform display cadence.
+
+Local evidence is indexed by `logs/lunar-p176-result.json` and
+`logs/p176-followup-result.json`; the latter links the per-movie commands,
+process identities, exit statuses, disc hashes, canonical gates and traces.
+The follow-up's outer command session returned 143, while its driver continued
+through completion and recorded exit status zero for every build, recording,
+HUD analysis, trace validation and still extraction. The completed results were
+verified without restarting any stage.
