@@ -11,6 +11,9 @@
 #   tools/run_headless.sh out/SCFMV_MCD.cue
 #   tools/run_headless.sh out/CDCBENCH.cue --tag cdc --shots 30 --interval 2
 #   tools/run_headless.sh out/TEST1M.cue --tag t1m --shots 4 --interval 1
+#   BLASTEM=/path/to/blastem tools/run_headless.sh --backend blastem \
+#     out/CDCBENCH.cue --max-frames 600 --vdp-event-log
+# Pass --backend blastem --help for the standalone backend's options.
 #
 # Options (all optional except the disc):
 #   --tag NAME        output prefix under the work dir (default: disc basename)
@@ -78,6 +81,17 @@ if [ "${SEGACD_EMU_TOKEN_HELD:-0}" != "1" ]; then
   exec "$ROOT/tools/python.sh" "$ROOT/tools/resource_tokens.py" run \
     --resource emu --count 1 -- \
     env SEGACD_EMU_TOKEN_HELD=1 "$0" "$@"
+fi
+
+if [ "${1:-}" = "--backend" ]; then
+  case "${2:-}" in
+    blastem)
+      shift 2
+      exec "$ROOT/tools/python.sh" "$ROOT/tools/run_blastem.py" "$@"
+      ;;
+    gpgx) shift 2 ;;
+    *) echo "--backend must be gpgx or blastem" >&2; exit 2 ;;
+  esac
 fi
 
 DISC=""

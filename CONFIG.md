@@ -76,8 +76,10 @@ exclusive lock per media `<stem>`.
 
 Sim acquires CPU/GPU tokens only for Extract, Palette, and Quantize.
 `render_analysis.py` and record-preview transcoding use the same token pool.
-Xvfb allocates a free display dynamically and each emulator gets a private
-RetroArch system directory. `tools/parallel_run.py` divides CPU workers across
+For the default Genesis Plus GX backend, Xvfb allocates a free display
+dynamically and RetroArch gets a private system directory. The standalone
+BlastEm backend shares the same EMU token pool and creates its own private
+configuration and save directory. `tools/parallel_run.py` divides CPU workers across
 profiles and retains the sim workspace lease between stages. A second process for
 the same stem fails immediately; it never shares managed paths or output files.
 
@@ -728,8 +730,10 @@ media `<stem>` ごとのexclusive lockを実装します。
 
 simはExtract、Palette、Quantizeの間だけCPU/GPU tokenを取得します。
 `render_analysis.py` とrecord preview transcodeも同じtoken poolを使います。
-Xvfbは空きdisplayを動的に割り当て、各emulatorはprivate RetroArch system directoryを
-使います。`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
+既定のGenesis Plus GX backendではXvfbが空きdisplayを動的に割り当て、RetroArchは
+private system directoryを使います。BlastEm単体版backendも同じEMU token poolを
+使い、実行ごとに設定とセーブ先を分離します。
+`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
 workspace leaseを保持します。同じstemの2つ目のprocessは即時FAILし、managed pathや
 output fileを共有しません。
 

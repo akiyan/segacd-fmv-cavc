@@ -338,6 +338,34 @@ directory. The normal `retroarch_<tag>.log` retains the DMA trace and unexpected
 core errors. The complete upstream trace is kept beside it as
 `gpgx_logvdp_<tag>.log.gz`.
 
+### BlastEm playback and recording
+
+Build the standalone `akiyan/blastem` SDL fork with Sega CD offline recording
+support. Point `BLASTEM` at that executable, and select a BIOS with
+`BIOS_REGION` and, optionally, `BIOS_IMAGE`. The headless check can save a
+binary VDP event log:
+
+```sh
+BLASTEM=/path/to/blastem tools/run_headless.sh --backend blastem \
+  out/PROFILE.cue --max-frames 600 --vdp-event-log
+```
+
+For a native lossless MKV, supply a frame-indexed input file for the BIOS and
+disc. Each line has the format `FRAME PAD down|up BUTTON`. Frame numbers count
+completed emulator frames, starting at 1. For example, `180 1 down start`
+presses START immediately after frame 180. Include the corresponding release.
+
+```sh
+BLASTEM=/path/to/blastem tools/record_movie.sh --backend blastem \
+  --disc out/PROFILE.cue --no-build --seconds 45 --input-script start.txt
+```
+
+The BlastEm backend uses a private BIOS configuration and save directory.
+Recording preserves the 320×224 H40 raster, emulator video timing and sound
+in FFV1/FLAC. Add `--vdp-event-log` to keep the event stream from the same
+execution. See [BlastEm qualification](harness/blastem/README.md) for the
+artifacts and verification procedure.
+
 ## Build
 
 For a split encode, use [multipart](#multipart-cli); it builds the ISO
@@ -861,6 +889,32 @@ distribution-installed coreへのfallbackはありません。`CORE`は明示的
 BIOSをrunごとのprivate system directoryへcopyします。通常の
 `retroarch_<tag>.log`にはDMA traceと想定外のcore errorを残し、上流trace全体は隣の
 `gpgx_logvdp_<tag>.log.gz`へ保存します。
+
+### BlastEmでの再生と録画
+
+メガCDのオフライン録画に対応した `akiyan/blastem` のSDL単体版をビルドします。
+`BLASTEM` に実行ファイルを設定し、`BIOS_REGION` と必要に応じて `BIOS_IMAGE` で
+BIOSを選びます。ヘッドレスの起動確認では、VDPイベントログをバイナリで保存できます。
+
+```sh
+BLASTEM=/path/to/blastem tools/run_headless.sh --backend blastem \
+  out/PROFILE.cue --max-frames 600 --vdp-event-log
+```
+
+ロスレスMKVを録画するには、BIOSとディスクに合ったフレーム指定の入力ファイルを
+渡します。各行は `FRAME PAD down|up BUTTON` です。フレーム番号は1始まりの
+完了フレーム数で、たとえば `180 1 down start` は180フレーム目の直後にSTARTを
+押します。対応する解放も記述します。
+
+```sh
+BLASTEM=/path/to/blastem tools/record_movie.sh --backend blastem \
+  --disc out/PROFILE.cue --no-build --seconds 45 --input-script start.txt
+```
+
+BlastEmのBIOS設定とセーブ先は実行ごとに分離します。録画はH40の320×224画素、
+エミュレーターの映像時刻と音声をFFV1/FLACに保存します。`--vdp-event-log` を
+加えると同じ実行のイベントも保存します。成果物と検証手順は
+[BlastEmの検証](harness/blastem/README.md)を参照してください。
 
 ## Build
 

@@ -35,6 +35,11 @@
 #                  use the legacy wall-clock-paced FFV1/FLAC path
 #   --input-replay FILE
 #                  reuse an input replay for an exact-frame offline or realtime run
+#   --backend NAME  gpgx (default) or blastem for standalone offline recording
+#   --input-script FILE
+#                  frame-indexed input script required with --backend blastem
+#   --vdp-event-log
+#                  keep the BlastEm hardware event stream beside the run log
 #   --record-size WxH
 #                  native recording surface (H40: 320x224)
 #   --auto-audio-trim
@@ -67,6 +72,9 @@ OFFLINE_RECORD=1
 OFFLINE_REQUESTED=0
 REALTIME_LOSSLESS_REQUESTED=0
 INPUT_REPLAY=""
+BACKEND=gpgx
+INPUT_SCRIPT=""
+VDP_EVENT_LOG=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -82,6 +90,9 @@ while [ $# -gt 0 ]; do
     --offline-record) OFFLINE_RECORD=1; OFFLINE_REQUESTED=1; shift;;
     --realtime-lossless) OFFLINE_RECORD=0; REALTIME_LOSSLESS_REQUESTED=1; shift;;
     --input-replay) INPUT_REPLAY="$2"; shift 2;;
+    --backend) BACKEND="$2"; shift 2;;
+    --input-script) INPUT_SCRIPT="$2"; shift 2;;
+    --vdp-event-log) VDP_EVENT_LOG=1; shift;;
     --record-size) RECORD_SIZE="$2"; shift 2;;
     --auto-audio-trim) AUTO_AUDIO_TRIM=1; shift;;
     --no-build) BUILD=0; shift;;
@@ -106,6 +117,31 @@ if [ "$PRESET" = "realtime" ]; then
   fi
   OFFLINE_RECORD=0
 fi
+
+case "$BACKEND" in
+  gpgx)
+    if [ -n "$INPUT_SCRIPT" ] || [ "$VDP_EVENT_LOG" -eq 1 ]; then
+      echo "--input-script and --vdp-event-log require --backend blastem" >&2
+      exit 2
+    fi
+    ;;
+  blastem)
+    if [ "$OFFLINE_RECORD" -ne 1 ] || [ "$PRESET" != "ffv1-flac" ] ||
+       [ -n "$INPUT_REPLAY" ] || [ -n "$DISPLAY_NUM" ]; then
+      echo "BlastEm uses offline FFV1/FLAC capture with a frame-indexed input script" >&2
+      exit 2
+    fi
+    if [ -n "$RECORD_SIZE" ] && [ "$RECORD_SIZE" != "320x224" ]; then
+      echo "BlastEm capture uses the native 320x224 raster" >&2
+      exit 2
+    fi
+    if [ -z "$INPUT_SCRIPT" ] || [ ! -f "$INPUT_SCRIPT" ]; then
+      echo "--backend blastem requires --input-script FILE" >&2
+      exit 2
+    fi
+    ;;
+  *) echo "--backend must be gpgx or blastem" >&2; exit 2 ;;
+esac
 
 if [ -n "$CONFIG" ]; then
   CONFIG_STEM="$("$PYTHON" tools/encode_config.py "$CONFIG" --print-stem)"
@@ -164,8 +200,10 @@ fi
 if [ "${SEGACD_RECORD_TMPFS_HELD:-0}" != "1" ]; then
   RECORD_REQUIRED_GB=$((4 + 2 * ((REC_SECS + 59) / 60)))
   RECORD_KEY="$TAG|$(realpath -m "$DISC")|$REC_SECS|$TRIM|$PRESET|$RECORD_SIZE|$OFFLINE_RECORD"
+  [ "$BACKEND" = "gpgx" ] || RECORD_KEY="$RECORD_KEY|$BACKEND|$VDP_EVENT_LOG"
   RECORD_INPUT_ARGS=()
   [ -z "$INPUT_REPLAY" ] || RECORD_INPUT_ARGS=(--input "$INPUT_REPLAY")
+  [ -z "$INPUT_SCRIPT" ] || RECORD_INPUT_ARGS=(--input "$INPUT_SCRIPT")
   exec "$PYTHON" tools/tmpfs_workspace.py run-directory \
     --kind record --key "$RECORD_KEY" --required-gb "$RECORD_REQUIRED_GB" \
     "${RECORD_INPUT_ARGS[@]}" -- \
@@ -223,7 +261,7 @@ if [ "$OFFLINE_RECORD" -eq 1 ] || [ -n "$INPUT_REPLAY" ]; then
   PIPELINE_WALL_START_NS="$(date +%s%N)"
 fi
 
-if [ "$OFFLINE_RECORD" -eq 1 ] && [ -z "$REPLAY_FILE" ]; then
+if [ "$BACKEND" = "gpgx" ] && [ "$OFFLINE_RECORD" -eq 1 ] && [ -z "$REPLAY_FILE" ]; then
   REPLAY_DIR="$CAPTURE_DIR/replay"
   REPLAY_FILE="$REPLAY_DIR/${TAG}_input.replay"
   REPLAY_MAX_FRAMES=$((MAX_FRAMES + 120))
@@ -242,7 +280,14 @@ RECORD_MODE="offline"
 echo ">> recording ${REC_SECS}s of $DISC (preset $PRESET, mode $RECORD_MODE) ..."
 RECORD_SIZE_ARGS=()
 [ -n "$RECORD_SIZE" ] && RECORD_SIZE_ARGS=(--record-size "$RECORD_SIZE")
-if [ "$OFFLINE_RECORD" -eq 1 ]; then
+RAW_MKV="$CAPTURE_DIR/${TAG}.mkv"
+if [ "$BACKEND" = "blastem" ]; then
+  BLASTEM_ARGS=()
+  [ "$VDP_EVENT_LOG" -eq 0 ] || BLASTEM_ARGS=(--vdp-event-log)
+  OUTDIR="$CAPTURE_DIR" tools/run_headless.sh --backend blastem "$DISC" --tag "$TAG" \
+    --record "$RAW_MKV" --max-frames "$MAX_FRAMES" --input-script "$INPUT_SCRIPT" \
+    "${BLASTEM_ARGS[@]}"
+elif [ "$OFFLINE_RECORD" -eq 1 ]; then
   OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
     --record-offline --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
     "${DISPLAY_ARGS[@]}" \
@@ -271,7 +316,6 @@ else
     "${RECORD_SIZE_ARGS[@]}"
 fi
 
-RAW_MKV="$CAPTURE_DIR/${TAG}.mkv"
 if [ "$PRESET" = "ffv1-flac" ]; then
   BOUNDED_MKV="$CAPTURE_DIR/${TAG}_lossless.mkv"
   BOUNDED_KEY="LOSSLESS"
@@ -283,7 +327,7 @@ else
   BOUNDED_KEY="CAPTURE"
   BOUNDED_LABEL="native 4:2:0"
 fi
-[ -f "$RAW_MKV" ] || { echo "recording not produced: $RAW_MKV (see $CAPTURE_DIR/retroarch_${TAG}.log)" >&2; exit 1; }
+[ -f "$RAW_MKV" ] || { echo "recording not produced: $RAW_MKV (see the $BACKEND run log in $CAPTURE_DIR)" >&2; exit 1; }
 
 AUTO_TRIM_WAV=""
 if [ "$AUTO_AUDIO_TRIM" -eq 1 ]; then
