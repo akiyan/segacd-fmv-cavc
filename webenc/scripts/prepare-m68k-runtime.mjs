@@ -11,7 +11,7 @@ for(const [directory,name]of [['gas','as-new'],['ld','ld-new'],['binutils','objc
  await copyFile(path.join(build,directory,name+'.wasm'),path.join(dest,name+'.wasm'));
 }
 const entries={};
-for(const name of ['movieplay_ip.s','movieplay_sp.s','movieplay_sp_ext.s','movieplay_boot.s','region_jp.inc','region_us.inc','sec_jp.bin','sec_us.bin'])entries['boot/'+name]=await readFile(path.join(repo,'boot',name));
+for(const name of ['movieplay_ip.s','movieplay_sp.s','movieplay_sp_ext.s','movieplay_boot.s','sub_boot.inc','region_jp.inc','region_us.inc','sec_jp.bin','sec_us.bin'])entries['boot/'+name]=await readFile(path.join(repo,'boot',name));
 for(const name of ['ip.ld','sp.ld','sp_ext.ld'])entries['cfg/'+name]=await readFile(path.join(repo,'cfg',name));
 const font=path.join(root,'.toolchain/dbgfont.bin');
 execFileSync(path.join(repo,'tools/python.sh'),[path.join(repo,'tools/gen_debugfont.py'),'--output',font],{stdio:'inherit'});

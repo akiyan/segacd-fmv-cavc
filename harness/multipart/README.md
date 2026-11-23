@@ -50,6 +50,11 @@ single-movie regression checks. Maximum part-table sizing can be checked by
 assembling `multipart_build.main_include`/`sub_include` with 64 entries and
 checking the linked Main/Word loader sizes. It needs no maximum-length encode.
 
+With the pinned Linux/x86-64 BlastEm build, a two-part packed fixture reaches
+the Sub bootstrap in both BIOS regions and crashes during Sub CPU translation
+of the loader in 1M Word RAM at `0x0DE45C`. The Japan fixture also reproduces
+the crash with the previous Main boot code.
+
 ## Requested recording and publication
 
 Record an existing disc with `tools/record_movie.sh --disc <cue> --no-build

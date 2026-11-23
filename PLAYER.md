@@ -458,6 +458,13 @@ differs.
 
 ### Startup
 
+The Main IP leaves the BIOS VBlank handler active until the resident Sub
+program publishes `STAT_SUB_BOOTED` on `COMSTAT0`. The handler sends INT2
+to the Sub CPU, allowing the North American Sega CD BIOS to finish loading
+the Sub program after the Main IP has started. A multipart disc's first
+entry waits for `STAT_LOADER_READY` from its Sub loader. Main then masks
+interrupts and takes over the display.
+
 One `CMD_STREAM` command spans the complete startup. The BOOT_STAGE ownership
 exchange still uses `STAT_BOOT_STAGE` plus `COMCMD1`, because Main must copy
 palette, switch table, dictionary, and sidecar data before Sub reuses that physical bank.
@@ -1159,6 +1166,12 @@ loaderを読み直してから次のpartを選び、最後からpart 1へ戻り�
 以下のsequenceは15、24、30 fpsで同一で、cadenceだけが異なります。
 
 ### Startup
+
+Main IPは、常駐Subプログラムが`COMSTAT0`に`STAT_SUB_BOOTED`を出すまで
+BIOSのVBlankハンドラを有効に保ちます。ハンドラがSub CPUへINT2を送ることで、
+北米版Sega CD BIOSはMain IPの起動後もSubプログラムのロードを完了できます。
+multipartディスクの初回起動時は、Subローダーの`STAT_LOADER_READY`を待ちます。
+その後、Mainは割り込みをマスクして画面の制御を引き継ぎます。
 
 1個の`CMD_STREAM` commandがstartup全体を通してassertされたままです。
 BOOT_STAGEのownership交換には引き続き`STAT_BOOT_STAGE`と`COMCMD1`を使います。

@@ -24,6 +24,7 @@
 .equ BIOS_ROM_READN,0x0020
 
 	.include "player_constants.inc"
+	.include "sub_boot.inc"
 .ifdef PLAYER_SPECIALIZED
 .if PC_AUDIO_FD_MOD > 0
 .equ INCLUDE_AUDIO_FD_DITHER, 1
@@ -457,6 +458,11 @@ multipart_player_entry:
 
 .global sp_main
 sp_main:
+.ifndef MULTIPART
+	/* The BIOS can still need INT2 after sp_init returns. Acknowledge only
+	   once the BIOS has entered the resident player's command loop. */
+	move.w	#STAT_SUB_BOOTED, (COMSTAT0).l
+.endif
 command_loop:
 	tst.w	(COMCMD0).l
 	bne	1f
@@ -469,7 +475,7 @@ command_loop:
 	tst.w	(COMCMD0).l
 	bne	2b
 	move.w	#0, (COMSTAT0).l
-	bra	sp_main
+	bra	command_loop
 
 do_stream:
 	movea.l	#SP_STACK, sp

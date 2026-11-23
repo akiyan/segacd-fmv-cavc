@@ -40,6 +40,8 @@
 .equ GA_COMSTAT2, 0x00A12024
 .equ GA_STOPWATCH, 0x00A1200C		/* 12-bit, 30.72 us/tick, Main read-only */
 
+	.include "sub_boot.inc"
+
 .equ PROBE_BANK, 0x00200000
 .equ O_NRUN_OFF, 0x0000
 .equ O_NLOAD_OFF, 0x0002
@@ -349,6 +351,9 @@
 
 .global ip_entry
 ip_entry:
+.ifndef MULTIPART
+	wait_sub_boot STAT_SUB_BOOTED
+.endif
 	move.w	#0x2700, sr
 	lea	STACK, sp
 .ifdef MULTIPART
