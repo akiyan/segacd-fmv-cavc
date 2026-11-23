@@ -2565,6 +2565,8 @@ def main(*, pack_resources=None):
         f"  control prefetch: {prefetch.changed_slots} changed slots; "
         f"waits for two or more control sectors "
         f"{prefetch.multi_sector_before}->{prefetch.multi_sector_after}; "
+        f"late first-sector waits in short slots "
+        f"{prefetch.short_first_sector_before}->{prefetch.short_first_sector_after}; "
         f"modeled APPLY peak {prefetch.apply_peak_bytes}B")
     if args.verify:
         decode_verify(log, per, blocks, supply_plan, sc, compare_dir=compare or None,

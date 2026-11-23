@@ -191,9 +191,10 @@ class EncodeProfile:
         apply_profile_env(self, env)
         current = sim_cache_identity(env)
         identities = [current]
-        # e203 only changes post-verification packing.
-        if current["encoder_version"] == "e203":
-            identities.append(dict(current, encoder_version="e202"))
+        # e203 and e204 change only post-verification packing.
+        if current["encoder_version"] == "e204":
+            identities.extend(dict(current, encoder_version=version)
+                              for version in ("e203", "e202"))
         for identity in identities:
             key = sim_cache_key(env, identity=identity)
             data = managed_directory_path(kind="sim", key=key)

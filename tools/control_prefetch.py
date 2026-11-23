@@ -19,6 +19,8 @@ APPLY_WATERMARK = 32 * 1024 - 2 * SECTOR
 class PrefetchStats:
     multi_sector_before: int
     multi_sector_after: int
+    short_first_sector_before: int
+    short_first_sector_after: int
     changed_slots: int
     apply_peak_bytes: int
 
@@ -29,17 +31,16 @@ def _blocking_control_sectors(control, word, prefix, needed):
     return np.where(word, control, required_here)
 
 
-def _plan(control, word, capacity, before, prefix, needed, blocking, fps):
-    """Find the best route with zero or one extra sector in each prefix."""
-    cadence = av_config.vblank_cadence_pattern(fps)
-    parents = np.full((len(control), 2), -1, dtype=np.int8)
-    scores = {0: (0, 0, 0, 0)}
+def _plan(control, word, capacity, before, prefix, needed, blocking, *,
+          short_slots, late_first_sector, max_ahead):
+    """Optimize delivery with a bounded number of extra sectors per prefix."""
+    parents = np.full((len(control), max_ahead + 1), -1, dtype=np.int8)
+    scores = {0: (0, 0, 0, 0, 0)}
     for frame in range(1, len(control)):
         following = {}
-        short_slot = cadence == (2, 3) and frame % 2 == 1
-        weight = 2 if short_slot else 1
+        weight = 2 if short_slots[frame] else 1
         for previous, score in scores.items():
-            for ahead in (0, 1):
+            for ahead in range(max_ahead + 1):
                 if ahead and (frame == 1 or frame == len(control) - 1):
                     continue
                 count = int(control[frame]) + ahead - previous
@@ -57,13 +58,14 @@ def _plan(control, word, capacity, before, prefix, needed, blocking, fps):
                 if required_here > blocking[frame]:
                     continue
                 waits = int(required_here >= 2)
-                # Prefer shorter slots first. For equal improvements, change
-                # fewer slots and hold the extra sector for fewer frames.
+                # Remove multi-sector waits first, then the late first-sector
+                # dependency. Break ties with fewer changes and less queue lead.
                 candidate = (
                     score[0] + weight * waits,
                     score[1] + waits,
-                    score[2] + int(ahead != previous),
-                    score[3] + ahead,
+                    score[2] + int(late_first_sector[frame] and required_here == 1),
+                    score[3] + int(ahead != previous),
+                    score[4] + ahead,
                 )
                 if ahead not in following or candidate < following[ahead]:
                     following[ahead] = candidate
@@ -98,18 +100,54 @@ def apply_to_schedule(schedule, *, fps):
     blocking = _blocking_control_sectors(control, word, prefix, needed)
     baseline_waits = int(np.count_nonzero(blocking[2:] >= 2))
     baseline_peak = int(np.max(prefix * SECTOR - before))
-    stats = PrefetchStats(baseline_waits, baseline_waits, 0, baseline_peak)
-    if not baseline_waits or baseline_peak > APPLY_WATERMARK:
-        return schedule, stats
+
+    short_slots = np.zeros_like(control, dtype=bool)
+    late_first_sector = short_slots.copy()
+    if av_config.vblank_cadence_pattern(fps) == (2, 3):
+        short_slots[1::2] = True
+        rate_steps, rate_mod = av_config.cd_sector_rate_steps(fps)
+        # In the short interval, a floor-sized slot starts with the lower
+        # CD-1x accumulator remainder, so its first sector arrives later.
+        late_first_sector = short_slots & (physical == rate_steps[0] // rate_mod) & (word == 0)
+        late_first_sector[:2] = False
+    baseline_first = int(np.count_nonzero(late_first_sector & (blocking == 1)))
+    if (not baseline_waits and not baseline_first) or baseline_peak > APPLY_WATERMARK:
+        return schedule, PrefetchStats(
+            baseline_waits, baseline_waits, baseline_first, baseline_first, 0, baseline_peak,
+        )
 
     capacity = np.minimum(
         np.minimum(physical, cavc_routing.FRAME_SECTORS) - payload,
         cavc_routing.MAX_CTRL_SECTORS,
     )
-    planned = _plan(control, word, capacity, before, prefix, needed, blocking, fps)
+    planned = control
+    if baseline_waits:
+        planned = _plan(control, word, capacity, before, prefix, needed, blocking,
+                        short_slots=short_slots, late_first_sector=np.zeros_like(short_slots),
+                        max_ahead=1)
+
+    first_pass_blocking = _blocking_control_sectors(planned, word, np.cumsum(planned), needed)
+    short_first_before = int(np.count_nonzero(late_first_sector & (first_pass_blocking == 1)))
+    short_first_after = short_first_before
+    max_ahead = 1
+    if short_first_before:
+        # Keep each frame's blocking limit from the first pass. The two-sector
+        # bound is measured from the frozen route and includes its existing lead.
+        candidate = _plan(control, word, capacity, before, prefix, needed, first_pass_blocking,
+                          short_slots=short_slots, late_first_sector=late_first_sector,
+                          max_ahead=2)
+        candidate_blocking = _blocking_control_sectors(candidate, word, np.cumsum(candidate), needed)
+        remaining = int(np.count_nonzero(late_first_sector & (candidate_blocking == 1)))
+        if remaining < short_first_before:
+            planned = candidate
+            short_first_after = remaining
+            max_ahead = 2
+
     changed_slots = int(np.count_nonzero(planned != control))
     if not changed_slots:
-        return schedule, stats
+        return schedule, PrefetchStats(
+            baseline_waits, baseline_waits, short_first_before, short_first_after, 0, baseline_peak,
+        )
 
     # Verify the materialized route by recomputing the physical CD clock and
     # the control byte prefixes. Word-prefix sectors retain their exact slots.
@@ -121,7 +159,7 @@ def apply_to_schedule(schedule, *, fps):
     planned_prefix = np.cumsum(planned)
     credit = planned_prefix - prefix
     if (np.any(planned[:2] != control[:2]) or credit[-1] != 0
-            or np.any((credit < 0) | (credit > 1))
+            or np.any((credit < 0) | (credit > max_ahead))
             or np.any(planned[word != 0] != control[word != 0])):
         raise AssertionError("control prefetch changed a protected route boundary")
     delivered_bytes = planned_prefix * SECTOR
@@ -130,7 +168,7 @@ def apply_to_schedule(schedule, *, fps):
     if np.any(margin < 0) or apply_peak > APPLY_WATERMARK:
         raise AssertionError("control prefetch violates a deadline or APPLY capacity")
     planned_blocking = _blocking_control_sectors(planned, word, planned_prefix, needed)
-    if np.any(planned_blocking > blocking):
+    if np.any(planned_blocking > first_pass_blocking) or np.any(planned_blocking > blocking):
         raise AssertionError("control prefetch delayed a control block")
 
     # Useful Prg/Word bytes may end in different slots, so keep their proven
@@ -152,5 +190,6 @@ def apply_to_schedule(schedule, *, fps):
     )
     return updated, PrefetchStats(
         baseline_waits, int(np.count_nonzero(planned_blocking[2:] >= 2)),
+        short_first_before, short_first_after,
         changed_slots, apply_peak,
     )

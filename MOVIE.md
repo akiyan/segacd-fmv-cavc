@@ -407,10 +407,15 @@ prefetches patterns for later frames. The physical schedule proves that:
 
 After verifying the encoded delivery plan, the packer can use spare physical
 sectors to deliver up to one additional sector of the continuous control stream
-ahead of that plan. It favors earlier completion in shorter display intervals.
-It keeps the physical slot lengths and the WordBuf refill positions. A control
-block may span sectors, and each block still completes by its original slot's
-control deadline.
+ahead of that plan. It favors removing waits for multiple control sectors in
+shorter display intervals. In the alternating 2/3-VBlank cadence, the short
+intervals with two physical sectors have a later first-sector arrival than
+those with three. The packer can use up to two additional sectors of lead if
+this removes a first-control-sector wait in that phase. The one-sector plan
+still bounds how many current-slot control sectors each frame can wait for.
+The physical slot lengths, pattern sector counts, and WordBuf refill positions
+stay fixed. The delivered control prefixes must fit in APPLY and complete every
+block by its original slot's deadline.
 
 ### Physical cadence
 
@@ -992,10 +997,14 @@ controlとpayloadはsector境界で分割した連続streamです。1個のcontr
   planに収まる
 
 packerはencode済みの配送計画を検証した後、空き物理sectorを使い、連続したcontrol
-streamを計画より最大1 sector先行させることができます。表示間隔の短いslotでの
-control完了の前倒しを優先します。物理slotの長さとWordBufの補充位置を保ちます。
-control blockはsectorをまたぐことがあり、元のslotのcontrol deadlineまでには全体が
-届きます。
+streamを計画より最大1 sector先行させることができます。表示間隔の短いslotで、
+複数のcontrol sectorを待つ箇所を優先して減らします。2/3 VBlankの交互cadenceでは、
+短い区間のうち物理2 sectorのslotは、3 sectorのslotより先頭sectorの到着が遅く
+なります。この位相で先頭control sectorの待ちを減らせる場合は、最大2 sectorまで
+先行できます。各frameが自分のslotで待つcontrol sector数は、1 sector先行の計画
+での値が上限です。物理slotの長さ、patternのsector数、WordBufの補充位置を保ちます。
+届いたcontrolのprefixはAPPLYに収まり、各blockが元のslotのdeadlineまでに完了する
+必要があります。
 
 ### 物理cadence
 
