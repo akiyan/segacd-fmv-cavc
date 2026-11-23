@@ -629,6 +629,25 @@ def profile_identity(profile: EncodeProfile | None) -> dict[str, Any] | None:
             "schema_version": SCHEMA_VERSION}
 
 
+def matches_pack_profile(profile: EncodeProfile, recorded_sha256: str | None) -> bool:
+    if recorded_sha256 == profile.sha256:
+        return True
+    # Authenticate the exact pre-migration spelling of playback metadata so
+    # existing decisions remain usable after the change of emulator.
+    raw = profile.path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != profile.sha256:
+        return False
+    previous = raw.decode("utf-8").replace(
+        'label = "Custom FMV Codec Playback — SEGA-CD Emulator (BlastEm fork)"',
+        'label = "Custom FMV Codec Playback — SEGA-CD Emulator (Genesis Plus GX)"',
+    )
+    previous = re.sub(
+        r'(?m)^(playback_title = "[^"\r\n]+) in the BlastEm fork"(\r?)$',
+        r'\1 in Genesis Plus GX"\2', previous,
+    )
+    return hashlib.sha256(previous.encode("utf-8")).hexdigest() == recorded_sha256
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config")

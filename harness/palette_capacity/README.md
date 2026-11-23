@@ -32,18 +32,18 @@ PALTAB for the same sixteen-segment decisions under both capacities. Only
 PALIDX gains unused sentinels. They also cover seventeen and sixty-four
 segments at both cadences and reject a sixty-five-segment decision log.
 
-Run the complete fixture through Genesis Plus GX with VDP tracing. This path
-does not create a video or audio recording. Use a fresh tag/output directory
-for each run. The trace verifier requires a complete first loop by default:
+Run the complete fixture through BlastEm with VDP tracing. Use a fresh work
+directory and the exact `VDP_EVENT_LOG=` path printed by the runner. The trace
+verifier requires a complete first loop by default:
 
 ```sh
-OUTDIR="$PWD/logs/palette64-15fps" tools/run_headless.sh \
+OUTDIR="$PWD/tmp/palette64/15fps-run" tools/run_headless.sh \
   tmp/palette64/15fps/palette.cue --tag palette64-15fps \
-  --max-frames 6000 --boot-wait 0.2 --presses 100 --press-gap 0.05 --shots 0
+  --max-frames 6000 --no-video --vdp-event-log
 
 tools/python.sh harness/palette_capacity/verify_trace.py \
   --fixture tmp/palette64/15fps \
-  --trace logs/palette64-15fps/gpgx_logvdp_palette64-15fps.log.gz \
+  --trace /path/from/VDP_EVENT_LOG \
   --tsv logs/palette64-15fps/playback.tsv
 ```
 
@@ -61,12 +61,8 @@ TSV is a fixture verification log, not a recording HUD gate.
 
 ## Qualification limits
 
-The specialized player passes this fixture at both cadences. The generic
-reference player's 15 fps fixture stops after loading the initial palette,
-before publishing the first HUD row. The same sixteen-segment HEADER/BODY
-and byte-identical Sub binary reproduce that stop with the sixteen-capacity
-Main player built from a clean baseline worktree. Generic assembly/link checks
-pass, but this fixture does not establish generic runtime qualification.
+The build matrix checks generic assembly and linking. Runtime qualification
+uses the actual trace for the selected fixture, cadence and player build.
 
 The specialized player validates the first sector of each finite read
 against its requested LBA and discards older buffered sectors without consuming

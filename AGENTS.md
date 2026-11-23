@@ -152,7 +152,7 @@ Python/NumPy fallback. A live CUDA parent requires spawned loader processes.
 Read `CONFIG.md` for CPU/GPU/EMU tokens and shared resource roots. Separate
 workspaces sharing one GPU need the same explicit `SEGACD_RESOURCE_ROOT`.
 
-The encoder/storage harness targets POSIX systems. Emulator/Xvfb and burner
+The encoder/storage harness targets POSIX systems. Emulator and burner
 harnesses have Linux dependencies; do not claim native Windows support. Check
 host device access before treating sandbox-only CUDA failure as a broken driver.
 
@@ -167,14 +167,15 @@ a Gist upload. Local results and YouTube descriptions must work without Gist
 credentials or a public timeline URL. Already authorized publication does not
 need a second approval after checks.
 
-Use emulator-synchronized A/V and explicit native 320x224 FFV1/FLAC capture.
-Keep startup and tail unless trimming is requested. Reuse the exact disc only
-when its identity/mode is known; DEBUG is the recording default and HUD-free
-requests select release. Replays belong to the exact disc/core/settings.
-A normal capture checks counts, media, logs and representative frames. Requalify
-same-Replay realtime/offline equivalence when the recording path changes or is
-suspect, not on every capture. Follow `record` for commands and `release` for
-HUD-free publication evidence. Never fabricate or transplant a gate JSON.
+Use the `akiyan/blastem` fork for emulator playback and synchronized
+320x224 FFV1/FLAC recording. Keep startup and tail unless trimming is requested.
+Reuse a disc whose identity and mode are known. DEBUG is the default and HUD-free
+requests select release. Keep the receipt with the disc, BIOS, executable and
+frame-indexed input hashes. A normal capture checks counts, media, logs and
+representative frames. When the recording path changes or is suspect, compare
+repeated same-input captures and verify their frame, audio and VDP evidence.
+Follow `record` for commands and `release` for HUD-free publication evidence.
+Never fabricate or transplant a gate JSON.
 
 Use `extract_verification_frames.sh` and its fresh manifest; do not mix stale
 stills via shared globs. Do not replace recorded audio with source audio or

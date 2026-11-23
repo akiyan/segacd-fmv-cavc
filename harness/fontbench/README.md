@@ -28,9 +28,9 @@ with the first differing word pair on screen falsifies the convention; the
 
 ```sh
 make fontbench
-tools/run_headless.sh out/FONTBENCH.cue --tag fontbench --shots 10 --interval 2 \
-  --record --record-preset ffv1-flac --record-size 320x224
-tools/python.sh harness/fontbench/read_result.py tmp/FONTBENCH/record/fontbench.mkv
+tools/run_headless.sh out/FONTBENCH.cue --tag fontbench --max-frames 1800 \
+  --record tmp/fontbench.mkv
+tools/python.sh harness/fontbench/read_result.py tmp/fontbench.mkv
 ```
 
 The IP forces H40 so the 320x224 recording is pixel-exact for OCR.
@@ -56,7 +56,7 @@ exits nonzero unless the FONT-vs-LUT verification passes.
 Backdrop: blue = FONT running, yellow = LUT, magenta = COPY, cyan = verify,
 green = done. Interrupts stay off; the Main side polls the VDP vblank flag.
 
-## Measured results (Genesis Plus GX libretro, headless RetroArch)
+## Historical Genesis Plus GX results
 
 Totals cover 8 x 2,048 = 16,384 patterns per variant; per-pattern figures
 assume the 12.5 MHz Sub clock.

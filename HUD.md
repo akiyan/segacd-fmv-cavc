@@ -104,7 +104,7 @@ The transport-retry remainder is
 The final-only tail runs in the publication blank after these transfer
 snapshots. Its words and setup are included in publication admission, but not
 in `transfer_ticks`, `transfer_end_vcounter` or the opened pattern-budget
-count. Use the packed final-tail counts and actual LOGVDP writes to check that
+count. Use the packed final-tail counts and actual VDP writes to check that
 phase; these HUD fields alone do not measure all pattern-transfer work.
 
 `prgbuf_jitter_peak_kib` is a sticky high-water value, not current occupancy.
@@ -245,11 +245,10 @@ milliseconds, audio-resync transition context, and
 cold-cap guide in the REQ row. `/mixline` validates their shared frame axis and
 combines both images without resizing either graph.
 
-The optional GPGX LOGVDP extractor aligns physical VDP writes to the HUD frame
-axis. The retired per-VBlank logical word-share HUD fields are not available
-for a HUD-side total; the extraction receipt therefore proves input hashes and
-frame alignment, while the codec timeline independently checks its exact R2V
-components.
+The BlastEm extractor aligns each publication in the binary VDP event stream
+with its capture scanout in the HUD TSV. It measures bytes written to pattern
+VRAM, the movie name table, and CRAM. The extraction receipt records both
+input hashes and frame alignment. The codec timeline checks R2V separately.
 
 ## Maintenance contract
 
@@ -375,7 +374,7 @@ Transport-retry remainder は
 最終VBlank専用の末尾領域は、この転送snapshotより後のpublication blankで転送します。
 Word数とsetupはpublicationのadmissionに含みますが、`transfer_ticks`、
 `transfer_end_vcounter`、開いたpattern-budget数には含みません。この段階はpackした
-末尾領域の転送数と実際のLOGVDP writeで確認します。これらのHUD fieldだけでは
+末尾領域の転送数と実際のVDP writeで確認します。これらのHUD fieldだけでは
 すべてのpattern-transfer workを計測できません。
 
 `prgbuf_jitter_peak_kib` は sticky high-water であり current occupancy では
@@ -507,10 +506,10 @@ audio-resync transition context、`transport_retry_recoveries` を保存しま�
 Main-to-VDP word と REQ row の cold-cap guide を含む encoder decision を描画します。
 `/mixline` は shared frame axis を検証し、どちらの graph も resize せず合成します。
 
-Optional GPGX LOGVDP extractor は physical VDP write を HUD frame axis へ align
-します。廃止した per-VBlank logical word-share HUD field から HUD-side total は
-得られません。そのため extraction receipt は input hash と frame alignment を
-証明し、codec timeline が独立して exact R2V component を検証します。
+BlastEmの抽出ツールは、バイナリVDPイベント上の各フレームの切り替えをHUD TSVの
+走査フレームと照合します。パターンVRAM、動画の名前テーブル、CRAMへの書き込み
+バイト数を測り、入力hashとフレームの対応をレシートに記録します。Codec timelineは
+独立してR2Vを検証します。
 
 ## Maintenance contract
 

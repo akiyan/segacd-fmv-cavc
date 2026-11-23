@@ -25,7 +25,7 @@ a menu and loop, with a loading pause between parts.
 Sega CD Constraint-Aware Video Codec is a full-motion-video codec designed for
 Sega CD hardware. It targets the Genesis VDP tile and CRAM model, continuous CD
 1x delivery, Sub-CPU PRG RAM, 1M/1M Word RAM, and the RF5C164 PCM chip. The
-same stream runs on physical hardware and Genesis Plus GX.
+same stream runs on physical hardware and the `akiyan/blastem` fork.
 
 The on-disc stream contains an explicit version. Generic repository filenames
 keep the implementation independent from the displayed codec name.
@@ -211,9 +211,8 @@ gate/layout/Gist metadata remain under `logs/`, with encoder and player
 versions in every TSV filename.
 
 Heavy stages share CPU, GPU, and emulator tokens. Different profile stems may
-overlap, while the same stem is rejected immediately. Xvfb displays, RetroArch
-system directories, build intermediates, and workspace leases are isolated per
-run.
+overlap, while the same stem is rejected immediately. Emulator configuration,
+saves, build intermediates, and workspace leases are isolated per run.
 
 ## Runtime storage
 
@@ -271,8 +270,7 @@ Ubuntu host packages:
 sudo apt update
 sudo apt install \
   ffmpeg fonts-ipafont-gothic genisoimage imagemagick \
-  pipx \
-  retroarch rsync xdotool xvfb
+  pipx rsync
 ```
 
 Install the pinned `uv` and isolated CPU environment:
@@ -321,50 +319,39 @@ test -f original/jp_mcd2_9212.bin
 test -f original/us_scd1_9210.bin
 ```
 
-Build the managed Genesis Plus GX diagnostic core once:
-
-```sh
-harness/gpgx_logvdp/build.sh
-harness/gpgx_logvdp/build.sh --check
-```
-
-The recording harness defaults to the pinned `LOGVDP` core at
-`vendor/gpgx-logvdp/genesis_plus_gx_logvdp_libretro.so`. Generated source,
-binary, build log, and manifest stay git-ignored below that directory. There is
-no fallback to a distribution-installed core. `CORE` remains an explicit A/B
-override; `BIOS_IMAGE` and `SYSTEM_DIR` override the other host-specific
-layouts. Normally the harness copies the BIOS into a private per-run system
-directory. The normal `retroarch_<tag>.log` retains the DMA trace and unexpected
-core errors. The complete upstream trace is kept beside it as
-`gpgx_logvdp_<tag>.log.gz`.
-
 ### BlastEm playback and recording
 
-Build the standalone `akiyan/blastem` SDL fork with Sega CD offline recording
-support. Point `BLASTEM` at that executable, and select a BIOS with
-`BIOS_REGION` and, optionally, `BIOS_IMAGE`. The headless check can save a
-binary VDP event log:
+Install the qualified SDL build of the `akiyan/blastem` fork. The executable
+and its runtime data stay together in `vendor/blastem/`.
 
 ```sh
-BLASTEM=/path/to/blastem tools/run_headless.sh --backend blastem \
-  out/PROFILE.cue --max-frames 600 --vdp-event-log
+sudo apt install build-essential git pkg-config python3 libsdl2-dev libglew-dev libgl-dev
+git clone --depth 1 --branch akiyan-2026-11-23-8a2cd78 \
+  https://github.com/akiyan/blastem.git vendor/blastem
+test "$(git -C vendor/blastem rev-parse HEAD)" = 8a2cd7803cd43aa135456251b84736b756706014
+make -C vendor/blastem -j4 DEBUG=1 blastem
 ```
 
-For a native lossless MKV, supply a frame-indexed input file for the BIOS and
-disc. Each line has the format `FRAME PAD down|up BUTTON`. Frame numbers count
-completed emulator frames, starting at 1. For example, `180 1 down start`
-presses START immediately after frame 180. Include the corresponding release.
+Set `BLASTEM` to use another build of this fork. Each run has its own BIOS
+configuration and saves. Override the BIOS path with `BIOS_IMAGE` when needed.
 
 ```sh
-BLASTEM=/path/to/blastem tools/record_movie.sh --backend blastem \
-  --disc out/PROFILE.cue --no-build --seconds 45 --input-script start.txt
+tools/run_headless.sh out/PROFILE.cue --max-frames 600 --vdp-event-log
 ```
 
-The BlastEm backend uses a private BIOS configuration and save directory.
-Recording preserves the 320×224 H40 raster, emulator video timing and sound
-in FFV1/FLAC. Add `--vdp-event-log` to keep the event stream from the same
-execution. See [BlastEm qualification](harness/blastem/README.md) for the
-artifacts and verification procedure.
+A native recording uses a bundled, frame-indexed controller script to start
+the movie. To supply different input, pass `--input-script start.txt`. Each
+line uses `FRAME PAD down|up BUTTON`. For example, `180 1 down start` presses
+START after the 180th emulator frame. Include the corresponding release.
+
+```sh
+tools/record_movie.sh --disc out/PROFILE.cue --no-build \
+  --seconds 45 --vdp-event-log
+```
+
+Recording preserves the 320×224 H40 raster and synchronized A/V in FFV1/FLAC.
+`--vdp-event-log` saves the VDP event stream from the same execution.
+[Capture verification and event format](harness/blastem/README.md)
 
 ## Build
 
@@ -526,17 +513,13 @@ tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 180 --tag STEM_emu
 ```
 
-The recorder defaults to fixed-Replay, faster-than-realtime, native-size
-FFV1/FLAC; the bounded lossless MKV is the artifact. Add `--preview` (with
-optional `--out NAME`) for an opt-in lossy H.264 verification preview.
-`--realtime-lossless`
-creates a paced FFV1/FLAC diagnostic baseline. `--preset realtime` is 4:2:0
-and is not an upload master. Recordings retain Mega-CD startup unless an
-explicit movie-only trim is requested.
+The recorder runs the fork offline with fixed frame-indexed input. It
+preserves Mega-CD startup and the ending hold in the bounded native lossless
+MKV. Use `--preview` (with optional `--out NAME`) for a lossy H.264 preview.
+Use `--trim` for an explicitly requested trim.
 
-Every full DEBUG recording requires complete HUD extraction, gate evaluation,
-and a public hudline. Analysis/playback publishing continues only after PASS
-or WARNING.
+Publication of a full DEBUG capture requires complete HUD extraction and a
+passing recording gate. Local recordings include their capture receipt.
 
 ## YouTube upload setup
 
@@ -603,7 +586,7 @@ repository.
 Sega CD Constraint-Aware Video CodecはSega CD hardware専用に設計した
 full-motion-video codecです。Genesis VDPのtile/CRAM model、連続CD 1x delivery、
 Sub-CPU PRG RAM、1M/1M Word RAM、RF5C164 PCM chipを直接対象にします。同じstreamを
-実機とGenesis Plus GXで再生します。
+実機と `akiyan/blastem` フォークで再生します。
 
 ディスク上のstreamは明示的なversionを持ちます。repository内のgeneric filenameに
 より、実装pathは表示上のcodec名から独立しています。
@@ -768,8 +751,8 @@ managed workspace実体pathを直接使います。Frame別codec timeline TSVと
 versionを入れます。
 
 heavy stageはCPU、GPU、emulator tokenを共有します。異なるprofile stemは重ねられますが、
-同じstemは即時拒否します。Xvfb display、RetroArch system directory、
-build intermediate、workspace leaseはrunごとに分離します。
+同じstemは即時拒否します。エミュレータの設定、セーブ先、build intermediate、
+workspace leaseは実行ごとに分離します。
 
 ## 実行時の保存先
 
@@ -825,8 +808,7 @@ Ubuntu host package:
 sudo apt update
 sudo apt install \
   ffmpeg fonts-ipafont-gothic genisoimage imagemagick \
-  pipx \
-  retroarch rsync xdotool xvfb
+  pipx rsync
 ```
 
 pinned `uv` とisolated CPU environmentをinstallします。
@@ -874,47 +856,39 @@ test -f original/jp_mcd2_9212.bin
 test -f original/us_scd1_9210.bin
 ```
 
-managed Genesis Plus GX diagnostic coreを一度buildします。
-
-```sh
-harness/gpgx_logvdp/build.sh
-harness/gpgx_logvdp/build.sh --check
-```
-
-recording harnessのdefaultは、固定された
-`vendor/gpgx-logvdp/genesis_plus_gx_logvdp_libretro.so` の`LOGVDP` coreです。
-generated source、binary、build log、manifestはこのdirectory以下でgit-ignoredです。
-distribution-installed coreへのfallbackはありません。`CORE`は明示的なA/B overrideとして
-残し、`BIOS_IMAGE`と`SYSTEM_DIR`でその他のhost固有layoutを上書きします。通常はharnessが
-BIOSをrunごとのprivate system directoryへcopyします。通常の
-`retroarch_<tag>.log`にはDMA traceと想定外のcore errorを残し、上流trace全体は隣の
-`gpgx_logvdp_<tag>.log.gz`へ保存します。
-
 ### BlastEmでの再生と録画
 
-メガCDのオフライン録画に対応した `akiyan/blastem` のSDL単体版をビルドします。
-`BLASTEM` に実行ファイルを設定し、`BIOS_REGION` と必要に応じて `BIOS_IMAGE` で
-BIOSを選びます。ヘッドレスの起動確認では、VDPイベントログをバイナリで保存できます。
+検証済みの `akiyan/blastem` フォークのSDL版を導入します。実行ファイルと実行時の
+データは `vendor/blastem/` にまとめて置きます。
 
 ```sh
-BLASTEM=/path/to/blastem tools/run_headless.sh --backend blastem \
-  out/PROFILE.cue --max-frames 600 --vdp-event-log
+sudo apt install build-essential git pkg-config python3 libsdl2-dev libglew-dev libgl-dev
+git clone --depth 1 --branch akiyan-2026-11-23-8a2cd78 \
+  https://github.com/akiyan/blastem.git vendor/blastem
+test "$(git -C vendor/blastem rev-parse HEAD)" = 8a2cd7803cd43aa135456251b84736b756706014
+make -C vendor/blastem -j4 DEBUG=1 blastem
 ```
 
-ロスレスMKVを録画するには、BIOSとディスクに合ったフレーム指定の入力ファイルを
-渡します。各行は `FRAME PAD down|up BUTTON` です。フレーム番号は1始まりの
-完了フレーム数で、たとえば `180 1 down start` は180フレーム目の直後にSTARTを
-押します。対応する解放も記述します。
+このフォークの別のビルドを使う場合は `BLASTEM` で指定します。BIOS設定と
+セーブ先は実行ごとに分離します。BIOSのパスは `BIOS_IMAGE` で上書きできます。
 
 ```sh
-BLASTEM=/path/to/blastem tools/record_movie.sh --backend blastem \
-  --disc out/PROFILE.cue --no-build --seconds 45 --input-script start.txt
+tools/run_headless.sh out/PROFILE.cue --max-frames 600 --vdp-event-log
 ```
 
-BlastEmのBIOS設定とセーブ先は実行ごとに分離します。録画はH40の320×224画素、
-エミュレーターの映像時刻と音声をFFV1/FLACに保存します。`--vdp-event-log` を
-加えると同じ実行のイベントも保存します。成果物と検証手順は
-[BlastEmの検証](harness/blastem/README.md)を参照してください。
+ネイティブ録画では、同梱のフレーム指定コントローラ入力で動画を開始します。
+入力を変える場合は `--input-script start.txt` を渡します。各行は
+`FRAME PAD down|up BUTTON` です。たとえば `180 1 down start` は180フレーム目の
+直後にSTARTを押します。対応する解放も記述します。
+
+```sh
+tools/record_movie.sh --disc out/PROFILE.cue --no-build \
+  --seconds 45 --vdp-event-log
+```
+
+録画はH40の320×224画素と同期した映像・音声をFFV1/FLACで保存します。
+`--vdp-event-log` は同じ実行で記録したVDPイベントを保存します。
+[録画の検証とイベント形式](harness/blastem/README.md)
 
 ## Build
 
@@ -1070,15 +1044,13 @@ tools/record_movie.sh --config profiles/PROFILE.toml \
   --seconds 180 --tag STEM_emu
 ```
 
-recorderのdefaultはfixed-Replay、faster-than-realtime、native-size FFV1/FLACです。
-成果物はbounded lossless MKVです。lossy H.264 verification previewはopt-inで、
-`--preview`（必要なら`--out NAME`も）を付けたときだけ作ります。
-`--realtime-lossless` はpaced FFV1/FLAC diagnostic
-baselineを作ります。`--preset realtime` は4:2:0でupload masterには使いません。
-明示的なmovie-only trimを要求しない限りMega-CD startupを保持します。
+フォークを固定のフレーム指定入力でオフライン実行します。収録範囲内のメガCDの
+起動と末尾の保持をネイティブのロスレスMKVに残します。H.264の確認用プレビュー
+には `--preview`（必要なら `--out NAME`）を使います。明示的にトリムを指定する
+場合は `--trim` を使います。
 
-full DEBUG recordingごとに、完全なHUD抽出、gate評価、public hudlineが必要です。PASS
-またはWARNINGの後だけanalysis/playback publishへ進みます。
+全編のDEBUG録画を公開する場合は、HUDを全編抽出し、録画ゲートの合格を確認します。
+ローカルの録画には収録レシートが付きます。
 
 ## YouTube upload setup
 

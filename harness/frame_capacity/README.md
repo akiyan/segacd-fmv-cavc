@@ -15,7 +15,7 @@ a full 1,120-pattern frame-0 output uses 35,872 aligned bytes and leaves
 
 ## Memory and boot proof
 
-The full-frame fixture and LOGVDP trace check actual bank handoff and the final
+The full-frame fixture and BlastEm event trace check actual bank handoff and the final
 frame index. `test_extended.py` checks the packed header and maximum output
 capacity without encoding a long source. Long routes load into the frame-0
 bank; the boot extension mirrors sectors through PRG `0x7B000..0x7B7FF`.
@@ -52,13 +52,13 @@ quality or throughput.
 tools/python.sh harness/palette_capacity/build_fixture.py \
   --output tmp/frame65535/24fps-65535 --fps 24 --frames 65535
 
-OUTDIR="$PWD/logs/frame65535-24fps-65535" tools/run_headless.sh \
+OUTDIR="$PWD/tmp/frame65535/24fps-65535-run" tools/run_headless.sh \
   tmp/frame65535/24fps-65535/palette.cue --tag frame65535-24fps-65535 \
-  --max-frames 168000 --boot-wait 0.2 --presses 100 --press-gap 0.05 --shots 0
+  --max-frames 168000 --no-video --vdp-event-log
 
 tools/python.sh harness/palette_capacity/verify_trace.py \
   --fixture tmp/frame65535/24fps-65535 \
-  --trace logs/frame65535-24fps-65535/gpgx_logvdp_frame65535-24fps-65535.log.gz \
+  --trace /path/from/VDP_EVENT_LOG \
   --tsv logs/frame65535-24fps-65535/playback.tsv
 ```
 
@@ -93,8 +93,8 @@ The long specialized player alternates neighboring frequency deltas against
 the physical NTSC crystal/scan clock. `test_audio_clock.py` bounds accumulated
 frequency error separately from the normal short/long interval phase swing.
 Short movies keep fixed frequency. Register writes retain the official
-384-cycle spacing. The pinned core also performs an end-of-frame audio update;
-its PCM timing must not be modeled solely by its truncated Sub cycles/line.
+384-cycle spacing. The former Genesis Plus GX core also performed an
+end-of-frame audio update beyond its truncated Sub cycles per line.
 
 For a player-only comparison, `build_fixture.py --stream-from DIRECTORY`
 copies identical stream/palette bytes and recompiles only the player. Keep
@@ -104,12 +104,12 @@ records the matching hashes of all five files for each tested cadence.
 To extract the leading HUD fields observationally from an existing full trace:
 
 ```sh
-gzip -dc TRACE.log.gz | rg 'VRAM 0xf0[01][0-9a-f] write ->' | \
-  tools/python.sh harness/frame_capacity/read_hud_trace.py > logs/e192_p156_trace-hud.tsv
+tools/python.sh harness/frame_capacity/read_hud_trace.py \
+  /path/from/VDP_EVENT_LOG --frames 65535 > logs/frame65535-trace-hud.tsv
 ```
 
-The source clock relationship and the core's final audio update can be inspected
-in the pinned Genesis Plus GX source, `core/system.c` (`audio_set_rate`),
+The historical source clock relationship and the old core's final audio
+update can be inspected in Genesis Plus GX `core/system.c` (`audio_set_rate`),
 `core/cd_hw/scd.c` and `core/cd_hw/pcm.c` at commit
 `46652c7fd74bd64a99f624b0bd53a768de0ff672`.
 
@@ -179,10 +179,11 @@ largest boot output, every displayed cell, all 64 palettes, DicBuf entry 511,
 final-frame display, and the following loop without expensive image analysis.
 They are playback/data tests and do not substitute for the full source encode.
 
-## Extended playback qualification
+## Historical extended playback qualification
 
-The full-raster distinct-pattern fixtures pass all-cell/pattern, palette,
-sequence, recovery-counter, and loop-restart checks on the pinned GPGX core:
+The full-raster distinct-pattern fixtures passed all-cell/pattern, palette,
+sequence, recovery-counter, and loop-restart checks on the former Genesis
+Plus GX core:
 
 | fps | Movie frames | Verified displayed frames | Next-loop frames |
 |---|---:|---:|---:|

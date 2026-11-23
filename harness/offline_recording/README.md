@@ -1,108 +1,31 @@
 # Offline lossless recording
 
-## Goal
+`tools/record_movie.sh` captures standalone BlastEm output at an exact emulator
+frame limit. Use CUE and ISO together, a matching BIOS and an explicit input
+script when overriding the default BIOS START sequence. The same disc, BIOS,
+input and executable hashes must appear in both receipts for a repeatability
+check. See `harness/blastem/README.md` for the basic capture workflow.
 
-This harness qualified a faster `/record` path that records the same native
-FFV1/FLAC output without waiting for wall time. After the exact A/B and repeat
-gates passed, the high-level recorder adopted this fixed-Replay path as its
-default. It must preserve the complete Mega-CD startup, CD player, START
-transition, DEBUG movie playback, and tail.
-
-The offline path is acceptable only when its decoded video, decoded audio, and
-packet timing are exactly equal to a realtime FFV1/FLAC run driven by the same
-input Replay.
-
-## Method
-
-`tools/record_movie.sh` orchestrates the default path. `--offline-record`
-remains an explicit, backward-compatible spelling of the same mode:
-
-1. Build a DEBUG disc unless `--no-build` is explicit.
-2. Record a RetroArch input Replay when none is supplied. The Replay is 120
-   emulator frames longer than the main recording window.
-3. Play that Replay with a fixed `--max-frames` limit.
-4. Keep RetroArch's SDL dummy audio path initialized, but disable audio sync,
-   audio rate control, and video vsync so emulation can run uncapped.
-5. Record native FFV1 video and FLAC audio. Lossy presets and arbitrary FFmpeg
-   recorder configurations are rejected in offline mode.
-6. Exit RetroArch naturally, require normal runtime/core unload, reject Replay
-   EOF, and require both recorded packet count and decoded-frame count to equal
-   `--max-frames`.
-7. Produce the same bounded lossless MKV and verification preview as the normal
-   high-level recorder. `ffprobe` must find a non-empty audio stream; waveform
-   thresholds are not a recording gate.
-
-The fixed Replay matters. Recording the Replay-generation run itself is not an
-equivalent baseline: in testing, RetroArch's Replay initial state shifted that
-boundary by one stereo PCM sample. Both sides of an A/B must *play* the same
-saved Replay.
-
-## Commands
-
-One-command default capture:
+Requalify after a capture-path change with two lossless runs under the same
+inputs. Keep the complete startup and tail. Use the emitted `LOSSLESS=` paths:
 
 ```sh
-tools/record_movie.sh \
-  --config profiles/ps2-sakura-op.toml \
-  --seconds 140 \
-  --tag offline_record --record-size 320x224 --display :299 \
-  --out offline_record_preview.mp4
+tools/python.sh tools/compare_recordings.py CAPTURE_A.mkv CAPTURE_B.mkv \
+  --json logs/blastem-repeatability.json
 ```
 
-The command prints direct `REPLAY=...` and `LOSSLESS=...` paths in the managed
-workspace. Select it with `tools/runtime.sh --workspace-root DIR --scratch-root
-DIR -- tools/record_movie.sh ...`. Reuse that exact replay for the realtime baseline and repeat
-offline capture, and use the two printed lossless paths for comparison:
+The comparator checks decoded video pixels, every stereo PCM sample and the
+original packet timestamps and durations. With `--vdp-event-log`, compare
+both same-run `VDP_EVENT_LOG=` files as well. Exact capture equality concerns
+this emulator, these inputs and these settings. Playback faults and appearance
+are checked separately on the matching lossless recording. Routine captures
+use the runner's own media, exit and count checks.
 
-```sh
-REPLAY=/path/to/printed/offline_record_input.replay
-
-tools/record_movie.sh \
-  --disc out/ps2-sakura-op.cue --no-build \
-  --seconds 140 --realtime-lossless --preset ffv1-flac \
-  --input-replay "$REPLAY" \
-  --tag realtime_baseline --record-size 320x224 --display :300 \
-  --out realtime_baseline_preview.mp4
-
-tools/record_movie.sh \
-  --disc out/ps2-sakura-op.cue --no-build \
-  --seconds 140 --input-replay "$REPLAY" \
-  --tag offline_ab --record-size 320x224 --display :301 \
-  --out offline_ab_preview.mp4
-
-tools/python.sh tools/compare_recordings.py \
-  "$REALTIME_LOSSLESS" \
-  "$OFFLINE_LOSSLESS" \
-  --json logs/realtime_vs_offline.json
-```
-
-When requalifying, repeat the offline command with a new tag, then compare the
-two offline bounded MKVs with the same comparator. Routine captures use their
-built-in frame/packet, audio-stream, log, and visual gates without rerunning
-the three-capture qualification.
-
-## Exact gates
-
-`tools/compare_recordings.py` performs a whole-file comparison with no trim,
-seek, or automatic alignment:
-
-- FFV1 pixel format, raster, frame rate, and stream metadata;
-- every decoded video-frame hash and total frame count;
-- every decoded stereo `s16le` PCM sample, SHA-256, and sample-frame count;
-- every original Matroska packet PTS, DTS, and present duration;
-- strict monotonic packet timestamps and equal total durations.
-
-Routine recording deliberately has no RMS, clipping, or adjacent-sample jump
-threshold. Those checks were content-dependent and could reject legitimate
-source transients or artifacts introduced only by the lossy preview. Exact
-same-Replay qualification still compares every decoded PCM sample.
-
-## Measured environment
+## Historical RetroArch recording results
 
 This section and the Results below it are the archived record of one
 qualification run. Their numbers, disc geometry, and hashes belong to that
-run's exact environment and are kept verbatim; they do not describe the
-commands above or any other recording.
+run's exact environment, recorded before the switch to BlastEm.
 
 - Date: 2026-07-17
 - RetroArch: 1.22.2, Git `b2ceb50`
@@ -154,30 +77,3 @@ DEBUG HUD movie playback through the full source, and post-movie tail.
 The explicit realtime-lossless fallback also passed a wall-clock smoke run:
 8.05 seconds of bounded 256x224 FFV1/FLAC, normal runtime/core unload, readable
 trailer, a non-empty audio stream, and a successful preview transcode.
-
-## Limits and decisions
-
-- RetroArch 1.22.2 exposes no FFV1 recorder-FIFO wait counter. This work does
-  not claim a FIFO wait duration. Exact 9000-packet/9000-decoded-frame raw
-  counts, readable trailers, normal unload, and whole-content equality prove
-  that no recorded frames were lost.
-- FFV1 remains at two encoder threads. The measured 13.45x main-run speed
-  already exceeds the target, so no thread-count change was needed.
-- The qualified fixed-Replay path is now the high-level default. Use
-  `--realtime-lossless --preset ffv1-flac` only for requalification or paced
-  diagnosis; `--preset realtime` remains the separate H.264 4:2:0 check path.
-- Existing post-processing remains sequential. The overall target was exceeded
-  without adding parallel decode/transcode complexity.
-- A Replay is tied to its disc, core binary, core options, and harness setup.
-  Regenerate it after any of those change. A Replay must extend beyond the
-  fixed run; reaching EOF is an error.
-- Automatic Replay creation sends a short burst of START presses on wall-clock
-  intervals. A newly generated Replay can therefore choose a slightly different
-  emulator input frame on another host/run. Once saved, the Replay fixes those
-  input frames exactly; all equality and repeatability tests must reuse that
-  same file.
-- Matroska container bytes may differ because of muxer metadata even when every
-  decoded frame, PCM sample, and packet timestamp is equal. Use the comparator,
-  not a whole-file checksum, as the content gate.
-- No human listening pass was performed. The qualification establishes exact
-  equality with realtime PCM, not an audible-quality claim.

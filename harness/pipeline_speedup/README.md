@@ -284,7 +284,7 @@ sectors.
 `stream_reader.py` reads packed control blocks for the cycle and shadow-list
 harnesses. Byte and display-state validation belongs to
 `harness/pattern_supply/verify.py`; actual transfer behavior belongs to the
-LOGVDP and playback detectors. Local Python copies of assembly loops are not
+matching VDP event and playback detectors. Local Python copies of assembly loops are not
 runtime qualification.
 
 ## Packed cold-run descriptor proof

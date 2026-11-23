@@ -169,13 +169,13 @@ the exact checked-byte count, the disc ID, and whether that ID enters the
 security verifier. A verifier-skipping output is an explicit non-boot control
 case, not a successful display-skip build.
 
-Run a US experiment without a cross-region Replay:
+Run a US experiment with its matching BIOS:
 
 ```sh
 BIOS_REGION=us OUTDIR=tmp/security-skip-us \
   tools/run_headless.sh \
   out/security-skip/bad-apple_us_release_ussec_baseline.cue \
-  --tag baseline --max-frames 900
+  --tag baseline --max-frames 900 --no-video --vdp-event-log
 ```
 
 Run the builder regression tests with:

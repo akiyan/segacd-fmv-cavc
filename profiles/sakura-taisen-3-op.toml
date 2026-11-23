@@ -50,7 +50,7 @@ tail_seconds = 5.0
 
 [youtube]
 analysis_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×168) Visual Analysis & Encoding Breakdown"
-playback_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×168) in Genesis Plus GX"
+playback_title = "Sega CD FMV at 30 FPS — Sakura Taisen 3 (320×168) in the BlastEm fork"
 # The master's own specification, not the encode's: a 4:3 capture whose picture
 # is a fixed 640x376 letterbox, carried at 59.94 fps. The encode displays every
 # second frame, which the title states as 30 FPS. Which console the capture came

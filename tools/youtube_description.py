@@ -32,7 +32,7 @@ from cram_switches import counts as cram_counts  # noqa: E402
 TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "youtube"
 VERSION_FILE = Path(__file__).resolve().parent / "av_version.txt"
 CD_1X_BYTES = 153600
-EMULATOR = "Genesis Plus GX"
+EMULATOR = "akiyan/blastem"
 
 # URL placeholders supplied by the caller rather than read from the encode.
 URL_FIELDS = {

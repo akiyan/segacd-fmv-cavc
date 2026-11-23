@@ -21,6 +21,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("manifest", type=Path)
     parser.add_argument("--max-frames", type=int, default=10000)
+    parser.add_argument("--input-script", type=Path,
+                        help="optional frame-indexed BlastEm controller input")
     args = parser.parse_args()
     os.chdir(ROOT)
     manifest = json.loads(args.manifest.read_text())
@@ -45,10 +47,17 @@ def main():
             cue.write_text('FILE "multipart.iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n')
             write_json(output / "manifest.json", manifest)
             env = dict(os.environ, OUTDIR=str(output), BIOS_REGION=manifest["region"])
-            run, _ = run_logged([ROOT / "tools/run_headless.sh", cue, "--tag", tag,
-                                 "--max-frames", str(args.max_frames), "--boot-wait", "0.2",
-                                 "--presses", "100", "--press-gap", "0.05", "--shots", "0"], tag, env=env)
-            trace = output / f"gpgx_logvdp_{tag}.log.gz"
+            command = [ROOT / "tools/run_headless.sh", cue, "--tag", tag,
+                       "--max-frames", str(args.max_frames), "--no-video", "--vdp-event-log"]
+            if args.input_script:
+                command.extend(("--input-script", args.input_script.resolve()))
+            run, _ = run_logged(command, tag, env=env)
+            traces = [line.removeprefix("VDP_EVENT_LOG=")
+                      for line in Path(run["log"]).read_text(encoding="utf-8").splitlines()
+                      if line.startswith("VDP_EVENT_LOG=")]
+            if len(traces) != 1:
+                raise ValueError("BlastEm run did not report exactly one VDP event log")
+            trace = Path(traces[0])
             receipt.update(run=run, trace=str(trace), trace_sha256=digest(trace))
             with resource_tokens.acquire_tokens("cpu", count=1):
                 receipt.update(verify(manifest, trace, ROOT / "logs" / f"{tag}.tsv"))

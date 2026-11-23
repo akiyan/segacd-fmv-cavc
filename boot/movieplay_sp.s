@@ -2777,8 +2777,8 @@ get_info:
 /* ---- RF5C164 PCM ---- */
 pcm_on:
 	move.w	#1, pcm_running
-	/* GPGX reloads a channel's address on the OFF write. Repeat OFF here so
-	   PCM_ST=SYNC_LEAD is latched even when the channel was left selected during
+	/* Refresh the channel start address with OFF so PCM_ST=SYNC_LEAD
+	   is latched even when the channel was left selected during
 	   the boot-prefix writes, then enable it.  These are internal-register
 	   accesses and the IC is sounding, so the PCM manual's 384-cycle minimum
 	   access period applies between them (dbra taken is 10 cycles). */

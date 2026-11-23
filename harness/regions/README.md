@@ -63,12 +63,12 @@ Two details are easy to get wrong by comparing files instead of contents.
 - **That a console boots the disc.** The security code is compared byte for
   byte against the region's own file, and the header fields against the
   region's own include, but neither is a substitute for a machine. The
-  Japanese disc is qualified by emulator recordings and by real Mega Drive 2 /
-  Mega CD 2 hardware. A user-supplied, git-ignored North American BIOS permits
-  a separate Genesis Plus GX boot check; the 20260807.e190.p154 Bad Apple and
-  Tears of Steel US release discs have both reached and advanced their movies
-  under that check. The hardware here remains Japanese, so this harness still
-  does not prove North American real-hardware booting.
+  Japanese disc is qualified by BlastEm recordings and by real Mega Drive 2 /
+  Mega CD 2 hardware. Use the BlastEm recording workflow with the matching
+  North American BIOS for a separate US playback check. The historical
+  20260807.e190.p154 Bad Apple and Tears of Steel US releases reached and
+  advanced their movies under Genesis Plus GX. The available hardware is
+  Japanese and has not been used to qualify North American booting.
 - **That the encode is good.** Playback quality, the HUD gate, and A/V sync
   belong to the `record` and `hudline` skills. This harness only asks whether
   the packaged disc is the disc it claims to be.

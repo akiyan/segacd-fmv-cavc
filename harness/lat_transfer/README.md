@@ -1,7 +1,6 @@
-# LAT and final-VBlank qualification
+# Archived LAT and final-VBlank traces
 
-This diagnostic checks actual Genesis Plus GX LOGVDP writes, rather than a
-Python model of the assembly. It detects a final-only pattern write or movie
+This reader checks retained Genesis Plus GX LOGVDP traces. It detects a final-only pattern write or movie
 name-table, HUD or CRAM write outside VBlank. It reads the first complete movie
 loop, including final HUD/CRAM updates, and excludes the next loop's clearing.
 Ambiguous scanline edges are reported separately and fail admission evidence.
@@ -20,11 +19,11 @@ The matching SIM supplies per-frame scroll-band lengths and final-tail load
 counts; the checker requires the actual writes to match those counts. Supply
 `--sim-out` for scrolling movies. A shortened/truncated trace cannot pass merely
 because no offending write was seen.
-Use the logs produced by the matching lossless recording when checking that
-capture. The Replay-generation log is a separate execution and must be labeled
-as such. A HUD gate checks frame progression, cadence and synchronization;
-representative capture frames check the rendered output. Neither this script
-nor an emulator recording proves real-hardware DMA timing.
+Use the same captured execution's archived text and matching recording. New
+BlastEm recordings use BLSTEL VDP events and the recording's HUD gate. BLSTEL
+provides actual write values and cycle positions. DMA command provenance and
+the per-command CPU PC require diagnostics beyond that format. See
+`harness/blastem/README.md` for current capture and trace commands.
 
 The twelve final-only slots occupy VRAM `0xD880..0xD9FF`. They are destination
 storage, not additional CD service or a larger PrgBuf. Compare equal cold caps

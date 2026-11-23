@@ -1,16 +1,15 @@
 # Standalone BlastEm qualification
 
-Use the `akiyan/blastem` SDL fork with Sega CD offline recording support.
+Use the [pinned build in the repository README](../../README.md#blastem-playback-and-recording).
 The qualification below used [`8a2cd78`](https://github.com/akiyan/blastem/commit/8a2cd7803cd43aa135456251b84736b756706014).
-`BLASTEM` selects the executable, `BIOS_REGION=jp|us` selects the region, and
-`BIOS_IMAGE` can supply the matching BIOS path. Use the original CUE and its
-ISO together.
+`BLASTEM` can select another build of the same fork. `BIOS_REGION=jp|us`
+selects the region and `BIOS_IMAGE` can supply the matching BIOS path.
 
 ## Bounded boot and VDP events
 
 ```sh
-OUTDIR="$PWD/tmp/blastem-boot" BLASTEM=/path/to/blastem \
-  tools/run_headless.sh --backend blastem out/CDCBENCH.cue \
+OUTDIR="$PWD/tmp/blastem-boot" \
+  tools/run_headless.sh out/CDCBENCH.cue \
   --max-frames 600 --vdp-event-log
 ```
 
@@ -21,8 +20,16 @@ progression after the BIOS screen.
 The fork's `BLSTEL` event stream contains VRAM, CRAM, VSRAM and VDP-register
 writes and their cycle positions. It uses the base Genesis event format.
 DMA command provenance, RF5C164 state and the Main/Sub CPU and CDC timeline
-need separate observations. The GPGX LOGVDP extractors read their own text
-format.
+need separate observations.
+
+Use the shared `event_stream.py` reader for diagnostics. The frame extractor
+checks each first-loop publication against the scanout in an untrimmed
+recording’s HUD TSV:
+
+```sh
+tools/python.sh harness/blastem/extract_frame_tsv.py "$VDP_EVENT_LOG" \
+  --hud-tsv logs/RUN_hud.tsv --output logs/RUN_vdp.tsv
+```
 
 ## Lossless capture
 
@@ -33,19 +40,12 @@ tools/python.sh harness/palette_capacity/build_fixture.py \
   --output tmp/blastem-palette --fps 30 --segments 17 --frames 68
 ```
 
-For the Japan BIOS, supply a sorted, frame-indexed series of START presses and
-releases in `start.txt`. Each line is `FRAME PAD down|up BUTTON`. The input
-is relative to emulator startup and applies after the indicated frame. Use
-the same exact input file, BIOS, CUE and binary for repeatability checks.
+The recorder uses the bundled START input for the Japanese BIOS. Pass
+`--input-script` for a custom frame-indexed input file.
 
 ```sh
-for ((frame = 120; frame <= 840; frame += 60)); do
-  printf '%d 1 down start\n%d 1 up start\n' "$frame" "$((frame + 4))"
-done > start.txt
-
-BLASTEM=/path/to/blastem tools/record_movie.sh --backend blastem \
-  --disc tmp/blastem-palette/palette.cue --no-build --seconds 35 \
-  --input-script start.txt --vdp-event-log
+tools/record_movie.sh --disc tmp/blastem-palette/palette.cue --no-build \
+  --seconds 35 --vdp-event-log
 ```
 
 The backend checks the fork's completion metadata, all APNG chunks and the
@@ -68,8 +68,7 @@ resync counters. The fixture supplies silent ADPCM. A separate sound fixture
 such as `PCMTEST` is needed to check nonzero RF5C164 output. For repeatability,
 use `tools/compare_recordings.py` to compare two recordings made by the same
 backend. Compare against the fixture and packed-stream expectations first.
-Use another emulator to locate differences and the appropriate hardware
-measurement to resolve timing-dependent behavior.
+Use hardware measurements to resolve timing-dependent behavior.
 
 ## Qualification scope
 
@@ -80,6 +79,8 @@ packet timestamps and BLSTEL bytes across the 1,800-frame APNG boundary.
 sector slips, control desyncs and audio resyncs, with cadence warnings.
 
 The North American BIOS recorded successfully, but its CAVC fixture stayed at
-the `FFFE` startup display. At scanout 900, the Main CPU was waiting in the
-player while the Sub CPU still executed BIOS code. North American movie
-playback and hardware timing need separate qualification.
+the `FFFE` startup display. North American Lunar also failed to start its
+movie. The BIOS recognized the Sub program's disc extent, and the CDC decoded
+the requested sector header. The Sub program was still missing from PRG-RAM at
+scanout 1900. North American movie playback and hardware timing need separate
+qualification.

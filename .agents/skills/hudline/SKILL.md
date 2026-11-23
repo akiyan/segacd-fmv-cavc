@@ -15,9 +15,9 @@ tools/python.sh .agents/skills/hudline/scripts/render_hudline.py \
   --config profiles/PROFILE.toml --label "run label"
 ```
 
-For a matching LOGVDP trace, extract its frame TSV with
-`harness/gpgx_logvdp/extract_frame_tsv.py` and pass `--gpgx-vdp-tsv` only with
-valid identity/alignment evidence. Inspect the printed PNG, expected/observed
+For a matching untrimmed BlastEm recording with `--vdp-event-log`, run
+`harness/blastem/extract_frame_tsv.py TRACE --hud-tsv HUD --output VDP.tsv`
+and pass `--blastem-vdp-tsv VDP.tsv` to plot physical VRAM and CRAM writes. Inspect the printed PNG, expected/observed
 frames, labels and limits, then show the image and link its persistent receipt.
 Frame 0 is excluded from timed statistics; terminal hold is not cadence data.
 

@@ -3,7 +3,10 @@ EN / [JP](#jp)
 # SEGA-CD FMV Budgets
 
 This note collects the first-order tile, DMA, and CD raw-read budgets used when
-choosing encoder targets. Numbers are estimates for NTSC 60 Hz playback.
+choosing encoder targets. Numbers are estimates for NTSC 60 Hz playback. The
+archived Genesis Plus GX measurements retain their original attribution. Use
+the akiyan BlastEm fork for current emulator checks and hardware for timing
+qualification.
 
 ## Assumptions
 
@@ -69,15 +72,14 @@ that finishes inside one VBlank and prints, top-left:
 - `F xxxx` = derived tiles/frame ≈ `(W/16) * 3`
 
 Source: `boot/dmabench_ip.s` (+ `dmabench_boot.s`, stub SP = `cdcbench_sp`).
-**Run it on ares / real hardware for authoritative numbers** — Genesis Plus GX
-is lenient and over-reports.
+Run it on the akiyan BlastEm fork for comparison and on real hardware for
+authoritative numbers.
 
-### Measured (Genesis Plus GX)
+### Archived measurements (Genesis Plus GX)
 
 | Mode  | DMA words/VBlank | Pattern tiles/VBlank | note |
 |-------|-----------------:|---------------------:|------|
 | H40   | 3,664 | 229 | `W 0E50`; `out/DMABENCH_h40.cue`, screenshot `tmp/dmabench_h40_clean_sheet.jpg` |
-| *ares* | TBD | TBD | run the ISO to fill in |
 
 ### Mid-VBlank DMA start (measured)
 
@@ -93,7 +95,7 @@ flag set again, so the delayed search converges on an impossible wrap solution.
 stopwatch bound (`FIT_MAX_TICKS`); the guard reproduces the full-window number
 within the 8-word search granularity (H40 `W 0E43` vs `0E50`).
 
-Measured (Genesis Plus GX), words per VBlank against the delay:
+Archived measurements (Genesis Plus GX), words per VBlank against the delay:
 
 | Mode | delay 0 | 10 lines | 19 lines | 29 lines | per-line slope |
 |------|--------:|---------:|---------:|---------:|---------------:|
@@ -112,8 +114,7 @@ Screenshots: `tmp/dmabench_h40_d{10,19,29}_result.png`.
 - Player consequence: the `bf_start_vbudget` rule "full budget only from a
   proven blank head" stays correct and is not overly pessimistic — a late
   start loses exactly the elapsed lines' capacity, and there is no cliff
-  beyond that loss. As with every `dmabench` number, confirm on ares / real
-  hardware before relying on the absolute values.
+  beyond that loss. As with every `dmabench` number, confirm on real hardware before relying on the absolute values.
 
 ### Repaired Word-RAM multi-run DMA (measured)
 
@@ -181,7 +182,7 @@ complete time model for the whole repair sequence or the common per-run setup.
 These are Genesis Plus GX results with no simultaneous Sub access to the other
 Word-RAM bank. The managed LOGVDP core SHA-256 is
 `51cfd71f338865288e274b271b8ce0d9a1d3dc415688f14db963a29555d9b4ac`.
-Re-measure on ares and real hardware before turning either fitted slope into a
+Re-measure on real hardware before turning either fitted slope into a
 production budget or run cap.
 
 ### The binding limit is the complete pipeline
@@ -221,7 +222,7 @@ fragmented colds transfer as single-run setups (see
 
 `boot/movieplay_ip.s` sets the VBlank word budget (`md_vbudget`) from
 `VB_WORDS` = 3200. That is below the GPGX ceiling of 3664 words/VBlank.
-Re-check against the ares `dmabench` value before raising it.
+Re-check against the hardware `dmabench` value before raising it.
 
 ## Empirical measurement — `cpuvrambench`
 
@@ -240,14 +241,13 @@ Active-display writes are deliberately not measured: the VDP FIFO is only
 immediately and are not a budget path.
 
 Source: `boot/cpuvrambench_ip.s` (+ `cpuvrambench_boot.s`, stub SP =
-`cdcbench_sp`). **Run it on ares / real hardware for authoritative numbers.**
+`cdcbench_sp`). Run it on real hardware for authoritative numbers.
 
-### Measured (Genesis Plus GX)
+### Archived measurements (Genesis Plus GX)
 
 | Mode | CPU words/VBlank | `dmabench` DMA words/VBlank | DMA/CPU ratio | note |
 |------|-----------------:|----------------------------:|--------------:|------|
 | H40  | 1,160            | 3,664                       | 3.16          | `W 0488`; `out/CPUVRAMBENCH_h40.cue`, screenshot `tmp/cpuvrambench_h40_result.png` |
-| *ares* | TBD            |                             |               | run the ISO to fill in |
 
 The limiter is 68000 instruction time (measured ≈ 16 cycles/word against the
 move.l loop's theoretical ≈ 14.5 plus poll and command-setup overhead), not VDP
@@ -256,7 +256,7 @@ slot supply, which is far above the CPU's demand during blanking.
 `CPU_VDP_WORD_COST = 4` in `boot/movieplay_ip.s` charges one CPU-written VDP
 word as four DMA words inside the VBlank budget. The measured GPGX ratio is
 3.16, so the constant over-charges CPU words and stays on the safe side.
-Re-measure the ratio on ares / real hardware before lowering it.
+Re-measure the ratio on real hardware before lowering it.
 
 ---
 
@@ -265,7 +265,9 @@ Re-measure the ratio on ares / real hardware before lowering it.
 # SEGA-CD FMVの予算
 
 この文書は、encoder targetを選ぶときに使うtile、DMA、CD raw-readの一次予算を
-まとめます。数値はNTSC 60 Hz再生の見積もりです。
+まとめます。数値はNTSC 60 Hz再生の見積もりです。Genesis Plus GXで得た過去の測定値は
+出典を明記しています。現在のエミュレータ検証にはakiyan版BlastEmを使用し、
+タイミングは実機で検証します。
 
 ## 前提
 
@@ -328,15 +330,13 @@ binary searchし、左上に次を表示します。
 - `F xxxx` = 導出したtiles/frame、約`(W/16) * 3`
 
 Sourceは`boot/dmabench_ip.s`です（`dmabench_boot.s`と、stub SP =
-`cdcbench_sp`も使用）。**権威ある数値にはaresまたは実機で実行してください。**
-Genesis Plus GXは判定が緩く、大きすぎる値を報告します。
+`cdcbench_sp`も使用）。比較にはakiyan版BlastEmを使い、確定値は実機で計測してください。
 
-### 実測値（Genesis Plus GX）
+### 過去の実測値（Genesis Plus GX）
 
 | Mode | DMA words/VBlank | Pattern tiles/VBlank | note |
 |---|---:|---:|---|
 | H40 | 3,664 | 229 | `W 0E50`、`out/DMABENCH_h40.cue`、screenshot `tmp/dmabench_h40_clean_sheet.jpg` |
-| *ares* | TBD | TBD | ISOを実行して記入 |
 
 ### VBlank途中開始のDMA（実測）
 
@@ -351,7 +351,7 @@ fits判定はVBlankフラグだけでは不十分です。巨大な転送はacti
 証明します。このguardは全window値を探索粒度（8語）以内で再現します
 （H40 `W 0E43` vs `0E50`）。
 
-実測（Genesis Plus GX）、遅延に対するVBlankあたり語数:
+過去の実測（Genesis Plus GX）、遅延に対するVBlankあたり語数:
 
 | Mode | delay 0 | 10ライン | 19ライン | 29ライン | ラインあたり傾き |
 |------|--------:|---------:|---------:|---------:|-----------------:|
@@ -369,7 +369,7 @@ Screenshot: `tmp/dmabench_h40_d{10,19,29}_result.png`。
 - Playerへの帰結: `bf_start_vbudget`の「証明されたblank headからのみ全budget」の
   ruleは正しく、過度に悲観的でもありません。遅い開始は経過ライン分の容量を正確に
   失うだけで、それを超える崖はありません。他の`dmabench`値と同様、絶対値に依存する
-  前にares / 実機で確認してください。
+  前に実機で確認してください。
 
 ### 先頭word補修付きWord RAM多run DMA（実測）
 
@@ -433,7 +433,7 @@ H40 playerのpayload budgetは3,200 wordです。この単独実測では、補�
 これらは、Subが反対側のWord-RAM bankを同時accessしていないGenesis Plus GXでの結果です。
 管理LOGVDP coreのSHA-256は
 `51cfd71f338865288e274b271b8ce0d9a1d3dc415688f14db963a29555d9b4ac`です。どちらのfit傾きも、
-production budgetまたはrun capへ変える前にaresと実機で測り直してください。
+production budgetまたはrun capへ変える前に実機で測り直してください。
 
 ### 制約になるのはpipeline全体
 
@@ -468,7 +468,7 @@ clampします。断片化したcoldが単独run setupとして転送される�
 
 `boot/movieplay_ip.s`は`VB_WORDS` = 3200からVBlank word予算`md_vbudget`を
 設定します。これはGPGX ceiling（3664 word/VBlank）より小さい値です。引き上げる
-前に、aresの`dmabench`値と照合してください。
+前に、実機の`dmabench`値と照合してください。
 
 ## 実測 — `cpuvrambench`
 
@@ -485,14 +485,13 @@ Active中は意図的に測りません: VDP FIFOは4語深しかなく、active
 ほぼ即座にFIFO slot待ちになるため、予算経路ではありません。
 
 Sourceは`boot/cpuvrambench_ip.s`です（`cpuvrambench_boot.s`と、stub SP =
-`cdcbench_sp`）。**Authoritativeな値はares / 実機で測り直してください。**
+`cdcbench_sp`）。確定値は実機で測り直してください。
 
-### 実測値（Genesis Plus GX）
+### 過去の実測値（Genesis Plus GX）
 
 | Mode | CPU語/VBlank | `dmabench` DMA語/VBlank | DMA/CPU比 | note |
 |------|-------------:|------------------------:|----------:|------|
 | H40  | 1,160        | 3,664                   | 3.16      | `W 0488`、`out/CPUVRAMBENCH_h40.cue`、screenshot `tmp/cpuvrambench_h40_result.png` |
-| *ares* | TBD        |                         |           | ISOを実行して記入 |
 
 律速はVDP slot供給ではなく68000の命令時間
 （実測 ≈ 16 cycle/語。move.lループの理論値 ≈ 14.5にpollとcommand設定のoverheadが
@@ -500,5 +499,5 @@ Sourceは`boot/cpuvrambench_ip.s`です（`cpuvrambench_boot.s`と、stub SP =
 
 `boot/movieplay_ip.s`の`CPU_VDP_WORD_COST = 4`は、CPUで書く1 VDP語をVBlank予算上
 DMA 4語としてchargeします。GPGX実測の比は3.16なので、この定数は
-CPU語を多めにchargeする安全側です。引き下げる前にares / 実機で比を測り直して
+CPU語を多めにchargeする安全側です。引き下げる前に実機で比を測り直して
 ください。

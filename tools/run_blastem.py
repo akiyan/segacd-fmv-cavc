@@ -11,10 +11,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import wave
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_BINARY = ROOT / "vendor" / "blastem" / "blastem"
+DEFAULT_INPUT = ROOT / "tools" / "blastem_start.txt"
 REGIONS = {
     "jp": ("J", "jp_mcd2_9212.bin"),
     "us": ("U", "us_scd1_9210.bin"),
@@ -52,16 +55,31 @@ def write_receipt(path: Path, data: dict) -> None:
     pending.replace(path)
 
 
+def check_fork(binary: Path, env: dict[str, str]) -> None:
+    try:
+        result = subprocess.run([str(binary), "-h"], env=env, capture_output=True,
+                                text=True, errors="replace", timeout=5, check=False)
+    except subprocess.TimeoutExpired as exc:
+        raise ValueError(f"BlastEm capability check timed out: {binary}") from exc
+    if result.returncode:
+        detail = result.stderr.strip() or result.stdout.strip()
+        raise ValueError(f"BlastEm capability check failed for {binary}: {detail}")
+    options = {line.split()[0] for line in result.stdout.splitlines() if line.strip()}
+    if not {"--record", "--record-input", "--record-no-video"} <= options:
+        raise ValueError(f"{binary} lacks the akiyan/blastem offline recording options")
+
+
 def run(args: argparse.Namespace) -> None:
     region = os.environ.get("BIOS_REGION", "jp")
     if region not in REGIONS:
         raise ValueError(f"BIOS_REGION must be jp or us: {region}")
     region_flag, bios_name = REGIONS[region]
     bios = Path(os.environ.get("BIOS_IMAGE", ROOT / "original" / bios_name)).resolve(strict=True)
-    requested_binary = os.environ.get("BLASTEM", "blastem")
+    requested_binary = os.environ.get("BLASTEM", str(DEFAULT_BINARY))
     executable = shutil.which(requested_binary)
     if executable is None:
-        raise ValueError(f"BlastEm executable not found: {requested_binary} (set BLASTEM)")
+        raise ValueError(f"BlastEm executable not found: {requested_binary}. "
+                         "Build the akiyan fork from README.md or set BLASTEM.")
     binary = Path(executable).resolve()
     disc = args.disc.absolute()
     inputs = {
@@ -69,12 +87,13 @@ def run(args: argparse.Namespace) -> None:
         "bios": identity(bios),
         "binary": identity(binary),
     }
-    input_script = args.input_script.resolve(strict=True) if args.input_script else None
+    capture = args.record is not None or args.no_video
+    input_script = (args.input_script or DEFAULT_INPUT).resolve(strict=True) if capture else None
     if input_script is not None:
         inputs["input_script"] = identity(input_script)
 
     tag = args.tag or disc.stem
-    if Path(tag).name != tag or tag in {".", ".."}:
+    if Path(tag).name != tag or tag in {".", ".."} or any(char in tag for char in "\r\n"):
         raise ValueError(f"invalid output tag: {tag}")
     scratch = Path(os.environ.get("CAVC_SCRATCH_ROOT", ROOT / "tmp"))
     outdir = Path(os.environ.get("OUTDIR", scratch / disc.stem / "record")).resolve()
@@ -114,12 +133,13 @@ def run(args: argparse.Namespace) -> None:
     command = [str(binary), "-r", region_flag]
     if events is not None:
         command.extend(("-e", str(events)))
-    if output is None:
-        command.extend(("-b", str(args.max_frames)))
-    else:
+    if capture:
         command.extend(("--record", str(prefix), str(args.max_frames)))
-        if input_script is not None:
-            command.extend(("--record-input", str(input_script)))
+        command.extend(("--record-input", str(input_script)))
+        if args.no_video:
+            command.append("--record-no-video")
+    else:
+        command.extend(("-b", str(args.max_frames)))
     command.append(str(disc))
     receipt = {
         "backend": "blastem",
@@ -134,6 +154,7 @@ def run(args: argparse.Namespace) -> None:
     write_receipt(receipt_path, receipt)
     print(f"BLASTEM_RECEIPT={receipt_path}", flush=True)
     print(f"BLASTEM_LOG={log_path}", flush=True)
+    check_fork(binary, env)
     with log_path.open("wb") as log, subprocess.Popen(
         command, env=env, stdout=log, stderr=subprocess.STDOUT
     ) as process:
@@ -159,11 +180,22 @@ def run(args: argparse.Namespace) -> None:
             if not handle.read(8).startswith(b"BLSTEL"):
                 raise ValueError(f"BlastEm did not produce a BLSTEL event log: {events}")
         print(f"VDP_EVENT_LOG={events}", flush=True)
-    if output is not None:
+    if capture:
         meta_path = prefix.with_suffix(".json")
         metadata = json.loads(meta_path.read_text(encoding="utf-8"))
-        if metadata.get("frames") != args.max_frames:
-            raise ValueError(f"BlastEm capture did not reach {args.max_frames} frames: {meta_path}")
+        if (metadata.get("complete") is not True or metadata.get("frames") != args.max_frames
+                or metadata.get("video") is not (output is not None)):
+            raise ValueError(f"incomplete or unexpected BlastEm capture metadata: {meta_path}")
+        receipt["capture_metadata"] = str(meta_path)
+    if args.no_video:
+        wav_path = prefix.with_suffix(".wav")
+        with wave.open(str(wav_path), "rb") as audio:
+            if (audio.getnchannels(), audio.getsampwidth(), audio.getframerate(), audio.getnframes()) != (
+                    2, 2, metadata.get("sample_rate"), metadata.get("audio_samples")) or not audio.getnframes():
+                raise ValueError(f"BlastEm WAV does not match capture metadata: {wav_path}")
+        receipt["audio_recording"] = str(wav_path)
+        print(f"AUDIO_RECORDING={wav_path}", flush=True)
+    if output is not None:
         with log_path.open("ab") as log:
             result = subprocess.run(
                 [sys.executable, str(ROOT / "tools/mux_blastem_capture.py"), str(prefix), str(output)],
@@ -174,7 +206,6 @@ def run(args: argparse.Namespace) -> None:
         if result.returncode:
             raise ValueError(f"BlastEm lossless mux failed; see {log_path}")
         receipt["raw_recording"] = str(output)
-        receipt["capture_metadata"] = str(meta_path)
         for path in run_dir.glob("capture*.apng"):
             path.unlink()
         prefix.with_suffix(".wav").unlink()
@@ -184,23 +215,25 @@ def run(args: argparse.Namespace) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(prog="run_headless.sh --backend blastem",
+    parser = argparse.ArgumentParser(prog="run_headless.sh",
                                      description=__doc__)
     parser.add_argument("disc", type=Path)
     parser.add_argument("--tag")
     parser.add_argument("--max-frames", type=int, required=True)
-    parser.add_argument("--record", type=Path, metavar="OUTPUT_MKV")
+    capture = parser.add_mutually_exclusive_group()
+    capture.add_argument("--record", type=Path, metavar="OUTPUT_MKV")
+    capture.add_argument("--no-video", action="store_true", help="retain WAV and metadata without video")
     parser.add_argument("--input-script", type=Path, metavar="FILE")
     parser.add_argument("--vdp-event-log", action="store_true")
     args = parser.parse_args()
     if not 1 <= args.max_frames <= 10_000_000:
         parser.error("--max-frames must be in 1..10000000")
-    if args.input_script and not args.record:
-        parser.error("--input-script requires --record")
+    if args.input_script and not (args.record or args.no_video):
+        parser.error("--input-script requires --record or --no-video")
     signal.signal(signal.SIGTERM, signal.default_int_handler)
     try:
         run(args)
-    except (OSError, ValueError) as error:
+    except (OSError, ValueError, wave.Error) as error:
         print(f"run_headless (BlastEm): {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

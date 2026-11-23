@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
 
 from encode_config import EncodeProfile, load_profile  # noqa: E402
+from disc_region import RELEASE_REGIONS  # noqa: E402
 import resource_tokens  # noqa: E402
 import tmpfs_workspace  # noqa: E402
 
@@ -35,13 +36,9 @@ import tmpfs_workspace  # noqa: E402
 STAGES = ("sim", "disc", "record", "hud")
 
 # Default launch-to-tail margin added to the source duration for recordings.
-# The Mega-CD startup before the visible frame-0 flip measures 14.9 seconds
-# with the default jp_mcd2_9212.bin BIOS once the replay generator mashes
-# START densely in emulated time (measured to the exact capture frame on
-# repeated runs). The bounded lossless capture is exactly ceil(duration) +
-# this margin, so it must also cover the player's 15-second end-of-movie
-# hold: 14.9 startup + 15 hold leaves the tail intact at 30.
-RECORD_MARGIN_SECONDS = 30
+# The bundled START input and JP BIOS enter frame 0 within 16 seconds on
+# qualified captures. The end-of-movie hold adds up to 15 seconds.
+RECORD_MARGIN_SECONDS = 31
 
 _PRINT_LOCK = threading.Lock()
 
@@ -57,6 +54,7 @@ class JobOptions:
     use_gpu: bool
     force_reencode: bool
     record_seconds: int | None
+    bios_region: str
     stagger_seconds: float
     run_dir: Path
 
@@ -100,17 +98,13 @@ def _record_seconds(profile: EncodeProfile, override: int | None) -> int:
             + RECORD_MARGIN_SECONDS)
 
 
-# The recorder must be pinned to the H40 native raster; RetroArch would
-# otherwise lock onto the Mega-CD BIOS startup geometry.
-NATIVE_RECORD_SIZE = "320x224"
-
-
 def stage_commands(
     profile: EncodeProfile,
     *,
     through: str,
     use_gpu: bool,
     record_seconds: int | None,
+    bios_region: str = "jp",
 ) -> list[tuple[str, list[str]]]:
     """Return fixed commands; the HUD frame count is filled after simulation."""
 
@@ -129,6 +123,7 @@ def stage_commands(
     if through_index >= STAGES.index("disc"):
         commands.append(("disc", [
             "make", "disc", f"CONFIG={profile.path}", "DEBUG=1",
+            f"SECURITY_REGION={bios_region}",
             f"PYTHON={python}",
         ]))
     stem = profile.sim_stem
@@ -139,7 +134,6 @@ def stage_commands(
             "--no-build",
             "--seconds", str(_record_seconds(profile, record_seconds)),
             "--tag", f"{stem}_emu",
-            "--record-size", NATIVE_RECORD_SIZE,
         ]))
     if through_index >= STAGES.index("hud"):
         commands.append(("hud", []))
@@ -258,6 +252,7 @@ def _run_job(
             time.monotonic() - started, log_path, str(exc))
 
     env = resource_tokens.held_stem_environment(profile.sim_stem)
+    env["BIOS_REGION"] = options.bios_region
     env["CBRSIM_WORKERS"] = str(options.workers)
     if not options.use_gpu:
         env["CBRSIM_GPU"] = "0"
@@ -271,6 +266,7 @@ def _run_job(
                 through=options.through,
                 use_gpu=options.use_gpu,
                 record_seconds=options.record_seconds,
+                bios_region=options.bios_region,
             ):
                 failed_stage = stage
                 command = (
@@ -300,7 +296,7 @@ def _run_job(
                         key=(
                             f"{profile.artifact_stem}-"
                             f"{profile.sha256[:10]}-"
-                            f"{profile.sim_stem}-{seconds}s"
+                            f"{profile.sim_stem}-{seconds}s-blastem-{options.bios_region}"
                         ),
                         required_bytes=(
                             4 + 2 * math.ceil(seconds / 60)
@@ -398,6 +394,9 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = _parse_args()
+    bios_region = os.environ.get("BIOS_REGION", "jp")
+    if args.through != "sim" and bios_region not in RELEASE_REGIONS:
+        raise SystemExit("BIOS_REGION must be jp or us")
     try:
         profiles = [load_profile(path) for path in args.profiles]
     except (OSError, ValueError) as exc:
@@ -439,6 +438,7 @@ def main() -> int:
         use_gpu=not args.cpu,
         force_reencode=args.force_reencode,
         record_seconds=args.record_seconds,
+        bios_region=bios_region,
         stagger_seconds=(
             0.0 if args.sequential else args.stagger_seconds),
         run_dir=run_dir,

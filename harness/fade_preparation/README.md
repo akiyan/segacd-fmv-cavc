@@ -29,7 +29,7 @@ their own shot. The log must contain only one preprocessing/decision pass.
 Packing must independently validate display slots and physical deadlines.
 
 Record the built release CUE with `tools/record_movie.sh --disc CUE --no-build
---seconds 40 --tag fade_preparation --record-size 320x224 --trim 0`, using the
+--seconds 40 --tag fade_preparation`, using the
 same explicit workspace/scratch options. This is a separate emulator tier.
 Pass its printed LOSSLESS path and the completed decision log to:
 
@@ -41,10 +41,10 @@ tools/python.sh harness/fade_preparation/verify_capture.py \
 
 The checker reconstructs each committed image from pattern keys and CRAM,
 independently of the packed reader. It requires an ordered occurrence of every
-image in the native HUD-free capture, mapping GPGX's normal RGB levels back to
+image in the native HUD-free capture, mapping BlastEm's normal RGB levels back to
 RGB333. Identical holds share a match; this checks pixels and order, not cadence,
 audio quality, every loop, or publication eligibility. The TSV and adjacent JSON
-are persistent evidence. Retain the exact disc, core, replay and recording
+are persistent evidence. Retain the exact disc, emulator, input and recording
 identities with the run receipt. Inspect fresh stills with
 `tools/extract_verification_frames.sh` as well.
 

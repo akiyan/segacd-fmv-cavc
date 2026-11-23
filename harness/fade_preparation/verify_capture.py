@@ -16,6 +16,10 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
 import tmpfs_workspace
 
+BLASTEM_RGB_LEVELS = (0, 49, 87, 119, 146, 174, 206, 255)
+RGB_TO_RGB333 = np.full(256, 255, dtype=np.uint8)
+RGB_TO_RGB333[list(BLASTEM_RGB_LEVELS)] = np.arange(8, dtype=np.uint8)
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
@@ -62,9 +66,10 @@ def verify(decision_path, capture, tsv):
                 break
             if len(raw) != 320 * 224 * 3:
                 raise ValueError("truncated capture frame")
-            # Native GPGX normal-intensity RGB levels map back to RGB333.
-            pixels = np.frombuffer(raw, np.uint8).astype(np.float32)
-            key = digest(np.rint(pixels * (7 / 255)).astype(np.uint8).tobytes())
+            # Keep non-DAC values distinct so a startup or altered RGB image
+            # cannot match an exact committed RGB333 raster after rounding.
+            pixels = RGB_TO_RGB333[np.frombuffer(raw, np.uint8)]
+            key = digest(pixels.tobytes())
             frames = lookup.get(key, [])
             for frame in frames:
                 matches[frame].append(capture_index)

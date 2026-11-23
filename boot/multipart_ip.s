@@ -50,7 +50,7 @@ multipart_resume:
 	move.w #0x8134, (VDP_CTRL).l
 	move.w #0x8F02, (VDP_CTRL).l
 	move.l #0x40000000, (VDP_CTRL).l
-/* Observational LOGVDP marker while display/audio are stopped. The following
+/* Observational VDP marker while display/audio are stopped. The following
  * BIOS clear erases these words before any movie is allowed to start. */
 .global multipart_trace_begin
 multipart_trace_begin:

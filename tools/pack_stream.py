@@ -55,7 +55,7 @@ import wordbuf_ring
 import resource_tokens
 import scroll_frames
 import scroll_plan
-from encode_config import load_profile
+from encode_config import load_profile, matches_pack_profile
 from cbr_paths import sim_work_dir
 from quantize_global4_tiles import pals_to_bytes
 from quantize_md_video import rgb333_to_rgb888
@@ -2129,7 +2129,7 @@ def main(*, pack_resources=None):
         if not recorded:
             raise SystemExit(
                 f"{dec_log}: decision log predates TOML profile authentication; re-run sim")
-        if recorded.get("sha256") != profile.sha256:
+        if not matches_pack_profile(profile, recorded.get("sha256")):
             raise SystemExit(
                 f"{dec_log}: profile hash mismatch; the TOML changed after sim. "
                 "Re-run sim before packing.")
