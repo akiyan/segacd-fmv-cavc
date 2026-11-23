@@ -398,12 +398,19 @@ Control and payload are continuous streams split at sector boundaries. One
 control sector may finish multiple future blocks, and payload normally
 prefetches patterns for later frames. The physical schedule proves that:
 
-- after a slot's control prefix arrives, its control block is complete in the
-  APPLY ring;
-- before a frame's control prefix is read, PREBUFFER and earlier BODY payload
-  already contain every Prg pattern that frame consumes;
+- by the end of a slot's control prefix, the corresponding frame's complete
+  control block has reached APPLY, possibly through earlier slots;
+- PREBUFFER and earlier BODY payload contain every Prg pattern that a frame
+  consumes before Sub starts preparing that frame;
 - control bytes, payload bytes, run descriptors, CRAM switches, and pad all fit
   the same physical-sector plan.
+
+After verifying the encoded delivery plan, the packer can use spare physical
+sectors to deliver up to one additional sector of the continuous control stream
+ahead of that plan. It favors earlier completion in shorter display intervals.
+It keeps the physical slot lengths and the WordBuf refill positions. A control
+block may span sectors, and each block still completes by its original slot's
+control deadline.
 
 ### Physical cadence
 
@@ -977,11 +984,18 @@ controlとpayloadはsector境界で分割した連続streamです。1個のcontr
 将来blockを完成させることがあり、payloadは通常、後のframeで使うpatternを先読み
 します。物理scheduleは次を証明します。
 
-- slotのcontrol prefix到着後、そのcontrol block全体がAPPLY ringにある
-- frameのcontrol prefixを読む前に、PREBUFFERと過去のBODY payloadが、そのframeで
+- slotのcontrol prefixの終わりまでに、対応frameのcontrol block全体がAPPLYへ
+  届く。先行slotから届くこともある
+- Subがframeの準備を始める前に、PREBUFFERと過去のBODY payloadが、そのframeで
   消費する全Prg patternを届けている
 - control byte、payload byte、run descriptor、CRAM switch、padが、同じ物理sector
   planに収まる
+
+packerはencode済みの配送計画を検証した後、空き物理sectorを使い、連続したcontrol
+streamを計画より最大1 sector先行させることができます。表示間隔の短いslotでの
+control完了の前倒しを優先します。物理slotの長さとWordBufの補充位置を保ちます。
+control blockはsectorをまたぐことがあり、元のslotのcontrol deadlineまでには全体が
+届きます。
 
 ### 物理cadence
 

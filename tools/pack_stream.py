@@ -35,11 +35,13 @@ import struct
 import sys
 from pathlib import Path
 from collections import deque
+from contextlib import ExitStack
 import numpy as np
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import av_config
+import control_prefetch
 import final_vblank
 import ima_adpcm
 import player_constants
@@ -53,7 +55,6 @@ import wordbuf_ring
 import resource_tokens
 import scroll_frames
 import scroll_plan
-import tmpfs_workspace
 from encode_config import load_profile
 from cbr_paths import sim_work_dir
 from quantize_global4_tiles import pals_to_bytes
@@ -2079,7 +2080,7 @@ def write_stream(
           f"PREBUF_SEC={prebuf_sec} PREBUF_PAT={Bpat} RING_PEAK_PAT={ring_peak} VSYNC_N={vsync_n}")
 
 
-def main():
+def main(*, pack_resources=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", help="per-source TOML profile (used to locate and authenticate decisions.pkl)")
     ap.add_argument("--dec-log", default="")
@@ -2107,8 +2108,21 @@ def main():
             profile = load_profile(args.config)
         except (OSError, ValueError) as exc:
             raise SystemExit(f"invalid encode profile: {exc}") from exc
-    dec_log = Path(args.dec_log) if args.dec_log else (
-        profile.decision_log if profile else sim_work_dir() / "decisions.pkl")
+    if args.dec_log:
+        dec_log = Path(args.dec_log)
+        if pack_resources is not None:
+            from tmpfs_workspace import lease_managed_path
+
+            decision_lease = lease_managed_path(dec_log)
+            if decision_lease is not None:
+                pack_resources.callback(decision_lease.release)
+    elif profile is not None and pack_resources is not None:
+        try:
+            dec_log = pack_resources.enter_context(profile.pack_decision_input())
+        except (OSError, RuntimeError, ValueError) as exc:
+            raise SystemExit(f"pack: {exc}") from exc
+    else:
+        dec_log = profile.decision_log if profile else sim_work_dir() / "decisions.pkl"
     log = load_log(dec_log)
     if profile is not None:
         recorded = ((log.get("config") or {}).get("profile") or {})
@@ -2546,6 +2560,12 @@ def main():
             f"ready_min={sc['ready_min']} ctrl_min={sc['ctrl_min']} "
             f"rate_lead_peak/end={sc.get('rate_lead_peak', 0)}/"
             f"{sc.get('rate_lead_end', 0)})")
+    sc, prefetch = control_prefetch.apply_to_schedule(sc, fps=FPS)
+    print(
+        f"  control prefetch: {prefetch.changed_slots} changed slots; "
+        f"waits for two or more control sectors "
+        f"{prefetch.multi_sector_before}->{prefetch.multi_sector_after}; "
+        f"modeled APPLY peak {prefetch.apply_peak_bytes}B")
     if args.verify:
         decode_verify(log, per, blocks, supply_plan, sc, compare_dir=compare or None,
                       sample_dir=Path(output).parent / "decoded",
@@ -2573,7 +2593,6 @@ def _profile_from_command_line():
 if __name__ == "__main__":
     _command_profile = _profile_from_command_line()
     _stem_lease = None
-    _sim_lease = None
     if _command_profile is not None:
         try:
             _stem_lease = resource_tokens.acquire_stem(
@@ -2582,12 +2601,8 @@ if __name__ == "__main__":
             print(str(exc), file=sys.stderr)
             raise SystemExit(75) from exc
     try:
-        if _command_profile is not None:
-            _sim_lease = tmpfs_workspace.lease_managed_path(
-                _command_profile.output_dir)
-        main()
+        with ExitStack() as _pack_resources:
+            main(pack_resources=_pack_resources)
     finally:
-        if _sim_lease is not None:
-            _sim_lease.release()
         if _stem_lease is not None:
             _stem_lease.release()

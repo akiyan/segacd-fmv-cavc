@@ -53,20 +53,25 @@ def _below_retired_media_dir(path):
     return True
 
 
-def sim_cache_key(environ=None):
-    """Return the deterministic managed-sim key for effective settings."""
-
+def sim_cache_identity(environ=None):
     env = os.environ if environ is None else environ
     import sim_artifact_cache
 
     source = env.get("CBRSIM_SRC", "movies/disc1/061.mp4")
-    identity = sim_artifact_cache.build_identity(
+    return sim_artifact_cache.build_identity(
         source=source,
         emit_decisions=_truthy(env.get("CBRSIM_EMIT_DEC")),
         environ=env,
     )
+
+
+def sim_cache_key(environ=None, *, identity=None):
+    """Return the deterministic managed-sim key for effective settings."""
+    env = os.environ if environ is None else environ
+    import sim_artifact_cache
+
     return sim_artifact_cache.readable_key(
-        identity,
+        sim_cache_identity(env) if identity is None else identity,
         mode=DISPLAY_MODE,
         width=int(env.get("CBRSIM_W", "320")),
         height=int(env.get("CBRSIM_H", "144")),

@@ -565,6 +565,11 @@ requests `STAT_END` only after that frame has become visible.
 Non-specialized, periodic-cadence, and feature-clear paths use the same early
 handoff once a future frame exists.
 
+Sub starts expanding a timed frame after the preceding physical slot has been
+drained, the current slot's required WordBuf refills are present, and APPLY
+contains the complete control block. Extra control sectors queued for later
+frames can arrive while expansion proceeds.
+
 On a scroll build, a type-3 control takes a dedicated apply path: item 0
 supplies the absolute HScroll/VScroll pair, and the remaining completed-list
 items write directly into the persistent 64x32 plane band, leaving the
@@ -1259,6 +1264,10 @@ startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期reque
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
 requestします。Non-specialized、periodic-cadence、feature-clear pathも、
 future frameが存在すれば同じearly handoffを使います。
+
+Subは、直前の物理slotを最後まで読み、現在のslotに必要なWordBuf補充とAPPLY上の
+control block全体が揃った時点で、timed frameの展開を始めます。後続frame向けの
+追加control sectorは展開と並行して到着できます。
 
 scroll buildでは、type 3 controlが専用のapply pathを通ります。item 0が絶対
 HScroll/VScroll対を供給し、残りのcompleted-list itemは常駐64x32 plane bandへ

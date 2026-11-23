@@ -15,6 +15,7 @@ import os
 import re
 import sys
 import tomllib
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, MutableMapping
@@ -176,6 +177,52 @@ class EncodeProfile:
     @property
     def decision_log(self) -> Path:
         return self.output_dir / "decisions.pkl"
+
+    @contextmanager
+    def pack_decision_input(self):
+        """Lease a complete encode whose decision format this packer accepts."""
+        from cbr_paths import sim_cache_identity, sim_cache_key
+        from sim_artifact_cache import (
+            CACHE_SCHEMA_VERSION, CacheValidationError, identity_sha256,
+        )
+        from tmpfs_workspace import lease_managed_path, managed_directory_path
+
+        env: dict[str, str] = {}
+        apply_profile_env(self, env)
+        current = sim_cache_identity(env)
+        identities = [current]
+        # e203 only changes post-verification packing.
+        if current["encoder_version"] == "e203":
+            identities.append(dict(current, encoder_version="e202"))
+        for identity in identities:
+            key = sim_cache_key(env, identity=identity)
+            data = managed_directory_path(kind="sim", key=key)
+            decision = data / "decisions.pkl"
+            lease = lease_managed_path(decision)
+            if lease is None:
+                continue
+            try:
+                completion = lease.entry / ".complete.json"
+                if not completion.is_file():
+                    continue
+                marker = json.loads(completion.read_text(encoding="utf-8"))
+                managed = json.loads(
+                    (lease.entry / ".managed.json").read_text(encoding="utf-8"))
+                digest = identity_sha256(identity)
+                if (marker.get("schema_version") != CACHE_SCHEMA_VERSION
+                        or marker.get("identity") != identity
+                        or marker.get("identity_sha256") != digest
+                        or marker.get("reuse_token") != digest
+                        or not isinstance(marker.get("frames"), int)
+                        or marker["frames"] < 1
+                        or managed.get("kind") != "sim" or managed.get("key") != key):
+                    raise CacheValidationError(f"completed sim identity mismatch: {data}")
+                print(f"  pack input: completed {identity['encoder_version']} encode at {data}")
+                yield decision
+                return
+            finally:
+                lease.release()
+        raise FileNotFoundError(f"no matching complete encode for {self.path}")
 
     @property
     def artifact_stem(self) -> str:
