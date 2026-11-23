@@ -78,9 +78,8 @@ packet timestamps and BLSTEL bytes across the 1,800-frame APNG boundary.
 `PCMTEST` produced a measured 246.5 Hz tone. The DEBUG gate reported zero
 sector slips, control desyncs and audio resyncs, with cadence warnings.
 
-The North American BIOS recorded successfully, but its CAVC fixture stayed at
-the `FFFE` startup display. North American Lunar also failed to start its
-movie. The BIOS recognized the Sub program's disc extent, and the CDC decoded
-the requested sector header. The Sub program was still missing from PRG-RAM at
-scanout 1900. North American movie playback and hardware timing need separate
-qualification.
+North American Lunar with the stock Sega CD 1.10 BIOS reached all 2,535 movie
+frames in order. Its VDP trace showed zero sector slips, control desyncs, and
+audio resyncs. The 24 fps cadence had eleven adjacent pairs of reversed
+2/3-VBlank intervals, all within the first 175 movie frames. Physical drive
+timing requires separate hardware qualification.

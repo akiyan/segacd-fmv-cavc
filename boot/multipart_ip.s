@@ -23,6 +23,7 @@
 
 .include "disc_region.inc"
 .include "multipart_ip.inc"
+.include "sub_boot.inc"
 .text
 .incbin "security.bin"
 	bra.w multipart_first
@@ -30,6 +31,8 @@
 
 .global multipart_first
 multipart_first:
+	wait_sub_boot STAT_LOADER_READY
+	move.w #0x2700, sr
 	move.l #0x4D505254, (MULTIPART_STATE).l
 	move.w #-1, (MULTIPART_INDEX).l
 	clr.l (MULTIPART_CYCLE).l

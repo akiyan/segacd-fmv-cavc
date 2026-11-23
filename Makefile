@@ -366,7 +366,7 @@ $(MOVIEPLAY_REGION_INC): $(BOOT_DIR)/region_$(SECURITY_REGION).inc movieplay-for
 $(MOVIEPLAY_DEBUG_FONT): tools/gen_debugfont.py | movieplay-setup
 	$(PYTHON) tools/gen_debugfont.py --output $@
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_REGION_INC) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o: $(BOOT_DIR)/movieplay_ip.s $(BOOT_DIR)/sub_boot.inc $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_REGION_INC) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) $(MOVIEPLAY_DEBUG_FONT) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(MAIN_CODEGEN)),--defsym MAIN_CODEGEN=1) $(if $(filter 1,$(PLAYER_SPECIALIZE)),--defsym PLAYER_SPECIALIZED=1) -I$(MOVIEPLAY_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $@
 
@@ -382,7 +382,7 @@ $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.bin: $(MOVIEPLAY_BUILD_DIR)/movieplay_ip.o
 			exit 1; \
 		fi
 
-$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py harness/pcm_write_pacing/check_pacing.py $(CONFIG) movieplay-force | movieplay-setup
+$(MOVIEPLAY_BUILD_DIR)/movieplay_sp.o: $(BOOT_DIR)/movieplay_sp.s $(BOOT_DIR)/sub_boot.inc $(PLAYER_CONSTANTS) $(SP_EXTENSION_CONSTANTS) tools/av_config.py tools/cavc_routing.py tools/ima_adpcm.py tools/sp_extension.py tools/check_player_ring.py harness/pcm_write_pacing/check_pacing.py $(CONFIG) movieplay-force | movieplay-setup
 	$(PYTHON) tools/check_player_ring.py --constants $(PLAYER_CONSTANTS) --extension $(SP_EXTENSION_BIN) --extension-constants $(SP_EXTENSION_CONSTANTS) $(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),--sp-tail-marker)
 	$(PYTHON) harness/pcm_write_pacing/check_pacing.py
 	$(if $(filter 1,$(ISO_VERIFY_SP_TAIL)),$(PYTHON) harness/sp_tail_marker/verify_profile.py --header $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT --max-pending-sectors 2)
