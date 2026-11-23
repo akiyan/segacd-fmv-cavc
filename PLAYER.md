@@ -61,6 +61,8 @@ captures establish the observed behavior, not a worst-case lateness bound for
 arbitrary streams.
 
 The 24 fps display controller remains phase-locked after a missed deadline.
+The frame-1 flip starts lateness accounting after the CD startup interval and
+sets the next display target to three VBlanks.
 It counts whole-VBlank lateness as debt and repays that debt only by shortening
 a later nominal three-VBlank display step to two. It never shortens a
 two-VBlank step to one. The Sub CPU's physical `(2, 3)` sector schedule remains
@@ -563,6 +565,11 @@ requests `STAT_END` only after that frame has become visible.
 Non-specialized, periodic-cadence, and feature-clear paths use the same early
 handoff once a future frame exists.
 
+Sub starts expanding a timed frame after the preceding physical slot has been
+drained, the current slot's required WordBuf refills are present, and APPLY
+contains the complete control block. Extra control sectors queued for later
+frames can arrive while expansion proceeds.
+
 On a scroll build, a type-3 control takes a dedicated apply path: item 0
 supplies the absolute HScroll/VScroll pair, and the remaining completed-list
 items write directly into the persistent 64x32 plane band, leaving the
@@ -779,7 +786,8 @@ jitter reserve使用量は最大3 KiBでした。この有限長の録画は観�
 ものであり、任意のstreamでの最大遅延を保証するものではありません。
 
 24 fps display controllerはdeadlineを外した後も位相を維持します。遅れをVBlank単位の
-debtとして数え、後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
+debtとして数えるのはCD起動待ちが終わったframe 1の表示切り替えからで、次の表示間隔の
+目標は3 VBlankです。後の名目3 VBlank display stepを2へ短縮する場合だけdebtを返済します。
 2 VBlank stepを1へ短縮することはありません。Sub CPUの物理`(2, 3)` sector scheduleは
 変えません。遅れたframeがreaderへ追加の物理時間をすでに与えており、補償display stepは
 その時間を消費します。これにより、単発のdisplay missが恒久的なreader leadとなって
@@ -1256,6 +1264,10 @@ startupの`CMD_STREAM` ownershipを保つため、frame 1は通常の同期reque
 取得します。最終frameも対象外で、表示された後にだけMainが`STAT_END`を
 requestします。Non-specialized、periodic-cadence、feature-clear pathも、
 future frameが存在すれば同じearly handoffを使います。
+
+Subは、直前の物理slotを最後まで読み、現在のslotに必要なWordBuf補充とAPPLY上の
+control block全体が揃った時点で、timed frameの展開を始めます。後続frame向けの
+追加control sectorは展開と並行して到着できます。
 
 scroll buildでは、type 3 controlが専用のapply pathを通ります。item 0が絶対
 HScroll/VScroll対を供給し、残りのcompleted-list itemは常駐64x32 plane bandへ

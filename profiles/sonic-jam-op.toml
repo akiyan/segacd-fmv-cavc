@@ -82,7 +82,7 @@ tail_seconds = 5.0
 # not mistaken for a capture off real hardware - that is the panel below.
 # "Custom" matches the headline, and leaves "Original" to mean the Saturn
 # master alone rather than naming two different things on one frame.
-label = "Custom FMV Codec Playback — SEGA-CD Emulator (Genesis Plus GX)"
+label = "Custom FMV Codec Playback — SEGA-CD Emulator (BlastEm fork)"
 # The audio note reads as a sentence, so it uses this instead.
 short_label = "the codec playback panel"
 slot = "main"
@@ -214,6 +214,6 @@ encoderの動作。VRAMに常駐しているtileは、完全一致か十分近�
 
 [youtube]
 analysis_title = "Sega CD FMV at 30 FPS — Sonic Jam Opening (288×200) Visual Analysis & Encoding Breakdown"
-playback_title = "Sega CD FMV at 30 FPS — Sonic Jam Opening (288×200) in Genesis Plus GX"
+playback_title = "Sega CD FMV at 30 FPS — Sonic Jam Opening (288×200) in the BlastEm fork"
 source_label = "Sonic Jam (Sega Saturn, 1997), 288x200, 30 fps, 44.1 kHz stereo"
 source_label_ja = "Sonic Jam (Sega Saturn、1997)、288x200、30 fps、44.1 kHz stereo"

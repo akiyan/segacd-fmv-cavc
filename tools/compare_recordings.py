@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare two native RetroArch FFV1/FLAC recordings exactly.
+"""Compare two native FFV1/FLAC recordings exactly.
 
 The comparison is deliberately stricter than comparing the two container files:
 Matroska metadata and FLAC/FFV1 packetisation may change without changing the
@@ -176,7 +176,7 @@ def probe_recording(path: Path) -> dict[str, Any]:
     }
 
 
-def decode_framemd5(path: Path) -> tuple[str, list[FrameHash]]:
+def decode_framemd5(path: Path, *, video_filter: str | None = None) -> tuple[str, list[FrameHash]]:
     """Decode all video frames into canonical bgr0 framemd5 rows."""
     command = [
         "ffmpeg",
@@ -194,6 +194,10 @@ def decode_framemd5(path: Path) -> tuple[str, list[FrameHash]]:
         "-an",
         "-sn",
         "-dn",
+    ]
+    if video_filter:
+        command.extend(("-vf", video_filter))
+    command.extend([
         "-pix_fmt",
         "bgr0",
         "-fps_mode",
@@ -201,7 +205,7 @@ def decode_framemd5(path: Path) -> tuple[str, list[FrameHash]]:
         "-f",
         "framemd5",
         "pipe:1",
-    ]
+    ])
     try:
         result = subprocess.run(command, check=False, capture_output=True, text=True)
     except FileNotFoundError as exc:

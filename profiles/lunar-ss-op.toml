@@ -85,7 +85,7 @@ tail_seconds = 5.0
 [comparison.panels.emu]
 # Names the codec and says this is an emulator running it, so the panel is not
 # mistaken for a capture off real hardware - that is the panel below it.
-label = "Custom FMV Codec Playback — SEGA-CD Emulator (Genesis Plus GX)"
+label = "Custom FMV Codec Playback — SEGA-CD Emulator (BlastEm fork)"
 # The audio note reads as a sentence, so it uses this instead.
 short_label = "the codec playback panel"
 slot = "main"
@@ -204,7 +204,7 @@ encoderの動作。VRAMに常駐しているtileは、完全一致か十分近�
 
 [youtube]
 analysis_title = "Sega CD FMV at 24 FPS — Lunar: Silver Star Story (320×224) Visual Analysis & Encoding Breakdown"
-playback_title = "Sega CD FMV at 24 FPS — Lunar: Silver Star Story (320×224) in Genesis Plus GX"
+playback_title = "Sega CD FMV at 24 FPS — Lunar: Silver Star Story (320×224) in the BlastEm fork"
 source_label = "Lunar: Silver Star Story Complete (PlayStation, 1996), 960x720, 24 fps, 48 kHz stereo"
 source_label_ja = "Lunar: Silver Star Story Complete (PlayStation、1996)、960x720、24 fps、48 kHz stereo"
 # Where the master came from. It is emitted on its own line in the

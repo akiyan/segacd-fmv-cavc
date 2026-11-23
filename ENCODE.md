@@ -146,6 +146,14 @@ stage variation, environment and reproduction procedure.
 
 ## Planning work reuse
 
+Packing verifies the frozen encode decisions first, then uses the final
+control block sizes to look for earlier delivery. The pass uses the existing
+physical slots and pattern assignments, so it runs when rebuilding the disc
+from a completed encode. It considers a bounded number of control-sector
+placements per slot, so its work grows linearly with the frame count. The e204
+packer can reuse a complete e202 or e203 artifact when the source and effective
+encoder settings match.
+
 The online delivery planner checks only the preceding and newly appended
 slots when committing cumulative control/payload prefixes. It still checks
 finite PrgBuf delivery for each trial and performs a complete prefix proof
@@ -317,6 +325,12 @@ Core i9-13900KFで比較しました。正規化済みRGB/PCMを共通入力と�
 記載しています。
 
 ## 計画処理の再利用
+
+pack時は確定済みのencode decisionを検証してから、control blockの最終サイズを
+使って配送を前倒しできる箇所を探します。既存の物理slotとpattern割り当てを使う
+ため、完成済みencodeからdiscを作り直すときに実行できます。slotごとに評価する
+control sectorの配置候補数には上限があり、処理量はframe数に比例します。e204 packerは、
+sourceとencoderの実効設定が一致する完成済みe202またはe203成果物を再利用できます。
 
 逐次配送plannerは、累積control/payloadの確定時に直前slotと新しく追加したslotを
 検査します。各候補の有限PrgBuf配送検査と、終了時の全prefix検証は維持します。

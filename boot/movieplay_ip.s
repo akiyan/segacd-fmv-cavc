@@ -1940,12 +1940,13 @@ pace_fixed_commit:
    repays one debt unit by using two VBlanks; a nominal two-VBlank step is
    never shortened. Thus isolated Main/Sub stalls cannot accumulate permanent
    reader lead and eventually fill APPLY while ordinary `(2, 3)` frames keep
-   their exact phase. Frame 0 only establishes the real stopwatch origin.
+   their exact phase. The interval from frame 0 to frame 1 includes CD startup.
+   Begin measuring lateness from the frame-1 flip.
    Trashes d0-d2. */
 pace_periodic_commit:
 	move.w	(GA_STOPWATCH).l, d0
-	tst.l	frame_no
-	beq.s	4f
+	cmpi.l	#1, frame_no
+	bls.s	4f
 	moveq	#0, d1
 	move.w	d0, d1
 	sub.w	pace_flip_tick, d1

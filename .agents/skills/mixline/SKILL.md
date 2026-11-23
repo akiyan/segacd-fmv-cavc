@@ -17,7 +17,7 @@ tools/python.sh .agents/skills/mixline/scripts/render_mixline.py \
   --hudline-layout logs/RUN_hudline-layout.json
 ```
 
-Inspect the printed PNG for a shared frame axis, the timeline/optional LOGVDP/
+Inspect the printed PNG for a shared frame axis, the timeline/optional VDP write/
 HUD order and visible gate status. Show the local image and receipt. Read
 [rendering.md](references/rendering.md) only when changing the compositor or
 investigating its row/header contract; source renderers own their geometry.

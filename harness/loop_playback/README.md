@@ -3,7 +3,7 @@
 These checks exercise two distinct replay failures: accepting an older CDC
 sector as the first sector of a new finite read, and retaining hidden
 name-table cells that a later fine-scroll frame exposes. They use assembled
-players and the managed GPGX LOGVDP core, with no source encode or A/V recording.
+players and BlastEm VDP event traces from an existing disc.
 
 ## Independent synthetic pixels
 
@@ -21,12 +21,12 @@ requires no source media.
 
 ## Existing movie pixels
 
-`verify_trace.py` reads an existing DEBUG player's complete compressed trace:
+`verify_trace.py` reads the BlastEm `VDP_EVENT_LOG=` for an existing DEBUG disc:
 
 ```sh
 tools/python.sh harness/loop_playback/verify_trace.py \
   --header /path/to/matching/HEADER.DAT \
-  --trace /path/to/gpgx_logvdp_run.log.gz \
+  --trace /path/to/vdp.blastel \
   --tsv logs/loop-playback.tsv --min-loops 3
 ```
 
@@ -45,7 +45,7 @@ first loop equals the encoder decisions. The synthetic reader supplies that
 independent check for its own fixture. Neither reader proves physical drive
 timing, PCM sample equality or sound quality.
 
-## Reproduction and evidence
+## Historical reproduction and evidence
 
 On base `3ddca8f`, the 15 fps 256-frame fixture completes one exact loop in
 6,000 VBlanks and then stops. A debugger snapshot identifies Main at

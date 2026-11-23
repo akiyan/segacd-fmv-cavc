@@ -3,7 +3,6 @@
 import argparse
 import csv
 from dataclasses import replace
-import gzip
 import importlib.util
 import json
 from pathlib import Path
@@ -11,11 +10,12 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "harness/blastem"))
 import encode_config
+from event_stream import iter_publications
 import resource_tokens
 import tmpfs_workspace
 from multipart import digest, write_json
-from verify_trace import WRITE
 
 spec = importlib.util.spec_from_file_location("multipart_hud", ROOT / "harness/startup_resync/analyze.py")
 hud = importlib.util.module_from_spec(spec)
@@ -24,42 +24,29 @@ spec.loader.exec_module(hud)
 
 
 def read_markers(trace, manifest):
-    words, markers = [], []
-    with gzip.open(trace, "rt", errors="strict") as source:
-        for line in source:
-            match = WRITE.search(line) if " write -> " in line else None
-            if not match:
-                continue
-            kind, address, value, pc = match.groups()
-            pc = int(pc, 16) & 0xFFFFFF
-            if kind != "VRAM" or not manifest["trace_pc_start"] <= pc <= manifest["trace_pc_end"]:
-                continue
-            if int(address, 16) != 2*len(words):
-                raise ValueError("incomplete dispatcher marker")
-            words.append(int(value, 16))
-            if len(words) == 8:
-                if words[:2] != [0x4D50, 0x5254] or words[-1] != 0x454E:
-                    raise ValueError("invalid multipart dispatcher signature")
-                marker = (words[2], (words[3]<<16)|words[4], (words[5]<<16)|words[6])
-                ordinal, count = len(markers), len(manifest["items"])
-                if marker != (ordinal % count, ordinal // count, ordinal+1):
-                    raise ValueError("wrong multipart dispatch order")
-                markers.append(marker)
-                words = []
-    if words or not markers:
-        raise ValueError("missing/truncated multipart markers")
+    markers = []
+    for publication in iter_publications(trace):
+        marker = publication.dispatcher
+        if marker is None or (markers and marker == markers[-1]):
+            continue
+        ordinal, count = len(markers), len(manifest["items"])
+        if marker != (ordinal % count, ordinal // count, ordinal+1):
+            raise ValueError("wrong multipart dispatch order")
+        markers.append(marker)
+    if not markers:
+        raise ValueError("missing multipart markers in BlastEm event log")
     return markers
 
 
 def analyze(binding, output):
-    for name in ("recording", "full_log", "manifest"):
+    for name in ("recording", "vdp_event_log", "manifest"):
         if digest(binding[name]) != binding[name+"_sha256"]:
             raise ValueError(f"capture binding changed: {name}")
     manifest = json.loads(Path(binding["manifest"]).read_text())
     if not manifest["debug"] or manifest["iso_sha256"] != binding["iso_sha256"]:
         raise ValueError("need this recording's DEBUG manifest")
     recording = Path(binding["recording"])
-    markers = read_markers(binding["full_log"], manifest)
+    markers = read_markers(binding["vdp_event_log"], manifest)
     probe = hud.probe_video(recording)
     if (probe.width, probe.height) != (320, 224):
         raise ValueError("multipart HUD qualification requires native 320x224")
@@ -97,7 +84,7 @@ def analyze(binding, output):
             gate["multipart_context"] = dict(part=index+1, cycle=cycle, visit=number,
                                                iso_sha256=manifest["iso_sha256"],
                                                manifest_sha256=binding["manifest_sha256"],
-                                               full_log_sha256=binding["full_log_sha256"])
+                                               vdp_event_log_sha256=binding["vdp_event_log_sha256"])
             gate["ocr_start_anchor"] = dict(method="recorded_frame_minus_one_and_dispatcher",
                                              frame0_capture_first=visit[0].capture_first,
                                              frame_minus_one_capture_first=(sentinel.capture_first if sentinel else None))

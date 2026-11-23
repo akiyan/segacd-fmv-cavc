@@ -40,12 +40,12 @@ def receipt(keys: list[str], heights: dict[str, int] | None = None) -> dict:
 
 
 class MixlineRenderingTests(unittest.TestCase):
-    def test_extracts_one_contiguous_logvdpline_block(self):
+    def test_extracts_one_contiguous_vdpline_block(self):
         keys = [
             "display_vblanks",
             "pattern_dma_ready_pressure",
             "name_table_dma_ready_pressure",
-            *mixline.LOGVDPLINE_KEYS,
+            *mixline.VDP_WRITE_KEYS,
             "pump_gap_ticks",
         ]
         heights = {
@@ -56,8 +56,8 @@ class MixlineRenderingTests(unittest.TestCase):
             receipt(keys, heights),
             image_height=70,
         )
-        self.assertEqual(log_range, (38, 66))
-        self.assertEqual(hud_ranges, [(10, 38), (66, 70)])
+        self.assertEqual(log_range, (38, 50))
+        self.assertEqual(hud_ranges, [(10, 38), (50, 70)])
 
     def test_plain_hudline_remains_one_source_range(self):
         log_range, hud_ranges = mixline.split_hudline_ranges(
@@ -72,12 +72,12 @@ class MixlineRenderingTests(unittest.TestCase):
         self.assertIsNone(log_range)
         self.assertEqual(hud_ranges, [(10, 30)])
 
-    def test_rejects_a_partial_logvdpline_block(self):
-        with self.assertRaisesRegex(SystemExit, "incomplete LOGVDP"):
+    def test_rejects_a_partial_vdpline_block(self):
+        with self.assertRaisesRegex(SystemExit, "incomplete VDP write"):
             mixline.split_hudline_ranges(
                 receipt([
                     "display_vblanks",
-                    mixline.LOGVDPLINE_KEYS[0],
+                    mixline.VDP_WRITE_KEYS[0],
                 ]),
                 image_height=30,
             )

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check actual VRAM writes around the first complete movie loop in LOGVDP."""
+"""Check first-loop VRAM writes in a retained Genesis Plus GX LOGVDP capture."""
 from __future__ import annotations
 
 import argparse

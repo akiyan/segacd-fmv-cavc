@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
-"""Check every synthetic movie frame against actual LOGVDP writes."""
+"""Check every synthetic movie frame against recorded BlastEm VDP writes."""
 
 import argparse
 import csv
-import gzip
-import re
 import struct
 import sys
 from pathlib import Path
@@ -12,11 +10,9 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tools"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "blastem"))
 import cavc_routing
-
-
-WRITE = re.compile(
-    r"(VRAM|CRAM) 0x([0-9a-f]+) write -> 0x([0-9a-f]+) \(([0-9a-f]+)\)")
+from event_stream import iter_publications, rgb333
 
 
 def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
@@ -35,15 +31,8 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
             cursor += 4
         assert 0 <= active < segments
         frame_segments.append(active)
-    # LOGVDP prints the VDP's packed 9-bit CRAM value, not the CPU bus word.
-    palettes = [tuple(
-        ((w & 0xE00) >> 3) | ((w & 0xE0) >> 2) | ((w & 0xE) >> 1)
-        for w in struct.unpack_from(">64H", table, segment * 128))
+    palettes = [tuple(map(rgb333, struct.unpack_from(">64H", table, segment * 128)))
         for segment in range(segments)]
-    vram = bytearray(65536)
-    cram = [0] * 64
-    hud = []
-    pending = None
     rows = []
     counter_faults = []
     expected_lines = np.arange(40 * 28) % 4
@@ -54,17 +43,18 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
         expected_patterns[:, 0] = indices >> 8
         expected_patterns[:, 1] = indices & 255
 
-    def finish_frame():
-        nonlocal pending
-        if pending is None:
-            return
-        frame, digits = pending
-        expected_frame = len(rows) % frames
-        assert frame == expected_frame, ("frame order", frame, expected_frame)
+    for publication in iter_publications(trace):
+        frame = len(rows) % frames
+        raw_frame = publication.frame
+        if raw_frame in (0xFFFE, 0xFFFF) and raw_frame != frame & 0xFFFF:
+            continue
+        assert raw_frame == frame & 0xFFFF, ("frame order", raw_frame, frame)
+        digits, vram = publication.hud, publication.vram
+        cram = tuple(map(rgb333, struct.unpack(">64H", publication.cram)))
         segment = frame_segments[frame]
-        assert tuple(cram) == palettes[segment], ("CRAM", frame, segment)
+        assert cram == palettes[segment], ("CRAM", frame, segment)
         assert digits[4] == segment % 16, ("HUD segment", frame, digits[4])
-        if digits[5:8] != [0, 0, 0]:
+        if any(digits[5:8]):
             counter_faults.append((frame, digits[5:8]))
         entries = np.frombuffer(vram, ">u2", count=2048, offset=0xE000).reshape(
             32, 64)[:28, :40].reshape(-1)
@@ -73,44 +63,6 @@ def verify(directory: Path, trace: Path, output: Path, min_loops: int) -> None:
         expected_patterns[0, :2] = (1, 255) if frame == frames - 1 else ((0x10, 0) if unique_frame0 else (0x22, 0x22))
         assert np.array_equal(patterns, expected_patterns), ("patterns", frame)
         rows.append((len(rows) // frames, frame, segment, digits[4], *digits[5:8]))
-        pending = None
-
-    with gzip.open(trace, "rt", errors="replace") as source:
-        for line in source:
-            if " write -> " not in line:
-                continue
-            match = WRITE.search(line)
-            if not match:
-                continue
-            kind, raw_address, raw_word, raw_pc = match.groups()
-            address, word, pc = (int(value, 16) for value in (raw_address, raw_word, raw_pc))
-            if pc & 0xFF0000 != 0xFF0000:
-                continue
-            if kind == "CRAM":
-                cram[(address & 0x7E) // 2] = word
-                continue
-            address &= 0xFFFF
-            if address == 0xE000:
-                # Finish the displayed state before the next movie NT is written.
-                finish_frame()
-            struct.pack_into(">H", vram, address, word)
-            if not 0xF000 <= address < 0xF050:
-                continue
-            if address == 0xF000:
-                hud = []
-            if address == 0xF000 + len(hud) * 2 and 1744 <= (word & 0x7FF) < 1760:
-                hud.append(word & 15)
-            else:
-                hud = []
-            if len(hud) == 40:
-                frame = int("".join(f"{digit:x}" for digit in hud[:4]), 16)
-                expected = len(rows) % frames
-                if frame != 0xFFFF or expected == 0xFFFF:
-                    assert frame == (expected & 0xFFFF), ("HUD frame", frame, expected)
-                    assert pending is None
-                    pending = (expected, hud)
-                hud = []
-    finish_frame()
     complete_loops = len(rows) // frames
     assert complete_loops >= min_loops, ("complete loops", complete_loops, min_loops)
     output.parent.mkdir(parents=True, exist_ok=True)

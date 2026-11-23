@@ -15,7 +15,7 @@
  *            (4-VBlank transfer of 320x160 IS feasible)
  *   RED    = at least one slice finished after VBlank ended (latched)
  *
- * Result (GPGX): GREEN - each 6400-byte slice fits inside one VBlank, so 4
+ * Historical emulator result: GREEN - each 6400-byte slice fits inside one VBlank, so 4
  * slices push 320x160 in 4 VBlanks. NOTE: the heavy CPU 2x-upscale plus the
  * serial 4-VBlank DMA cannot sustain the 15fps continuous CD stream (the DMA
  * alone uses the whole 4-VBlank/frame budget); the stream stalls after a few

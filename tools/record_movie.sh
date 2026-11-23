@@ -1,47 +1,23 @@
 #!/usr/bin/env bash
-#
-# record_movie.sh - record Sega CD playback into a bounded lossless MKV.
-#
-# Wraps tools/run_headless.sh (RetroArch + Genesis Plus GX FFmpeg recorder under
-# Xvfb), keeps the Mega-CD startup sequence, and records FFV1/FLAC through a
-# fixed input Replay at uncapped speed by default. A lossy H.264 + AAC
-# verification preview is opt-in via --preview and is not produced normally.
-#
-# The recording is the emulator's own synchronized A/V output (video + whatever
-# audio the build produces) - not an offline re-mux of PROBE.BIN.
+# Capture Sega CD playback with the akiyan/blastem fork in native FFV1/FLAC.
 #
 # Usage:
-#   tools/record_movie.sh --config profiles/bad-apple.toml --seconds 250
-#   tools/record_movie.sh --config profiles/bad-apple.toml --seconds 30
-#   tools/record_movie.sh --disc out/bad-apple.cue --no-build --seconds 250
+#   tools/record_movie.sh --config profiles/PROFILE.toml --seconds 160
+#   tools/record_movie.sh --disc out/PROFILE.cue --no-build --seconds 160
 #
 # Options:
-#   --config TOML  profile used by make; also derives out/<toml-stem>.cue
-#   --disc CUE     explicit disc image to boot (normally derived from --config)
-#   --preview      also transcode a lossy H.264 verification preview
-#                  (default: off; the bounded lossless MKV is the artifact)
-#   --out NAME     requested verification-preview filename; used only with
-#                  --preview (default <tag>_preview.mp4; bytes stay in tmpfs)
-#   --seconds N    seconds to keep in the bounded native MKV/preview (default 160)
-#   --trim SEC     seconds to drop from the front; disables auto-audio-trim
-#                  (default: 0, preserving the startup sequence)
-#   --tag NAME     work prefix under the capture dir (default: rec_<disc basename>)
-#   --display :N   explicit X display; rejects an existing server
-#                  (default: allocate a free display)
-#   --preset NAME  ffv1-flac (pixel-lossless default) or realtime (paced 4:2:0 check)
-#   --offline-record
-#                  explicitly select the default fixed-Replay uncapped mode
-#   --realtime-lossless
-#                  use the legacy wall-clock-paced FFV1/FLAC path
-#   --input-replay FILE
-#                  reuse an input replay for an exact-frame offline or realtime run
-#   --record-size WxH
-#                  native recording surface (H40: 320x224)
-#   --auto-audio-trim
-#                  explicitly choose a movie-only window from the recorded WAV
-#   --no-build     do not run `make disc` first
-#   --release-build
-#                  build with DEBUG=0 instead of the recording default DEBUG=1
+#   --config TOML         Build and boot the profile's disc.
+#   --disc CUE            Use an explicit disc.
+#   --seconds N          Length of the bounded capture (default: 160).
+#   --tag NAME           Output prefix (default: rec_<disc basename>).
+#   --trim SEC           Drop SEC seconds from the beginning (default: 0).
+#   --auto-audio-trim    Find a window from the recorded audio.
+#   --input-script FILE  Override the bundled frame-indexed START input.
+#   --vdp-event-log      Retain the VDP event stream for this run.
+#   --preview            Also produce a lossy H.264/AAC preview.
+#   --out NAME           Preview filename (default: <tag>_preview.mp4).
+#   --no-build           Boot an existing disc.
+#   --release-build      Build the HUD-free disc.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -56,17 +32,14 @@ OUT=""
 REC_SECS=160
 TRIM=0
 TAG=""
-DISPLAY_NUM=""
-PRESET="ffv1-flac"
-RECORD_SIZE=""
 BUILD=1
 BUILD_DEBUG=1
 AUTO_AUDIO_TRIM=0
 PREVIEW=0
-OFFLINE_RECORD=1
-OFFLINE_REQUESTED=0
-REALTIME_LOSSLESS_REQUESTED=0
-INPUT_REPLAY=""
+INPUT_SCRIPT="$ROOT/tools/blastem_start.txt"
+VDP_EVENT_LOG=0
+BIOS_REGION="${BIOS_REGION:-jp}"
+export BIOS_REGION
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -77,12 +50,14 @@ while [ $# -gt 0 ]; do
     --seconds) REC_SECS="$2"; shift 2;;
     --trim) TRIM="$2"; AUTO_AUDIO_TRIM=0; shift 2;;
     --tag) TAG="$2"; shift 2;;
-    --display) DISPLAY_NUM="$2"; shift 2;;
-    --preset) PRESET="$2"; shift 2;;
-    --offline-record) OFFLINE_RECORD=1; OFFLINE_REQUESTED=1; shift;;
-    --realtime-lossless) OFFLINE_RECORD=0; REALTIME_LOSSLESS_REQUESTED=1; shift;;
-    --input-replay) INPUT_REPLAY="$2"; shift 2;;
-    --record-size) RECORD_SIZE="$2"; shift 2;;
+    --backend)
+      [ "${2:-}" = "blastem" ] || { echo "record_movie.sh uses the akiyan/blastem fork" >&2; exit 2; }
+      shift 2;;
+    --input-script) INPUT_SCRIPT="$2"; shift 2;;
+    --vdp-event-log) VDP_EVENT_LOG=1; shift;;
+    --record-size)
+      [ "${2:-}" = "320x224" ] || { echo "BlastEm capture uses native 320x224" >&2; exit 2; }
+      shift 2;;
     --auto-audio-trim) AUTO_AUDIO_TRIM=1; shift;;
     --no-build) BUILD=0; shift;;
     --release-build) BUILD_DEBUG=0; shift;;
@@ -91,29 +66,20 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ "$OFFLINE_REQUESTED" -eq 1 ] && [ "$REALTIME_LOSSLESS_REQUESTED" -eq 1 ]; then
-  echo "--offline-record and --realtime-lossless are mutually exclusive" >&2
-  exit 2
-fi
-if [ "$REALTIME_LOSSLESS_REQUESTED" -eq 1 ] && [ "$PRESET" != "ffv1-flac" ]; then
-  echo "--realtime-lossless requires --preset ffv1-flac" >&2
-  exit 2
-fi
-if [ "$PRESET" = "realtime" ]; then
-  if [ "$OFFLINE_REQUESTED" -eq 1 ]; then
-    echo "--offline-record does not support --preset realtime" >&2
-    exit 2
-  fi
-  OFFLINE_RECORD=0
-fi
+case "$BIOS_REGION" in
+  jp) REGION_SUFFIX="";;
+  us) REGION_SUFFIX="_us";;
+  *) echo "BIOS_REGION must be jp or us" >&2; exit 2;;
+esac
+[ -f "$INPUT_SCRIPT" ] || { echo "input script not found: $INPUT_SCRIPT" >&2; exit 2; }
 
 if [ -n "$CONFIG" ]; then
   CONFIG_STEM="$("$PYTHON" tools/encode_config.py "$CONFIG" --print-stem)"
   # A release build writes out/<stem>_release.cue; DEBUG keeps out/<stem>.cue.
   if [ "$BUILD_DEBUG" -eq 1 ]; then
-    CONFIG_DISC="out/${CONFIG_STEM}.cue"
+    CONFIG_DISC="out/${CONFIG_STEM}${REGION_SUFFIX}.cue"
   else
-    CONFIG_DISC="out/${CONFIG_STEM}_release.cue"
+    CONFIG_DISC="out/${CONFIG_STEM}${REGION_SUFFIX}_release.cue"
   fi
   if [ -z "$DISC" ]; then
     DISC="$CONFIG_DISC"
@@ -149,26 +115,18 @@ if [[ ! "$TRIM" =~ ^(0|[1-9][0-9]*)$ ]]; then
   echo "--trim must be a non-negative integer: $TRIM" >&2
   exit 2
 fi
-if [ "$OFFLINE_RECORD" -eq 1 ] && [ "$PRESET" != "ffv1-flac" ]; then
-  echo "offline recording only supports --preset ffv1-flac" >&2
-  exit 2
-fi
-if [ -n "$INPUT_REPLAY" ] && [ ! -f "$INPUT_REPLAY" ]; then
-  echo "input replay not found: $INPUT_REPLAY" >&2
-  exit 1
-fi
-
 [ -z "$TAG" ] && TAG="rec_$(basename "${DISC%.*}")"
+case "$TAG" in
+    .|..|*/*|*$'\r'*|*$'\n'*) echo "invalid recording tag: $TAG" >&2; exit 2;;
+esac
 [ -z "$OUT" ] && OUT="${TAG}_preview.mp4"
 
 if [ "${SEGACD_RECORD_TMPFS_HELD:-0}" != "1" ]; then
   RECORD_REQUIRED_GB=$((4 + 2 * ((REC_SECS + 59) / 60)))
-  RECORD_KEY="$TAG|$(realpath -m "$DISC")|$REC_SECS|$TRIM|$PRESET|$RECORD_SIZE|$OFFLINE_RECORD"
-  RECORD_INPUT_ARGS=()
-  [ -z "$INPUT_REPLAY" ] || RECORD_INPUT_ARGS=(--input "$INPUT_REPLAY")
+  RECORD_KEY="$TAG|$(realpath -m "$DISC")|$REC_SECS|$TRIM|blastem|$BIOS_REGION|$VDP_EVENT_LOG"
   exec "$PYTHON" tools/tmpfs_workspace.py run-directory \
     --kind record --key "$RECORD_KEY" --required-gb "$RECORD_REQUIRED_GB" \
-    "${RECORD_INPUT_ARGS[@]}" -- \
+    --input "$INPUT_SCRIPT" -- \
     env SEGACD_RECORD_TMPFS_HELD=1 OUTDIR='{output}' \
       "$0" "${ORIGINAL_ARGS[@]}"
 fi
@@ -195,95 +153,29 @@ if [ "$BUILD" -eq 1 ]; then
   else
     echo ">> make disc CONFIG=$CONFIG DEBUG=0 (explicit release build)"
   fi
-  make disc CONFIG="$CONFIG" DEBUG="$BUILD_DEBUG" PYTHON="$PYTHON" >/dev/null
+  make disc CONFIG="$CONFIG" DEBUG="$BUILD_DEBUG" SECURITY_REGION="$BIOS_REGION" PYTHON="$PYTHON" >/dev/null
 fi
 [ -f "$DISC" ] || { echo "disc not found: $DISC (drop --no-build or build it)" >&2; exit 1; }
 
-# run_headless records launch->Escape. The capture loop (shots*interval) is the
-# window during which paced playback is recorded; size it to cover trim plus the
-# requested seconds and a small margin. Offline is the default and uses the same
-# duration to derive an exact emulator-frame limit. Auto trim is an explicit
-# movie-only mode, so give its window enough extra material to search.
-INTERVAL=2
 CAPTURE_LEAD="$TRIM"
 [ "$AUTO_AUDIO_TRIM" -eq 1 ] && CAPTURE_LEAD=30
-SHOTS=$(( (CAPTURE_LEAD + REC_SECS + 10 + INTERVAL - 1) / INTERVAL ))
-REPLAY_FILE="$INPUT_REPLAY"
-MAX_FRAMES=""
-PIPELINE_WALL_START_NS=""
-DISPLAY_ARGS=()
-[ -n "$DISPLAY_NUM" ] && DISPLAY_ARGS=(--display "$DISPLAY_NUM")
-if [ "$OFFLINE_RECORD" -eq 1 ] || [ -n "$INPUT_REPLAY" ]; then
-  RAW_EMULATED_SECONDS=$((CAPTURE_LEAD + REC_SECS + 10))
-  MAX_FRAMES=$((RAW_EMULATED_SECONDS * 60))
-  if [ "$RAW_EMULATED_SECONDS" -le 0 ] || [ "$MAX_FRAMES" -le 0 ]; then
-    echo "capture duration is outside the supported integer range" >&2
-    exit 2
-  fi
-  PIPELINE_WALL_START_NS="$(date +%s%N)"
+MAX_FRAMES=$(( (CAPTURE_LEAD + REC_SECS + 10) * 60 ))
+if [ "$MAX_FRAMES" -le 0 ] || [ "$MAX_FRAMES" -gt 10000000 ]; then
+  echo "capture duration is outside the supported range" >&2
+  exit 2
 fi
-
-if [ "$OFFLINE_RECORD" -eq 1 ] && [ -z "$REPLAY_FILE" ]; then
-  REPLAY_DIR="$CAPTURE_DIR/replay"
-  REPLAY_FILE="$REPLAY_DIR/${TAG}_input.replay"
-  REPLAY_MAX_FRAMES=$((MAX_FRAMES + 120))
-  echo ">> generating input replay ($REPLAY_MAX_FRAMES frames) -> $REPLAY_FILE"
-  # Replay generation is unpaced, so press START on a wall-clock cadence fine
-  # enough to stay dense in emulated time at 8x-26x. The loop stops when
-  # RetroArch exits, so the extra presses cost nothing on a short run.
-  OUTDIR="$REPLAY_DIR" tools/run_headless.sh "$DISC" --tag "${TAG}_replay" \
-    --record-replay "$REPLAY_FILE" --max-frames "$REPLAY_MAX_FRAMES" \
-    --boot-wait 0.3 --presses 600 --press-gap 0.05 "${DISPLAY_ARGS[@]}"
-  [ -s "$REPLAY_FILE" ] || { echo "input replay not produced: $REPLAY_FILE" >&2; exit 1; }
-fi
-
-RECORD_MODE="offline"
-[ "$OFFLINE_RECORD" -eq 0 ] && RECORD_MODE="realtime"
-echo ">> recording ${REC_SECS}s of $DISC (preset $PRESET, mode $RECORD_MODE) ..."
-RECORD_SIZE_ARGS=()
-[ -n "$RECORD_SIZE" ] && RECORD_SIZE_ARGS=(--record-size "$RECORD_SIZE")
-if [ "$OFFLINE_RECORD" -eq 1 ]; then
-  OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
-    --record-offline --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
-    "${DISPLAY_ARGS[@]}" \
-    "${RECORD_SIZE_ARGS[@]}"
-elif [ -n "$INPUT_REPLAY" ] && [ "$PRESET" = "realtime" ]; then
-  OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
-    --record-realtime \
-    --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
-    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
-    "${RECORD_SIZE_ARGS[@]}"
-elif [ -n "$INPUT_REPLAY" ]; then
-  OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
-    --record --record-preset "$PRESET" \
-    --max-frames "$MAX_FRAMES" --play-replay "$REPLAY_FILE" \
-    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
-    "${RECORD_SIZE_ARGS[@]}"
-elif [ "$PRESET" = "realtime" ]; then
-  OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
-    --record-realtime \
-    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
-    "${RECORD_SIZE_ARGS[@]}"
-else
-  OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
-    --record --record-preset "$PRESET" \
-    --shots "$SHOTS" --interval "$INTERVAL" "${DISPLAY_ARGS[@]}" \
-    "${RECORD_SIZE_ARGS[@]}"
-fi
-
+PIPELINE_WALL_START_NS="$(date +%s%N)"
+echo ">> recording ${REC_SECS}s of $DISC with the BlastEm fork"
 RAW_MKV="$CAPTURE_DIR/${TAG}.mkv"
-if [ "$PRESET" = "ffv1-flac" ]; then
-  BOUNDED_MKV="$CAPTURE_DIR/${TAG}_lossless.mkv"
-  BOUNDED_KEY="LOSSLESS"
-  BOUNDED_LABEL="lossless"
-else
-  # flac-fast/realtime converts chroma to yuv420p before lossless H.264 coding,
-  # so it is useful for synchronized checks but must not be labelled lossless.
-  BOUNDED_MKV="$CAPTURE_DIR/${TAG}_native.mkv"
-  BOUNDED_KEY="CAPTURE"
-  BOUNDED_LABEL="native 4:2:0"
-fi
-[ -f "$RAW_MKV" ] || { echo "recording not produced: $RAW_MKV (see $CAPTURE_DIR/retroarch_${TAG}.log)" >&2; exit 1; }
+BOUNDED_MKV="$CAPTURE_DIR/${TAG}_lossless.mkv"
+BLASTEM_ARGS=()
+[ "$VDP_EVENT_LOG" -eq 0 ] || BLASTEM_ARGS=(--vdp-event-log)
+LAUNCHER_LOG="$CAPTURE_DIR/${TAG}_launcher.log"
+OUTDIR="$CAPTURE_DIR" tools/run_headless.sh "$DISC" --tag "$TAG" \
+  --record "$RAW_MKV" --max-frames "$MAX_FRAMES" --input-script "$INPUT_SCRIPT" \
+  "${BLASTEM_ARGS[@]}" | tee "$LAUNCHER_LOG"
+RUN_RECEIPT="$(sed -n 's/^BLASTEM_RECEIPT=//p' "$LAUNCHER_LOG")"
+[ -s "$RUN_RECEIPT" ] || { echo "BlastEm run receipt is missing" >&2; exit 1; }
 
 AUTO_TRIM_WAV=""
 if [ "$AUTO_AUDIO_TRIM" -eq 1 ]; then
@@ -332,12 +224,15 @@ PY
 fi
 
 if [ "$TRIM" = "0" ]; then
-  echo ">> keeping Mega-CD startup in bounded $BOUNDED_LABEL capture -> $BOUNDED_MKV"
+  echo ">> keeping Mega-CD startup in bounded lossless capture -> $BOUNDED_MKV"
+  CAPTURE_CODEC_ARGS=(-c copy)
 else
-  echo ">> explicitly trimming ${TRIM}s from the bounded $BOUNDED_LABEL capture -> $BOUNDED_MKV"
+  echo ">> trimming ${TRIM}s from the bounded lossless capture -> $BOUNDED_MKV"
+  # Decode the precise cut point instead of keeping the previous keyframe.
+  CAPTURE_CODEC_ARGS=(-c:v ffv1 -threads:v 2 -pix_fmt bgr0 -c:a flac)
 fi
 ffmpeg -y -hide_banner -loglevel error -ss "$TRIM" -i "$RAW_MKV" \
-  -t "$REC_SECS" -map 0:v:0 -map '0:a:0?' -c copy "$BOUNDED_MKV"
+  -t "$REC_SECS" -map 0:v:0 -map 0:a:0 "${CAPTURE_CODEC_ARGS[@]}" "$BOUNDED_MKV"
 
 if [ "$PREVIEW" -eq 1 ]; then
   echo ">> transcoding verification preview -> $OUT"
@@ -356,18 +251,10 @@ else
   OUT_ACTUAL=""
 fi
 
-if [ -n "$PIPELINE_WALL_START_NS" ]; then
-  PIPELINE_WALL_END_NS="$(date +%s%N)"
-  PIPELINE_WALL_SECONDS="$(awk -v start="$PIPELINE_WALL_START_NS" -v end="$PIPELINE_WALL_END_NS" \
-    'BEGIN { printf "%.3f", (end - start) / 1000000000 }')"
-fi
+PIPELINE_WALL_END_NS="$(date +%s%N)"
+PIPELINE_WALL_SECONDS="$(awk -v start="$PIPELINE_WALL_START_NS" -v end="$PIPELINE_WALL_END_NS" \
+  'BEGIN { printf "%.3f", (end - start) / 1000000000 }')"
 
-rm -f "$RAW_MKV"
-[ -z "$AUTO_TRIM_WAV" ] || rm -f "$AUTO_TRIM_WAV"
-[ -n "$REPLAY_FILE" ] && echo "REPLAY=$REPLAY_FILE"
-[ -n "$PIPELINE_WALL_START_NS" ] && echo "PIPELINE_WALL_SECONDS=$PIPELINE_WALL_SECONDS"
-echo "$BOUNDED_KEY=$BOUNDED_MKV"
-[ -z "$OUT_ACTUAL" ] || echo "OUT=$OUT_ACTUAL"
 ARTIFACTS=("$BOUNDED_MKV")
 [ -z "$OUT_ACTUAL" ] || ARTIFACTS+=("$OUT_ACTUAL")
 for artifact in "${ARTIFACTS[@]}"; do
@@ -383,3 +270,31 @@ for artifact in "${ARTIFACTS[@]}"; do
   echo "AUDIO=$artifact codec=$AUDIO_CODEC rate=$AUDIO_RATE channels=$AUDIO_CHANNELS packets=$AUDIO_PACKETS"
   ffprobe -hide_banner "$artifact" 2>&1 | grep -E 'Input|Duration|Stream' || true
 done
+
+"$PYTHON" - "$RUN_RECEIPT" "$BOUNDED_MKV" "$TRIM" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+
+from run_blastem import write_receipt
+
+receipt_path, recording = map(Path, sys.argv[1:3])
+data = json.loads(receipt_path.read_text(encoding="utf-8"))
+if data.get("complete") is not True:
+    raise SystemExit(f"incomplete BlastEm receipt: {receipt_path}")
+stat = recording.stat()
+data["lossless_recording"] = {
+    "path": str(recording.resolve()),
+    "size": stat.st_size,
+    "mtime_ns": stat.st_mtime_ns,
+    "trim_seconds": int(sys.argv[3]),
+}
+write_receipt(receipt_path, data)
+PYTHON
+
+rm -f "$RAW_MKV"
+[ -z "$AUTO_TRIM_WAV" ] || rm -f "$AUTO_TRIM_WAV"
+echo "PIPELINE_WALL_SECONDS=$PIPELINE_WALL_SECONDS"
+echo "RECORD_DIR=$CAPTURE_DIR"
+echo "LOSSLESS=$BOUNDED_MKV"
+[ -z "$OUT_ACTUAL" ] || echo "OUT=$OUT_ACTUAL"

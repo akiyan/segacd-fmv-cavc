@@ -31,18 +31,14 @@ SEPARATOR = (62, 64, 72)
 SECTION_BG = (18, 18, 22)
 HEADER_HEIGHT = 220
 SECTION_HEADER_HEIGHT = 38
-LOGVDPLINE_KEYS = (
-    "pattern_dma_blank_words",
-    "pattern_dma_active_words",
-    "pattern_cpu_blank_words",
-    "pattern_cpu_active_edge_words",
-    "name_table_dma_blank_words",
-    "name_table_dma_active_words",
-    "pattern_dma_commands",
+VDP_WRITE_KEYS = (
+    "pattern_vram_write_bytes",
+    "name_table_vram_write_bytes",
+    "cram_write_bytes",
 )
 SECTION_LABELS = {
     "timeline": "/timeline",
-    "logvdpline": "/logvdpline",
+    "vdpline": "/vdpline",
     "hudline": "/hudline",
 }
 
@@ -136,25 +132,25 @@ def split_hudline_ranges(
     receipt: dict,
     image_height: int,
 ) -> tuple[tuple[int, int] | None, list[tuple[int, int]]]:
-    """Separate the optional LOGVDP rows from the ordinary HUDline body."""
+    """Separate the optional VDP write rows from the ordinary HUDline body."""
     geometry = hudline_row_geometry(receipt, image_height)
     positions = {row["key"]: index for index, row in enumerate(geometry)}
-    present = [key in positions for key in LOGVDPLINE_KEYS]
+    present = [key in positions for key in VDP_WRITE_KEYS]
     plot_top = int(receipt["plot_top"])
     if not any(present):
         return None, [(plot_top, image_height)]
     if not all(present):
         missing = [
-            key for key, exists in zip(LOGVDPLINE_KEYS, present, strict=True)
+            key for key, exists in zip(VDP_WRITE_KEYS, present, strict=True)
             if not exists
         ]
         raise SystemExit(
-            f"hudline has an incomplete LOGVDP row block: {missing}"
+            f"hudline has an incomplete VDP write row block: {missing}"
         )
 
-    indices = [positions[key] for key in LOGVDPLINE_KEYS]
+    indices = [positions[key] for key in VDP_WRITE_KEYS]
     if indices != list(range(indices[0], indices[0] + len(indices))):
-        raise SystemExit("hudline LOGVDP rows are not one contiguous block")
+        raise SystemExit("hudline VDP write rows are not one contiguous block")
     log_top = geometry[indices[0]]["top"]
     log_bottom = geometry[indices[-1]]["bottom"]
     hud_ranges = [
@@ -166,7 +162,7 @@ def split_hudline_ranges(
         if bottom > top
     ]
     if not hud_ranges:
-        raise SystemExit("hudline contains no ordinary rows outside LOGVDP")
+        raise SystemExit("hudline contains no ordinary rows outside VDP write")
     return (log_top, log_bottom), hud_ranges
 
 
@@ -253,12 +249,12 @@ def main() -> None:
         raise SystemExit("invalid timeline row geometry")
     # The HUD panel owns the one shared horizontal scale and footer. Crop the
     # codec panel at its final data row so its duplicate scale and explanation
-    # disappear. When present, extract the exact LOGVDP row block into a middle
+    # disappear. When present, extract the exact VDP write row block into a middle
     # panel; concatenate the remaining HUD source ranges without changing any
     # row pixels.
     upper = timeline_image.crop(
         (0, timeline_plot_top, timeline_image.width, timeline_plot_bottom))
-    logvdpline_range, hudline_ranges = split_hudline_ranges(
+    vdpline_range, hudline_ranges = split_hudline_ranges(
         hudline,
         hudline_image.height,
     )
@@ -269,13 +265,13 @@ def main() -> None:
         "source": "timeline",
         "source_segments": [(timeline_plot_top, timeline_plot_bottom)],
     }]
-    if logvdpline_range is not None:
+    if vdpline_range is not None:
         sections.append({
-            "kind": "logvdpline",
+            "kind": "vdpline",
             "image": crop_vertical_segments(
-                hudline_image, [logvdpline_range]),
+                hudline_image, [vdpline_range]),
             "source": "hudline",
-            "source_segments": [logvdpline_range],
+            "source_segments": [vdpline_range],
         })
     sections.append({
         "kind": "hudline",
@@ -571,7 +567,7 @@ def main() -> None:
         "gap": args.gap,
         "header_height": HEADER_HEIGHT,
         "section_header_height": SECTION_HEADER_HEIGHT,
-        "logvdpline_present": logvdpline_range is not None,
+        "vdpline_present": vdpline_range is not None,
         "panels": [
             {
                 "kind": "header",

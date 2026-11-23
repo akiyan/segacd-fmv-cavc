@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Detect visible-time name-table DMA in a lossless DEBUG recording."""
+"""Check visible raster changes within each held frame of a DEBUG recording."""
 
 from __future__ import annotations
 
@@ -73,7 +73,7 @@ def load_name_table_transfers(path: Path) -> dict[int, tuple[int, int]]:
         missing = required - set(reader.fieldnames or ())
         if missing:
             raise ValueError(
-                f"GPGX VDP TSV lacks columns: {sorted(missing)}")
+                f"Archived VDP TSV lacks columns: {sorted(missing)}")
         transfers = {
             int(row["frame"]): (
                 int(row["name_table_dma_blank_words"]),
@@ -82,7 +82,7 @@ def load_name_table_transfers(path: Path) -> dict[int, tuple[int, int]]:
             for row in reader
         }
     if not transfers:
-        raise ValueError("GPGX VDP TSV has no frame rows")
+        raise ValueError("Archived VDP TSV has no frame rows")
     return transfers
 
 
@@ -199,7 +199,7 @@ def attach_name_table_transfers(
         missing = sorted(set(frames) - set(transfers))
         extra = sorted(set(transfers) - set(frames))
         raise ValueError(
-            "HUD/video and GPGX VDP frame axes differ: "
+            "HUD/video and archived VDP frame axes differ: "
             f"missing={missing[:8]} extra={extra[:8]}")
     for row in rows:
         blank, active = transfers[int(row["frame"])]
@@ -226,8 +226,8 @@ def main() -> None:
     parser.add_argument("video", type=Path)
     parser.add_argument("hud_tsv", type=Path)
     parser.add_argument(
-        "--gpgx-vdp-tsv", type=Path, required=True,
-        help="frame-aligned transfer TSV from extract_frame_tsv.py",
+        "--archive-vdp-tsv", type=Path,
+        help="optional archived frame-aligned DMA TSV with active/blank word counts",
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
@@ -237,31 +237,35 @@ def main() -> None:
     args = parser.parse_args()
     if (
         args.hud_tsv.suffix != ".tsv"
-        or args.gpgx_vdp_tsv.suffix != ".tsv"
+        or (args.archive_vdp_tsv is not None and args.archive_vdp_tsv.suffix != ".tsv")
         or args.output.suffix != ".tsv"
     ):
-        parser.error("HUD, GPGX VDP, and detector paths must use .tsv")
-    if not all(path.is_file() for path in (
-        args.video, args.hud_tsv, args.gpgx_vdp_tsv,
-    )):
-        parser.error("video, HUD TSV, and GPGX VDP TSV must exist")
+        parser.error("HUD, archived VDP, and detector paths must use .tsv")
+    inputs = [args.video, args.hud_tsv]
+    if args.archive_vdp_tsv is not None:
+        inputs.append(args.archive_vdp_tsv)
+    if not all(path.is_file() for path in inputs):
+        parser.error("video, HUD TSV, and any archived VDP TSV must exist")
     try:
         spans = load_spans(args.hud_tsv)
         rows = inspect(
             args.video, spans, skip_top_rows=args.skip_top_rows)
-        attach_name_table_transfers(
-            rows, load_name_table_transfers(args.gpgx_vdp_tsv))
+        if args.archive_vdp_tsv is not None:
+            attach_name_table_transfers(rows, load_name_table_transfers(args.archive_vdp_tsv))
+        else:
+            for row in rows:
+                row["status"] = "RASTER_ONLY"
     except (OSError, subprocess.CalledProcessError, ValueError) as exc:
         raise SystemExit(str(exc)) from exc
     write_tsv(args.output, rows)
-    tears = [row for row in rows if row["status"] != "PASS"]
+    tears = [row for row in rows if row["status"] == "TEAR"]
     changed = [row for row in rows if row["visual_status"] != "STABLE"]
-    active_words = sum(
-        int(row["name_table_dma_active_words"]) for row in rows)
     print(
         f"tearing detector: {len(rows)} movie frames, "
-        f"{active_words} active-display NT DMA words, "
         f"{len(changed)} visually changing raster groups")
+    if args.archive_vdp_tsv is not None:
+        active_words = sum(int(row["name_table_dma_active_words"]) for row in rows)
+        print(f"Archived VDP trace: {active_words} active-display NT DMA words")
     print(args.output.resolve())
     if tears:
         examples = ", ".join(str(row["frame"]) for row in tears[:12])

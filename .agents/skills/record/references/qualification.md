@@ -23,18 +23,19 @@ HUD-free capture uses the `release` chain and has no HUD gate of its own.
 
 ## Recorder requalification
 
-Only when RetroArch/core/recording timing/settings change or results are
-suspect: record one realtime-lossless and two offline captures of the **same
-Replay**, disc and configuration. Compare each offline result to the realtime
-capture using:
+When the fork build, recorder, or timing settings change, or the result is
+suspect, record two offline captures of the same disc, BIOS, fork binary and
+frame-indexed input. Request `--vdp-event-log` for both. Compare the files:
 
 ```sh
-tools/python.sh tools/compare_recordings.py "$REALTIME" "$OFFLINE" \
+tools/python.sh tools/compare_recordings.py "$CAPTURE_A" "$CAPTURE_B" \
   --json /path/to/comparison.json
+cmp "$VDP_A" "$VDP_B"
 ```
 
-The comparator checks every decoded video frame, PCM sample, packet timing,
-metadata and counts without alignment/trimming. The Replay-generation run is
-not the realtime baseline: its initial-state audio boundary may differ by a
-sample. Before increasing emulator concurrency, compare concurrent runs with
-the one-instance baseline in the same way.
+The comparator checks decoded video, PCM, packet timing, metadata, and counts
+from startup through the final scanout. Use the run receipts to verify that the
+captures used the same inputs. The launcher receipt binds the final bounded
+MKV under `lossless_recording` and names the VDP trace under `vdp_event_log`.
+Use untrimmed captures to match scanouts directly. For a concurrency change,
+compare against the single-instance result using the same method.

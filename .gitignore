@@ -28,5 +28,7 @@ __pycache__/
 /assets/*.avi
 harness/**/out/
 
-# Locally built diagnostic emulator core and its build receipts.
+# Locally built standalone emulator.
+/vendor/blastem/
+# Former generated core installations may still exist in local checkouts.
 /vendor/gpgx-logvdp/

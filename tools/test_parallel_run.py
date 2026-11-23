@@ -56,13 +56,14 @@ class ParallelRunTests(unittest.TestCase):
                 through="record",
                 use_gpu=False,
                 record_seconds=41,
+                bios_region="us",
             )
             self.assertEqual(
                 [stage for stage, _command in commands],
                 ["sim", "disc", "record"],
             )
+            self.assertIn("SECURITY_REGION=us", commands[1][1])
             record = commands[-1][1]
-            self.assertIn("320x224", record)
             self.assertIn("41", record)
             self.assertNotIn("--gpu", commands[0][1])
 

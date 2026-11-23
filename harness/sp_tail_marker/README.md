@@ -22,7 +22,7 @@ interval every 48 frames. A mismatch increments the existing control-desync
 counter, so the ordinary full-loop HUD gate records a failure without adding a
 new playback decision or HUD field.
 
-Use a full fixed-Replay recording and require:
+Record a complete loop with fixed frame-indexed input and require:
 
 - every expected content frame is present;
 - `sector_slip`, `control_desync`, and `audio_resync` remain zero;

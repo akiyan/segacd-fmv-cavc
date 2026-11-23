@@ -173,7 +173,7 @@ $(OUT_DIR)/CDCBENCH.cue: $(OUT_DIR)/CDCBENCH.iso
 	@printf 'FILE "CDCBENCH.iso" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
 # --- fontbench: gate-array Font bit vs CPU LUT の 1bpp->4bpp 展開ベンチ ---
-# 使い方: make fontbench && tools/run_headless.sh out/FONTBENCH.cue
+# Capture FONTBENCH with tools/run_headless.sh --max-frames 1800 --record FILE.
 # 表示行と手順は harness/fontbench/README.md 参照。CD読み無し(起動後は自走)。
 FONTBENCH_DISC := $(OUT_DIR)/disc_fontbench
 

@@ -41,8 +41,8 @@ final result: passed
 - The exported 90-second MP4 fully decodes, contains all 2,714 frames, and its
   AAC-LC audio has zero measured sample lag and 0.99866 correlation with the
   canonical PCM model after sample-rate conversion.
-- A browser-built ISO boots and displays changing movie images in Genesis Plus
-  GX. Input data is kept private in the managed tmpfs comparison workspace.
+- For emulator playback qualification, run the browser-built ISO with the
+  pinned akiyan BlastEm fork. Keep the input data in the managed comparison workspace.
 
 Ordinary media preprocessing uses FFmpeg Wasm. The preprocessing harness
 compares every RGB pixel and PCM sample with native FFmpeg using recorded
@@ -56,9 +56,8 @@ ordinary-input functional coverage remain separate.
 The current UI tests cover crop drag/resize, bounds/reset, input aspect validation,
 fps/fit, cold-cap auto/manual/reset, cancellation/retry, progress, local video
 play/seek/mute, ZIP invalidation, desktop layout, mobile overflow and page errors.
-Generated MP4 playback pauses in Framing mode and resumes in Playback. The
-emulator opens in its own tab and receives the generated ISO. Production contains
-no BIOS; development auto-load is restricted to loopback Vite middleware.
+Generated MP4 playback pauses in Framing mode and resumes in Playback. Native
+playback qualification uses the exported ISO and the standalone fork.
 
 Ten processing stages include normalization, MOSAIC-GM, quantization, planning,
 encoding, packing verification, canonical reconstruction, MP4, ISO/CUE and ZIP.

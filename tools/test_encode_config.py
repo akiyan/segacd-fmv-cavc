@@ -2,6 +2,7 @@
 """Regression tests for TOML-derived artifact names."""
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +16,7 @@ from encode_config import (
     apply_profile_env,
     consume_config_arg,
     load_profile,
+    matches_pack_profile,
 )
 
 
@@ -44,6 +46,17 @@ algorithm = "mosaic-gm"
 
 
 class EncodeProfileArtifactTests(unittest.TestCase):
+    def test_pack_reuses_decisions_after_emulator_title_rename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "movie.toml"
+            previous = PROFILE + '\n[youtube]\nplayback_title = "Demo in Genesis Plus GX"\n'
+            recorded_hash = hashlib.sha256(previous.encode()).hexdigest()
+            migrated = previous.replace("in Genesis Plus GX", "in the BlastEm fork")
+            path.write_text(migrated)
+            self.assertTrue(matches_pack_profile(load_profile(path), recorded_hash))
+            path.write_text(migrated.replace('fps = "30"', 'fps = "24"'))
+            self.assertFalse(matches_pack_profile(load_profile(path), recorded_hash))
+
     def test_removed_schema_v4_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "old-schema.toml"

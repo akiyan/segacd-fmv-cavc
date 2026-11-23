@@ -17,32 +17,30 @@ Release images use `out/PROFILE_release.iso` and `.cue`. For recording:
 
 ```sh
 tools/record_movie.sh --config profiles/PROFILE.toml --release-build \
-  --seconds N --tag STEM_rel --record-size 320x224
+  --seconds N --tag STEM_rel
 ```
 
-Follow `record` for capture mechanics. Generate a Replay for this disc rather
-than reusing the DEBUG binary's Replay. Use configured runtime roots.
+Follow `record` for capture mechanics. Use the same BIOS, fork binary and
+frame-indexed input for the DEBUG and release qualification runs.
 
 ## Publication evidence
 
-For a qualified upload, retain the complete-loop PASS DEBUG baseline of the
-same stream/player version, its gate, and both recordings' logs. Record hashes
-of HEADER.DAT, BODY.DAT, paltab.bin and palidx.bin before building release;
-require the rebuilt stream bytes to match. A discrepancy needs investigation,
-not an automatic source re-encode.
+For upload, retain a complete-loop PASS DEBUG capture of the same stream and
+player version, its gate, and both BlastEm run receipts. Capture both with
+`--vdp-event-log` and startup/tail intact. Compare the hashes of HEADER.DAT,
+BODY.DAT, paltab.bin and palidx.bin from the DEBUG and release disc builds.
 
 ```sh
-tools/python.sh .agents/skills/release/scripts/compare_logvdp.py \
-  --baseline "$DEBUG_LOG" --release "$RELEASE_LOG" \
-  --json /path/to/release_logvdp_compare.json
+tools/python.sh .agents/skills/release/scripts/compare_blastem.py \
+  --baseline "$DEBUG_RECEIPT" --release "$RELEASE_RECEIPT" \
+  --baseline-gate "$DEBUG_GATE" --header "$HEADER" \
+  --json logs/STEM_release_vdp.json
 ```
 
-This compares actual player DMA/error traces. Keep the tool's tolerance;
-removing HUD lowers total DMA, so active-display percentage alone is not a
-regression measure. Inspect lossless boot, advancing content and tail, and
-confirm the HUD is absent. Preserve matching stream hashes, baseline gate,
-LOGVDP comparison and visual evidence. A release capture has no HUD gate of
-its own. If the baseline is absent, report the missing qualification and act
-within the user's recording/validation scope; do not add an unrequested full
-pipeline. For authorized publication, pass the evidence and lossless file to
-`compilation` without a redundant approval pause.
+The receipts identify the recordings and their VDP logs. The trace aligns
+movie publications, and the comparison checks their recorded pixels with the
+DEBUG overlay area masked. Review
+any cadence differences and inspect lossless boot, advancing content and tail
+to confirm the HUD is absent. Retain the report and the stream hashes.
+If evidence is missing, report the scope actually verified. For an authorized
+upload, pass the evidence and lossless file to `compilation`.

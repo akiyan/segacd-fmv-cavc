@@ -76,8 +76,8 @@ exclusive lock per media `<stem>`.
 
 Sim acquires CPU/GPU tokens only for Extract, Palette, and Quantize.
 `render_analysis.py` and record-preview transcoding use the same token pool.
-Xvfb allocates a free display dynamically and each emulator gets a private
-RetroArch system directory. `tools/parallel_run.py` divides CPU workers across
+The `akiyan/blastem` fork runs under the EMU token pool with a private
+configuration and save directory for each run. `tools/parallel_run.py` divides CPU workers across
 profiles and retains the sim workspace lease between stages. A second process for
 the same stem fails immediately; it never shares managed paths or output files.
 
@@ -524,8 +524,9 @@ make disc CONFIG=profiles/<profile>.toml DEBUG=1
 
 `sim.py` resolves the profile once and stores the effective settings and TOML
 SHA-256 in `decisions.pkl`. `pack_stream.py` uses that frozen configuration and
-requires a supplied TOML hash to match. Editing a profile therefore requires a
-new sim run.
+authenticates the supplied TOML against the recorded hash. The playback label
+and title spelling from the emulator migration also authenticate against the
+previous TOML hash. An encode setting change requires a new sim run.
 
 The TOML filename is the artifact identity:
 
@@ -728,8 +729,9 @@ media `<stem>` ごとのexclusive lockを実装します。
 
 simはExtract、Palette、Quantizeの間だけCPU/GPU tokenを取得します。
 `render_analysis.py` とrecord preview transcodeも同じtoken poolを使います。
-Xvfbは空きdisplayを動的に割り当て、各emulatorはprivate RetroArch system directoryを
-使います。`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
+`akiyan/blastem` フォークはEMU token poolを使い、実行ごとに設定とセーブ先を
+分離します。
+`tools/parallel_run.py` はprofile間でCPU workerを分配し、stage間もsimの
 workspace leaseを保持します。同じstemの2つ目のprocessは即時FAILし、managed pathや
 output fileを共有しません。
 
@@ -1133,7 +1135,8 @@ make disc CONFIG=profiles/<profile>.toml DEBUG=1
 
 `sim.py` はprofileを1回解決し、effective settingとTOML SHA-256を `decisions.pkl` に
 保存します。`pack_stream.py` はその固定済みconfigurationを使い、指定TOMLのhash一致を
-要求します。profileを編集した場合は新しいsim runが必要です。
+確認します。エミュレータ移行時の再生ラベルとタイトルの表記は、移行前のTOML hashでも
+照合できます。エンコード設定を変えた場合は新しいsim runが必要です。
 
 TOML filenameがartifact identityです。
 

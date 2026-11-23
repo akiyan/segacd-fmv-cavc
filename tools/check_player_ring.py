@@ -770,7 +770,8 @@ for token in (
         "lea\tROUTING, a0",
         "move.l\tring_tail, d0",
         "pp_apply_space:",
-        "move.l\tapply_tail, d0",
+        "bsr.s\tapply_available",
+        "cmpi.w\t#APPLY_SIZE-0x1000, d0",
         "pp_cdc:",
 ):
     if token not in pump:

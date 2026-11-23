@@ -350,7 +350,7 @@ def validate_observations(
         current += 1
         first_captures.append(observation.capture)
         if current == final_frame:
-            # The final frame may be held until RetroArch exits.  Nothing after
+            # The final frame may be held until the emulator exits. Nothing after
             # its first appearance belongs to this cadence proof.
             return CadenceReport(
                 anchor_capture, final_frame, tuple(first_captures), accepted

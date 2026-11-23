@@ -1,7 +1,7 @@
 # Parallel profile-run qualification
 
 This harness verifies that independent SEGA-CD FMV profiles can overlap without
-sharing output paths, tmpfs leases, X displays, RetroArch system directories,
+sharing output paths, workspace leases, emulator configuration and save directories,
 or fixed build intermediates.
 
 The two profiles intentionally encode only the first eight seconds of Bad Apple
@@ -17,8 +17,7 @@ local pipeline. The sim transfers its live tmpfs lease to the parent before
 exiting, and the recording lease remains held through HUD extraction, so
 another allocation cannot evict live inputs. CPU-heavy stages use shared CPU
 tokens, GPU stages use the GPU token, and each `run_headless.sh` invocation uses
-an EMU token. Xvfb chooses a free display with `-displayfd`; an explicitly
-requested display fails if another server owns it.
+an EMU token. Each BlastEm process gets its own configuration and save path.
 
 Interactive `$run` uses this orchestrator even for one profile. That rule is
 what preserves the pipeline-wide lock and lease when unrelated Codex sessions
@@ -71,18 +70,16 @@ optional and requires an explicit request for that destination.
 Every invocation writes one plain-text log per profile and a UTF-8 TSV summary
 under `logs/parallel-run/`. A qualification run must also compare the
 sequential and concurrent `decisions.pkl`, `HEADER.DAT`, `BODY.DAT`, and
-`MOVIE.DAT` hashes. Recording qualification uses the same Replay with
+`MOVIE.DAT` hashes. Recording qualification uses the same frame-indexed input with
 `tools/compare_recordings.py`; decoded frames, PCM, timestamps, packet
 durations, and stream metadata must match exactly.
 
-## Qualified result
+## Archived earlier-runner qualification
 
 The numbers below were measured with a 320x224 plus 256x224 profile pair. The
-256x224 half is gone with H32, so the isolation qualification must be re-run on
-the current 320x224 plus 320x176 pair before these figures are cited again. The
-resource-isolation conclusions they established still define what a passing run
-must show: identical artifact hashes between the sequential and concurrent
-runs, separate Xvfb displays, and no cancellation under shared-token pressure.
+256x224 half was removed with H32. The current 320x224 plus 320x176 pair uses
+independent BlastEm processes. Compare sequential and concurrent artifact
+hashes and recordings to qualify that path.
 
 On the 26-CPU-token workstation, a clean sequential H40+H32 sim/disc run took
 15.8 seconds and the two-job run took 9.9 seconds, a 37% wall-time reduction.

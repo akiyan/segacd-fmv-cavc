@@ -93,16 +93,10 @@ HEX_COLUMNS = {
     "name_table_dma_ready_vcounter",
 }
 
-GPGX_VDP_COLUMNS = (
-    "pattern_dma_commands",
-    "pattern_dma_updates",
-    "pattern_dma_blank_words",
-    "pattern_dma_active_words",
-    "pattern_cpu_blank_words",
-    "pattern_cpu_active_words",
-    "pattern_cpu_boundary_words",
-    "name_table_dma_blank_words",
-    "name_table_dma_active_words",
+BLASTEM_VDP_COLUMNS = (
+    "pattern_vram_write_bytes",
+    "name_table_vram_write_bytes",
+    "cram_write_bytes",
 )
 
 
@@ -111,9 +105,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("tsv", type=Path)
     parser.add_argument("--gate-json", type=Path, required=True)
     parser.add_argument(
-        "--gpgx-vdp-tsv",
+        "--blastem-vdp-tsv",
         type=Path,
-        help="optional frame TSV from harness/gpgx_logvdp/extract_frame_tsv.py",
+        help="optional frame TSV from harness/blastem/extract_frame_tsv.py",
     )
     parser.add_argument("--config", type=Path)
     parser.add_argument("--output", type=Path)
@@ -133,7 +127,7 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def load_gpgx_vdp_tsv(
+def load_blastem_vdp_tsv(
     path: Path,
     hud_path: Path,
     hud_data: dict[str, np.ndarray],
@@ -141,34 +135,30 @@ def load_gpgx_vdp_tsv(
     with path.open("r", encoding="utf-8", newline="") as source:
         reader = csv.DictReader(source, delimiter="\t")
         fields = set(reader.fieldnames or ())
-        missing = {"frame", *GPGX_VDP_COLUMNS} - fields
+        missing = {"frame", *BLASTEM_VDP_COLUMNS} - fields
         if missing:
-            raise SystemExit(f"GPGX VDP TSV lacks columns: {sorted(missing)}")
+            raise SystemExit(f"BlastEm VDP TSV lacks columns: {sorted(missing)}")
         rows = list(reader)
     frames = np.asarray([int(row["frame"]) for row in rows], np.int64)
     if not np.array_equal(frames, hud_data["frame"]):
-        raise SystemExit("GPGX VDP TSV frame axis does not match the HUD TSV")
+        raise SystemExit("BlastEm VDP TSV frame axis does not match the HUD TSV")
     arrays = {
         key: np.asarray([int(row[key]) for row in rows], np.float64)
-        for key in GPGX_VDP_COLUMNS
+        for key in BLASTEM_VDP_COLUMNS
     }
-    arrays["pattern_cpu_active_edge_words"] = (
-        arrays["pattern_cpu_active_words"]
-        + arrays["pattern_cpu_boundary_words"]
-    )
 
     receipt_path = Path(str(path) + ".json")
     if not receipt_path.is_file():
-        raise SystemExit(f"GPGX VDP TSV receipt is missing: {receipt_path}")
+        raise SystemExit(f"BlastEm VDP TSV receipt is missing: {receipt_path}")
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
-    if receipt.get("kind") != "gpgx-logvdp-frame-transfer":
-        raise SystemExit("GPGX VDP TSV receipt has the wrong kind")
+    if receipt.get("kind") != "blastem-vdp-frame-writes":
+        raise SystemExit("BlastEm VDP TSV receipt has the wrong kind")
     if int(receipt.get("frames", -1)) != len(rows):
-        raise SystemExit("GPGX VDP TSV receipt frame count does not match")
+        raise SystemExit("BlastEm VDP TSV receipt frame count does not match")
     if str(receipt.get("output_tsv_sha256")) != digest(path):
-        raise SystemExit("GPGX VDP TSV hash does not match its receipt")
+        raise SystemExit("BlastEm VDP TSV hash does not match its receipt")
     if str(receipt.get("hud_tsv_sha256")) != digest(hud_path):
-        raise SystemExit("GPGX VDP TSV was extracted against another HUD TSV")
+        raise SystemExit("BlastEm VDP TSV was extracted against another HUD TSV")
 
     return arrays, receipt, receipt_path
 
@@ -779,70 +769,13 @@ def row_specs(
                     float(gate.get("jitter_headroom_kib", 0))),
                 style.COL_PRG, "prgbuf_jitter_peak_kib"),
     ]
-    if "pattern_dma_blank_words" in data:
-        pattern_phase_max = max(
-            1,
-            *(
-                timed_max(key)
-                for key in (
-                    "pattern_dma_blank_words",
-                    "pattern_dma_active_words",
-                    "pattern_cpu_blank_words",
-                    "pattern_cpu_active_edge_words",
-                )
-            ),
-        )
-        rows.extend([
-            RowSpec(
-                "pattern_dma_blank_words",
-                "PATTERN DMA IN BLANK",
-                "pattern words/frame",
-                pattern_phase_max,
-                (94, 174, 224),
-            ),
-            RowSpec(
-                "pattern_dma_active_words",
-                "PATTERN DMA IN ACTIVE",
-                "pattern words/frame",
-                pattern_phase_max,
-                WARN,
-            ),
-            RowSpec(
-                "pattern_cpu_blank_words",
-                "PATTERN CPU IN BLANK",
-                "direct + repair words/frame",
-                pattern_phase_max,
-                (102, 193, 169),
-            ),
-            RowSpec(
-                "pattern_cpu_active_edge_words",
-                "PATTERN CPU IN ACTIVE*",
-                "active + V-edge words/frame",
-                pattern_phase_max,
-                (238, 135, 73),
-            ),
-            RowSpec(
-                "name_table_dma_blank_words",
-                "NAME TABLE DMA IN BLANK",
-                "name-table words/frame",
-                max(1, timed_max("name_table_dma_blank_words")),
-                (132, 160, 220),
-            ),
-            RowSpec(
-                "name_table_dma_active_words",
-                "NAME TABLE DMA IN ACTIVE",
-                "name-table words/frame",
-                max(1, timed_max("name_table_dma_active_words")),
-                FAIL,
-            ),
-            RowSpec(
-                "pattern_dma_commands",
-                "PATTERN DMA COMMANDS",
-                "commands/frame",
-                max(1, timed_max("pattern_dma_commands")),
-                style.COL_RUN,
-            ),
-        ])
+    if "pattern_vram_write_bytes" in data:
+        for key, label, color in (
+            ("pattern_vram_write_bytes", "PATTERN VRAM WRITES", (94, 174, 224)),
+            ("name_table_vram_write_bytes", "NAME TABLE VRAM WRITES", (132, 160, 220)),
+            ("cram_write_bytes", "CRAM WRITES", (102, 193, 169)),
+        ):
+            rows.append(RowSpec(key, label, "bytes/frame", max(1, timed_max(key)), color))
     if "pump_gap_ticks" in data:
         frame_ticks = math.ceil(
             1000.0 / float(gate["content_fps"]) / 0.03072
@@ -1232,14 +1165,14 @@ def main() -> None:
     rows, data, _fields = load_tsv(tsv_path)
     gate = load_gate(gate_path)
     validate(tsv_path, gate_path, config_path, rows, data, gate)
-    gpgx_vdp_path = args.gpgx_vdp_tsv.resolve() if args.gpgx_vdp_tsv else None
-    gpgx_vdp_receipt = None
-    gpgx_vdp_receipt_path = None
-    if gpgx_vdp_path is not None:
-        gpgx_data, gpgx_vdp_receipt, gpgx_vdp_receipt_path = (
-            load_gpgx_vdp_tsv(gpgx_vdp_path, tsv_path, data)
+    blastem_vdp_path = args.blastem_vdp_tsv.resolve() if args.blastem_vdp_tsv else None
+    blastem_vdp_receipt = None
+    blastem_vdp_receipt_path = None
+    if blastem_vdp_path is not None:
+        blastem_vdp_data, blastem_vdp_receipt, blastem_vdp_receipt_path = (
+            load_blastem_vdp_tsv(blastem_vdp_path, tsv_path, data)
         )
-        data.update(gpgx_data)
+        data.update(blastem_vdp_data)
     display_vblanks, display_vblank_pattern = derive_display_vblanks(
         data,
         float(gate["content_fps"]),
@@ -1478,35 +1411,16 @@ def main() -> None:
             and name_table_dma_ready_vcounter_max is not None
         ) else ""
     )
-    gpgx_vdp_maxima = (
-        {
-            key: int(data[key][1:].max(initial=0))
-            for key in (
-                "pattern_dma_commands",
-                "pattern_dma_blank_words",
-                "pattern_dma_active_words",
-                "pattern_cpu_blank_words",
-                "pattern_cpu_active_words",
-                "pattern_cpu_boundary_words",
-                "pattern_cpu_active_edge_words",
-                "name_table_dma_blank_words",
-                "name_table_dma_active_words",
-            )
-        }
-        if gpgx_vdp_path is not None else None
+    blastem_vdp_maxima = (
+        {key: int(data[key][1:].max(initial=0)) for key in BLASTEM_VDP_COLUMNS}
+        if blastem_vdp_path is not None else None
     )
-    gpgx_vdp_text = (
-        "LOGVDP max "
-        "pattern DMA blank/active "
-        f"{gpgx_vdp_maxima['pattern_dma_blank_words']}/"
-        f"{gpgx_vdp_maxima['pattern_dma_active_words']}; "
-        f"CPU blank/active+edge "
-        f"{gpgx_vdp_maxima['pattern_cpu_blank_words']}/"
-        f"{gpgx_vdp_maxima['pattern_cpu_active_edge_words']}; "
-        f"NT blank/active "
-        f"{gpgx_vdp_maxima['name_table_dma_blank_words']}/"
-        f"{gpgx_vdp_maxima['name_table_dma_active_words']} words; "
-        if gpgx_vdp_maxima is not None else ""
+    blastem_vdp_text = (
+        "VDP max pattern/NT/CRAM "
+        f"{blastem_vdp_maxima['pattern_vram_write_bytes']}/"
+        f"{blastem_vdp_maxima['name_table_vram_write_bytes']}/"
+        f"{blastem_vdp_maxima['cram_write_bytes']} bytes; "
+        if blastem_vdp_maxima is not None else ""
     )
     phase_note = (
         "pump_gap_ticks is the maximum Sub pump-opportunity interval; "
@@ -1561,7 +1475,7 @@ def main() -> None:
             f"{float(adpcm_decode_stats['median']):g}/"
             f"{int(adpcm_decode_stats['maximum'])}; "
             f"{reader_ahead_text}{transfer_text}"
-            f"{gpgx_vdp_text}"
+            f"{blastem_vdp_text}"
             f"{pump_gap_stats_text}{apply_backpressure_text}"
             f"{cadence_text}"
             f"range {int(finite_display_vblanks.min())}-"
@@ -1615,8 +1529,7 @@ def main() -> None:
             "but the first/last 4 content frames at 30 fps and 2 at 15 fps do not raise its ALERT. "
             "The terminal hold is also excluded. "
             f"frame is the x-axis. {phase_note}"
-            "pass2_delay_q4 belongs to frame. LOGVDP active CPU work includes writes "
-            "on the two V-counter edge representations. Orange lines are gate "
+            "pass2_delay_q4 belongs to frame. Orange lines are gate "
             "limits or either ready-pressure E0 deadline; "
             "PrgBuf jitter also shows the yellow normal interval."
         ),
@@ -1669,19 +1582,19 @@ def main() -> None:
         "image_sha256": digest(actual_output),
         "tsv": str(tsv_path),
         "tsv_sha256": digest(tsv_path),
-        "gpgx_vdp_tsv": (
-            str(gpgx_vdp_path) if gpgx_vdp_path is not None else None
+        "blastem_vdp_tsv": (
+            str(blastem_vdp_path) if blastem_vdp_path is not None else None
         ),
-        "gpgx_vdp_tsv_sha256": (
-            digest(gpgx_vdp_path) if gpgx_vdp_path is not None else None
+        "blastem_vdp_tsv_sha256": (
+            digest(blastem_vdp_path) if blastem_vdp_path is not None else None
         ),
-        "gpgx_vdp_receipt": (
-            str(gpgx_vdp_receipt_path)
-            if gpgx_vdp_receipt_path is not None else None
+        "blastem_vdp_receipt": (
+            str(blastem_vdp_receipt_path)
+            if blastem_vdp_receipt_path is not None else None
         ),
-        "gpgx_vdp_receipt_sha256": (
-            digest(gpgx_vdp_receipt_path)
-            if gpgx_vdp_receipt_path is not None else None
+        "blastem_vdp_receipt_sha256": (
+            digest(blastem_vdp_receipt_path)
+            if blastem_vdp_receipt_path is not None else None
         ),
         "gate_json": str(gate_path),
         "gate_json_sha256": digest(gate_path),
@@ -1769,8 +1682,8 @@ def main() -> None:
                 if name_table_dma_ready_vcounter_max is not None else {}
             ),
             **(
-                {"LOGVDP": gpgx_vdp_maxima}
-                if gpgx_vdp_maxima is not None else {}
+                {"VDP": blastem_vdp_maxima}
+                if blastem_vdp_maxima is not None else {}
             ),
         },
         "cd_wait_statistics": cd_wait_stats,
@@ -1810,8 +1723,8 @@ def main() -> None:
             NT_READY_DEADLINE_SCANLINE,
         "name_table_dma_ready_missed_sentinel":
             NT_READY_MISSED_PRESSURE,
-        "gpgx_vdp_maxima": gpgx_vdp_maxima,
-        "gpgx_vdp_extraction": gpgx_vdp_receipt,
+        "blastem_vdp_maxima": blastem_vdp_maxima,
+        "blastem_vdp_extraction": blastem_vdp_receipt,
         "jitter_normal_kib": int(gate.get("jitter_headroom_kib", 0)),
         "display_vblank_expected": display_vblank_expected,
         "display_vblank_warning_count": display_vblank_warning_count,

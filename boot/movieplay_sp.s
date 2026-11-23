@@ -491,41 +491,41 @@ do_stream:
 .ifdef MULTIPART
 	/* Qualified SP-GAP: saved HEADER/BODY extents, after BIOS init. */
 	lea	0x00007F30.w, a0
-	move.l	(a0)+, header_lba
-	move.l	(a0)+, header_total
-	move.l	(a0)+, body_lba
-	move.l	(a0)+, body_total
+	move.l	(a0)+, (header_lba).w
+	move.l	(a0)+, (header_total).w
+	move.l	(a0)+, (body_lba).w
+	move.l	(a0)+, (body_total).w
 .else
 	bsr	init_iso9660
 	lea	file_header, a0
 	bsr	find_file		/* d0=LBA, d1=sector count */
-	move.l	d0, header_lba
-	move.l	d1, header_total
+	move.l	d0, (header_lba).w
+	move.l	d1, (header_total).w
 	lea	file_body, a0
 	bsr	find_file
-	move.l	d0, body_lba
-	move.l	d1, body_total
+	move.l	d0, (body_lba).w
+	move.l	d1, (body_total).w
 .endif
 	bset	#2, (MEMMODE+1).l
 stream_start:
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
 	   timed reader is idle, then starts BODY.DAT from its own ISO extent. */
-	clr.w	slip_count
-	clr.l	desync_count			/* desync_count + adjacent resync_count */
+	clr.w	(slip_count).w
+	clr.l	(desync_count).w			/* desync_count + adjacent resync_count */
 	clr.w	(COMSTAT1).l
 	clr.w	(COMSTAT2).l
-	clr.l	drain_frame
+	clr.l	(drain_frame).w
 .ifdef INCLUDE_WORDBUF_RING
-	clr.w	word_pending_count
+	clr.w	(word_pending_count).w
 .endif
 .ifdef DEBUG_SUB_POLL_GAP
 	clr.w	(O_PRGPEAK).l
 	clr.w	(O_READAHEAD).l
 .endif
 	move.b	#0xFF, (PCM_ONOFF).l		/* extension initializes the channel after HEADER load */
-	clr.w	pcm_running
+	clr.w	(pcm_running).w
 .ifdef INCLUDE_AUDIO_FD_DITHER
-	clr.w	audio_fd_phase
+	clr.w	(audio_fd_phase).w
 .endif
 	move.l	header_lba, d0
 	move.l	header_total, d1
@@ -903,7 +903,7 @@ arm_audio_lp:
 	PC_MOVE_W h_f0_ctrl_sec, PC_F0_CTRL_SEC, d0
 	lea	CTRL_SCR, a0
 	bsr	drain_lin_staged
-	move.l	#F0PAT_TMP, f0_pat_addr
+	move.l	#F0PAT_TMP, (f0_pat_addr).w
 	moveq	#0, d0
 	PC_MOVE_W h_f0_pat_sec, PC_F0_PAT_SEC, d0
 	movea.l	f0_pat_addr, a0
@@ -913,16 +913,16 @@ arm_audio_lp:
 	/* The extension prepared the steady-state queues and exact ring tail.
 	   BODY-arm storage is complete, so expand frame 0 with no active CD read. */
 	bsr	expand_frame
-	clr.w	f0_expand
+	clr.w	(f0_expand).w
 
 	/* Initialize the logical timed state while the CD remains stopped.  The
 	   frame-0 bank must reach Main before any timed BODY sector can arrive. */
 .ifdef DEBUG_PRGBUF_Q
 	PC_MOVE_W h_prebuf_pat+2, PC_PREBUF_PAT, d0
-	move.w	d0, ring_level
+	move.w	d0, (ring_level).w
 .endif
-	move.l	#1, drain_frame
-	move.l	#RING_BASE, ring_head
+	move.l	#1, (drain_frame).w
+	move.l	#RING_BASE, (ring_head).w
 
 frame0_handoff:
 	/* One CMD_STREAM command spans startup. Hand frame 0 to Main with the
@@ -931,7 +931,7 @@ frame0_handoff:
 	bchg	#0, (MEMMODE+1).l
 	bsr	swap_settle
 .ifdef INCLUDE_WORDBUF_RING
-	move.w	#1, word_owned_bank		/* Main owns frame-0 bank; Sub owns Wr1 */
+	move.w	#1, (word_owned_bank).w		/* Main owns frame-0 bank; Sub owns Wr1 */
 .endif
 	move.w	#STAT_READY, (COMSTAT0).l
 frame0_ready_wait:
@@ -1014,7 +1014,7 @@ f0h2:
 .endif
 .equ ISO_HOLD_DUMP, 0			/* 0=クリーン静止(全画面=実フレームN) 1=内部状態ダンプ */
 stream_loop:
-	move.l	frame_idx, d0			/* 全フレーム処理済み=映画終端 */
+	move.l	(frame_idx).w, d0			/* 全フレーム処理済み=映画終端 */
 	PC_CMP_L h_frames, PC_FRAMES, d0
 	bhs	movie_end
 	bsr	process_frame
@@ -1043,7 +1043,7 @@ stream_loop:
 5:
 	move.w	#0, (COMSTAT0).l
 .if ISO_HOLD_N
-	cmp.l	#ISO_HOLD_N+1, frame_idx	/* frame N 処理済み=表示中 */
+	cmp.l	#ISO_HOLD_N+1, (frame_idx).w	/* frame N 処理済み=表示中 */
 	bne	stream_loop
 .if ISO_HOLD_DUMP
 	/* ISO診断: ring_head(現pop位置)から576パターンをダンプした擬似フレームを1回出して静止 */
@@ -1074,12 +1074,12 @@ dump_ring_head:
 	movem.l	d0-d7/a0-a6, -(sp)
 	lea	dsv_vals, a3
 	moveq	#0, d0
-	move.l	frame_idx, d0
+	move.l	(frame_idx).w, d0
 	move.l	d0, (a3)			/* [0]=frame_idx(=desyncしたコマ) */
 	moveq	#0, d0
 	move.w	(CTRL_SCR+2).l, d0
 	move.l	d0, 4(a3)			/* [1]=読んだ frame_seq(実測) */
-	move.l	apply_cur, 8(a3)		/* [2]=apply_cur */
+	move.l	(apply_cur).w, 8(a3)		/* [2]=apply_cur */
 	moveq	#0, d0
 	move.w	slip_count, d0
 	move.l	d0, 12(a3)			/* [3]=slip_count(CDCスリップ=グリッチ検出数) */
@@ -1425,7 +1425,7 @@ p1_top:
 	move.l	drain_frame, d0
 	PC_CMP_L h_frames, PC_FRAMES, d0
 	bhs	p1_ret				/* ストリーム終端: 読まずに戻る */
-	tst.w	drain_k
+	tst.w	(drain_k).w
 	bne	p1_read				/* コマ途中: cur_fsec は計算済み */
 	/* --- コマ先頭: v7+ routingを展開し cur_fsec を計算 --- */
 	lea	ROUTING, a0
@@ -1514,14 +1514,14 @@ p1_top:
 	tst.w	cur_fsec			/* fsec==0(total=0かつ先行中)= ディスク上0セクタ */
 	bne.s	p1_read
 	addq.l	#1, drain_frame			/* 前進のみ、read無し(データは先行配送済み) */
-	clr.w	drain_k
+	clr.w	(drain_k).w
 	bra	p1_top
 p1_read:
 .ifdef INCLUDE_WORDBUF_RING
 	/* A future frame's control and Word prefix may be drained before the bank
 	   swap. word_accept_guard either proves a direct write or reserves one of
 	   three Sub-PRG pending sectors, keeping the continuous CDC read moving. */
-	move.w	drain_k, d3
+	move.w	(drain_k).w, d3
 	move.w	cur_n_ctrl, d1
 	cmp.w	d1, d3
 	blo.s	p1_drain
@@ -1537,7 +1537,7 @@ p1_drain:
 	bsr	drain1				/* 1セクタ取り込み(d1/d2破壊) */
 	move.w	cur_n_ctrl, d1
 	move.w	cur_total, d4			/* stage_copy preserves cached routing in memory */
-	move.w	drain_k, d3
+	move.w	(drain_k).w, d3
 	cmp.w	d1, d3
 	blo	p1_apply			/* k < n_ctrl: BODY control comes first */
 .ifdef INCLUDE_WORDBUF_RING
@@ -1636,21 +1636,21 @@ p1_ring:
 .endif
 	bra.s	p1_adv
 p1_apply:
-	movea.l	apply_tail, a1
+	movea.l	(apply_tail).w, a1
 	bsr	stage_copy
-	movea.l	apply_tail, a0
+	movea.l	(apply_tail).w, a0
 	lea	0x800(a0), a0
 	cmpa.l	#APPLY_END, a0
 	blo.s	1f
 	movea.l	#APPLY_BASE, a0
 1:
-	move.l	a0, apply_tail
+	move.l	a0, (apply_tail).w
 p1_adv:
-	addq.w	#1, drain_k
-	move.w	drain_k, d3
+	addq.w	#1, (drain_k).w
+	move.w	(drain_k).w, d3
 	cmp.w	cur_fsec, d3			/* v4: fsec(=max(total,rate) レートマッチ)セクタで1コマ完了 */
 	blo.s	p1_ret
-	clr.w	drain_k
+	clr.w	(drain_k).w
 	addq.l	#1, drain_frame
 p1_ret:
 .ifdef DEBUG_SUB_POLL_GAP
@@ -1659,7 +1659,7 @@ p1_ret:
 	   current slot. Retain the largest lexicographic position this frame. */
 	moveq	#0, d0
 	move.l	drain_frame, d0
-	sub.l	frame_idx, d0
+	sub.l	(frame_idx).w, d0
 	bpl.s	1f
 	moveq	#0, d0
 1:
@@ -1668,7 +1668,7 @@ p1_ret:
 	move.w	#0x00FF, d0
 2:
 	lsl.w	#8, d0
-	move.b	drain_k+1, d0
+	move.b	(drain_k+1).w, d0
 	cmp.w	(O_READAHEAD).l, d0
 	bls.s	3f
 	move.w	d0, (O_READAHEAD).l
@@ -1781,7 +1781,7 @@ pump_poll_core:
 	addq.w	#1, d4
 9:
 .endif
-	move.w	drain_k, d3
+	move.w	(drain_k).w, d3
 	cmp.w	d3, d1
 	bhi.s	pp_apply_space			/* k < n_ctrl: control -> APPLY only */
 .ifdef INCLUDE_WORDBUF_RING
@@ -1810,13 +1810,8 @@ pp_not_word:
 	bcc.s	pp_done
 	bra.s	pp_cdc
 pp_apply_space:
-	/* Control -> APPLY only. */
-	move.l	apply_tail, d0
-	sub.l	apply_cur, d0
-	bpl.s	2f
-	add.l	#APPLY_SIZE, d0
-2:
-	cmp.l	#APPLY_SIZE-0x1000, d0
+	bsr.s	apply_available
+	cmpi.w	#APPLY_SIZE-0x1000, d0
 .ifdef DEBUG_SUB_POLL_GAP
 	bcc.s	pp_apply_blocked
 .else
@@ -1841,6 +1836,16 @@ pp_done:
 	move.w	(GA_STOPWATCH_ABS_W).w, d0
 	move.w	d0, (poll_last_tick).w
 .endif
+	rts
+
+/* Both APPLY pointers share one 64 KiB page. Unsigned borrow detects a
+   wrap even when the number of available bytes exceeds signed word range. */
+apply_available:
+	move.w	(apply_tail+2).w, d0
+	sub.w	(apply_cur+2).w, d0
+	bcc.s	1f
+	addi.w	#APPLY_SIZE, d0
+1:
 	rts
 
 .ifdef INCLUDE_WORDBUF_RING
@@ -1974,7 +1979,7 @@ process_frame:
 	move.w	d0, (O_PRGPEAK).l
 	moveq	#0, d0
 	move.l	drain_frame, d0
-	sub.l	frame_idx, d0
+	sub.l	(frame_idx).w, d0
 	bpl.s	8f
 	moveq	#0, d0
 8:
@@ -1983,7 +1988,7 @@ process_frame:
 	move.w	#0x00FF, d0
 8:
 	lsl.w	#8, d0
-	move.b	drain_k+1, d0
+	move.b	(drain_k+1).w, d0
 	move.w	d0, (O_READAHEAD).l
 	move.w	(GA_STOPWATCH_ABS_W).w, d0
 	move.w	d0, (poll_last_tick).w
@@ -1998,9 +2003,10 @@ process_frame:
 .endif
 .endif
 pf_pump:
-	move.l	frame_idx, d0			/* pump1_core may trash d0; reload each pass */
-	cmp.l	drain_frame, d0
-	blo.s	pf_ready			/* drain_frame > frame_idx: full frame already drained */
+	moveq	#0, d3				/* zero once this slot's required prefix has arrived */
+	move.l	(frame_idx).w, d0
+	cmp.l	(drain_frame).w, d0
+	blo.s	pf_control_available
 	bhi.s	pf_body_blocked			/* BODY is still draining an older frame */
 		/* Same frame: control must be complete. A ring stream also drains the
 		   following Word prefix before expansion, so its capacity proof cannot
@@ -2020,27 +2026,55 @@ pf_pump:
 9:
 	add.w	d2, d1				/* wait through the complete Word payload prefix */
 .endif
-	cmp.w	drain_k, d1
-	bls.s	pf_ready
+	cmp.w	(drain_k).w, d1
+	bls.s	pf_control_available
+.ifdef INCLUDE_WORDBUF_RING
+	tst.w	d2
+	bne.s	pf_ctrl_blocked			/* the current Word prefix is still required */
+.endif
+	moveq	#1, d3				/* more control sectors can still arrive */
+pf_control_available:
+	bsr	apply_available
+	movea.l	(apply_cur).w, a0
+	move.w	(a0), d7
+	cmp.w	d7, d0
+	blo.s	pf_incomplete_control
+	PC_MOVE_W h_audio_control_bytes, PC_AUDIO_CONTROL_BYTES, d1
+	addq.w	#8, d1
+	cmp.w	d1, d7
+	blo.s	pf_incomplete_control
+	cmpi.w	#PAD_SCR-CTRL_SCR, d7
+	bhi.s	pf_incomplete_control
+	btst	#0, d7
+	beq.s	pf_ready
+pf_incomplete_control:
+	tst.w	d3
+	bne.s	pf_ctrl_blocked
+	/* The required prefix is already on hand. Drop the damaged queued
+	   control so a bad length cannot overrun scratch or stall the reader. */
+	move.l	(apply_tail).w, (apply_cur).w
+	addq.l	#1, (frame_idx).w
+	bra.s	pf_desync
+pf_ctrl_blocked:
 .ifdef DEBUG
-	addq.w	#1, pf_ctrl_wait
+	addq.w	#1, (pf_ctrl_wait).w
 	bra.s	pf_need_pump
 .endif
 pf_body_blocked:
 .ifdef DEBUG
-	addq.w	#1, pf_body_wait
+	addq.w	#1, (pf_body_wait).w
 .endif
 pf_need_pump:
 	bsr	pump1_core			/* non-preserving blocking sector pump */
-	bra.s	pf_pump
+	bra	pf_pump
 pf_ready:
-	addq.l	#1, frame_idx
+	addq.l	#1, (frame_idx).w
 	bsr	fetch_control			/* apply循環 → CTRL_SCR 線形化 */
 	/* 同期チェック: control先頭の frame_seq(CTRL_SCR+2) が 期待値(frame_idx-1) と一致するか。
 	   ズレ=desync(CDCセクタ落ち等)。破棄して前コマ維持(0更新)し、診断カウントを出す。
 	   持続desyncは前コマ静止に化ける(=青赤崩壊より軽い)。 */
 	move.w	(CTRL_SCR+2).l, d0		/* 実 frame_seq */
-	move.w	frame_idx+2, d1
+	move.w	(frame_idx+2).w, d1
 	subq.w	#1, d1				/* 期待 seq */
 	cmp.w	d1, d0
 	bne.s	pf_desync
@@ -2048,7 +2082,7 @@ pf_ready:
 	bsr	expand_frame			/* CTRL_SCR → Word-RAM 出力 + 音声 */
 	rts
 pf_desync:
-	addq.w	#1, desync_count
+	addq.w	#1, (desync_count).w
 .ifndef ISO_VERIFY_SP_TAIL
 	move.w	desync_count, (COMSTAT1).l	/* 診断: desync回数 */
 .endif
@@ -2071,6 +2105,7 @@ dsd_w:
 1:
 .endif
 	clr.w	(O_NRUN).l
+	clr.w	(CTRL_SCR+4).l			/* Main keeps the current name table */
 	move.w	#0, (O_NLOAD).l			/* このコマは更新破棄=前コマ維持 */
 	bsr	pump_poll_core
 	rts
@@ -2078,9 +2113,7 @@ dsd_w:
 /* apply-buffer(PRG循環, apply_cur) から control block を CTRL_SCR(Word-RAM) へコピー(折返し線形化)。
    block先頭 >H total_len。apply_cur を total_len 進める。 */
 fetch_control:
-	/* The sole caller reloads every value it needs after this routine. */
-	movea.l	apply_cur, a0
-	move.w	(a0), d7			/* total_len */
+	/* a0 and d7 are the validated head and length from process_frame. */
 	/* コピー: total_len バイトを a0(循環) → CTRL_SCR */
 	lea	CTRL_SCR, a1
 	move.w	d7, d6				/* 残バイト */
@@ -2099,14 +2132,12 @@ fc_nowrap:
 	move.w	d6, d5
 	bsr	fc_copy_even
 fc_done:
-	/* apply_cur += total_len, 折返し */
-	movea.l	apply_cur, a0
-	adda.w	d7, a0
+	/* The copy has already advanced a0 through any split at APPLY_END. */
 	cmpa.l	#APPLY_END, a0
 	blo.s	3f
-	suba.l	#APPLY_SIZE, a0
+	movea.l	#APPLY_BASE, a0
 3:
-	move.l	a0, apply_cur
+	move.l	a0, (apply_cur).w
 	rts					/* issue#15: 冗長movem削除(process_frameが退避済み) */
 
 /* Copy d5 even bytes from a0 to a1. Control blocks and APPLY_SIZE are even, so
@@ -2746,8 +2777,8 @@ get_info:
 /* ---- RF5C164 PCM ---- */
 pcm_on:
 	move.w	#1, pcm_running
-	/* GPGX reloads a channel's address on the OFF write. Repeat OFF here so
-	   PCM_ST=SYNC_LEAD is latched even when the channel was left selected during
+	/* Refresh the channel start address with OFF so PCM_ST=SYNC_LEAD
+	   is latched even when the channel was left selected during
 	   the boot-prefix writes, then enable it.  These are internal-register
 	   accesses and the IC is sounding, so the PCM manual's 384-cycle minimum
 	   access period applies between them (dbra taken is 10 cycles). */

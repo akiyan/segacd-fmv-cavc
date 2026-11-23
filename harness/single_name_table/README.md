@@ -3,28 +3,24 @@
 ## Lossless-recording tearing detector
 
 `detect_tearing.py` uses the exact `capture_first..capture_last` spans in a
-matching DEBUG HUD TSV and the frame-aligned transfer TSV extracted from that
-recording's GPGX LOGVDP sidecar. It excludes the two HUD rows and records
-within-group visual changes as a diagnostic. The pass/fail result checks the
-specific single-table risk directly: every name-table DMA word must transfer
-in blanking, with zero words in active display. This avoids misclassifying
-pattern DMA, palette work, or a capture-boundary transition as an NT tear. The
-video input must be the native FFV1 lossless recording, not a compressed
-preview.
+matching DEBUG HUD TSV. It excludes the two HUD rows and reports within-group
+visual changes in the native FFV1 lossless recording. Use these rows to select
+a range for further inspection of the matching BlastEm VDP event log.
 
 ```sh
 tools/python.sh harness/single_name_table/detect_tearing.py \
   /path/to/printed/PROFILE_emu_lossless.mkv \
   logs/<run>_hud.tsv \
-  --gpgx-vdp-tsv logs/<run>_gpgx_vdp.tsv \
   --output logs/<run>_single_nt_tearing.tsv
 ```
 
-The output is a per-movie-frame TSV. `PASS` means that frame's name-table DMA
-has zero active-display words. `TEAR` records a nonzero active-display count.
-`visual_status`, the unique-raster count, outlier count, and maximum changed
-pixels preserve the independent image diagnostic without changing the NT
-result.
+The per-frame TSV includes the count of unique rasters, outlier scanouts and
+maximum changed pixels. `RASTER_ONLY` means the result measures the recorded
+image. Palette, pattern, scroll and name-table effects all contribute to that
+observation. For a saved LOGVDP capture, `--archive-vdp-tsv` also accepts its
+original frame-aligned active/blank DMA counts. In that case `PASS` means zero
+active name-table DMA words and `TEAR` means a nonzero active count. The BlastEm
+event stream identifies VDP writes, without labeling each write as DMA or CPU.
 
 ## Saved aggregate comparison
 

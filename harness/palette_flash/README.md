@@ -7,7 +7,8 @@ clean source preview alone cannot prove a correct packed stream.
 
 Current stream qualification uses `harness/pattern_supply/verify.py` against
 HEADER.DAT/BODY.DAT and the matching decisions. `harness/palette_capacity`
-provides a current-format fixture and actual LOGVDP all-cell/palette comparison.
+provides a current-format fixture and compares all cells and palettes from
+actual BlastEm VDP events.
 Use HUD frame identity to align real captures; wall-clock guesses drift, and
 window screenshots are not pixel-exact. Distinguish the intended old/new states
 from old-content/new-CRAM and new-content/old-CRAM combinations when diagnosing

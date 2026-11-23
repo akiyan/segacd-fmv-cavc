@@ -27,13 +27,14 @@ tools/python.sh --workspace-root /path/to/workspace \
 ```
 
 The example frame limit covers Sonic Jam OP split into three parts, including
-startup/loading and the next cycle. Increase it for longer sources. This runs
-the existing ISO; it never encodes or records A/V. Logs and exit receipts remain
-in `logs/`, with the ISO snapshot and complete compressed LOGVDP trace in a
-leased workspace artifact. The receipt binds the ISO, manifest, trace and SIM
-decision hashes. Its TSV is a diagnostic result, not a recording/publication
-HUD gate. A failed parser check can be rerun on the retained trace with the same
-runtime roots and `harness/multipart/verify_trace.py --receipt logs/<run>.json`.
+startup, loading, and the next cycle. Increase it for longer sources. This runs
+the existing ISO in BlastEm with video recording disabled. Supply
+`--input-script FILE` to override the runner's frame-indexed BIOS input. Logs
+and exit receipts remain in `logs/`, with the ISO snapshot and `.blastel`
+trace in a leased workspace artifact. The receipt binds the ISO, manifest,
+trace and SIM decision hashes. The TSV reports the exact pixel and recovery
+checks. To rerun the parser on a retained trace, use the same runtime roots
+and `harness/multipart/verify_trace.py --receipt logs/<run>.json`.
 
 `verify_trace.py` checks actual assembled dispatcher markers in order, every
 movie frame number, zero recovery counters, and every displayed RGB333 pixel
@@ -43,8 +44,8 @@ state, skipped tails, a wrong module or stream selection, and failure to loop.
 Only non-scrolling DEBUG parts are supported by this pixel comparator; reject
 other cases explicitly rather than claiming that an unobserved path passed.
 
-This proves behavior in the managed Genesis Plus GX core, not physical drive
-timing or audio quality. The ordinary player build/disassembly matrix owns
+This checks BlastEm playback. Physical drive timing and audio quality require
+their own observations. The ordinary player build/disassembly matrix owns
 single-movie regression checks. Maximum part-table sizing can be checked by
 assembling `multipart_build.main_include`/`sub_include` with 64 entries and
 checking the linked Main/Word loader sizes. It needs no maximum-length encode.
@@ -52,16 +53,17 @@ checking the linked Main/Word loader sizes. It needs no maximum-length encode.
 ## Requested recording and publication
 
 Record an existing disc with `tools/record_movie.sh --disc <cue> --no-build
---seconds N --trim 0 --record-size 320x224`. Generate a separate input Replay
-for each disc. Bind the recording, complete trace, manifest and ISO hashes in
+--seconds N --vdp-event-log`. Use the input script and BIOS recorded for that
+disc. Bind the recording, complete trace, manifest and ISO hashes in
 the capture receipt. `analyze_recording.py --capture-receipt <json> --json
-logs/<run>-hud.json` reads its `captures.debug` entry and applies the existing
-schema-16 HUD gate separately to each completed movie visit. It requires the
+logs/<run>-hud.json` reads `captures.debug` with fields `recording`,
+`vdp_event_log`, `manifest`, their respective `_sha256` fields, and
+`iso_sha256`. It applies the schema-16 HUD gate to each movie visit and requires the
 actual frame-minus-one/frame-zero anchor for every visit and all parts plus the
 next cycle's frame zero. A bounded recording can end before the trace's extra
 ten-second tail; only observed recorded visits receive a gate. Boundary timings
 are written to a TSV, not used to trim the recording.
 
 For HUD-free publication, compare the matching DEBUG/release stream hashes and
-recording DMA logs using the `release` skill, then follow `compilation` and
+VDP evidence using the `release` skill, then follow `compilation` and
 `YOUTUBE.md`. These stages are only run when recording/publication is requested.

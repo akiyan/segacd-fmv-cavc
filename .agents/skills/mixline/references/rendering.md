@@ -23,10 +23,10 @@
   horizontal ticks and lower explanation are omitted; `/hudline` owns the one
   shared horizontal scale and footer.
 - Put a thin boundary bar with a left-aligned heading before each graph
-  section. When the HUD receipt contains the complete contiguous LOGVDP row
-  block, extract those rows into a middle `/logvdpline` section. Concatenate
-  the remaining pre- and post-LOGVDP HUD source ranges, in that order, under
-  `/hudline`. Without LOGVDP rows, render only `/timeline` and `/hudline`.
+  section. When the HUD receipt contains the complete contiguous VDP write row
+  block, extract those rows into a middle `/vdpline` section. Concatenate
+  the remaining pre- and post-VDP write HUD source ranges, in that order, under
+  `/hudline`. Without VDP write rows, render only `/timeline` and `/hudline`.
 - Consume current source images and layout receipts on every render; never
   duplicate timeline or hudline row geometry, scales, labels, or colours in
   the compositor. Source presentation changes must flow through automatically.
