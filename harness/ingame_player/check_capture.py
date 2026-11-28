@@ -39,7 +39,9 @@ from player_constants import parse_header_sector
 LINE_CYCLES = 3420
 VBLANK_LINES = 262 - 224
 FONT_TILE = 1400            # boot/ingame_host_ip.s
-HOST_REG10 = 0x5F           # boot/ingame_host_ip.s: H-int every 96 lines
+# boot/ingame_host_ip.s: H-int line counter, every 96 lines, or 7 when the
+# host carries the music-driver load (HOST_LOAD_LINES).
+HOST_REG10 = (0x5F, 0x07)
 
 
 def expected_pictures(profile_path, frames):
@@ -81,9 +83,10 @@ def picture(vram, cram, nt, col0, row0, columns, rows):
 
 
 def host_rows(vram, nt):
-    """Decode the test host's two result rows (4 hex digits per value)."""
+    """Decode the test host's result rows (4 hex digits per value); row 4
+    holds the music-driver load statistics when the host carries one."""
     values = []
-    for row in (2, 3):
+    for row in (2, 3, 4):
         entries = struct.unpack_from(">64H", vram, nt + row * 128)
         digits, row_values = [], []
         for entry in entries[1:31]:
@@ -120,7 +123,7 @@ def check(trace, header, profile, nt, hscroll, profile_log=False):
                     plays[-1]["host_rows"] = rows_now
             continue
         if event.kind == "REGISTER":
-            if event.address == 10 and event.data[0] == HOST_REG10:
+            if event.address == 10 and event.data[0] in HOST_REG10:
                 host = True
             if event.address == 15 and event.data[0] == 2 and play is not None:
                 # The movie's VBlank hook starts here: the picture of the
@@ -159,7 +162,7 @@ def check(trace, header, profile, nt, hscroll, profile_log=False):
             if event.address == first_entry + 1:
                 play["published"].append(play["blanks"])
         elif (event.kind == "VSRAM" and event.address >= 4
-              and not (profile_log and 0x40 <= event.address < 0x46)):
+              and not (profile_log and 0x40 <= event.address < 0x50)):
             play["outside_budget"].append((play["blanks"], f"VSRAM {event.address}"))
     if play is not None:
         play["complete"] = False
@@ -170,6 +173,9 @@ def check(trace, header, profile, nt, hscroll, profile_log=False):
     for number, play in enumerate(plays, 1):
         published = play["published"]
         gaps = Counter(b - a for a, b in zip(published, published[1:]))
+        # Lateness against frame 1's publication, as the player measures it.
+        late = [max(0, at - published[1] - constants.vsync_n * (i - 1))
+                for i, at in enumerate(published) if i >= 1] if len(published) > 1 else []
         results.append({
             "play": number,
             "complete": play["complete"],
@@ -179,6 +185,9 @@ def check(trace, header, profile, nt, hscroll, profile_log=False):
             "blanks_frame0_to_last": published[-1] - published[0] if published else None,
             "nominal_blanks_frame0_to_last": (constants.frames - 1) * constants.vsync_n,
             "blanks_between_publications": dict(sorted(gaps.items())),
+            "late_frames": sum(1 for value in late if value),
+            "max_lateness_blanks": max(late, default=0),
+            "mean_lateness_blanks": round(sum(late) / len(late), 1) if late else 0,
             "publications_after_a_longer_gap": sum(
                 n for gap, n in gaps.items() if gap > constants.vsync_n),
             "blanks_showing_a_wrong_picture": len(play["wrong_blanks"]),
@@ -204,7 +213,7 @@ def main():
     parser.add_argument("--nt", type=lambda v: int(v, 0), default=0xC000)
     parser.add_argument("--hscroll", type=lambda v: int(v, 0), default=0xF400)
     parser.add_argument("--profile-log", action="store_true",
-                        help="allow the IDLE_PROFILE build's VSRAM 0x40..0x45 log")
+                        help="allow the IDLE_PROFILE build's VSRAM 0x40..0x4F log")
     parser.add_argument("--json", type=Path)
     args = parser.parse_args()
     report = check(args.trace, args.header, args.profile, args.nt, args.hscroll,

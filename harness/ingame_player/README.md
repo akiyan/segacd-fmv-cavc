@@ -17,8 +17,11 @@ For every play it reports one publication per frame, every displayed field
 from frame 0 to the end compared with the SIM picture of the latest
 publication, VDP writes outside the blank (more than 38 lines after the
 movie's VBlank hook entry) or outside the movie's VRAM budget, the VBlank
-gaps between publications, and the test host's result rows drawn after the
-play. `PASS` needs exact pictures and no write outside the blank or budget in
+gaps between publications, each frame's lateness against frame 1's
+publication (count, largest, mean), and the test host's result rows drawn
+after the play. With `make ingame-disc INGAME_HOST_LOAD=N` the host's third
+row holds the music-driver stand-in's runs, runs that ended in the vertical
+blank, preempted runs, the latest end line and the largest extra lines. `PASS` needs exact pictures and no write outside the blank or budget in
 every complete play. Add `--profile-log` for a diagnostic build, whose VSRAM
 log is otherwise counted as outside the budget.
 
@@ -38,7 +41,10 @@ VSRAM at each VBlank hook entry. The report gives their distribution per
 VBlank interval and per movie frame over timed playback, and the worst
 intervals and frames. `INGAME_SUBBUS_LOAD=N` also holds the Sub bus for about
 N Main cycles in every VBlank, to see whether a music driver's PRG-RAM reads
-disturb the Sub side; check such a capture with `check_capture.py`.
+disturb the Sub side; check such a capture with `check_capture.py`. Built
+with `DEBUG=1 INGAME_GAP_DIAG=1` as well, the log's last words carry the Sub's
+most recent CD sequence gap (expected and received sector, slot and sector in
+the slot) instead of its pump statistics.
 
 Both tools find the plays by the test host's horizontal-interrupt line
 setting (register 10) and the movie's plane-B write. `idle_report.py` also

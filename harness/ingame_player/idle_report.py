@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "harness/blastem"))
 from event_stream import iter_events
 
-HOST_REG10 = 0x5F            # boot/ingame_host_ip.s
+HOST_REG10 = (0x5F, 0x07)    # boot/ingame_host_ip.s (plain or with HOST_LOAD_LINES)
 LOG_ADDRESS = 0x40           # boot/ingame_ip.s, IDLE_PROFILE
 
 
@@ -38,7 +38,7 @@ def plays(trace, nt):
     log = bytearray(6)
     for event in iter_events(trace):
         if event.kind == "REGISTER":
-            if event.address == 10 and event.data[0] == HOST_REG10:
+            if event.address == 10 and event.data[0] in HOST_REG10:
                 host = True
             elif event.address == 4 and host:
                 if event.data[0] == movie_reg4 and play is None:
