@@ -433,9 +433,14 @@ $(MOVIEPLAY_CUE): $(MOVIEPLAY_ISO)
 # scanlines through VSRAM; INGAME_SUBBUS_LOAD=N (with it) also holds the Sub
 # bus for about N Main cycles per VBlank. Both get their own disc names.
 INGAME_MAIN_BASE ?= 0x00FF9000
+# INGAME_HOST_LOAD=N gives the test host a music-driver stand-in: a horizontal
+# interrupt that the movie keeps, busy for N lines from line 8 of every frame
+# and then holding the Sub bus for about 400 cycles.
 INGAME_PROFILE ?= 0
 INGAME_SUBBUS_LOAD ?= 0
-INGAME_VARIANT := $(if $(filter 1,$(INGAME_PROFILE)),_profile$(if $(filter-out 0,$(INGAME_SUBBUS_LOAD)),_subbus$(INGAME_SUBBUS_LOAD)))
+INGAME_HOST_LOAD ?= 0
+INGAME_VARIANT := $(if $(filter 1,$(INGAME_PROFILE)),_profile$(if $(filter-out 0,$(INGAME_SUBBUS_LOAD)),_subbus$(INGAME_SUBBUS_LOAD)))$(if $(filter-out 0,$(INGAME_HOST_LOAD)),_load$(INGAME_HOST_LOAD))
+INGAME_HOST_FLAGS := $(if $(filter-out 0,$(INGAME_HOST_LOAD)),--defsym HOST_LOAD_LINES=$(INGAME_HOST_LOAD))
 INGAME_MAIN_FLAGS := $(if $(filter 1,$(INGAME_PROFILE)),--defsym IDLE_PROFILE=1 $(if $(filter-out 0,$(INGAME_SUBBUS_LOAD)),--defsym SUBBUS_LOAD=$(INGAME_SUBBUS_LOAD)))
 INGAME_BUILD_DIR := $(MOVIEPLAY_TMP_DIR)/ingame$(INGAME_VARIANT)
 INGAME_DISC := $(MOVIEPLAY_TMP_DIR)/ingame_disc$(INGAME_VARIANT)
@@ -463,7 +468,7 @@ $(INGAME_BUILD_DIR)/movieplay_sp_ingame.s: $(BOOT_DIR)/movieplay_sp.s | moviepla
 
 $(INGAME_SUB): $(INGAME_BUILD_DIR)/movieplay_sp_ingame.s $(INGAME_CONSTANTS) $(BOOT_DIR)/sub_boot.inc $(CFG_DIR)/ingame_sp.ld harness/pcm_write_pacing/check_pacing.py
 	$(PYTHON) harness/pcm_write_pacing/check_pacing.py
-	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) --defsym INGAME=1 --defsym PLAYER_SPECIALIZED=1 -I$(INGAME_BUILD_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/movieplay_sp_ingame.o
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) $(if $(filter 1,$(INGAME_GAP_DIAG)),--defsym INGAME_GAP_DIAG=1) --defsym INGAME=1 --defsym PLAYER_SPECIALIZED=1 -I$(INGAME_BUILD_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/movieplay_sp_ingame.o
 	$(LD) -nostdlib -T $(CFG_DIR)/ingame_sp.ld -o $(INGAME_BUILD_DIR)/movieplay_sp_ingame.elf $(INGAME_BUILD_DIR)/movieplay_sp_ingame.o
 	$(OBJCOPY) -O binary $(INGAME_BUILD_DIR)/movieplay_sp_ingame.elf $@
 
@@ -473,7 +478,7 @@ $(INGAME_MAIN): $(BOOT_DIR)/ingame_ip.s $(INGAME_CONSTANTS) $(MOVIEPLAY_STREAM_D
 	$(OBJCOPY) -O binary -j .text $(INGAME_BUILD_DIR)/ingame_ip.elf $@
 
 $(INGAME_BUILD_DIR)/ingame_host_ip.bin: $(BOOT_DIR)/ingame_host_ip.s $(INGAME_MAIN) $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_REGION_INC) $(MOVIEPLAY_DEBUG_FONT) $(BOOT_DIR)/sub_boot.inc $(CFG_DIR)/ingame_host_ip.ld
-	$(AS) $(ASFLAGS) -I$(INGAME_BUILD_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/ingame_host_ip.o
+	$(AS) $(ASFLAGS) $(INGAME_HOST_FLAGS) -I$(INGAME_BUILD_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/ingame_host_ip.o
 	$(LD) $(LDFLAGS) --defsym INGAME_MAIN_BASE=$(INGAME_MAIN_BASE) -T $(CFG_DIR)/ingame_host_ip.ld -o $@ $(INGAME_BUILD_DIR)/ingame_host_ip.o
 
 $(INGAME_BUILD_DIR)/ingame_host_sp.bin: $(BOOT_DIR)/ingame_host_sp.s $(BOOT_DIR)/sub_boot.inc | movieplay-setup

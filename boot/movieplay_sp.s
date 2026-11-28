@@ -343,7 +343,7 @@
 .equ F0PAT_TMP,   RING_END-0x9000     /* boot only: 36 KiB frame-0 stage */
 .equ ROUTING_TMP, APPLY_BASE          /* boot only: routing stage */
 .equ ROUTING_TMP_BYTES, APPLY_SIZE
-.equ PCM_DEC_BUF_BYTES, 0x00000600
+.equ PCM_DEC_BUF_BYTES, (PC_AUDIO_BYTES+0xFF)&0xFF00  /* one frame's decoded PCM */
 .equ ADPCM_INDEX_BYTES, 0x00000B20
 .equ ADPCM_LUT_BYTES,   0x00000100
 .equ ADPCM_DELTA_BYTES, 0x00001640
@@ -1043,6 +1043,26 @@ pb_done:
 
 	/* The first arm region contains one decoded PCM chunk per sector. Live
 	   controls keep carrying future chunks, preserving source sample order. */
+.ifdef INGAME
+.if PC_AUDIO_BYTES > 2048
+	/* Below about 11 fps a chunk takes two whole sectors. They are staged in
+	   the frame-0 pattern area, which the arm fills only afterwards. */
+.if PC_AUDIO_BYTES > 4096
+.error "an arm audio chunk exceeds two sectors"
+.endif
+	moveq	#PC_AUDIO_PRELOAD_SEC/2, d7
+arm_audio_lp:
+	movem.l	d7, -(sp)
+	lea	F0PAT_TMP, a0
+	bsr	drain1
+	lea	F0PAT_TMP+0x800, a0
+	bsr	drain1
+	lea	F0PAT_TMP, a0
+	bsr	write_wave_chunk
+	movem.l	(sp)+, d7
+	subq.w	#1, d7
+	bne	arm_audio_lp
+.else
 	PC_MOVE_W h_audio_pre_sec, PC_AUDIO_PRELOAD_SEC, d7
 arm_audio_lp:
 	movem.l	d7, -(sp)
@@ -1053,6 +1073,19 @@ arm_audio_lp:
 	movem.l	(sp)+, d7
 	subq.w	#1, d7
 	bne	arm_audio_lp
+.endif
+.else
+	PC_MOVE_W h_audio_pre_sec, PC_AUDIO_PRELOAD_SEC, d7
+arm_audio_lp:
+	movem.l	d7, -(sp)
+	lea	PAD_SCR, a0
+	bsr	drain1
+	lea	PAD_SCR, a0
+	bsr	write_wave_chunk
+	movem.l	(sp)+, d7
+	subq.w	#1, d7
+	bne	arm_audio_lp
+.endif
 
 	/* Frame 0 follows in the same BODY arm. It remains an untimed exact
 	   construction and never consumes the timed Prg ring. */
@@ -1530,6 +1563,16 @@ d1_gap:
 	addq.b	#1, (slip_count+1).w
 .else
 	addq.w	#1, slip_count
+.endif
+.ifdef INGAME
+.ifdef INGAME_GAP_DIAG
+	/* Diagnostic: where the last sequence gap happened, for Main's
+	   INGAME_PROFILE log. */
+	move.w	d2, (O_STATUS+0x2C).l		/* expected absolute frame (low) */
+	move.w	d1, (O_STATUS+0x2E).l		/* received */
+	move.w	(drain_frame+2).l, (O_STATUS+0x30).l
+	move.w	(drain_k).l, (O_STATUS+0x32).l
+.endif
 .endif
 	move.l	d2, d0
 	sub.l	base_msf, d0			/* ファイル相対セクタ */

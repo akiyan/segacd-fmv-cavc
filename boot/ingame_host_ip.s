@@ -17,6 +17,14 @@
  * The host's horizontal interrupt fires three times a frame only to prove
  * that the movie hands it back; the movie masks it while it plays. The
  * result screen stays up for five seconds, then the movie plays again.
+ *
+ * Built with HOST_LOAD_LINES=N, the horizontal interrupt instead stands in
+ * for a music driver that keeps running during the movie: once per frame it
+ * starts at line 8, busy-waits until N lines later, then holds the Sub bus
+ * and reads PRG-RAM for about 400 cycles. The movie is asked to keep it
+ * (flag bit 1). Row 4 then shows, for the play: load runs, runs that ended
+ * in the vertical blank, runs that took over two lines longer than asked
+ * (preempted), the latest end line, and the largest extra lines.
  */
 	.include "sub_boot.inc"
 
@@ -33,6 +41,15 @@
 .equ GA_COMSTAT2, 0x00A12024
 .equ VDP_DATA, 0x00C00000
 .equ VDP_CTRL, 0x00C00004
+.equ VDP_HV,   0x00C00008
+.equ GA_SUB_CTRL, 0x00A12001
+.ifdef HOST_LOAD_LINES
+.equ HINT_LINE, 7			/* first interrupt after line 7: work from line 8 */
+.equ LOAD_BUS_WORDS, 16			/* about 400 cycles of PRG-RAM reads */
+.equ MOVIE_FLAGS, 3			/* restore registers, keep this interrupt */
+.else
+.equ MOVIE_FLAGS, 1
+.endif
 
 .equ WORD_RAM, 0x00200000
 .equ HOST_WORD_BYTES, 176128		/* the game's script, tables and font */
@@ -81,7 +98,11 @@ ip_entry:
 	move.w	#0x8D00|(HSCROLL>>10), (a6)
 	move.w	#0x8F02, (a6)
 	move.w	#0x9001, (a6)			/* 64x32 */
+.ifdef HOST_LOAD_LINES
+	move.w	#0x8A00|HINT_LINE, (a6)		/* first interrupt of the frame at line 8 */
+.else
 	move.w	#0x8A5F, (a6)			/* horizontal interrupt every 96 lines */
+.endif
 	move.w	#REG7, (a6)
 	bsr	load_font
 	/* The Sub program starts the drive and finds the movie files. */
@@ -141,7 +162,17 @@ play_again:
 	movea.l	8(a0), a1
 	movea.l	20(a1), a1			/* entry */
 	lea	movie_params, a0
+.ifdef HOST_LOAD_LINES
+	lea	load_stats, a2
+	clr.l	(a2)+
+	clr.l	(a2)+
+	clr.w	(a2)+
+	move.w	#1, load_counting
+.endif
 	jsr	(a1)
+.ifdef HOST_LOAD_LINES
+	clr.w	load_counting
+.endif
 3:
 	lea	results, a0
 	movem.w	d0-d5, (a0)
@@ -187,7 +218,9 @@ check_after_movie:
 	subq.l	#1, d1
 	bpl.s	3b
 4:
-	/* The host font sits above the movie's 1,279-tile pool. */
+	/* The host font sits above the movie's 1,279-tile pool. No interrupt
+	   may write a VDP register during these reads. */
+	move.w	#0x2700, sr
 	clr.w	vram_errors
 	move.l	#FONT_ADDR, d0
 	bsr	vram_read_cmd
@@ -218,6 +251,7 @@ check_after_movie:
 	addq.w	#1, d2
 	dbra	d1, 1b
 	/* Both host interrupts run again. */
+	move.w	#0x2300, sr
 	move.w	frame_count, d2
 	move.w	hint_count, d3
 	move.w	#10, d0
@@ -346,6 +380,12 @@ result_screen:
 	lea	sub_status, a0
 	moveq	#6-1, d3
 	bsr	put_row
+.ifdef HOST_LOAD_LINES
+	move.l	#PLANE_A+(4*64+1)*2, d0
+	lea	load_stats, a0
+	moveq	#5-1, d3
+	bsr	put_row
+.endif
 	move.w	#0x2300, sr
 	rts
 
@@ -371,8 +411,77 @@ host_vint:
 	addq.w	#1, frame_count
 	rte
 host_hint:
+.ifndef HOST_LOAD_LINES
 	addq.w	#1, hint_count
 	rte
+.else
+	movem.l	d0-d2/a0, -(sp)
+	addq.w	#1, hint_count
+	moveq	#0, d1
+	move.b	(VDP_HV).l, d1			/* start line */
+	cmpi.b	#HINT_LINE+4, d1
+	bhs	hh_second
+	/* The frame's first interrupt: no other until the next blank. One
+	   control-word write; the movie's VDP access is all in its V-int. */
+	move.w	#0x8AFF, (VDP_CTRL).l
+	/* The driver's work: busy-wait N lines ... */
+	move.w	d1, d2
+	addi.w	#HOST_LOAD_LINES, d2
+1:
+	moveq	#0, d0
+	move.b	(VDP_HV).l, d0
+	cmp.w	d1, d0
+	blo.s	2f				/* wrapped into the next frame */
+	cmp.w	d2, d0
+	blo.s	1b
+2:
+	/* ... then read song data from PRG-RAM with the Sub bus held. */
+	bset	#1, (GA_SUB_CTRL).l
+3:
+	btst	#1, (GA_SUB_CTRL).l
+	beq.s	3b
+	lea	0x00020000, a0
+	moveq	#LOAD_BUS_WORDS-1, d0
+3:
+	move.w	(a0)+, d2
+	dbra	d0, 3b
+	bclr	#1, (GA_SUB_CTRL).l
+	tst.w	load_counting
+	beq.s	hh_done
+	moveq	#0, d0
+	move.b	(VDP_HV).l, d0			/* end line */
+	addq.w	#1, load_stats+0		/* runs */
+	cmpi.w	#0xE0, d0
+	blo.s	4f
+	addq.w	#1, load_stats+2		/* ended in the vertical blank */
+4:
+	cmp.w	d1, d0
+	bhs.s	5f
+	addq.w	#1, load_stats+2		/* wrapped: ran past the blank */
+	addi.w	#0x100, d0
+5:
+	cmp.w	load_stats+6, d0
+	bls.s	6f
+	move.w	d0, load_stats+6		/* latest end line */
+6:
+	sub.w	d1, d0
+	subi.w	#HOST_LOAD_LINES, d0		/* extra lines beyond the asked load */
+	cmpi.w	#2, d0
+	bls.s	7f
+	addq.w	#1, load_stats+4		/* preempted */
+7:
+	cmp.w	load_stats+8, d0
+	ble.s	hh_done
+	move.w	d0, load_stats+8
+	bra.s	hh_done
+hh_second:
+	/* The frame's second interrupt: the counter now holds 0xFF, so restore
+	   the line for the next frame's first interrupt. */
+	move.w	#0x8A00|HINT_LINE, (VDP_CTRL).l
+hh_done:
+	movem.l	(sp)+, d0-d2/a0
+	rte
+.endif
 
 	.align	2
 host_cram:
@@ -387,7 +496,7 @@ movie_params:
 	.word	REG4
 	.word	REG7
 	.long	EXVEC_LEVEL6
-	.word	1			/* restore the display registers */
+	.word	MOVIE_FLAGS		/* restore the display registers (+ keep H-int) */
 dbgfont:
 	.incbin	"dbgfont.bin"
 	.align	2
@@ -405,4 +514,8 @@ word_errors:	.space 2
 vram_errors:	.space 2
 int_check:	.space 2
 play_count:	.space 2
+.ifdef HOST_LOAD_LINES
+load_stats:	.space 10		/* runs, in blank, preempted, latest end, max extra */
+load_counting:	.space 2
+.endif
 font_expanded:	.space FONT_TILES*32

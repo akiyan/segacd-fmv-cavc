@@ -4,11 +4,15 @@
  * A host game loads this image at its link base (INGAME_MAIN_BASE) and calls
  * the entry once per movie, after its Sub program has started the in-game
  * Sub module (movieplay_sp.s built with INGAME) and after stopping its own
- * music. The movie owns the interrupts for the duration of the call: it masks
- * the level-4 horizontal interrupt, disables it in VDP register 0, and
- * replaces the level-6 vertical-interrupt target with its own handler, which
- * performs every VDP write of the movie inside the vertical blank. The host's
- * interrupt mask, register 0 and level-6 target are restored on return.
+ * music, unless flag bit 1 keeps the host's level-4 horizontal interrupt
+ * (for example a music driver) running during the movie. Otherwise the movie
+ * owns the interrupts for the duration of the call: it masks the horizontal
+ * interrupt and disables it in VDP register 0. Either way it replaces the
+ * level-6 vertical-interrupt target with its own handler, which performs every
+ * VDP write of the movie inside the vertical blank. The host's interrupt mask,
+ * register 0 and level-6 target are restored on return. A kept horizontal
+ * interrupt must not touch the VDP or the comm registers the movie owns, and
+ * its work must end before the vertical blank: the hook preempts it there.
  * PLAYER.md (In-game player) owns the memory map and the calling contract.
  *
  * Entry: a0 -> parameters (VDP register values as register-write words,
@@ -21,7 +25,8 @@
  *   +10 .w  host VDP register 4      | otherwise the last frame stays up
  *   +12 .w  host VDP register 7     /
  *   +14 .l  address of the level-6 jump-table long (BIOS: 0xFFFD08)
- *   +18 .w  flags: bit 0 = restore registers 1/2/4/7 before returning
+ *   +18 .w  flags: bit 0 = restore registers 1/2/4/7 before returning,
+ *               bit 1 = keep the host's horizontal interrupt enabled
  * Return: d0.w status (0 = played, 0xBAD1 = the Sub refused the stream),
  *   d1.l frames published, d2.w frames published after their deadline,
  *   d3.w largest lateness in VBlanks, d4.w Sub slip recoveries,
@@ -180,9 +185,14 @@ ingame_main:
 	dbra	d0, 1b
 	lea	palidx_image, a0
 	move.l	a0, palidx_ptr
-	/* Own the interrupts: only the movie's vertical interrupt is taken. */
+	/* Own the interrupts: only the movie's vertical interrupt is taken,
+	   and the host's horizontal interrupt when flag bit 1 keeps it. */
 	move.w	sr, host_sr
 	move.w	#0x2500, sr
+	btst	#1, p_flags+1
+	beq.s	1f
+	move.w	#0x2300, sr
+1:
 	movea.l	p_vint_slot, a1
 	move.l	(a1), host_vint
 	move.l	#vint_hook, (a1)
@@ -529,6 +539,13 @@ palette_switch:
 read_sub_status:
 	move.w	(O_SLIP).l, sub_slips
 	move.w	(O_DSY).l, sub_desyncs
+.ifdef IDLE_PROFILE
+	/* A DEBUG Sub module's per-frame diagnostics (zero otherwise). */
+	move.w	(O_STATUS+0x2C).l, sub_diag+0	/* last slip: expected sector */
+	move.w	(O_STATUS+0x2E).l, sub_diag+2	/* received */
+	move.w	(O_STATUS+0x30).l, sub_diag+4	/* its frame slot */
+	move.w	(O_STATUS+0x32).l, sub_diag+6	/* its sector in the slot */
+.endif
 	rts
 
 /* Prepare frame d0.l's publication: copy its final-only patterns out of
@@ -639,6 +656,11 @@ vint_hook:
 	move.w	idle_blank, (a5)
 	move.w	idle_active, (a5)
 	move.w	hook_exit_v, (a5)
+	move.w	sub_slips, (a5)			/* 0x46.. Sub diagnostics */
+	move.w	sub_diag+0, (a5)
+	move.w	sub_diag+2, (a5)
+	move.w	sub_diag+4, (a5)
+	move.w	sub_diag+6, (a5)
 	clr.w	idle_blank
 	clr.w	idle_active
 .endif
@@ -1025,7 +1047,10 @@ publish:
 /* Frame -1: black CRAM, blank name table, zero scroll, movie registers. */
 job_blank:
 	move.w	p_reg0, d0
+	btst	#1, p_flags+1
+	bne.s	1f
 	andi.w	#0xFFEF, d0			/* no horizontal interrupt */
+1:
 	move.w	d0, (a6)
 	move.w	#0x8700, (a6)			/* backdrop: palette 0 colour 0 */
 	move.l	#0xC0000000, (a6)
@@ -1150,6 +1175,7 @@ idle_active:	.space 2
 idle_blank:	.space 2
 idle_vb:	.space 2
 hook_exit_v:	.space 2
+sub_diag:	.space 8
 idle_v:		.space 2
 .endif
 base_vb:	.space 2
