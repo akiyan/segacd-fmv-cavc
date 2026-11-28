@@ -1911,11 +1911,14 @@ def write_stream(
     # One reconstructed PCM chunk per sector lets the Sub write each chunk without
     # cross-sector staging. Offset 58 carries the RF5C164 frequency delta; offset
     # 60 tells the player how many BODY-arm sectors to queue before PCM starts.
+    # Below about 11 fps a chunk outgrows one sector and takes whole sectors;
+    # the header counts sectors (only the in-game player reads such chunks).
+    audio_chunk_sectors = -(-int(AUDIO_PCM) // SECTOR)
     audio_preload = b"".join(
-        source_pcm_chunks[i].ljust(SECTOR, b"\0")
+        source_pcm_chunks[i].ljust(audio_chunk_sectors * SECTOR, b"\0")
         for i in range(audio_prefetch_frames)
     )
-    audio_preload_sec = audio_prefetch_frames
+    audio_preload_sec = audio_prefetch_frames * audio_chunk_sectors
     # v4: 可変フレーム(5セクタ固定paddingを廃止=各frameは n_pay+n_ctrl セクタ)＋ vsync/コマ N。
     # CDレート累積器が実際のfpsを決める。Nは整数VBlank cadenceのヒントで、24fpsのN2を
     # 29.97fpsへ丸める指定ではない。AUDIOも実効fps由来。FRAME_SECTORS(=5)は最大スロット。

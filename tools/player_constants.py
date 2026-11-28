@@ -281,18 +281,24 @@ def _parse_header_sector(sector: bytes, *, ingame: bool) -> PlayerConstants:
     adpcm_table_sectors = (
         ima_adpcm.FULL_TABLE_BYTES + SECTOR - 1) // SECTOR
     if vblank_cadence:
-        cadence = av_config.vblank_cadence_pattern(fps_int)
+        cadence = av_config.header_vblank_cadence(fps_int, vsync_n)
         if cadence is None:
             raise ValueError(
-                f"VBlank-cadence header has no qualified schedule for fps={fps_int}")
-        if cadence[0] != vsync_n:
-            raise ValueError(
-                f"VBlank-cadence header vsync_n={vsync_n} disagrees with "
-                f"fps={fps_int} (expected {cadence[0]})")
-        sec_steps, sec_mod = av_config.cd_sector_rate_steps(fps_int)
+                f"VBlank-cadence header has no qualified schedule for "
+                f"fps={fps_int} vsync_n={vsync_n}")
+        sec_steps, sec_mod = av_config.cadence_sector_steps(cadence)
     else:
         cadence = ()
         sec_steps, sec_mod = (75,), fps_int
+    if not ingame and max(cadence, default=0) > av_config.STANDALONE_MAX_VBLANK_INTERVAL:
+        raise ValueError(
+            f"the standalone player paces at most "
+            f"{av_config.STANDALONE_MAX_VBLANK_INTERVAL} VBlanks per frame; "
+            f"this header uses {max(cadence)} (in-game player build only)")
+    if not ingame and audio_bytes > av_config.PCM_DEC_BUF_BYTES:
+        raise ValueError(
+            f"{audio_bytes} decoded audio bytes per frame exceed the standalone "
+            f"player's {av_config.PCM_DEC_BUF_BYTES}-byte PCM buffer")
     cadence_period = len(cadence)
     vsync_alt = cadence[1] if len(cadence) > 1 else vsync_n
     sec_num = sec_steps[0]

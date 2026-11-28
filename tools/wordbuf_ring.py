@@ -657,7 +657,8 @@ def _assign_boot(
                 index,
             ),
         )
-        if selected is None:
+        if not selected:
+            # No exact subset, or an empty one: this parity keeps Prg.
             continue
         selected_set = set(selected)
         frontier = bisect_left(parity_items[parity], max(selected))

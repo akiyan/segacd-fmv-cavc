@@ -442,10 +442,13 @@ CD_BYTES_PER_SECOND = CD_SECTOR_BYTES * CD_SECTORS_PER_SECOND
 # one place so display pacing, CD deadlines, and fixed PCM chunks cannot drift.
 NTSC_VSYNC = 60_000 / 1001
 _INTEGER_VBLANK_TOLERANCE = 0.01
-# Fixed display pacing is currently practical through N=4.  Larger intervals
-# would regularly need more than the routing format's five useful sectors per
-# frame and can outlive the Main CPU's 12-bit stopwatch cadence window.
-MAX_FIXED_VBLANK_INTERVAL = 4
+# Fixed display pacing reaches N=8 (7.5 fps) for the in-game player, which
+# counts VBlanks. The standalone player paces through N=4 only: a longer
+# interval can outlive its Main CPU's 12-bit stopwatch cadence window. Above
+# N=4 a slot has more physical sectors than the routing format's five useful
+# ones, so the rest of the slot is pad.
+MAX_FIXED_VBLANK_INTERVAL = 8
+STANDALONE_MAX_VBLANK_INTERVAL = 4
 
 # RF5C164 phase-step conversion.  One output sample advances the 11-bit
 # frequency delta once per 384 clocks of the 12.5 MHz PCM clock.
@@ -565,6 +568,32 @@ def vblank_cadence_pattern(fps):
     return None
 
 
+def header_vblank_cadence(fps_int, vsync_n):
+    """Return the cadence a VBlank-cadence header describes, or ``None``.
+
+    ``fps_int`` is the header's rounded content rate, which cannot name a
+    fractional rate such as 7.5 fps, so a fixed cadence is taken from
+    ``vsync_n`` and checked to lie within one of the rounded rate.
+    """
+    cadence = vblank_cadence_pattern(fps_int)
+    if cadence is not None and cadence[0] == vsync_n:
+        return cadence
+    n = int(vsync_n)
+    if 1 <= n <= MAX_FIXED_VBLANK_INTERVAL and abs(NTSC_VSYNC / n - fps_int) < 1:
+        return (n,)
+    return None
+
+
+def cadence_sector_steps(cadence):
+    """Return reduced CD numerators per cadence step and their modulus."""
+    numerators = tuple(1001 * int(interval) for interval in cadence)
+    modulus = 800
+    divisor = modulus
+    for numerator in numerators:
+        divisor = math.gcd(divisor, numerator)
+    return tuple(numerator // divisor for numerator in numerators), modulus // divisor
+
+
 def uses_vblank_cadence(fps):
     """Whether the stream has an authoritative repeating VBlank schedule."""
     return vblank_cadence_pattern(fps) is not None
@@ -596,15 +625,7 @@ def cd_sector_rate_steps(fps):
         raise ValueError(f"fps must be positive, got {fps!r}")
     cadence = vblank_cadence_pattern(value)
     if cadence is not None:
-        numerators = tuple(1001 * interval for interval in cadence)
-        modulus = 800
-        divisor = modulus
-        for numerator in numerators:
-            divisor = math.gcd(divisor, numerator)
-        return (
-            tuple(numerator // divisor for numerator in numerators),
-            modulus // divisor,
-        )
+        return cadence_sector_steps(cadence)
     nominal = int(round(value))
     if nominal <= 0:
         raise ValueError(f"fps must round to a positive integer, got {fps!r}")

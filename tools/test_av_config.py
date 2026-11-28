@@ -123,7 +123,7 @@ class PlaybackTimingTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             av_config.cd_sector_rate(0)
         with self.assertRaises(ValueError):
-            av_config.fixed_cd_sector_rate(5)
+            av_config.fixed_cd_sector_rate(9)
 
 
 class ColdCapTests(unittest.TestCase):
@@ -154,7 +154,7 @@ class ColdCapTests(unittest.TestCase):
         self.assertEqual(av_config.cold_cap_key("225"), "225")
 
     def test_interval_spec_rejects_bad_entries(self) -> None:
-        for value in ("2:170,2:250", "0:100", "5:100", "2:0", "2:a", "2:"):
+        for value in ("2:170,2:250", "0:100", "9:100", "2:0", "2:a", "2:"):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 av_config.cold_cap(value)
 
