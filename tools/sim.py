@@ -4914,6 +4914,10 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
     ring_plan = None
     ring_enabled = False
     frame0_output = None
+    # Frame 0's control and O_LOADS carry only its inline runs; the boot
+    # sidecar is copied from the boot stage. These counts differ only when a
+    # full resident pool places sidecar slots behind the final-VBlank slot.
+    frame0_output_runs = int(transfer_runs_log[0])
     if PATTERN_SUPPLY_ON and n > cavc_routing.WORDBUF_MAX_FRAMES:
         peak_prg = np.asarray(prg_loads, np.int64).copy()
         peak_prg[0] -= int(boot_sidecar_requests)
@@ -4990,7 +4994,10 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                     if ring_plan.feasible else transfer_runs_log
                 ),
                 np.int64,
-            )
+            ).copy()
+            # The ring model counts frame 0 over every boot load, the
+            # sidecar included; frame 0's O_LOADS carries the inline runs.
+            peak_runs[0] = frame0_output_runs
             # Boot-sidecar patterns are copied from the static boot stage and
             # never appear as inline Prg bytes in frame 0 O_LOADS.
             peak_prg[0] -= int(boot_sidecar_requests)
@@ -5049,6 +5056,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             transfer_runs_log = [
                 int(value) for value in ring_plan.runs
             ]
+            transfer_runs_log[0] = frame0_output_runs
             control_lengths = stream_schedule.control_block_lengths(
                 control_update_counts,
                 np.asarray(transfer_runs_log, np.int64),
@@ -5081,7 +5089,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
     if ring_enabled:
         apply_postplan_transfer_stats(
             stats,
-            dma_runs=ring_plan.runs,
+            dma_runs=transfer_runs_log,
             prefetch_cold=prefetch_cold_log,
         )
         source_names = ("Prg", "Wr0", "Wr1", "Dic")

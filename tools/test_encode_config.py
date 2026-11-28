@@ -221,17 +221,6 @@ class EncodeProfileArtifactTests(unittest.TestCase):
             av_config.ResourceBudget(224, 1279, 0, 40))
         self.assertEqual(reduced_env["CBRSIM_VRAM_TILES"], "1279")
 
-    def test_pack_refuses_a_reduced_resource_budget(self) -> None:
-        import pack_stream
-
-        reduced = av_config.ResourceBudget(dic_patterns=0)
-        log = {"config": {"hardware": {"resources": {
-            name: getattr(reduced, name)
-            for name in av_config.RESOURCE_ENV}}}}
-        with self.assertRaisesRegex(
-                SystemExit, r"reduced resource budget \(dic_patterns=0\)"):
-            pack_stream.configure_from_log(log)
-
     def test_resources_bound_the_profile(self) -> None:
         for resources, message in (
                 ("vram_pool_tiles = 1100", "cannot hold the 1120-cell grid"),

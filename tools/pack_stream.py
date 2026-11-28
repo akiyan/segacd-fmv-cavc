@@ -85,6 +85,7 @@ PLAYBACK_FPS = 0.0
 AUDIO_RATE = 0
 AUDIO_PCM = 0
 AUDIO_CONTROL = 0
+RESOURCE_BUDGET = av_config.ResourceBudget()
 STARTUP_AUDIO_FRAMES = av_config.STARTUP_AUDIO_PREFETCH_FRAMES
 PACK_FILL = av_config.PACK_FORWARD_FILL
 PCM_SYNC_LEAD = 0x3000
@@ -137,7 +138,7 @@ def configure_from_log(log):
     """
     global TCOLS, TROWS, C_CELLS, TILE, PATTERN_BYTES
     global FPS, VSYNC_N, PLAYBACK_FPS, AUDIO_RATE
-    global AUDIO_PCM, AUDIO_CONTROL
+    global AUDIO_PCM, AUDIO_CONTROL, RESOURCE_BUDGET
     global RING_SIZE_KB, RING_CAP_KB, RING_CAP_PAT
     global RING_DELIVERY_CAP_KB, RING_DELIVERY_CAP_PAT
     global RING_JITTER_HEADROOM_KB
@@ -148,23 +149,16 @@ def configure_from_log(log):
     audio = cfg.get("audio") or {}
     hardware = cfg.get("hardware") or {}
 
-    # The assembled player implements only the standalone resource map. A
-    # reduced [resources] budget is an encoder-side plan for an embedding
-    # player that does not exist yet; refuse it rather than write a disc
-    # whose player disagrees with the encoded buffers. Installing the log's
-    # (default) budget also discards any inherited CBRSIM_RESOURCE_* value.
+    # Pack the stream against the budget the encoder used. Installing the
+    # log's budget also discards any inherited CBRSIM_RESOURCE_* value. A
+    # reduced budget is written to the header's RSRC extension; only the
+    # in-game player build accepts such a header (tools/player_constants.py).
     try:
         budget = av_config.ResourceBudget(**(hardware.get("resources") or {}))
     except (TypeError, ValueError) as exc:
         raise SystemExit(f"decision log has an invalid resource budget: {exc}")
-    if not budget.is_default:
-        changed = ", ".join(
-            f"{name}={value}" for name, value in budget.changed().items())
-        raise SystemExit(
-            f"pack: decision log was encoded for a reduced resource budget "
-            f"({changed}); the player supports only the standalone map, so "
-            "this encode can be simulated and analysed but not packed")
     av_config.apply_resource_budget(budget)
+    RESOURCE_BUDGET = budget
     RING_SIZE_KB = av_config.RING_SIZE_KB
     geom = log.get("geom")
     if geom is None:
@@ -864,6 +858,13 @@ def run_stats(
                 np.int64,
             )
         )
+        if pattern_supply.frame0_output_split():
+            # A reduced Word-RAM budget passes frame 0 through the even
+            # reservation in several boot handoffs (pattern_supply).
+            over = over[over > 0]
+            print(f"  frame-0 O_LOADS {int(loads_bytes[0])}B in up to "
+                  f"{pattern_supply.frame0_output_handoffs(loads_bytes[0], caps[0])} "
+                  f"boot handoffs of {caps[0]}B")
         if over.size:
             frame = int(over[0])
             raise SystemExit(
@@ -1955,6 +1956,18 @@ def write_stream(
     # inside the player image, not a header field.
     header += b"\0" * (SECTOR - len(header))
     header = bytearray(header)
+    if not RESOURCE_BUDGET.is_default:
+        # RSRC extension: the reduced resource budget the stream was encoded
+        # for. Only the in-game player build accepts it.
+        player_constants.RESOURCE_STRUCT.pack_into(
+            header, player_constants.RESOURCE_OFFSET,
+            player_constants.RESOURCE_MAGIC,
+            RESOURCE_BUDGET.prg_ring_kib,
+            RESOURCE_BUDGET.vram_pool_tiles,
+            RESOURCE_BUDGET.dic_patterns,
+            RESOURCE_BUDGET.word_ram_bank_kib,
+            RESOURCE_BUDGET.apply_kib,
+        )
     if supply_plan.enabled:
         player_constants.PATTERN_SUPPLY_STRUCT.pack_into(
             header, player_constants.PATTERN_SUPPLY_OFFSET,
@@ -2005,7 +2018,8 @@ def write_stream(
     with header_path.open("wb") as f:
         f.write(header_blob)
     constants_path = out_path.with_name("player_constants.inc")
-    player_constants.generate_include(header_path, constants_path)
+    player_constants.generate_include(
+        header_path, constants_path, ingame=not RESOURCE_BUDGET.is_default)
 
     body_arm = audio_preload + frame0_blk
     arm_sectors = len(body_arm) // SECTOR
@@ -2305,7 +2319,8 @@ def main(*, pack_resources=None):
     if inline_prg[0] < 0:
         raise SystemExit("pack: boot sidecar exceeds frame-0 Prg source count")
     wr0_peak, wr1_peak = pattern_supply.output_load_peaks(
-        inline_prg, packed_runs)
+        inline_prg, packed_runs,
+        include_frame0=not pattern_supply.frame0_output_split())
     packed_peaks = (wr0_peak.bytes, wr1_peak.bytes)
     frozen_peaks = (
         wordram_layout.wr0_load_bytes,
@@ -2580,6 +2595,12 @@ def main(*, pack_resources=None):
             f"rate_lead_peak/end={sc.get('rate_lead_peak', 0)}/"
             f"{sc.get('rate_lead_end', 0)})")
     sc, prefetch = control_prefetch.apply_to_schedule(sc, fps=FPS)
+    if (not RESOURCE_BUDGET.is_default
+            and prefetch.apply_peak_bytes > control_prefetch.apply_watermark()):
+        raise SystemExit(
+            f"pack: modeled APPLY peak {prefetch.apply_peak_bytes}B exceeds "
+            f"the {RESOURCE_BUDGET.apply_kib} KiB APPLY queue's "
+            f"{control_prefetch.apply_watermark()}B scheduled limit")
     print(
         f"  control prefetch: {prefetch.changed_slots} changed slots; "
         f"waits for two or more control sectors "

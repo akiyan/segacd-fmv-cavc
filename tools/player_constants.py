@@ -31,6 +31,10 @@ PATTERN_SUPPLY_OFFSET = HEADER_SIGNATURE_OFFSET + 4
 PATTERN_SUPPLY_MAGIC = b"PSUP"
 PATTERN_SUPPLY_VERSION = 4
 PATTERN_SUPPLY_STRUCT = struct.Struct(">4s11H")
+# RSRC: the reduced resource budget of an in-game stream (absent otherwise).
+RESOURCE_OFFSET = 64
+RESOURCE_MAGIC = b"RSRC"
+RESOURCE_STRUCT = struct.Struct(">4s5H")
 
 # The single supported display mode. HEADER.DAT offset 36 must name it, and a
 # 40x28 aperture with a conservative 3,200-word VBlank budget follows from it.
@@ -131,12 +135,50 @@ class PlayerConstants:
     wr1_offset: int
     wr1_end: int
     wr1_capacity: int
+    # In-game builds only (``ingame=True``); omitted from standalone includes.
+    ingame: bool = False
+    bank_base: int = 0
+    ring_kb: int = av_config.DEFAULT_RING_SIZE_KB
+    apply_kb: int = av_config.DEFAULT_APPLY_KB
 
 
-def parse_header_sector(sector: bytes) -> PlayerConstants:
-    """Validate one packed first sector and derive its hot player constants."""
+def header_resource_budget(sector: bytes) -> av_config.ResourceBudget | None:
+    """Return the RSRC budget of a header sector, or ``None`` when absent."""
+    magic, *values = RESOURCE_STRUCT.unpack_from(sector, RESOURCE_OFFSET)
+    if magic == b"\0\0\0\0" and not any(values):
+        return None
+    if magic != RESOURCE_MAGIC:
+        raise ValueError(f"bad resource-budget magic: {magic!r}")
+    return av_config.ResourceBudget(*values)
+
+
+def parse_header_sector(sector: bytes, *, ingame: bool = False) -> PlayerConstants:
+    """Validate one packed first sector and derive its hot player constants.
+
+    A header carrying a reduced resource budget (RSRC) belongs to the in-game
+    player; a standalone build refuses it, and an in-game build requires it.
+    """
     if len(sector) != SECTOR:
         raise ValueError(f"header sector must be {SECTOR} bytes, got {len(sector)}")
+    budget = header_resource_budget(sector)
+    if budget is not None and not ingame:
+        raise ValueError(
+            "HEADER.DAT was encoded for a reduced resource budget "
+            f"({budget.changed()}); only the in-game player build (INGAME=1) "
+            "plays it")
+    if ingame and budget is None:
+        raise ValueError(
+            "the in-game player needs a HEADER.DAT encoded with a [resources] "
+            "budget")
+    previous = av_config.RESOURCE_BUDGET
+    av_config.apply_resource_budget(budget or av_config.ResourceBudget())
+    try:
+        return _parse_header_sector(sector, ingame=ingame)
+    finally:
+        av_config.apply_resource_budget(previous)
+
+
+def _parse_header_sector(sector: bytes, *, ingame: bool) -> PlayerConstants:
     values = HEADER_STRUCT.unpack_from(sector)
     (
         _magic, frames, tcols, trows, cells, pool, base,
@@ -391,6 +433,10 @@ def parse_header_sector(sector: bytes) -> PlayerConstants:
         wr1_offset=wordram.wr1_offset,
         wr1_end=wordram.wr1_end,
         wr1_capacity=wordram.wr1_patterns,
+        ingame=ingame,
+        bank_base=pattern_supply.word_ram_bank_base(),
+        ring_kb=av_config.RING_SIZE_KB,
+        apply_kb=av_config.APPLY_SIZE_KB,
     )
 
 
@@ -416,6 +462,7 @@ INCLUDE_ORDER = (
     "wr0_offset", "wr0_end", "wr0_capacity",
     "wr1_offset", "wr1_end", "wr1_capacity",
 )
+INGAME_INCLUDE = ("ingame", "bank_base", "ring_kb", "apply_kb")
 
 
 def render_include(constants: PlayerConstants) -> str:
@@ -423,19 +470,22 @@ def render_include(constants: PlayerConstants) -> str:
     lines = [
         "/* Generated from HEADER.DAT by tools/player_constants.py. Do not edit. */",
     ]
-    for name in INCLUDE_ORDER:
-        value = getattr(constants, name)
+    names = INCLUDE_ORDER + (INGAME_INCLUDE if constants.ingame else ())
+    for name in names:
+        value = int(getattr(constants, name))
         width = 8 if value > 0xFFFF or name in {"signature", "font_addr"} else 4
         lines.append(f".equ PC_{name.upper()}, 0x{value:0{width}X}")
     lines.append("")
     return "\n".join(lines)
 
 
-def generate_include(header_path: Path, output_path: Path) -> PlayerConstants:
+def generate_include(
+        header_path: Path, output_path: Path, *, ingame: bool = False,
+) -> PlayerConstants:
     """Generate the include, preserving mtime when its bytes are unchanged."""
     with header_path.open("rb") as src:
         sector = src.read(SECTOR)
-    constants = parse_header_sector(sector)
+    constants = parse_header_sector(sector, ingame=ingame)
     rendered = render_include(constants)
     if not output_path.exists() or output_path.read_text() != rendered:
         output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -447,8 +497,11 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("header", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--ingame", action="store_true",
+        help="generate constants for the in-game player build")
     args = parser.parse_args()
-    constants = generate_include(args.header, args.output)
+    constants = generate_include(args.header, args.output, ingame=args.ingame)
     print(
         f"player_constants: {args.output} signature=0x{constants.signature:08X} "
         f"{constants.tcols}x{constants.trows} {constants.fps_int}fps "

@@ -15,6 +15,12 @@ SECTOR = cavc_routing.SECTOR_BYTES
 APPLY_WATERMARK = 32 * 1024 - 2 * SECTOR
 
 
+def apply_watermark():
+    """Return the scheduled APPLY limit of the current resource budget."""
+    return min(APPLY_WATERMARK + 2 * SECTOR,
+               int(av_config.APPLY_SIZE_KB) * 1024) - 2 * SECTOR
+
+
 @dataclass(frozen=True)
 class PrefetchStats:
     multi_sector_before: int
@@ -50,7 +56,7 @@ def _plan(control, word, capacity, before, prefix, needed, blocking, *,
                     continue
                 delivered = int(prefix[frame]) + ahead
                 if (delivered < needed[frame]
-                        or delivered * SECTOR - before[frame] > APPLY_WATERMARK):
+                        or delivered * SECTOR - before[frame] > apply_watermark()):
                     continue
                 delivered_before = int(prefix[frame - 1]) + previous
                 required_here = count if word[frame] else max(
@@ -111,7 +117,7 @@ def apply_to_schedule(schedule, *, fps):
         late_first_sector = short_slots & (physical == rate_steps[0] // rate_mod) & (word == 0)
         late_first_sector[:2] = False
     baseline_first = int(np.count_nonzero(late_first_sector & (blocking == 1)))
-    if (not baseline_waits and not baseline_first) or baseline_peak > APPLY_WATERMARK:
+    if (not baseline_waits and not baseline_first) or baseline_peak > apply_watermark():
         return schedule, PrefetchStats(
             baseline_waits, baseline_waits, baseline_first, baseline_first, 0, baseline_peak,
         )
@@ -165,7 +171,7 @@ def apply_to_schedule(schedule, *, fps):
     delivered_bytes = planned_prefix * SECTOR
     margin = delivered_bytes - end
     apply_peak = int(np.max(delivered_bytes - before))
-    if np.any(margin < 0) or apply_peak > APPLY_WATERMARK:
+    if np.any(margin < 0) or apply_peak > apply_watermark():
         raise AssertionError("control prefetch violates a deadline or APPLY capacity")
     planned_blocking = _blocking_control_sectors(planned, word, planned_prefix, needed)
     if np.any(planned_blocking > first_pass_blocking) or np.any(planned_blocking > blocking):

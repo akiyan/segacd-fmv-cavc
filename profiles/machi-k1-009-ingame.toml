@@ -34,7 +34,10 @@ cold_cap = 320
 algorithm = "mosaic-gm"
 
 [resources]
-prg_ring_kib = 224
+# The in-game player's share of the 256 KiB PRG-RAM loan after its Sub
+# module, ADPCM tables, decode buffer, pending WordBuf sectors and APPLY.
+prg_ring_kib = 218
 vram_pool_tiles = 1279
 dic_patterns = 0
 word_ram_bank_kib = 40
+apply_kib = 16

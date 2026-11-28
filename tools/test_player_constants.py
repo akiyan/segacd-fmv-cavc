@@ -48,6 +48,41 @@ def make_header(*, mode=av_config.DISPLAY_MODE_BYTE, fps=30, features=None,
 
 
 class PlayerConstantsTest(unittest.TestCase):
+    def test_reduced_budget_needs_the_ingame_build(self):
+        # A standalone build must refuse a stream encoded for the in-game
+        # memory map instead of assembling a player with the wrong buffers.
+        budget = av_config.ResourceBudget(224, 1279, 0, 40, 16)
+        sector = bytearray(make_header(
+            fps=15, pool=1279, frames=139,
+            features=(cavc_routing.FEATURE_COLD_RUNS
+                      | cavc_routing.FEATURE_VBLANK_CADENCE
+                      | cavc_routing.FEATURE_PATTERN_SUPPLY
+                      | cavc_routing.FEATURE_DICBUF_INDEXED_RUNS),
+            cold_cap=320))
+        player_constants.PATTERN_SUPPLY_STRUCT.pack_into(
+            sector, player_constants.PATTERN_SUPPLY_OFFSET,
+            player_constants.PATTERN_SUPPLY_MAGIC,
+            player_constants.PATTERN_SUPPLY_VERSION, 0,
+            0, 0, 0, 0, 0, 0, 320, 13_000, 13_000)
+        player_constants.RESOURCE_STRUCT.pack_into(
+            sector, player_constants.RESOURCE_OFFSET,
+            player_constants.RESOURCE_MAGIC, 224, 1279, 0, 40, 16)
+        sector = player_constants.stamp_header_sector(bytes(sector))
+        with self.assertRaisesRegex(ValueError, "in-game player build"):
+            player_constants.parse_header_sector(sector)
+        values = player_constants.parse_header_sector(sector, ingame=True)
+        self.assertEqual(values.audio_control_bytes, 740)
+        self.assertEqual(values.ring_kb, budget.prg_ring_kib)
+        self.assertEqual(values.apply_kb, 16)
+        self.assertEqual(
+            values.bank_base, pattern_supply.WORD_RAM_BANK_BYTES - 40 * 1024)
+        self.assertEqual(
+            values.prg_buf_cap_patterns, (224 - 6 - 40) * 1024 // 32)
+        self.assertTrue(av_config.RESOURCE_BUDGET.is_default)
+        with self.assertRaisesRegex(ValueError, "needs a HEADER.DAT"):
+            player_constants.parse_header_sector(
+                make_header(fps=15), ingame=True)
+
     def test_u16_frame_count_reaches_65535_without_growing_the_header(self):
         size = player_constants.HEADER_STRUCT.size
         for frames in (16384, 16385, 32767, 32768, 32769, 65534, 65535):

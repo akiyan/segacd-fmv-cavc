@@ -217,6 +217,11 @@ FINAL_VBLANK_TILES = 12
 DEFAULT_DIC_BUF_PATTERNS = 512
 # One physical 1M Word-RAM bank.
 WORD_RAM_BANK_KB = 128
+# The standalone player's Sub APPLY control queue (boot/movieplay_sp.s
+# APPLY_SIZE). One control block never exceeds the 8 KiB CTRL-SCR, and the
+# Sub stops draining control 4 KiB before the queue end.
+DEFAULT_APPLY_KB = 34
+MIN_APPLY_KB = 12
 
 
 # --- Physical resource budget ---
@@ -238,13 +243,15 @@ class ResourceBudget:
     contiguous resident pattern pool starting at tile 1. ``dic_patterns`` is
     the DicBuf dictionary size; zero disables DicBuf. ``word_ram_bank_kib`` is
     the usable top of each 1M Word-RAM bank: routing, the fixed tail, the
-    O_LOADS reservation and WordBuf must all fit inside it.
+    O_LOADS reservation and WordBuf must all fit inside it. ``apply_kib`` is
+    the Sub's APPLY control queue; pack bounds its modeled occupancy by it.
     """
 
     prg_ring_kib: int = DEFAULT_RING_SIZE_KB
     vram_pool_tiles: int = DEFAULT_VRAM_PATTERN_POOL_TILES
     dic_patterns: int = DEFAULT_DIC_BUF_PATTERNS
     word_ram_bank_kib: int = WORD_RAM_BANK_KB
+    apply_kib: int = DEFAULT_APPLY_KB
 
     def __post_init__(self):
         for field in dataclasses.fields(self):
@@ -277,6 +284,11 @@ class ResourceBudget:
                 "resources.word_ram_bank_kib must be an even KiB count "
                 f"within 2..{WORD_RAM_BANK_KB}, "
                 f"got {self.word_ram_bank_kib}")
+        if (self.apply_kib % 2
+                or not MIN_APPLY_KB <= self.apply_kib <= DEFAULT_APPLY_KB):
+            raise ValueError(
+                "resources.apply_kib must be an even KiB count within "
+                f"{MIN_APPLY_KB}..{DEFAULT_APPLY_KB}, got {self.apply_kib}")
 
     @property
     def is_default(self):
@@ -297,6 +309,7 @@ RESOURCE_ENV = {
     "vram_pool_tiles": "CBRSIM_RESOURCE_VRAM_TILES",
     "dic_patterns": "CBRSIM_RESOURCE_DIC_PATTERNS",
     "word_ram_bank_kib": "CBRSIM_RESOURCE_WORD_RAM_BANK_KB",
+    "apply_kib": "CBRSIM_RESOURCE_APPLY_KB",
 }
 
 
@@ -333,7 +346,7 @@ def apply_resource_budget(budget):
     global RESOURCE_BUDGET, RING_SIZE_KB, BACKPRESSURE_KB, DELIVERY_CAP_KB
     global RING_JITTER_HEADROOM_KB, RING_CAP_KB, PRG_BUF_CAP_KB
     global QUALITY_BUDGET_KB, VRAM_PATTERN_POOL_TILES, FINAL_VBLANK_SLOT
-    global DIC_BUF_PATTERNS, WORD_RAM_BANK_BUDGET_BYTES
+    global DIC_BUF_PATTERNS, WORD_RAM_BANK_BUDGET_BYTES, APPLY_SIZE_KB
     if not isinstance(budget, ResourceBudget):
         raise TypeError(f"expected ResourceBudget, got {type(budget).__name__}")
     RESOURCE_BUDGET = budget
@@ -344,6 +357,7 @@ def apply_resource_budget(budget):
     FINAL_VBLANK_SLOT = VRAM_PATTERN_POOL_TILES - FINAL_VBLANK_TILES
     DIC_BUF_PATTERNS = budget.dic_patterns
     WORD_RAM_BANK_BUDGET_BYTES = budget.word_ram_bank_kib * 1024
+    APPLY_SIZE_KB = budget.apply_kib
     # The 30 fps reference aliases need a positive 30 fps ceiling; a ring too
     # small for that is still usable at a rate whose own check passes.
     reference = DELIVERY_CAP_KB - cadence_jitter_reserve_kb(30)
