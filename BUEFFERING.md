@@ -20,8 +20,10 @@ disabled; PrgBuf and DicBuf retain their allocations.
 | `DicBuf` | `Dic` | Main RAM | 512 patterns / 16 KiB | Staged through Word RAM at boot, copied to Main RAM, and reused by 9-bit index. |
 
 These are the standalone player's capacities. A profile's `[resources]` table
-may plan a smaller PrgBuf ring, DicBuf, Word-RAM bank and VRAM pool for
-simulation and analysis; see [`CONFIG.md`](CONFIG.md#resource-budget).
+may plan a smaller PrgBuf ring, DicBuf, Word-RAM bank, APPLY queue and VRAM
+pool, which the in-game player build plays; see
+[`CONFIG.md`](CONFIG.md#resource-budget) and
+[`PLAYER.md`](PLAYER.md#in-game-player).
 
 `PrgBuf` is implemented as a ring buffer, so player assembly uses internal
 names such as `RING_BASE` and `RING_SIZE`. `PrgBuf` is the public name of the
@@ -330,9 +332,10 @@ refill、source選択、quality creditをすべて無効化し、PrgBufとDicBuf
 | `WordBuf1` | `Wr1` | 反対側のphysical 1M Word-RAM bank | buildから導出するparity別容量 | `HEADER.DAT`からloadしたringをstream中に先頭BODY payload sectorで補充し、対象となるodd frameが消費 |
 | `DicBuf` | `Dic` | Main RAM | 512 pattern / 16 KiB | boot時にWord RAM経由でMain RAMへcopyし、9-bit indexで再利用 |
 
-これはstandalone playerの容量です。profileの`[resources]` tableは、simulationと
-解析のために、より小さいPrgBuf ring、DicBuf、Word-RAM bank、VRAM poolを計画
-できます。[`CONFIG.md`](CONFIG.md#resource-budget-1)を参照してください。
+これはstandalone playerの容量です。profileの`[resources]` tableは、より小さい
+PrgBuf ring、DicBuf、Word-RAM bank、APPLY queue、VRAM poolを計画でき、それは
+in-game player buildが再生します。[`CONFIG.md`](CONFIG.md#resource-budget-1)と
+[`PLAYER.md`](PLAYER.md#in-game-player-1)を参照してください。
 
 `PrgBuf`はring bufferとして実装されるため、player assemblyは`RING_BASE`や
 `RING_SIZE`などの内部名を使います。Pattern供給の公開名は`PrgBuf`であり、

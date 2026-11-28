@@ -328,12 +328,12 @@ residual after that first reservation becomes WordBuf capacity, rounded down
 to complete 2 KiB preload sectors. The two banks can therefore have different
 starts and capacities; `WB-GAP` is the remaining sub-sector rounding space.
 
-This is the only map the player assembles. A profile's reduced `[resources]`
-Word-RAM budget (see [`CONFIG.md`](CONFIG.md#resource-budget)) is an encoder
-plan for a future embedding player: it keeps the same order inside the top
-`word_ram_bank_kib` of each bank, starts `W-HDR` and `LOADS` at that budget's
-base, and passes the untimed frame-0 output through several boot handoffs.
-Pack refuses such a decision log.
+This is the standalone player's map. A profile's reduced `[resources]`
+Word-RAM budget (see [`CONFIG.md`](CONFIG.md#resource-budget)) keeps the same
+order inside the top `word_ram_bank_kib` of each bank, starts `W-HDR` and
+`LOADS` at that budget's base, and passes the untimed frame-0 output through
+several boot handoffs; the in-game player plays it (see
+[In-game player](#in-game-player)).
 
 During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` for the optional boot-VRAM
 sidecar records; `DIC-STG` uses `+0x6000..+0x9FFF` for DicBuf staging. The
@@ -457,6 +457,139 @@ its own palette and pattern state. There is a loading pause, no menu, and no
 15-second single-movie tail. Frame -1 remains untimed; frame 0 is displayed
 before starting the timed suffix, and the first frame-1 control proves service
 before PCM starts, independently for every part.
+
+## In-game player
+
+A game can play a CAVC movie between its own scenes with the in-game build:
+a Sub module (`boot/movieplay_sp.s` assembled with `INGAME`, `MOVIES.BIN`)
+and a Main module (`boot/ingame_ip.s`, `MOVIEM.BIN`). The stream must be
+encoded with a reduced `[resources]` budget that fits the maps below
+([`CONFIG.md`](CONFIG.md#in-game-player-build) builds them); `HEADER.DAT`
+carries that budget (MOVIE.md, Resource budget) and the modules refuse any
+other header. The game keeps its program, music driver and data; it lends the
+resources below for the duration of one call and gets them back when the
+call returns. The modules support one fixed VBlank cadence, no DicBuf and no
+scroll windows; their assembly rejects other streams.
+
+### Calling sequence
+
+1. The game stops its music (Z80, YM2612, PSG and PCM are its own to stop)
+   and leaves Word RAM in 2M mode owned by Main. Its data may occupy the low
+   176,128 bytes of Word RAM.
+2. The game's Sub program reads `MOVIES.BIN` to PRG-RAM `0x40000` and checks
+   its header: `"CAVS"` at `+0`, interface version 1 at `+4`, link base at
+   `+8` (must equal the load address), image bytes at `+12`, entry at `+16`.
+   It calls the entry with `a0` pointing at four longs: `HEADER.DAT` LBA,
+   `HEADER.DAT` sectors, `BODY.DAT` LBA, `BODY.DAT` sectors.
+3. The game's Main program copies `MOVIEM.BIN` to its link base and checks
+   `"CAVM"` at `+0`, version 1 at `+4`, link base at `+8`, image bytes at
+   `+12` (to copy), Main-RAM bytes used at `+16` (image plus state), entry at
+   `+20`. It calls the entry with `a0` pointing at the parameters below.
+4. Both calls return when the last frame is on screen. Sub returns
+   `d0.w` = 0 or `0xBAD1` (header refused), `d1.w` = sector slips,
+   `d2.w` = control desynchronizations, preserving `d3-d7/a0-a6`. Main
+   returns `d0.w` = 0 or `0xBAD1`, `d1.l` = frames published, `d2.w` =
+   frames published after their VBlank, `d3.w` = largest lateness in VBlanks,
+   `d4.w` / `d5.w` = Sub's slips / desynchronizations, preserving
+   `d6-d7/a0-a6`. On return Word RAM is in 2M mode, owned by Main.
+
+| Main parameter | Size | Meaning |
+|---|---|---|
+| `+0` | word | VRAM address of the movie's 64x32 name table (8 KiB aligned) |
+| `+2` | word | VRAM address of the game's horizontal-scroll table |
+| `+4` | word | the game's VDP register 0 as a register write (`0x80xx`); always restored |
+| `+6`, `+8`, `+10`, `+12` | word | the game's registers 1, 2, 4 and 7 |
+| `+14` | long | address of the level-6 jump-table target long (BIOS: `0xFFFD08`) |
+| `+18` | word | bit 0: restore registers 1, 2, 4 and 7 before returning; otherwise the last movie frame stays up |
+
+The two calls meet through the comm registers: Main writes `CMD_STREAM`
+(`0x50`) and `CMD_SWAP` (`0x51`) to `0xA12010` and acknowledges boot
+handoffs on `0xA12012`; Sub reports on `0xA12020` (`STAT_BOOT_STAGE`
+`0x8001`, `STAT_READY` `0x8003`, `STAT_END` `0x8004`, `STAT_F0_CHUNK`
+`0x8005`, `STAT_FAIL` `0x80FF`). The movie owns `0xA12010..0xA12013` and
+`0xA12020..0xA12025` during the call; Sub clears `0xA12022/24` and Main
+leaves `0xA12010` zero on return. Other comm words are not touched.
+
+### Ownership during the call
+
+| Domain | The movie uses | The game keeps |
+|---|---|---|
+| Main RAM | the Main module at its link base: 3,130-byte image plus 8,672 bytes of state, 11,804 bytes in all (008/009 builds, budget 16 KiB); the game's stack | everything else; the game's stack also carries the module's calls and its VBlank hook (about 256 bytes) |
+| Sub PRG-RAM | `0x40000..0x7FFFF` (map below) | `0x00000..0x3FFFF`, including its own program and BIOS areas; the module runs on the game's Sub stack |
+| Word RAM | 1M mode: the top 40 KiB of each bank (bank offsets `0x16000..0x1FFFF`) | 2M bytes `0x00000..0x2AFFF` (176,128), which no 1M offset at or above `0x16000` maps to |
+| VRAM | tiles 1–1,279 (`0x0020..0x9FFF`), the 64x32 name table, the first entry of the game's horizontal-scroll table, VSRAM words 0–1, all of CRAM | everything else, including tile 0 |
+| VDP registers | 0 (horizontal interrupt off), 1, 2 and 4 (both planes on the movie table), 7, 15, 19–23 | the rest; 11 (full-screen scroll), 12 (H40) and 16 (64x32 planes) must already be set |
+| Main interrupts | mask `0x2500`; the level-6 target is the movie's hook, which does every VDP write inside the blank | the gate array's horizontal-interrupt vector (`0xA12006`), never written |
+| Sub interrupts | mask `0x2000` and gate-array enables `0x3C` (BIOS CDC/CDD service) | its interrupt vectors; mask and `0xFF8033` are restored |
+| Sound | RF5C164 channel 0 and wave RAM `0x0000..0x7FFF` (22.05 kHz ADPCM); all channels are keyed off at the end | Z80, YM2612 and PSG are not touched |
+| Drive | BIOS reads of the two files; stopped on return | sectors of `BODY.DAT` can remain in the CDC buffer after STOP: the game's next read must check each sector's header (MSF) and drop strays, as the test host does |
+
+On return the movie leaves VDP register 15 at 2, its last palette in CRAM,
+its last frame in the pattern pool and name table, and zero scroll in
+VSRAM 0–1 and the first horizontal-scroll entry; the game redraws what it
+needs. Registers 0, 1, 2, 4 and 7, the interrupt mask and the level-6
+target are the game's again.
+
+### Sub PRG-RAM map (in-game)
+
+| Range | Size | Owner |
+|---|---:|---|
+| `0x40000..0x414FD` | 5,374 B | Sub module image: code and state (link limit `0x417A0`) |
+| `0x417A0..0x43A00` | 8,800 B | ADPCM tables, installed from the `HEADER.DAT` stage |
+| `0x43A00..0x43FFF` | 1.5 KiB | decoded PCM chunk |
+| `0x44000..0x7A7FF` | 218 KiB | PrgBuf (`RING_*`); scheduled ceiling 172 KiB at 15 fps |
+| `0x7A800..0x7BFFF` | 6 KiB | three pending WordBuf sectors |
+| `0x7C000..0x7FFFF` | 16 KiB | APPLY control queue |
+| `0x71800..0x7A7FF` | 36 KiB | boot only: frame-0 pattern stage over the PrgBuf tail (the prebuffer ends at `0x6F000`) |
+| `0x7C000..0x7FFFF` | 16 KiB | boot only: ADPCM-table and routing stages over APPLY |
+
+### Word RAM (in-game)
+
+Each 1M bank keeps the standalone order inside its top `word_ram_bank_kib`:
+`W-HDR` and `LOADS` start at bank offset `0x16000`, WordBuf follows the
+parity's `LOADS` peak (`player_constants.inc` `PC_WR0/1_OFFSET`), and the
+fixed tail (`STATUS` `0x1CF00`, `CTRL-SCR` `0x1D000`, `SECT-STG`, routing at
+the bank end) is unchanged. In the 2M view 1M word `w` of bank `b` is word
+`2w + b`, so bank offsets from `0x16000` are 2M bytes from `0x2C000`; the
+game's first 176,128 bytes and the 4 KiB gap above them stay intact. The boot
+stage (`BOOT-STG`, sidecar records) also starts at `0x16000`.
+
+Frame 0 is untimed. Its `O_LOADS` (about 35 KiB at 320x224) does not fit the
+bank, so Sub writes it in chunks that each fill `[O_LOADS, WordBuf)`: after a
+full chunk Sub hands the bank to Main and posts `STAT_F0_CHUNK`; Main
+transfers the records in VBlanks, acknowledges on `0xA12012`, and Sub takes
+the bank back for the next chunk. The last chunk travels with frame 0's
+control in the ordinary `STAT_READY` handoff. Each record is the ordinary
+22-byte `O_LOADS` v2 record with its inline payload.
+
+### Main module
+
+The module owns the level-6 interrupt for the whole call. Its hook reads the
+gate array's stopwatch (`0xA1200C`) on entry and, before each DMA, checks
+that the transfer still ends inside the blank (72 ticks, 34.8 lines, after
+entry). It transfers the current frame's records, splitting a record at whole
+patterns when the blank runs out, and publishes a frame (final-tail patterns,
+the 64x32 name-table band in one DMA, CRAM) once its records are done and its
+VBlank has come. Frame 1's publication anchors the cadence. A frame's records
+start only after the preceding frame is on screen, and a frame is armed for
+publication only after its records have started. Word-RAM DMA uses `src+2`
+and rewrites the first word. Task level builds each frame's name-table shadow
+(two 64-pitch shadows, 3,536 bytes each) from the control in the owned bank.
+
+### Test host
+
+`make ingame-disc` builds a disc whose boot program stands in for a game
+(`boot/ingame_host_ip.s`, `boot/ingame_host_sp.s`): plane A `0xC000`, plane
+B `0xE000`, sprites `0xF000`, horizontal scroll `0xF400`, H40, 64x32, a
+level-6 frame counter and a horizontal interrupt every 96 lines, a pattern in
+the low 176,128 bytes of Word RAM and a font at tile 1,400. Its Sub program
+finds the files, then on request loads and calls the Sub module; its Main
+program calls the Main module. After each play it shows two rows:
+status, frames, late frames, largest lateness, slips, desynchronizations;
+then Sub status, Sub slips, Word-RAM errors, VRAM errors (font and plane B),
+an interrupt check (0 when both host interrupts run again) and the play count.
+It plays the movie again five seconds later.
+`harness/ingame_player` checks such captures.
 
 ## Startup and Per-Frame CPU Sequence
 
@@ -1053,11 +1186,11 @@ Encoderは全frameから偶数・奇数それぞれの最大値を
 したがって2 bankのstartとcapacityは異なり得ます。`WB-GAP`は残った
 sub-sector丸め領域です。
 
-playerが組み立てるのはこのmapだけです。profileの`[resources]`で減らしたWord-RAM
-budget（[`CONFIG.md`](CONFIG.md#resource-budget-1)を参照）は、将来の組み込み用
-playerに向けたencoder側の計画です。各bankの上端`word_ram_bank_kib`の中で同じ順序を
-保ち、`W-HDR`と`LOADS`をそのbudgetの底から始め、非計時のframe-0出力を複数の
-boot handoffで渡します。packはそのdecision logを拒否します。
+これはstandalone playerのmapです。profileの`[resources]`で減らしたWord-RAM
+budget（[`CONFIG.md`](CONFIG.md#resource-budget-1)を参照）は、各bankの上端
+`word_ram_bank_kib`の中で同じ順序を保ち、`W-HDR`と`LOADS`をそのbudgetの底から
+始め、非計時のframe-0出力を複数のboot handoffで渡します。それはin-game playerが
+再生します（[In-game player](#in-game-player-1)を参照）。
 
 Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（optionalなboot-VRAM sidecar record専用）、
 `DIC-STG`が`+0x6000..+0x9FFF`をDicBuf stagingに使います。palette表と切替表は
@@ -1173,6 +1306,130 @@ loaderを読み直してから次のpartを選び、最後からpart 1へ戻り�
 メニューと単一動画の15秒tailはありません。各partでframe -1はuntimedとし、frame 0を
 表示してからtimed suffixを開始し、最初のframe-1 controlで配送を確認してからPCMを
 開始します。
+
+## In-game player
+
+gameは、in-game buildを使って自分の場面の合間にCAVC movieを再生できます。
+Sub module（`INGAME`でassembleした`boot/movieplay_sp.s`、`MOVIES.BIN`）と
+Main module（`boot/ingame_ip.s`、`MOVIEM.BIN`）の2つです。streamは下のmapに
+収まる減らした`[resources]` budgetでencodeしなければなりません
+（[`CONFIG.md`](CONFIG.md#in-game-player-build)がbuildします）。`HEADER.DAT`は
+そのbudgetを持ち（MOVIE.md、Resource budget）、moduleはそれ以外のheaderを拒否
+します。gameは自分のprogram、music driver、dataを持ち続け、1回の呼び出しの間だけ
+下のresourceを貸し、呼び出しが戻ると取り戻します。moduleが扱うのは固定VBlank
+cadence、DicBufなし、scroll windowなしのstreamだけで、それ以外はassembleで拒否します。
+
+### 呼び出し手順
+
+1. gameは自分の音楽を止めます（Z80、YM2612、PSG、PCMを止めるのはgameの役目）。
+   Word RAMは2M modeでMainが所有した状態にします。gameのdataはWord RAMの下位
+   176,128 byteに置けます。
+2. gameのSub programは`MOVIES.BIN`をPRG-RAM `0x40000`へ読み、headerを確かめます:
+   `+0`に`"CAVS"`、`+4`にinterface version 1、`+8`にlink base（読み込んだ番地と
+   一致すること）、`+12`にimage byte数、`+16`にentry。entryを、`a0`が4つのlong
+   （`HEADER.DAT`のLBA、`HEADER.DAT`のsector数、`BODY.DAT`のLBA、`BODY.DAT`の
+   sector数）を指す状態で呼びます。
+3. gameのMain programは`MOVIEM.BIN`をlink baseへcopyし、`+0`の`"CAVM"`、`+4`の
+   version 1、`+8`のlink base、`+12`のimage byte数（copyする量）、`+16`の使用
+   Main-RAM byte数（imageと状態）、`+20`のentryを確かめます。entryを、`a0`が下の
+   parameterを指す状態で呼びます。
+4. 2つの呼び出しは最終frameが画面に出たときに戻ります。Subは`d0.w` = 0または
+   `0xBAD1`（header拒否）、`d1.w` = sector slip数、`d2.w` = control desync数を
+   返し、`d3-d7/a0-a6`を保存します。Mainは`d0.w` = 0または`0xBAD1`、`d1.l` =
+   publishしたframe数、`d2.w` = VBlankに遅れてpublishしたframe数、`d3.w` = 最大の
+   遅れ（VBlank数）、`d4.w` / `d5.w` = Subのslip数 / desync数を返し、
+   `d6-d7/a0-a6`を保存します。戻ったときWord RAMは2M modeでMainが所有しています。
+
+| Main parameter | 大きさ | 意味 |
+|---|---|---|
+| `+0` | word | movieの64x32 name tableのVRAM番地（8 KiB境界） |
+| `+2` | word | gameのhorizontal-scroll tableのVRAM番地 |
+| `+4` | word | gameのVDP register 0をregister write形式（`0x80xx`）で。常に復元 |
+| `+6`、`+8`、`+10`、`+12` | word | gameのregister 1、2、4、7 |
+| `+14` | long | level-6 jump tableの飛び先longの番地（BIOS: `0xFFFD08`） |
+| `+18` | word | bit 0: 戻る前にregister 1、2、4、7を復元する。0なら最後のmovie frameを表示したまま |
+
+2つの呼び出しはcomm registerで連絡します: Mainは`0xA12010`へ`CMD_STREAM`
+（`0x50`）と`CMD_SWAP`（`0x51`）を書き、boot handoffを`0xA12012`で確認します。
+Subは`0xA12020`で報告します（`STAT_BOOT_STAGE` `0x8001`、`STAT_READY` `0x8003`、
+`STAT_END` `0x8004`、`STAT_F0_CHUNK` `0x8005`、`STAT_FAIL` `0x80FF`）。呼び出しの
+間movieは`0xA12010..0xA12013`と`0xA12020..0xA12025`を所有し、戻るときSubは
+`0xA12022/24`を0にし、Mainは`0xA12010`を0のままにします。ほかのcomm wordには
+触れません。
+
+### 呼び出し中の所有
+
+| 領域 | movieが使う | gameが持ち続ける |
+|---|---|---|
+| Main RAM | link baseのMain module: 3,130 byteのimageと8,672 byteの状態、合計11,804 byte（008/009のbuild、予算16 KiB）、それにgameのstack | それ以外すべて。gameのstackはmoduleの呼び出しとVBlank hookも載せる（約256 byte） |
+| Sub PRG-RAM | `0x40000..0x7FFFF`（下のmap） | `0x00000..0x3FFFF`（自分のprogramとBIOS領域を含む）。moduleはgameのSub stackで動く |
+| Word RAM | 1M mode: 各bankの上端40 KiB（bank offset `0x16000..0x1FFFF`） | 2M byte `0x00000..0x2AFFF`（176,128）。`0x16000`以上の1M offsetはここに対応しない |
+| VRAM | tile 1〜1,279（`0x0020..0x9FFF`）、64x32 name table、gameのhorizontal-scroll tableの先頭entry、VSRAM word 0〜1、CRAM全体 | それ以外すべて（tile 0を含む） |
+| VDP register | 0（horizontal interrupt off）、1、2と4（両planeをmovie tableへ）、7、15、19〜23 | 残り。11（全画面scroll）、12（H40）、16（64x32 plane）は設定済みであること |
+| Main割り込み | mask `0x2500`。level-6の飛び先はmovieのhookで、VDPへの書き込みはすべてblank内で行う | gate arrayのhorizontal-interrupt vector（`0xA12006`）。書かない |
+| Sub割り込み | mask `0x2000`とgate-array enable `0x3C`（BIOSのCDC/CDD処理） | 割り込みvector。maskと`0xFF8033`は復元する |
+| 音 | RF5C164のchannel 0とwave RAM `0x0000..0x7FFF`（22.05 kHz ADPCM）。終わりに全channelをkey off | Z80、YM2612、PSGには触れない |
+| Drive | 2つのfileのBIOS読み出し。戻るとき停止 | STOP後もCDC bufferに`BODY.DAT`のsectorが残り得る。gameの次の読み出しは各sectorのheader（MSF）を確かめ、外れたものを捨てること（test hostと同じ） |
+
+戻ったとき、movieはVDP register 15を2、CRAMを最後のpalette、pattern poolと
+name tableを最後のframe、VSRAM 0〜1とhorizontal-scroll先頭entryを0 scrollの
+ままにします。gameは必要なものを描き直します。register 0、1、2、4、7、割り込み
+mask、level-6の飛び先はgameのものに戻っています。
+
+### Sub PRG-RAM map（in-game）
+
+| 範囲 | 大きさ | 所有 |
+|---|---:|---|
+| `0x40000..0x414FD` | 5,374 B | Sub module image: codeと状態（link上限`0x417A0`） |
+| `0x417A0..0x43A00` | 8,800 B | ADPCM table。`HEADER.DAT`のstageから設置 |
+| `0x43A00..0x43FFF` | 1.5 KiB | decode済みPCM chunk |
+| `0x44000..0x7A7FF` | 218 KiB | PrgBuf（`RING_*`）。15 fpsでの予定上限は172 KiB |
+| `0x7A800..0x7BFFF` | 6 KiB | pending WordBuf sector 3つ |
+| `0x7C000..0x7FFFF` | 16 KiB | APPLY control queue |
+| `0x71800..0x7A7FF` | 36 KiB | boot専用: PrgBuf末尾に重ねたframe-0 pattern stage（prebufferは`0x6F000`で終わる） |
+| `0x7C000..0x7FFFF` | 16 KiB | boot専用: APPLYに重ねたADPCM tableとroutingのstage |
+
+### Word RAM（in-game）
+
+各1M bankは上端`word_ram_bank_kib`の中でstandaloneと同じ順序を保ちます:
+`W-HDR`と`LOADS`はbank offset `0x16000`から始まり、WordBufはそのparityの`LOADS`
+peakの後（`player_constants.inc`の`PC_WR0/1_OFFSET`）に続き、固定tail（`STATUS`
+`0x1CF00`、`CTRL-SCR` `0x1D000`、`SECT-STG`、bank末尾のrouting）は変わりません。
+2M viewではbank `b`の1M word `w`はword `2w + b`なので、`0x16000`以上のbank offsetは
+2M byte `0x2C000`以上です。gameの先頭176,128 byteと、その上の4 KiBの隙間は
+そのまま残ります。boot stage（`BOOT-STG`、sidecar record）も`0x16000`から始まります。
+
+frame 0は非計時です。その`O_LOADS`（320x224で約35 KiB）はbankに入らないため、
+Subはそれぞれが`[O_LOADS, WordBuf)`を満たすchunkに分けて書きます: chunkが満ちると
+Subはbankを渡して`STAT_F0_CHUNK`を出し、MainはrecordをVBlankで転送して
+`0xA12012`で確認し、Subは次のchunkのためにbankを取り戻します。最後のchunkは
+frame 0のcontrolと一緒に通常の`STAT_READY` handoffで渡ります。各recordはinline
+payloadを伴う通常の22 byteの`O_LOADS` v2 recordです。
+
+### Main module
+
+moduleは呼び出しの間ずっとlevel-6割り込みを所有します。hookは入口でgate arrayの
+stopwatch（`0xA1200C`）を読み、DMAの前ごとに転送がまだblank内（入口から72 tick、
+34.8 line）で終わるかを確かめます。現在のframeのrecordを転送し、blankが尽きると
+recordを丸ごとのpattern単位で分け、recordが終わってそのVBlankが来たframeを
+publishします（final-tail pattern、64x32 name-table bandを1回のDMA、CRAM）。
+frame 1のpublishがcadenceの基準です。frameのrecordは前のframeが画面に出てから
+始まり、frameはrecordが始まってからはじめてpublish可能になります。Word-RAM DMAは
+`src+2`を使い、先頭wordを書き直します。task levelは、所有bankのcontrolから各frameの
+name-table shadow（64 pitchのshadow 2つ、各3,536 byte）を作ります。
+
+### Test host
+
+`make ingame-disc`は、boot programがgameの代役になるdiscをbuildします
+（`boot/ingame_host_ip.s`、`boot/ingame_host_sp.s`）: plane A `0xC000`、plane B
+`0xE000`、sprite `0xF000`、horizontal scroll `0xF400`、H40、64x32、level-6の
+frame counterと96 lineごとのhorizontal interrupt、Word RAM下位176,128 byteの
+pattern、tile 1,400のfont。Sub programはfileを探し、要求を受けるとSub moduleを
+読み込んで呼びます。Main programはMain moduleを呼びます。再生のたびに2行を表示
+します: status、frame数、遅れたframe数、最大の遅れ、slip数、desync数。続いて
+Sub status、Sub slip数、Word-RAM error数、VRAM error数（fontとplane B）、割り込み
+check（hostの2つの割り込みがまた動けば0）、再生回数。5秒後にもう一度再生します。
+そのcaptureは`harness/ingame_player`が確かめます。
 
 ## StartupとframeごとのCPU sequence
 

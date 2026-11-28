@@ -128,20 +128,45 @@ defaults keeps the same effective settings and completed-sim identity.
 | `vram_pool_tiles` | 1,743 | above the 12-tile final-VBlank tail, at least the grid's cell count, at most 1,743 | Contiguous resident pool from tile 1; the final-VBlank tail is its last 12 slots. The cold cap may not exceed it. |
 | `dic_patterns` | 512 | 0..512 | `DicBuf` dictionary size; 0 disables DicBuf. |
 | `word_ram_bank_kib` | 128 | even, 2..128 | Usable top of each 1M Word-RAM bank. Routing keeps the bank end, the fixed tail (`SECT-STG`, `CTRL-SCR`, `DBG-HDR`) follows, and the `O_LOADS` reservation and WordBuf start at the budget base instead of offset 0. The routing table and fixed tail must fit. |
+| `apply_kib` | 34 | 12..34 | `APPLY` control queue. Control prefetch keeps its scheduled peak two sectors below it, and pack rejects a stream whose modeled peak exceeds that. |
 
 Below 128 KiB a full-grid frame-0 `O_LOADS` (about 35 KiB at 320x224) no longer
 fits beside the fixed tail. The encoder then treats frame 0, which is untimed
 boot work, as consecutive boot handoffs through the even bank's timed
 reservation: the even reservation covers timed frames only, and the sim
-reports the frame-0 bytes and the upper-estimate handoff count.
+reports the frame-0 bytes and the upper-estimate handoff count. The in-game
+player performs those handoffs (PLAYER.md, In-game player).
 
 `tools/encode_config.py` writes only changed values to `CBRSIM_RESOURCE_*`
 and `tools/av_config.py` installs them before any capacity is derived, so sim,
 the analysis renderer and every `CBRSIM_*`-identified artifact use the same
 budget. The decision log records a reduced budget under `config.hardware`.
-The assembled player implements only the standalone map, so
-`tools/pack_stream.py` refuses a reduced budget: such an encode is for
-simulation and analysis until a player supports it.
+Pack writes it into `HEADER.DAT` (MOVIE.md, Resource budget). The standalone
+disc player implements only the standalone map and refuses such a header; a
+reduced budget is played by the in-game player build.
+
+### In-game player build
+
+`make ingame-disc CONFIG=profiles/PROFILE.toml` packs the stream, builds the
+two in-game modules and a standalone test disc,
+`out/PROFILE_ingame.iso` + `.cue`, which boots a stand-in host game that loads
+and calls them (PLAYER.md, In-game player). `make ingame-modules` stops after
+the modules. The profile must carry a reduced `[resources]` budget whose maps
+fit the in-game player; the module links check that. The outputs are:
+
+| File | Contents |
+|---|---|
+| `tmp/PROFILE/ingame/MOVIES.BIN` | Sub module, linked for PRG-RAM `0x40000` |
+| `tmp/PROFILE/ingame/MOVIEM.BIN` | Main module, linked for `INGAME_MAIN_BASE` |
+| `tmp/PROFILE/ingame/player_constants.inc` | in-game player constants (`tools/player_constants.py --ingame`) |
+
+| Make variable | Default | Effect |
+|---|---|---|
+| `INGAME_MAIN_BASE` | `0x00FF9000` | Main-RAM link base of the Main module; the host loads the image there. |
+| `INGAME_PROFILE` | 0 | 1 builds the diagnostic Main module that reports Main's idle scanlines (`harness/ingame_player`). The disc is `out/PROFILE_ingame_profile.iso`. |
+| `INGAME_SUBBUS_LOAD` | 0 | With `INGAME_PROFILE=1`, N holds the Sub bus for about N Main cycles in every VBlank, as a music driver reading PRG-RAM would; the disc name gains `_subbusN`. |
+
+`DEBUG=1` has no HUD effect on the in-game modules.
 
 ## Palette table
 
@@ -576,7 +601,7 @@ tmp/<profile>/
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct workspace path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
-| `[resources]` | optional `prg_ring_kib`, `vram_pool_tiles`, `dic_patterns`, `word_ram_bank_kib` | Reduced physical resource budget; see [Resource budget](#resource-budget). Simulation and analysis only: pack refuses it. |
+| `[resources]` | optional `prg_ring_kib`, `vram_pool_tiles`, `dic_patterns`, `word_ram_bank_kib`, `apply_kib` | Reduced physical resource budget; see [Resource budget](#resource-budget). Played by the in-game player build only. |
 | `[multipart]` | optional `parts` | Default part count (integer 1..64) for `tools/multipart.py`; CLI `--parts N` takes precedence. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
@@ -811,18 +836,43 @@ movieを再生する計画に使います。省略したkeyはstandaloneの値�
 | `vram_pool_tiles` | 1,743 | 12-tileのfinal-VBlank tailより大きく、grid cell数以上、1,743以下 | tile 1から連続するresident pool。final-VBlank tailはその最後の12 slot。cold capはこれを超えられない。 |
 | `dic_patterns` | 512 | 0..512 | `DicBuf` dictionaryの大きさ。0でDicBufを使わない。 |
 | `word_ram_bank_kib` | 128 | 偶数、2..128 | 各1M Word-RAM bankで使える上端部分。routingはbank末尾のままで、固定tail（`SECT-STG`、`CTRL-SCR`、`DBG-HDR`）が続き、`O_LOADS`予約とWordBufはoffset 0ではなくbudgetの底から始まる。routing tableと固定tailが収まらなければならない。 |
+| `apply_kib` | 34 | 12..34 | `APPLY` control queue。control prefetchは予定上のpeakをその2 sector下に保ち、packはmodel上のpeakがそれを超えるstreamを拒否する。 |
 
 128 KiB未満では、full-gridのframe-0 `O_LOADS`（320x224で約35 KiB）が固定tailと
 並んで入りません。そのときencoderは、非計時のboot処理であるframe 0を、even bankの
 timed予約を通る連続したboot handoffとして扱います。even予約はtimed frameだけを
-覆い、simはframe-0のbyte数とhandoff回数の上限見積もりを報告します。
+覆い、simはframe-0のbyte数とhandoff回数の上限見積もりを報告します。そのhandoffは
+in-game playerが行います（PLAYER.md、In-game player）。
 
 `tools/encode_config.py`は変更された値だけを`CBRSIM_RESOURCE_*`へ書き、
 `tools/av_config.py`がcapacityの導出前にそれを組み込みます。sim、analysis renderer、
 `CBRSIM_*`で識別されるすべてのartifactが同じbudgetを使います。decision logは
-減らしたbudgetを`config.hardware`に記録します。組み立てたplayerはstandalone mapしか
-実装していないため、`tools/pack_stream.py`は減らしたbudgetを拒否します。そのencodeは、
-対応するplayerができるまでsimulationと解析用です。
+減らしたbudgetを`config.hardware`に記録し、packはそれを`HEADER.DAT`に書きます
+（MOVIE.md、Resource budget）。standaloneのdisc playerはstandalone mapしか実装して
+おらず、そのheaderを拒否します。減らしたbudgetはin-game player buildが再生します。
+
+### In-game player build
+
+`make ingame-disc CONFIG=profiles/PROFILE.toml`はstreamをpackし、2つのin-game
+moduleと、それを読み込んで呼ぶ代役のhost gameを起動する単体のtest disc
+`out/PROFILE_ingame.iso` + `.cue`をbuildします（PLAYER.md、In-game player）。
+`make ingame-modules`はmoduleまでで止まります。profileは、in-game playerのmapに
+収まる減らした`[resources]` budgetを持たなければならず、moduleのlinkがそれを
+確かめます。出力は次のとおりです。
+
+| File | 内容 |
+|---|---|
+| `tmp/PROFILE/ingame/MOVIES.BIN` | Sub module。PRG-RAM `0x40000`向けにlink |
+| `tmp/PROFILE/ingame/MOVIEM.BIN` | Main module。`INGAME_MAIN_BASE`向けにlink |
+| `tmp/PROFILE/ingame/player_constants.inc` | in-game player定数（`tools/player_constants.py --ingame`） |
+
+| Make変数 | Default | 効果 |
+|---|---|---|
+| `INGAME_MAIN_BASE` | `0x00FF9000` | Main moduleのMain-RAM link base。hostはimageをそこへ読み込む。 |
+| `INGAME_PROFILE` | 0 | 1でMainのidle scanlineを報告する診断用Main moduleをbuildする（`harness/ingame_player`）。discは`out/PROFILE_ingame_profile.iso`。 |
+| `INGAME_SUBBUS_LOAD` | 0 | `INGAME_PROFILE=1`と併用し、N で毎VBlank約N Main cycleのあいだSub busを保持する（PRG-RAMを読むmusic driverの代わり）。disc名に`_subbusN`が付く。 |
+
+`DEBUG=1`はin-game moduleのHUDに影響しません（HUDがない）。
 
 ## Palette table
 
@@ -1215,7 +1265,7 @@ tmp/<profile>/
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなworkspace実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
-| `[resources]` | optional `prg_ring_kib`、`vram_pool_tiles`、`dic_patterns`、`word_ram_bank_kib` | 減らした物理resource budget。[Resource budget](#resource-budget-1)を参照。simulationと解析専用で、packは拒否する。 |
+| `[resources]` | optional `prg_ring_kib`、`vram_pool_tiles`、`dic_patterns`、`word_ram_bank_kib`、`apply_kib` | 減らした物理resource budget。[Resource budget](#resource-budget-1)を参照。in-game player buildだけが再生する。 |
 | `[multipart]` | optional `parts` | `tools/multipart.py`の分割数の既定値（1..64の整数）。CLIの`--parts N`を優先する。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 

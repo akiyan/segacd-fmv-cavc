@@ -111,9 +111,9 @@ Each source has a strict TOML profile.
 - **Cold cap:** a required per-source profile value, changed and qualified
   through that profile.
 - **Resource budget:** optional smaller PrgBuf ring, resident VRAM pool,
-  DicBuf and Word-RAM bank for planning a movie embedded in a game. Such an
-  encode is for simulation and analysis; the player assembles only the
-  standalone map.
+  DicBuf, Word-RAM bank and APPLY queue for a movie a game plays between its
+  own scenes. The in-game player build (`make ingame-disc`) plays such a
+  stream; the standalone disc player keeps its own map.
 - **Palette algorithm:** `stl4` or `mosaic-gm`.
 - **Analysis canvas:** optional and never changes the encoded stream.
 - **Disc region:** Japan or North America, and both are NTSC.
@@ -254,6 +254,7 @@ provides a complete 16,384-frame memory comparison.
 | Target | Purpose |
 |---|---|
 | `movieplay` / `disc` | Codec player disc. |
+| `ingame-disc` / `ingame-modules` | In-game player modules for a game to embed, and a test disc whose stand-in host calls them; the profile needs a reduced `[resources]` budget ([`PLAYER.md`](PLAYER.md#in-game-player)). |
 | `cdcbench` | Continuous and restarted CD-read measurement. |
 | `dmabench` | Maximum VRAM DMA per VBlank. |
 | `cpuvrambench` | CPU-to-VRAM data-port write throughput during VBlank. |
@@ -663,9 +664,10 @@ sourceごとにstrict TOML profileを使います。
   無効化し、routingはframe当たり1 byteを維持。
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
-- **Resource budget:** gameへ組み込むmovieを計画するための、より小さいPrgBuf ring、
-  resident VRAM pool、DicBuf、Word-RAM bank（optional）。そのencodeはsimulationと
-  解析用で、playerが組み立てるのはstandalone mapだけ。
+- **Resource budget:** gameが自分の場面の合間に再生するmovieのための、より小さい
+  PrgBuf ring、resident VRAM pool、DicBuf、Word-RAM bank、APPLY queue（optional）。
+  そのstreamはin-game player build（`make ingame-disc`）が再生し、standaloneの
+  disc playerは自分のmapのままです。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
 - **Analysis canvas:** optionalで、encoded streamは変えない。
 - **Disc region:** 日本または北米。どちらもNTSC。
@@ -795,6 +797,7 @@ Linux依存があります。保存先の移植性はnative Windowsや実機で�
 | Target | 用途 |
 |---|---|
 | `movieplay` / `disc` | Codec player disc。 |
+| `ingame-disc` / `ingame-modules` | gameに組み込むin-game player moduleと、代役のhostがそれを呼ぶtest disc。profileには減らした`[resources]` budgetが必要（[`PLAYER.md`](PLAYER.md#in-game-player-1)）。 |
 | `cdcbench` | continuous/restarted CD read計測。 |
 | `dmabench` | VBlank当たり最大VRAM DMA。 |
 | `cpuvrambench` | VBlank中のCPU→VRAM data port書き込みthroughput実測。 |

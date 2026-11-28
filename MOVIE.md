@@ -164,7 +164,9 @@ The remaining fields are:
 | 56 | 2 | audio_fd | RF5C164 frequency delta |
 | 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors |
 | 60 | 2 | features | feature bits described below |
-| 62 | 130 | pad | zero |
+| 62 | 2 | pad | zero |
+| 64 | 14 | RSRC | reduced resource budget, only for an in-game stream (below) |
+| 78 | 114 | pad | zero |
 | 192 | 4 | player_signature | CRC-32 of contract bytes 4 through 61; magic is excluded |
 | 196 | 26 | PSUP | pattern-supply extension when feature bit 3 is set |
 | 222 | 1826 | pad | zero |
@@ -222,6 +224,26 @@ constants freeze the preload values, routing allocation, compact-tail offsets,
 and parity-specific WordBuf starts, ends, and capacities. The packer
 independently recomputes both `O_LOADS v2` peaks from the materialized runs and
 rejects a mismatch with the decision log.
+
+### Resource budget
+
+A stream encoded with a reduced `[resources]` budget (CONFIG.md, Resource
+budget) carries it as RSRC, `struct ">4s5H"` at offset 64; a default stream
+leaves these bytes zero. RSRC lies outside the signed contract bytes, so the
+player signature does not cover it; the player constants generator reads it.
+
+| Off | Size | Field | Meaning |
+|---:|---:|---|---|
+| 64 | 4 | magic | `"RSRC"` |
+| 68 | 2 | prg_ring_kib | physical PrgBuf ring |
+| 70 | 2 | vram_pool_tiles | resident pool from tile 1 |
+| 72 | 2 | dic_patterns | DicBuf size; 0 = none |
+| 74 | 2 | word_ram_bank_kib | usable top of each 1M bank |
+| 76 | 2 | apply_kib | APPLY control queue |
+
+`tools/player_constants.py` refuses a header with RSRC for the standalone
+player and requires it with `--ingame`, which derives the in-game maps
+(PLAYER.md, In-game player) from it.
 
 ## Player-embedded palette tables
 
@@ -772,7 +794,9 @@ hashを完成済みpartのfileと照合します。loaderはroot directoryを64 
 | 56 | 2 | audio_fd | RF5C164 frequency delta |
 | 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数 |
 | 60 | 2 | features | 下記のfeature bit |
-| 62 | 130 | pad | zero |
+| 62 | 2 | pad | zero |
+| 64 | 14 | RSRC | 減らしたresource budget。in-game streamだけ（下記） |
+| 78 | 114 | pad | zero |
 | 192 | 4 | player_signature | contract byte 4〜61のCRC-32。magicは対象外 |
 | 196 | 26 | PSUP | feature bit 3がsetのときのpattern-supply extension |
 | 222 | 1826 | pad | zero |
@@ -827,6 +851,27 @@ PSUPは `struct ">4s11H"` です。
 player constantsがpreload値、routing allocation、compact-tail offset、parity別WordBufの
 開始・終了・容量を固定します。Packerはmaterialize済みrunから2つの
 `O_LOADS v2`ピークを独立再計算し、decision logとの不一致を拒否します。
+
+
+### Resource budget
+
+減らした`[resources]` budget（CONFIG.md、Resource budget）でencodeしたstreamは、
+それをoffset 64のRSRC（`struct ">4s5H"`）に持ちます。defaultのstreamではこのbyteは
+0です。RSRCは署名対象のcontract byteの外にあるためplayer signatureには含まれず、
+player constants generatorが読みます。
+
+| Off | Size | Field | 意味 |
+|---:|---:|---|---|
+| 64 | 4 | magic | `"RSRC"` |
+| 68 | 2 | prg_ring_kib | 物理PrgBuf ring |
+| 70 | 2 | vram_pool_tiles | tile 1からのresident pool |
+| 72 | 2 | dic_patterns | DicBufの大きさ。0はなし |
+| 74 | 2 | word_ram_bank_kib | 各1M bankで使える上端 |
+| 76 | 2 | apply_kib | APPLY control queue |
+
+`tools/player_constants.py`はstandalone player向けにはRSRCを持つheaderを拒否し、
+`--ingame`ではそれを必須とし、そこからin-game map（PLAYER.md、In-game player）を
+導きます。
 
 ## Player内蔵palette table
 
