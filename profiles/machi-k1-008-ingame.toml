@@ -1,0 +1,40 @@
+schema_version = 5
+
+# Machi movie 008 (Amamiya Keima, route B) for in-game playback in the Mega CD
+# port: full 320x224 at the native 15 fps inside the resources the game can
+# lend while a movie plays. The source is a silent Duck TrueMotion 1 AVI; the
+# encoder carries a silent audio track for it.
+[source]
+path = "assets/machi_008.avi"
+fps = "15"
+duration = "9.266667"
+# The Saturn's 320-dot mode uses the same 6.7 MHz dot clock as H40, so its
+# pixels already have the 32:35 aspect; the AVI only carries a 1:1 default.
+sar = "32:35"
+
+[video]
+width = 320
+height = 224
+fit = "pad"
+master_denoise = false
+
+[output]
+directory = "tmpfs/machi_k1_008_ingame_H40_320x224/sim"
+reuse = false
+emit_decisions = true
+
+[encoder]
+# One frame of CD 1x at 15 fps is about 10 KiB, or 320 patterns. The 40 KiB
+# Word-RAM budget holds a 320-pattern worst case (32 + 22 bytes each) and
+# still leaves WordBuf sectors, and the 1,279-tile pool leaves at least 159
+# free slots beside a full 1,120-cell frame.
+cold_cap = 320
+
+[palette]
+algorithm = "mosaic-gm"
+
+[resources]
+prg_ring_kib = 224
+vram_pool_tiles = 1279
+dic_patterns = 0
+word_ram_bank_kib = 40
