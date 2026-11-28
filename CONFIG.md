@@ -165,6 +165,8 @@ fit the in-game player; the module links check that. The outputs are:
 | `INGAME_MAIN_BASE` | `0x00FF9000` | Main-RAM link base of the Main module; the host loads the image there. |
 | `INGAME_PROFILE` | 0 | 1 builds the diagnostic Main module that reports Main's idle scanlines (`harness/ingame_player`). The disc is `out/PROFILE_ingame_profile.iso`. |
 | `INGAME_SUBBUS_LOAD` | 0 | With `INGAME_PROFILE=1`, N holds the Sub bus for about N Main cycles in every VBlank, as a music driver reading PRG-RAM would; the disc name gains `_subbusN`. |
+| `INGAME_HOST_LOAD` | 0 | N gives the test host a music-driver stand-in that the movie keeps running: a horizontal interrupt busy for N lines from line 8 of every frame, then holding the Sub bus for about 400 cycles; the disc name gains `_loadN`. |
+| `INGAME_GAP_DIAG` | 0 | With `INGAME_PROFILE=1 DEBUG=1`, the Sub module records where its last CD sequence gap happened for the profile log. |
 
 `DEBUG=1` has no HUD effect on the in-game modules.
 
@@ -363,7 +365,10 @@ schedule displays every N VBlanks and uses the matching reduced `1001*N/800`
 sector accumulator:
 
 - N=2: 199 two-sector and 201 three-sector slots per 400 frames;
-- N=4: 199 five-sector and one six-sector slot per 200 frames.
+- N=4: 199 five-sector and one six-sector slot per 200 frames;
+- N=6 (10 fps) and N=8 (7.5 fps), in-game player only: about 7.5 and 10
+  physical sectors per frame, of which at most five carry data; the rest is
+  pad. The standalone player paces at most N=4.
 
 The N=4 sixth sector is physical pad only because the routing byte still caps
 useful data at five sectors. At 24 fps, frame 1 starts after two VBlanks and
@@ -871,6 +876,8 @@ moduleと、それを読み込んで呼ぶ代役のhost gameを起動する単�
 | `INGAME_MAIN_BASE` | `0x00FF9000` | Main moduleのMain-RAM link base。hostはimageをそこへ読み込む。 |
 | `INGAME_PROFILE` | 0 | 1でMainのidle scanlineを報告する診断用Main moduleをbuildする（`harness/ingame_player`）。discは`out/PROFILE_ingame_profile.iso`。 |
 | `INGAME_SUBBUS_LOAD` | 0 | `INGAME_PROFILE=1`と併用し、N で毎VBlank約N Main cycleのあいだSub busを保持する（PRG-RAMを読むmusic driverの代わり）。disc名に`_subbusN`が付く。 |
+| `INGAME_HOST_LOAD` | 0 | Nでtest hostに、movie中も動き続けるmusic driverの代わりを持たせる: 毎frameのline 8からN line忙しく、続けて約400 cycle Sub busを保持するhorizontal interrupt。disc名に`_loadN`が付く。 |
+| `INGAME_GAP_DIAG` | 0 | `INGAME_PROFILE=1 DEBUG=1`と併用し、Sub moduleが最後のCD連番の飛びの位置をprofile logに残す。 |
 
 `DEBUG=1`はin-game moduleのHUDに影響しません（HUDがない）。
 
@@ -1045,6 +1052,9 @@ MainがN VBlankごとに表示し、Subが対応する`1001*N/800`の約分secto
 
 - N=2: 400 frame当たり2-sector slotが199個、3-sector slotが201個
 - N=4: 200 frame当たり5-sector slotが199個、6-sector slotが1個
+- N=6（10 fps）とN=8（7.5 fps）、in-game player専用: frameごとに約7.5と10の
+  physical sector。dataを運ぶのは最大5つで、残りはpad。standalone playerの
+  pacingはN=4まで。
 
 N=4の6個目はphysical padだけです。routing byteの有効data上限は5 sectorのままです。
 24 fpsではframe 1を2 VBlank後に表示して`(2, 3)`を反復し、Subも同じ位相の

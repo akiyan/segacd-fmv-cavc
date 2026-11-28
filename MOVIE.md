@@ -53,7 +53,7 @@ HEADER.DAT
 
 BODY.DAT
 +--------------------------------------------------+  sector 0
-| ARM_AUDIO (audio_preload_sec sectors)            |  one decoded chunk per sector
+| ARM_AUDIO (audio_preload_sec sectors)            |  one decoded chunk per sector (two below ~11 fps)
 +--------------------------------------------------+
 | ARM_FRAME0 (f0_ctrl_sec + f0_pat_sec sectors)    |  control, then patterns
 +--------------------------------------------------+
@@ -162,7 +162,7 @@ The remaining fields are:
 | 52 | 2 | audio_bytes | even decoded samples per effective playback frame |
 | 54 | 2 | fps_int | nominal content rate |
 | 56 | 2 | audio_fd | RF5C164 frequency delta |
-| 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors |
+| 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sectors; each chunk takes `ceil(audio_bytes / 2048)` whole sectors |
 | 60 | 2 | features | feature bits described below |
 | 62 | 2 | pad | zero |
 | 64 | 14 | RSRC | reduced resource budget, only for an in-game stream (below) |
@@ -171,13 +171,15 @@ The remaining fields are:
 | 196 | 26 | PSUP | pattern-supply extension when feature bit 3 is set |
 | 222 | 1826 | pad | zero |
 
-When `FEATURE_VBLANK_CADENCE` is set, `fps_int` selects a qualified repeating
-schedule and `vsync_n` must equal its first interval: 15 fps is `(4)`, 24 fps
-is `(2, 3)`, 30 fps is `(2)`, and 60 fps is `(1)`. Frame 1 uses the first
-interval. When the bit is clear, `vsync_n` is only a display hint and delivery
-follows `75 / fps_int`. `audio_bytes` is normally 1472 at 15 fps, 920 at 24
-fps, and 736 at 30 fps. A live ADPCM chunk occupies `4 + audio_bytes / 2`
-bytes before alignment.
+When `FEATURE_VBLANK_CADENCE` is set, `fps_int` and `vsync_n` select a
+qualified repeating schedule: 15 fps is `(4)`, 24 fps is `(2, 3)`, 30 fps is
+`(2)`, and 60 fps is `(1)`; the in-game player also takes 10 fps `(6)` and
+7.5 fps `(8)`, whose rounded `fps_int` (10 and 8) names the rate only
+approximately, so a fixed cadence is `(vsync_n)` within one of it. Frame 1
+uses the first interval. When the bit is clear, `vsync_n` is only a display
+hint and delivery follows `75 / fps_int`. `audio_bytes` is normally 1472 at
+15 fps, 920 at 24 fps, 736 at 30 fps, 2208 at 10 fps and 2944 at 7.5 fps. A
+live ADPCM chunk occupies `4 + audio_bytes / 2` bytes before alignment.
 
 The player signature is generated from the same header sector as
 `player_constants.inc` and baked into both player objects. A player/header
@@ -692,7 +694,7 @@ HEADER.DAT
 
 BODY.DAT
 +--------------------------------------------------+  sector 0
-| ARM_AUDIO (audio_preload_sec sectors)            |  one decoded chunk per sector
+| ARM_AUDIO (audio_preload_sec sectors)            |  one decoded chunk per sector（約11 fps未満は2つ）
 +--------------------------------------------------+
 | ARM_FRAME0 (f0_ctrl_sec + f0_pat_sec sectors)    |  control, then patterns
 +--------------------------------------------------+
@@ -792,7 +794,7 @@ hashを完成済みpartのfileと照合します。loaderはroot directoryを64 
 | 52 | 2 | audio_bytes | 実効playback frameごとの偶数decoded sample数 |
 | 54 | 2 | fps_int | nominal content rate |
 | 56 | 2 | audio_fd | RF5C164 frequency delta |
-| 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数 |
+| 58 | 2 | audio_preload_sec | BODY-arm decoded-audio sector数。各chunkは`ceil(audio_bytes / 2048)`個の完全なsectorを使う |
 | 60 | 2 | features | 下記のfeature bit |
 | 62 | 2 | pad | zero |
 | 64 | 14 | RSRC | 減らしたresource budget。in-game streamだけ（下記） |
@@ -801,11 +803,13 @@ hashを完成済みpartのfileと照合します。loaderはroot directoryを64 
 | 196 | 26 | PSUP | feature bit 3がsetのときのpattern-supply extension |
 | 222 | 1826 | pad | zero |
 
-`FEATURE_VBLANK_CADENCE` がsetなら、`fps_int` が認定済みの反復scheduleを選び、
-`vsync_n` はその最初の間隔と一致しなければなりません。15 fpsは`(4)`、24 fpsは
-`(2, 3)`、30 fpsは`(2)`、60 fpsは`(1)`で、frame 1が最初の間隔を使います。
-bitがclearなら`vsync_n`はdisplay hintだけになり、deliveryは`75 / fps_int`に
-従います。`audio_bytes`は通常、15 fpsで1472、24 fpsで920、30 fpsで736です。
+`FEATURE_VBLANK_CADENCE` がsetなら、`fps_int`と`vsync_n`が認定済みの反復
+scheduleを選びます。15 fpsは`(4)`、24 fpsは`(2, 3)`、30 fpsは`(2)`、60 fpsは`(1)`
+です。in-game playerは10 fpsの`(6)`と7.5 fpsの`(8)`も扱い、丸めた`fps_int`
+（10と8）は速さをおおよそしか表さないため、固定cadenceはそこから1以内の
+`(vsync_n)`とします。frame 1が最初の間隔を使います。bitがclearなら`vsync_n`は
+display hintだけになり、deliveryは`75 / fps_int`に従います。`audio_bytes`は
+通常、15 fpsで1472、24 fpsで920、30 fpsで736、10 fpsで2208、7.5 fpsで2944です。
 live ADPCM chunkはalignment前で`4 + audio_bytes / 2` byteです。
 
 player signatureは同じheader sectorから生成する `player_constants.inc` とともに

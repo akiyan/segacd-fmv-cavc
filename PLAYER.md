@@ -500,7 +500,7 @@ scroll windows; their assembly rejects other streams.
 | `+4` | word | the game's VDP register 0 as a register write (`0x80xx`); always restored |
 | `+6`, `+8`, `+10`, `+12` | word | the game's registers 1, 2, 4 and 7 |
 | `+14` | long | address of the level-6 jump-table target long (BIOS: `0xFFFD08`) |
-| `+18` | word | bit 0: restore registers 1, 2, 4 and 7 before returning; otherwise the last movie frame stays up |
+| `+18` | word | bit 0: restore registers 1, 2, 4 and 7 before returning; otherwise the last movie frame stays up. Bit 1: keep the game's horizontal interrupt (for example its music driver) running during the movie |
 
 The two calls meet through the comm registers: Main writes `CMD_STREAM`
 (`0x50`) and `CMD_SWAP` (`0x51`) to `0xA12010` and acknowledges boot
@@ -519,7 +519,7 @@ leaves `0xA12010` zero on return. Other comm words are not touched.
 | Word RAM | 1M mode: the top 40 KiB of each bank (bank offsets `0x16000..0x1FFFF`) | 2M bytes `0x00000..0x2AFFF` (176,128), which no 1M offset at or above `0x16000` maps to |
 | VRAM | tiles 1–1,279 (`0x0020..0x9FFF`), the 64x32 name table, the first entry of the game's horizontal-scroll table, VSRAM words 0–1, all of CRAM | everything else, including tile 0 |
 | VDP registers | 0 (horizontal interrupt off), 1, 2 and 4 (both planes on the movie table), 7, 15, 19–23 | the rest; 11 (full-screen scroll), 12 (H40) and 16 (64x32 planes) must already be set |
-| Main interrupts | mask `0x2500`; the level-6 target is the movie's hook, which does every VDP write inside the blank | the gate array's horizontal-interrupt vector (`0xA12006`), never written |
+| Main interrupts | mask `0x2500` (`0x2300` with flag bit 1); the level-6 target is the movie's hook, which does every VDP write inside the blank | the gate array's horizontal-interrupt vector (`0xA12006`), never written. A kept horizontal interrupt must leave the VDP and the movie's comm words alone and end before the blank, where the hook preempts it |
 | Sub interrupts | mask `0x2000` and gate-array enables `0x3C` (BIOS CDC/CDD service) | its interrupt vectors; mask and `0xFF8033` are restored |
 | Sound | RF5C164 channel 0 and wave RAM `0x0000..0x7FFF` (22.05 kHz ADPCM); all channels are keyed off at the end | Z80, YM2612 and PSG are not touched |
 | Drive | BIOS reads of the two files; stopped on return | sectors of `BODY.DAT` can remain in the CDC buffer after STOP: the game's next read must check each sector's header (MSF) and drop strays, as the test host does |
@@ -536,7 +536,7 @@ target are the game's again.
 |---|---:|---|
 | `0x40000..0x414FD` | 5,374 B | Sub module image: code and state (link limit `0x417A0`) |
 | `0x417A0..0x43A00` | 8,800 B | ADPCM tables, installed from the `HEADER.DAT` stage |
-| `0x43A00..0x43FFF` | 1.5 KiB | decoded PCM chunk |
+| `0x43A00..0x43FFF` | 1.5 KiB | decoded PCM chunk (one frame's audio rounded up to 256 bytes: 2.25 KiB at 10 fps, 3 KiB at 7.5 fps, which then take a 216 KiB PrgBuf) |
 | `0x44000..0x7A7FF` | 218 KiB | PrgBuf (`RING_*`); scheduled ceiling 172 KiB at 15 fps |
 | `0x7A800..0x7BFFF` | 6 KiB | three pending WordBuf sectors |
 | `0x7C000..0x7FFFF` | 16 KiB | APPLY control queue |
@@ -1347,7 +1347,7 @@ cadence、DicBufなし、scroll windowなしのstreamだけで、それ以外は
 | `+4` | word | gameのVDP register 0をregister write形式（`0x80xx`）で。常に復元 |
 | `+6`、`+8`、`+10`、`+12` | word | gameのregister 1、2、4、7 |
 | `+14` | long | level-6 jump tableの飛び先longの番地（BIOS: `0xFFFD08`） |
-| `+18` | word | bit 0: 戻る前にregister 1、2、4、7を復元する。0なら最後のmovie frameを表示したまま |
+| `+18` | word | bit 0: 戻る前にregister 1、2、4、7を復元する。0なら最後のmovie frameを表示したまま。bit 1: movie中もgameのhorizontal interrupt（たとえばmusic driver）を動かし続ける |
 
 2つの呼び出しはcomm registerで連絡します: Mainは`0xA12010`へ`CMD_STREAM`
 （`0x50`）と`CMD_SWAP`（`0x51`）を書き、boot handoffを`0xA12012`で確認します。
@@ -1366,7 +1366,7 @@ Subは`0xA12020`で報告します（`STAT_BOOT_STAGE` `0x8001`、`STAT_READY` `
 | Word RAM | 1M mode: 各bankの上端40 KiB（bank offset `0x16000..0x1FFFF`） | 2M byte `0x00000..0x2AFFF`（176,128）。`0x16000`以上の1M offsetはここに対応しない |
 | VRAM | tile 1〜1,279（`0x0020..0x9FFF`）、64x32 name table、gameのhorizontal-scroll tableの先頭entry、VSRAM word 0〜1、CRAM全体 | それ以外すべて（tile 0を含む） |
 | VDP register | 0（horizontal interrupt off）、1、2と4（両planeをmovie tableへ）、7、15、19〜23 | 残り。11（全画面scroll）、12（H40）、16（64x32 plane）は設定済みであること |
-| Main割り込み | mask `0x2500`。level-6の飛び先はmovieのhookで、VDPへの書き込みはすべてblank内で行う | gate arrayのhorizontal-interrupt vector（`0xA12006`）。書かない |
+| Main割り込み | mask `0x2500`（flag bit 1なら`0x2300`）。level-6の飛び先はmovieのhookで、VDPへの書き込みはすべてblank内で行う | gate arrayのhorizontal-interrupt vector（`0xA12006`）。書かない。残したhorizontal interruptはVDPとmovieのcomm wordに触れず、hookが割り込むblankの前に終えること |
 | Sub割り込み | mask `0x2000`とgate-array enable `0x3C`（BIOSのCDC/CDD処理） | 割り込みvector。maskと`0xFF8033`は復元する |
 | 音 | RF5C164のchannel 0とwave RAM `0x0000..0x7FFF`（22.05 kHz ADPCM）。終わりに全channelをkey off | Z80、YM2612、PSGには触れない |
 | Drive | 2つのfileのBIOS読み出し。戻るとき停止 | STOP後もCDC bufferに`BODY.DAT`のsectorが残り得る。gameの次の読み出しは各sectorのheader（MSF）を確かめ、外れたものを捨てること（test hostと同じ） |
@@ -1382,7 +1382,7 @@ mask、level-6の飛び先はgameのものに戻っています。
 |---|---:|---|
 | `0x40000..0x414FD` | 5,374 B | Sub module image: codeと状態（link上限`0x417A0`） |
 | `0x417A0..0x43A00` | 8,800 B | ADPCM table。`HEADER.DAT`のstageから設置 |
-| `0x43A00..0x43FFF` | 1.5 KiB | decode済みPCM chunk |
+| `0x43A00..0x43FFF` | 1.5 KiB | decode済みPCM chunk（1 frame分の音声を256 byteに切り上げ。10 fpsで2.25 KiB、7.5 fpsで3 KiBになり、そのときPrgBufは216 KiB） |
 | `0x44000..0x7A7FF` | 218 KiB | PrgBuf（`RING_*`）。15 fpsでの予定上限は172 KiB |
 | `0x7A800..0x7BFFF` | 6 KiB | pending WordBuf sector 3つ |
 | `0x7C000..0x7FFFF` | 16 KiB | APPLY control queue |
