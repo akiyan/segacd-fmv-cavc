@@ -77,19 +77,23 @@ def encoder_change_note() -> str:
     """
     lines = VERSION_FILE.read_text(encoding="utf-8").splitlines()
     version = build_version().split(".e")[1].split(".p")[0]
-    head = f"#   e{version}:"
+    # Entries are written both as "#   e194:" and "# e204:", and a combined
+    # bump as "# e198/p166:".
+    head = re.compile(rf"^#\s+e{version}(?:/p\d+)?:")
+    entry = re.compile(r"^#\s+[ep]\d+(?:/p\d+)?:")
     try:
-        start = next(i for i, line in enumerate(lines) if line.startswith(head))
+        start = next(i for i, line in enumerate(lines) if head.match(line))
     except StopIteration:
         raise SystemExit(f"{VERSION_FILE}: no history entry for e{version}")
     collected = []
     for line in lines[start:]:
         if not line.startswith("#"):
             break
-        if collected and re.match(r"^#\s+[ep]\d+:", line):
+        if collected and entry.match(line):
             break
         collected.append(re.sub(r"^#\s{0,9}", "", line))
-    return "\n".join(collected).replace(f"e{version}: ", "", 1)
+    return re.sub(
+        rf"^e{version}(?:/p\d+)?: ", "", "\n".join(collected), count=1)
 
 
 def comparison_template(profile) -> str:
