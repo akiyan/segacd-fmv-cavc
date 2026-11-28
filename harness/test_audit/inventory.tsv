@@ -54,6 +54,8 @@ harness/frame_capacity/test_extended.py	unit	quick	retain	Header/counter limits,
 harness/frame_capacity/test_packing.py	retired	none	delete/consolidate	See candidates.tsv for the explicitly dropped guarantee or replacement.	—
 harness/gpgx_logvdp/extract_frame_tsv.py	archive reader	opt-in historical diagnostic	retain	Historical core log PC and DMA-source evidence is misattributed to the wrong movie frame.	—
 harness/hud_ocr/verify.py	diagnostic/support	opt-in diagnostic	retain	Actual font/layout pixels are decoded into wrong HUD fields.	—
+harness/ingame_player/check_capture.py	diagnostic/support	opt-in diagnostic	retain	The assembled in-game player shows a picture other than the SIM's, writes VDP memory outside the blank or outside its lent VRAM, or drops a frame, in a real emulator capture.	—
+harness/ingame_player/idle_report.py	diagnostic/support	opt-in diagnostic	retain	The Main CPU time left to a host game's music during in-game playback is assumed rather than measured from a capture.	—
 harness/main_codegen/measure_cycles.py	diagnostic/support	opt-in diagnostic	retain	Actual build/cycle observations are unavailable for generated-handler diagnosis.	—
 harness/main_codegen/verify_handlers.py	retired	none	delete/consolidate	See candidates.tsv for the explicitly dropped guarantee or replacement.	—
 harness/multipart/analyze_recording.py	recording verifier	opt-in publication/device	retain	Applies the standard HUD gate to actual recorded independent parts; catches skipped visits, lost start anchors and per-part cadence/recovery failures.	—
