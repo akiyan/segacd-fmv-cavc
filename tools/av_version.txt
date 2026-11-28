@@ -1384,7 +1384,7 @@
 # p159: reject stale finite-read prefixes and clear the scroll plane on replay.
 # e196: reserve the first scroll control's guard edge independently of its
 #       ordinary anchor's geometry state.
-date=20261123
+date=20261128
 # e197: reduce infeasible control-sector reservations before projecting Prg limits.
 # e200: restore cold-only admission and allocation.
 e=204
@@ -1401,7 +1401,7 @@ e=204
 # p170: start bounded LAT transfers from the active edge using a physical blank origin.
 # p171: retain a usable blank head and wait through the active-edge counter wrap.
 # p172: admit a bounded protected-pattern transfer in each EAT and LAT.
-p=179
+p=180
 
 # e201/p173: carry unfinished reference updates through inline CRAM fades.
 # e202: reserve the final publication bundle during placement, including
@@ -1417,3 +1417,7 @@ p=179
 # p178: accept complete queued control after the required physical delivery.
 # e204: prefetch late first control sectors on short alternating-cadence slots.
 # p179: preserve the BIOS VBlank handler through the Sub program boot handoff.
+# p180: add the in-game player: a Sub module (movieplay_sp.s built with INGAME)
+#       and a Main module (ingame_ip.s) that a game loads and calls with a
+#       reduced resource budget; frame 0 reaches Main in Word-RAM chunks. The
+#       standalone player's output is unchanged.

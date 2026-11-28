@@ -18,7 +18,7 @@ PYTHON ?= tools/python.sh
 ifeq ($(strip $(MAKECMDGOALS)),)
 MOVIEPLAY_REQUESTED := all
 else
-MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal movieplay-module test1m,$(MAKECMDGOALS))
+MOVIEPLAY_REQUESTED := $(filter all disc movieplay movieplay-internal movieplay-module test1m ingame-disc ingame-internal ingame-modules,$(MAKECMDGOALS))
 endif
 ifneq ($(strip $(MOVIEPLAY_REQUESTED)),)
 ifeq ($(strip $(CONFIG)),)
@@ -76,7 +76,7 @@ ASFLAGS := -m68000 --register-prefix-optional --bitwise-or
 CFLAGS_M68K := -m68000 -ffreestanding -fno-builtin -fomit-frame-pointer -O2 -Wall -Wextra
 LDFLAGS := -nostdlib --oformat binary
 
-.PHONY: all disc setup movieplay-setup clean check-tools test1m cdcbench fontbench still256 movieplay movieplay-internal moviepack dmabench cpuvrambench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
+.PHONY: all disc setup movieplay-setup clean check-tools ingame-disc ingame-internal ingame-modules test1m cdcbench fontbench still256 movieplay movieplay-internal moviepack dmabench cpuvrambench streamtest pcmtest adpcmtest upscaletest asictest prgtest movieplay-force
 
 all: disc
 
@@ -420,6 +420,90 @@ $(MOVIEPLAY_ISO): $(MOVIEPLAY_BUILD_DIR)/movieplay_boot.bin $(MOVIEPLAY_STREAM_D
 $(MOVIEPLAY_CUE): $(MOVIEPLAY_ISO)
 	@rm -f $@
 	@printf 'FILE "$(notdir $(MOVIEPLAY_ISO))" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
+
+# --- In-game player: the two modules a game embeds, and their test disc ---
+# The profile must carry a reduced [resources] budget (PLAYER.md, In-game
+# player). MOVIES.BIN is the Sub module: the standalone Sub source assembled
+# with INGAME after its absolute-short variable references are widened, since
+# the module runs at 0x40000. MOVIEM.BIN is the Main module, linked for
+# INGAME_MAIN_BASE, the Main-RAM address the host loads it to. The test disc
+# boots a stand-in host that loads and calls both, then checks what the host
+# keeps across the movie.
+# INGAME_PROFILE=1 builds the diagnostic Main module that reports idle
+# scanlines through VSRAM; INGAME_SUBBUS_LOAD=N (with it) also holds the Sub
+# bus for about N Main cycles per VBlank. Both get their own disc names.
+INGAME_MAIN_BASE ?= 0x00FF9000
+INGAME_PROFILE ?= 0
+INGAME_SUBBUS_LOAD ?= 0
+INGAME_VARIANT := $(if $(filter 1,$(INGAME_PROFILE)),_profile$(if $(filter-out 0,$(INGAME_SUBBUS_LOAD)),_subbus$(INGAME_SUBBUS_LOAD)))
+INGAME_MAIN_FLAGS := $(if $(filter 1,$(INGAME_PROFILE)),--defsym IDLE_PROFILE=1 $(if $(filter-out 0,$(INGAME_SUBBUS_LOAD)),--defsym SUBBUS_LOAD=$(INGAME_SUBBUS_LOAD)))
+INGAME_BUILD_DIR := $(MOVIEPLAY_TMP_DIR)/ingame$(INGAME_VARIANT)
+INGAME_DISC := $(MOVIEPLAY_TMP_DIR)/ingame_disc$(INGAME_VARIANT)
+INGAME_ISO := $(OUT_DIR)/$(CONFIG_STEM)$(REGION_SUFFIX)_ingame$(INGAME_VARIANT).iso
+INGAME_CUE := $(OUT_DIR)/$(CONFIG_STEM)$(REGION_SUFFIX)_ingame$(INGAME_VARIANT).cue
+INGAME_CONSTANTS := $(INGAME_BUILD_DIR)/player_constants.inc
+INGAME_SUB := $(INGAME_BUILD_DIR)/MOVIES.BIN
+INGAME_MAIN := $(INGAME_BUILD_DIR)/MOVIEM.BIN
+
+ingame-disc:
+	$(PYTHON) tools/resource_tokens.py run-stem --config "$(CONFIG)" -- \
+		$(MAKE) ingame-internal
+
+ingame-internal: check-tools $(INGAME_ISO) $(INGAME_CUE)
+
+ingame-modules: check-tools $(INGAME_SUB) $(INGAME_MAIN)
+
+$(INGAME_CONSTANTS): $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT tools/player_constants.py tools/cavc_routing.py tools/ima_adpcm.py | movieplay-setup
+	@mkdir -p $(INGAME_BUILD_DIR)
+	$(PYTHON) tools/player_constants.py --ingame $< --output $@
+
+$(INGAME_BUILD_DIR)/movieplay_sp_ingame.s: $(BOOT_DIR)/movieplay_sp.s | movieplay-setup
+	@mkdir -p $(INGAME_BUILD_DIR)
+	sed -E 's/\(([a-z_][a-z_0-9]*(\+[0-9]+)?)\)\.w/(\1).l/g' $< > $@
+
+$(INGAME_SUB): $(INGAME_BUILD_DIR)/movieplay_sp_ingame.s $(INGAME_CONSTANTS) $(BOOT_DIR)/sub_boot.inc $(CFG_DIR)/ingame_sp.ld harness/pcm_write_pacing/check_pacing.py
+	$(PYTHON) harness/pcm_write_pacing/check_pacing.py
+	$(AS) $(ASFLAGS) $(if $(filter 1,$(DEBUG)),--defsym DEBUG=1) --defsym INGAME=1 --defsym PLAYER_SPECIALIZED=1 -I$(INGAME_BUILD_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/movieplay_sp_ingame.o
+	$(LD) -nostdlib -T $(CFG_DIR)/ingame_sp.ld -o $(INGAME_BUILD_DIR)/movieplay_sp_ingame.elf $(INGAME_BUILD_DIR)/movieplay_sp_ingame.o
+	$(OBJCOPY) -O binary $(INGAME_BUILD_DIR)/movieplay_sp_ingame.elf $@
+
+$(INGAME_MAIN): $(BOOT_DIR)/ingame_ip.s $(INGAME_CONSTANTS) $(MOVIEPLAY_STREAM_DIR)/paltab.bin $(MOVIEPLAY_STREAM_DIR)/palidx.bin $(CFG_DIR)/ingame_ip.ld
+	$(AS) $(ASFLAGS) $(INGAME_MAIN_FLAGS) -I$(INGAME_BUILD_DIR) -I$(MOVIEPLAY_STREAM_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/ingame_ip.o
+	$(LD) -nostdlib --defsym INGAME_MAIN_BASE=$(INGAME_MAIN_BASE) -T $(CFG_DIR)/ingame_ip.ld -o $(INGAME_BUILD_DIR)/ingame_ip.elf $(INGAME_BUILD_DIR)/ingame_ip.o
+	$(OBJCOPY) -O binary -j .text $(INGAME_BUILD_DIR)/ingame_ip.elf $@
+
+$(INGAME_BUILD_DIR)/ingame_host_ip.bin: $(BOOT_DIR)/ingame_host_ip.s $(INGAME_MAIN) $(MOVIEPLAY_SECURITY) $(MOVIEPLAY_REGION_INC) $(MOVIEPLAY_DEBUG_FONT) $(BOOT_DIR)/sub_boot.inc $(CFG_DIR)/ingame_host_ip.ld
+	$(AS) $(ASFLAGS) -I$(INGAME_BUILD_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/ingame_host_ip.o
+	$(LD) $(LDFLAGS) --defsym INGAME_MAIN_BASE=$(INGAME_MAIN_BASE) -T $(CFG_DIR)/ingame_host_ip.ld -o $@ $(INGAME_BUILD_DIR)/ingame_host_ip.o
+
+$(INGAME_BUILD_DIR)/ingame_host_sp.bin: $(BOOT_DIR)/ingame_host_sp.s $(BOOT_DIR)/sub_boot.inc | movieplay-setup
+	@mkdir -p $(INGAME_BUILD_DIR)
+	$(AS) $(ASFLAGS) -I$(BOOT_DIR) $< -o $(INGAME_BUILD_DIR)/ingame_host_sp.o
+	$(LD) $(LDFLAGS) -T $(CFG_DIR)/sp.ld -o $@ $(INGAME_BUILD_DIR)/ingame_host_sp.o
+
+$(INGAME_BUILD_DIR)/ingame_host_boot.bin: $(INGAME_BUILD_DIR)/ingame_host_ip.bin $(INGAME_BUILD_DIR)/ingame_host_sp.bin $(BOOT_DIR)/ingame_host_boot.s $(MOVIEPLAY_REGION_INC)
+	$(AS) $(ASFLAGS) -I$(INGAME_BUILD_DIR) -I$(MOVIEPLAY_BUILD_DIR) -I$(BOOT_DIR) $(BOOT_DIR)/ingame_host_boot.s -o $(INGAME_BUILD_DIR)/ingame_host_boot.out
+	$(OBJCOPY) -O binary $(INGAME_BUILD_DIR)/ingame_host_boot.out $@
+	@bytes=$$(wc -c < $@); \
+		if [ "$$bytes" -ne 32768 ]; then \
+			echo "ERROR: $@ is $$bytes bytes; the complete boot image must be 32768 bytes" >&2; \
+			rm -f $@; \
+			exit 1; \
+		fi
+
+$(INGAME_ISO): $(INGAME_BUILD_DIR)/ingame_host_boot.bin $(INGAME_SUB) $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(MOVIEPLAY_STREAM_DIR)/BODY.DAT | movieplay-setup
+	@mkdir -p $(INGAME_DISC)
+	@printf "in-game player test host\n" > $(INGAME_DISC)/README.TXT
+	@rm -f $(INGAME_DISC)/HEADER.DAT $(INGAME_DISC)/BODY.DAT $(INGAME_DISC)/MOVIES.BIN
+	cp $(MOVIEPLAY_STREAM_DIR)/HEADER.DAT $(INGAME_DISC)/HEADER.DAT
+	cp $(MOVIEPLAY_STREAM_DIR)/BODY.DAT $(INGAME_DISC)/BODY.DAT
+	cp $(INGAME_SUB) $(INGAME_DISC)/MOVIES.BIN
+	@rm -f $@ $(INGAME_CUE)
+	$(MKISOFS) -iso-level 1 -G $< -pad -V "SCFMV_GAME" -o $@ $(INGAME_DISC)
+
+$(INGAME_CUE): $(INGAME_ISO)
+	@rm -f $@
+	@printf 'FILE "$(notdir $(INGAME_ISO))" BINARY\n  TRACK 01 MODE1/2048\n    INDEX 01 00:00:00\n' > $@
 
 # --- Continuous-stream self-test (standalone, IP+SP only, STREAM.DAT on disc) ---
 # NOTE: STREAM_FRAMES / STREAM_FRAME_SECTORS must match NUM_FRAMES / FRAME_SECTORS

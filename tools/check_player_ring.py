@@ -33,7 +33,40 @@ QUALIFIED_ADPCM_BOOT_COPY_SHA256 = (
 SP_TAIL_MARKER_ADPCM_BOOT_COPY_SHA256 = (
     "d68bf023717f28c36134c48c339e786f87259f0a7c3a70bb0604780eade8d862"
 )
-sp_text = SP.read_text()
+def without_ingame(source: str) -> str:
+    """Return the Sub source as the standalone player assembles it.
+
+    The in-game module build (INGAME) shares movieplay_sp.s. Its
+    `.ifdef INGAME` / `.ifndef INGAME` conditionals are resolved for a
+    standalone build (and their directive lines dropped), so the textual
+    checks below describe the standalone resident player only.
+    """
+    kept = []
+    # One entry per open conditional: None for an unrelated one, otherwise
+    # whether the current branch is assembled in a standalone build.
+    stack = []
+    for line in source.splitlines(keepends=True):
+        word = line.split("/*", 1)[0].strip()
+        if word.startswith(".if"):
+            if word == ".ifdef INGAME":
+                stack.append(False)
+                continue
+            if word == ".ifndef INGAME":
+                stack.append(True)
+                continue
+            stack.append(None)
+        elif word == ".else" and stack and stack[-1] is not None:
+            stack[-1] = not stack[-1]
+            continue
+        elif word == ".endif" and stack:
+            if stack.pop() is not None:
+                continue
+        if all(state is not False for state in stack):
+            kept.append(line)
+    return "".join(kept)
+
+
+sp_text = without_ingame(SP.read_text())
 sp_ext_text = SP_EXT.read_text()
 ip_text = IP.read_text()
 boot_text = BOOT.read_text()

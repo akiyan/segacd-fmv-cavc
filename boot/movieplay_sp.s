@@ -25,6 +25,18 @@
 
 	.include "player_constants.inc"
 	.include "sub_boot.inc"
+.ifdef INGAME
+/* In-game module build: a host Sub program loads this image at 0x40000 and
+   calls it once per movie (see PLAYER.md, In-game player). It is always
+   profile-specialized; the generated constants carry the stream's reduced
+   resource budget. */
+.ifndef PLAYER_SPECIALIZED
+.error "the in-game Sub module requires PLAYER_SPECIALIZE=1"
+.endif
+.if PC_INGAME != 1
+.error "the in-game Sub module requires in-game player constants"
+.endif
+.endif
 .ifdef PLAYER_SPECIALIZED
 .if PC_AUDIO_FD_MOD > 0
 .equ INCLUDE_AUDIO_FD_DITHER, 1
@@ -39,7 +51,9 @@
 .equ INCLUDE_SCROLL, 1
 .endif
 .endif
+.ifndef INGAME
 	.include "sp_extension.inc"
+.endif
 .ifdef MULTIPART
 	.include "multipart_player.inc"
 .endif
@@ -198,6 +212,7 @@
 .endif
 
 /* --- PRG-RAM layout --- */
+.ifndef INGAME
 /* The BIOS loads this 5 KiB resident image at 0x6000. ISO directory discovery
    uses the timed-ring tail only during boot, before any PrgBuf/frame-0 owner. */
 .equ ISO_BUF,     0x00067000
@@ -306,6 +321,50 @@
 .endif
 .endif
 
+.else
+/* In-game PRG-RAM map: the host lends 0x40000..0x7FFFF. The module image
+   (code and state) starts at the base and the ADPCM tables and decoded PCM
+   buffer follow it; PrgBuf, the three pending WordBuf sectors and the APPLY
+   queue fill the rest up to 0x80000. Frame-0 patterns and the routing stage
+   are boot-only overlays on the PrgBuf tail and the APPLY queue, as in the
+   standalone map. */
+.equ INGAME_PRG_BASE, 0x00040000
+.equ INGAME_PRG_END,  0x00080000
+.equ APPLY_SIZE,  PC_APPLY_KB*1024
+.equ APPLY_END,   INGAME_PRG_END
+.equ APPLY_BASE,  APPLY_END-APPLY_SIZE
+.equ WORD_PENDING3, APPLY_BASE-0x0800
+.equ WORD_PENDING1, APPLY_BASE-0x1000
+.equ WORD_PENDING0, APPLY_BASE-0x1800
+.equ RING_SIZE,   PC_RING_KB*1024
+.equ RING_END,    WORD_PENDING0
+.equ RING_BASE,   RING_END-RING_SIZE
+.equ RING_PATTERNS, RING_SIZE/32
+.equ F0PAT_TMP,   RING_END-0x9000     /* boot only: 36 KiB frame-0 stage */
+.equ ROUTING_TMP, APPLY_BASE          /* boot only: routing stage */
+.equ ROUTING_TMP_BYTES, APPLY_SIZE
+.equ PCM_DEC_BUF_BYTES, 0x00000600
+.equ ADPCM_INDEX_BYTES, 0x00000B20
+.equ ADPCM_LUT_BYTES,   0x00000100
+.equ ADPCM_DELTA_BYTES, 0x00001640
+.equ PCM_DEC_BUF,   RING_BASE-PCM_DEC_BUF_BYTES
+.equ ADPCM_LUT,     PCM_DEC_BUF-ADPCM_LUT_BYTES
+.equ ADPCM_DELTAS,  ADPCM_LUT-ADPCM_DELTA_BYTES
+.equ ADPCM_INDICES, ADPCM_DELTAS-ADPCM_INDEX_BYTES
+/* The linker checks that the module image ends at or below this address. */
+	.global	ingame_image_limit
+	.set	ingame_image_limit, ADPCM_INDICES
+.if RING_BASE & 0x07FF
+.error "in-game PrgBuf must start on a sector boundary"
+.endif
+.if PC_PREBUF_PAT*32 > RING_SIZE-0x9000
+.error "in-game prebuffer overlaps the frame-0 stage"
+.endif
+.if PC_ROUTING_BYTES > ROUTING_TMP_BYTES
+.error "in-game routing table exceeds its APPLY-area stage"
+.endif
+.endif
+
 /* --- Word-RAM compact tail (same offsets in both physical banks) --- */
 .equ CTRL_SCR,    SUB_BANK_1M+PC_CTRL_SCR_OFFSET
 .equ PAD_SCR,     SUB_BANK_1M+PC_PAD_SCR_OFFSET
@@ -319,6 +378,7 @@
 .equ O_STATUS,    SUB_BANK_1M+PC_STATUS_OFFSET
 .equ ADPCM_TABLE_BYTES, 8800
 .equ ADPCM_TABLE_SECTORS, 5
+.ifndef INGAME
 .if SP_EXTENSION_LOAD_BASE != ROUTING_TMP+ADPCM_TABLE_BYTES
 .error "Sub extension preload must follow the ADPCM table image"
 .endif
@@ -335,13 +395,21 @@
 .equ ROUTING_EXTENSION_IN_STAGE, 1
 .endif
 .endif
+.endif
 
 /* --- Word-RAM output read by Main ---
    O_UPDS is absent: Main re-walks CTRL_SCR directly. The generated Wr0/Wr1
    starts reserve the complete parity-specific O_LOADS peak before WordBuf. */
+.ifdef INGAME
+/* The in-game budget is the top of each bank. */
+.equ O_NRUN,    SUB_BANK_1M+PC_BANK_BASE+0x0000
+.equ O_NLOAD,   SUB_BANK_1M+PC_BANK_BASE+0x0002
+.equ O_LOADS,   SUB_BANK_1M+PC_BANK_BASE+0x0004
+.else
 .equ O_NRUN,    SUB_BANK_1M+0x0000
 .equ O_NLOAD,   SUB_BANK_1M+0x0002
 .equ O_LOADS,   SUB_BANK_1M+0x0004
+.endif
 .equ O_SLIP,   O_STATUS+0x00
 .equ O_DSY,    O_STATUS+0x7E
 .equ O_CTRLWAIT,O_STATUS+0x18
@@ -362,10 +430,26 @@
    image, not the disc). The header keeps the paltab_sec field name. */
 .equ PALTAB_STAGE_OFF, 0x0000
 .equ PALTAB_STAGE_BYTES, 0x6000
+.ifdef INGAME
+.equ O_PALTAB_STAGE, SUB_BANK_1M+PC_BANK_BASE+PALTAB_STAGE_OFF
+.else
 .equ O_PALTAB_STAGE, SUB_BANK_1M+PALTAB_STAGE_OFF
+.endif
 .equ DIC_STAGE_OFF, 0x6000
+.ifdef INGAME
+.equ DIC_STAGE, SUB_BANK_1M+PC_BANK_BASE+DIC_STAGE_OFF
+.else
 .equ DIC_STAGE, SUB_BANK_1M+DIC_STAGE_OFF
+.endif
 .equ DIC_STAGE_PATTERNS, 512
+.ifdef INGAME
+.if PC_BANK_BASE+PALTAB_STAGE_BYTES > PC_STATUS_OFFSET
+.error "in-game boot stage overlaps the Word-RAM tail"
+.endif
+.if PC_DIC_SECTORS != 0
+.error "the in-game Word-RAM budget has no DicBuf stage"
+.endif
+.endif
 
 /* --- RF5C164 output reconstructed from ADPCM --- */
 .equ PCM_ENV,   0x00FF0001
@@ -411,6 +495,8 @@
 
 .equ CMD_STREAM, 0x50
 .equ CMD_SWAP,   0x51
+.equ STAT_F0_CHUNK, 0x8005		/* in-game: one frame-0 O_LOADS chunk is ready */
+.equ STAT_FAIL,  0x80FF			/* in-game: the stream cannot be played */
 .equ STAT_BOOT_STAGE, 0x8001		/* sidecar/Dic stage ready for one-time Main copy */
 .equ STAT_READY, 0x8003
 .equ STAT_END,   0x8004			/* 全フレーム再生完了(MDは15秒待って CMD_STREAM 再送) */
@@ -422,6 +508,47 @@
 
 .text
 
+.ifdef INGAME
+/* Host interface. The host Sub program loads this image at its link base
+   (0x40000) and calls the entry with a0 pointing at four longs: HEADER.DAT
+   LBA, HEADER.DAT sectors, BODY.DAT LBA, BODY.DAT sectors. The call returns
+   after the final frame with Word RAM back in 2M mode and owned by Main,
+   d0.w = 0 (or 0xBAD1 for a header signature mismatch), d1.w = slips and
+   d2.w = control desynchronizations. The interrupt mask and gate-array
+   interrupt enables are restored; d3-d7/a0-a6 are preserved. */
+ingame_header:
+	.ascii	"CAVS"
+	.word	1				/* interface version */
+	.word	0
+	.long	ingame_header			/* link base = required load address */
+	.long	sp_end-ingame_header		/* image bytes */
+	.long	ingame_entry
+ingame_entry:
+	movem.l	d3-d7/a0-a6, -(sp)
+	move.l	sp, ingame_host_sp
+	move.w	sr, ingame_host_sr
+	move.b	(SUB_GA_BASE+0x33).l, ingame_host_ien
+	move.l	(a0)+, header_lba
+	move.l	(a0)+, header_total
+	move.l	(a0)+, body_lba
+	move.l	(a0)+, body_total
+	/* BIOS sector service is interrupt driven, exactly as in do_stream. */
+	ori.b	#0x3C, (SUB_GA_BASE+0x33).l
+	move.w	#0x2000, sr
+1:
+	BIOSCALL BIOS_CDB_STAT
+	andi.b	#0xF0, (CDB_STAT).w
+	bne	1b
+	/* 1M mode. The movie uses only the top of each bank, which leaves the
+	   host's low 2M Word-RAM data intact. */
+	andi.b	#0xFA, (MEMMODE+1).l
+	bset	#2, (MEMMODE+1).l
+1:
+	cmpi.w	#CMD_STREAM, (COMCMD0).l
+	bne.s	1b
+	move.w	#CMD_STREAM, (COMSTAT0).l
+	bra	stream_start
+.else
 sp_header:
 	.ascii	"MAIN       "
 	.byte	0
@@ -513,6 +640,7 @@ do_stream:
 	move.l	d1, (body_total).w
 .endif
 	bset	#2, (MEMMODE+1).l
+.endif
 stream_start:
 	/* Every replay reloads the immutable startup file, builds frame 0 while the
 	   timed reader is idle, then starts BODY.DAT from its own ISO extent. */
@@ -694,6 +822,17 @@ pm_set:
 .endif
 	bra.s	header_accepted
 bad_header:
+.ifdef INGAME
+	/* Tell the in-game Main to give up, then return the failure to the
+	   host instead of halting its Sub program. */
+	move.w	#STAT_FAIL, (COMSTAT0).l
+1:
+	tst.w	(COMCMD0).l
+	bne.s	1b
+	clr.w	(COMSTAT0).l
+	move.w	#0xBAD1, d0
+	bra	ingame_return
+.endif
 	bra	bad_header
 header_accepted:
 	/* MDへヘッダ写しを渡す(frame0と同じバンクに書く=swap後にMDが読める) */
@@ -754,6 +893,9 @@ header_accepted:
 	moveq	#ADPCM_TABLE_SECTORS, d0
 	lea	ROUTING_TMP, a0
 	bsr	drain_lin_staged
+.ifdef INGAME
+	bsr	ingame_adpcm_install
+.else
 	lea	SP_EXTENSION_LOAD_BASE, a0
 	lea	SP_EXTENSION_EXEC_BASE, a1
 .ifdef ROUTING_EXTENSION_IN_STAGE
@@ -765,6 +907,7 @@ header_accepted:
 	move.l	(a0)+, (a1)+
 	dbra	d0, 1b
 	jsr	ADPCM_BOOT_COPY
+.endif
 	/* Wr0 is the physical frame-0 bank and Wr1 is the other bank. Their
 	   generated starts and sector-rounded capacities differ. Two toggles
 	   restore the frame-0 bank phase. */
@@ -846,10 +989,14 @@ pb_done:
 .else
 	move.w	h_audio_fd, d0
 .endif
+.ifdef INGAME
+	bsr	ingame_pcm_init
+.else
 .ifdef ROUTING_EXTENSION_IN_STAGE
 	jsr	(SP_EXTENSION_LOAD_BASE+PCM_BOOT_INIT_OFF).l
 .else
 	jsr	(SP_EXTENSION_EXEC_BASE+PCM_BOOT_INIT_OFF).l
+.endif
 .endif
 	move.w	#SYNC_LEAD, write_ptr
 	/* HEADER.DAT is exhausted before validation/copying and bank toggles.
@@ -871,10 +1018,14 @@ pb_done:
 	PC_MOVE_L h_prebuf_pat, PC_PREBUF_PAT, d6
 	lea	ring_head, a4
 	lea	drain_k, a5
+.ifdef INGAME
+	bsr	ingame_routing_prepare
+.else
 .ifdef ROUTING_EXTENSION_IN_STAGE
 	jsr	(SP_EXTENSION_LOAD_BASE+ADPCM_BOOT_COPY_BYTES).l
 .else
 	jsr	(SP_EXTENSION_EXEC_BASE+ADPCM_BOOT_COPY_BYTES).l
+.endif
 .endif
 	tst.w	d0
 	bne	bad_header
@@ -918,7 +1069,11 @@ arm_audio_lp:
 
 	/* The extension prepared the steady-state queues and exact ring tail.
 	   BODY-arm storage is complete, so expand frame 0 with no active CD read. */
+.ifdef INGAME
+	bsr	expand_frame0_ingame
+.else
 	bsr	expand_frame
+.endif
 	clr.w	(f0_expand).w
 
 	/* Initialize the logical timed state while the CD remains stopped.  The
@@ -1216,10 +1371,33 @@ movie_end:
 	/* The PRG return stub survives replacement of both player images. */
 	jmp	0x0000D680.l
 .endif
+.ifdef INGAME
+	moveq	#0, d0
+ingame_return:
+	/* d0 = status. Stop the drive's read, return Word RAM to Main in 2M
+	   mode, restore the host's interrupt state and return to the caller. */
+	move.w	d0, -(sp)
+	BIOSCALL BIOS_CDC_STOP
+	move.w	(sp)+, d0
+	clr.w	(COMSTAT1).l
+	clr.w	(COMSTAT2).l
+	move.b	#0x01, (MEMMODE+1).l		/* MODE=2M, RET=1: Word RAM to Main */
+1:
+	btst	#0, (MEMMODE+1).l
+	beq.s	1b
+	move.w	slip_count, d1
+	move.w	desync_count, d2
+	movea.l	ingame_host_sp, sp
+	move.b	ingame_host_ien, (SUB_GA_BASE+0x33).l
+	move.w	ingame_host_sr, sr
+	movem.l	(sp)+, d3-d7/a0-a6
+	rts
+.else
 3:
 	cmp.w	#CMD_STREAM, (COMCMD0).l	/* MDの再開指示を待つ */
 	bne	3b
 	bra	stream_start
+.endif
 
 /* Start one finite ISO file read. d0=absolute LBA, d1=sector count.
    Initialize the absolute MSF anchor here, including the first sector.
@@ -2677,6 +2855,321 @@ ef_store:
 1:
 	rts
 
+.ifdef INGAME
+/* In-game boot helper replacing the standalone extension's routing entry.
+   Validate the d7-entry route at a0, copy d5 longs to a1 in both physical
+   banks, then initialize the ring/APPLY/frame state at a4 and drain_k/
+   f0_expand at a5 (same contract as routing_prepare in movieplay_sp_ext.s).
+   d6 = prebuffer patterns. Return d0=0 on success, 1 on an invalid route. */
+ingame_routing_prepare:
+	movea.l	a0, a2
+	movea.l	a1, a3
+	tst.b	(a0)
+	bne	irp_invalid
+	subq.l	#1, d7
+1:
+	moveq	#0, d0
+	move.b	(a0)+, d0
+	cmpi.b	#ROUTING_MAX_ENTRY, d0
+	bhi	irp_invalid
+	move.w	d0, d2
+	move.w	d0, d3
+	andi.w	#ROUTING_CTRL_MASK, d0
+	andi.w	#ROUTING_TOTAL_MASK, d2
+	lsr.w	#ROUTING_TOTAL_SHIFT, d2
+	cmpi.w	#5, d2
+	bhi	irp_invalid
+	cmp.w	d2, d0
+	bhi	irp_invalid
+	andi.w	#ROUTING_WORD_MASK, d3
+	lsr.w	#ROUTING_WORD_SHIFT, d3
+	btst	#2, d0
+	beq.s	2f
+	cmpi.w	#3, d3
+	bne	irp_invalid
+	andi.w	#ROUTING_CTRL_COUNT_MASK, d0
+	addq.w	#1, d3
+2:
+	sub.w	d0, d2
+	cmp.w	d2, d3
+	bhi	irp_invalid
+	subq.l	#1, d7
+	bpl	1b
+	moveq	#ROUTING_BANK_COPIES-1, d1
+2:
+	movea.l	a2, a0
+	movea.l	a3, a1
+	move.w	d5, d0
+	subq.w	#1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+	dbra	d1, 2b
+	move.l	#RING_BASE, (a4)+		/* ring_head */
+	lsl.l	#5, d6
+	add.l	#RING_BASE, d6
+	move.l	d6, (a4)+			/* ring_tail after the prebuffer */
+	move.l	#APPLY_BASE, (a4)+		/* apply_tail */
+	move.l	#APPLY_BASE, (a4)+		/* apply_cur */
+	move.l	#1, (a4)			/* frame_idx */
+	clr.w	(a5)				/* drain_k */
+	move.w	#1, 4(a5)			/* f0_expand */
+	moveq	#0, d0
+	rts
+irp_invalid:
+	moveq	#1, d0
+	rts
+
+/* Install the three ADPCM lookup tables from the HEADER stage once. */
+ingame_adpcm_install:
+	lea	ROUTING_TMP, a0
+	lea	ADPCM_INDICES, a1
+	move.w	#ADPCM_INDEX_BYTES/4-1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	lea	ADPCM_DELTAS, a1
+	move.w	#ADPCM_DELTA_BYTES/4-1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	lea	ADPCM_LUT, a1
+	move.w	#ADPCM_LUT_BYTES/4-1, d0
+1:
+	move.l	(a0)+, (a1)+
+	dbra	d0, 1b
+	rts
+
+/* Prepare PCM channel 0 and its 32 KiB wave ring (d0 = frequency delta).
+   The in-game movie touches only channel 0, wave RAM 0x0000..0x8000 and
+   the ON/OFF register; the standalone extension clears all 64 KiB and parks
+   every channel. */
+ingame_pcm_init:
+	movem.l	d1-d3/a0, -(sp)
+	move.w	d0, d3
+	move.b	#0xFF, (PCM_ONOFF).l
+	PCM_REG_WAIT d1
+	moveq	#0, d2
+1:
+	move.w	d2, d0
+	ori.b	#0x80, d0
+	move.b	d0, (PCM_CTRL).l
+	PCM_REG_WAIT d1
+	lea	(PCM_WAVE).l, a0
+	move.w	#0x1000-1, d1
+2:
+	move.b	#0x00, (a0)
+	addq.l	#2, a0
+	dbra	d1, 2b
+	addq.w	#1, d2
+	cmpi.w	#WAVE_RING_END/0x1000, d2
+	blo.s	1b
+	PCM_REG_WAIT d1
+	move.b	#0x80|(WAVE_RING_END/0x1000), (PCM_CTRL).l
+	PCM_REG_WAIT d1
+	move.b	#0xFF, (PCM_WAVE).l		/* loop-end marker after the ring */
+	PCM_REG_WAIT d1
+	move.b	#0xC0, (PCM_CTRL).l		/* channel 0 registers */
+	PCM_REG_WAIT d1
+	move.b	#0xFF, (PCM_ENV).l
+	PCM_REG_WAIT d1
+	move.b	#0xFF, (PCM_PAN).l
+	PCM_REG_WAIT d1
+	move.b	d3, (PCM_FDL).l
+	PCM_REG_WAIT d1
+	lsr.w	#8, d3
+	move.b	d3, (PCM_FDH).l
+	PCM_REG_WAIT d1
+	move.b	#0x00, (PCM_LSL).l
+	PCM_REG_WAIT d1
+	move.b	#0x00, (PCM_LSH).l
+	PCM_REG_WAIT d1
+	move.b	#SYNC_LEAD>>8, (PCM_ST).l
+	PCM_REG_WAIT d1
+	movem.l	(sp)+, d1-d3/a0
+	rts
+
+/* Frame 0 is untimed boot work. The in-game Word-RAM budget cannot hold its
+   complete O_LOADS output beside the fixed tail, so expand it in chunks that
+   each fit the frame-0 bank's reservation [O_LOADS, WORD_BUF0). Every full
+   chunk is handed to Main with STAT_F0_CHUNK and taken back after Main's
+   COMCMD1 acknowledgement; the last chunk travels with the ordinary frame-0
+   STAT_READY handoff together with the control in CTRL_SCR. Frame-0 runs are
+   all Prg and their patterns are contiguous in the boot stage. */
+expand_frame0_ingame:
+	/* Walk frame 0's control as expand_frame does: a fade carries inline
+	   CRAM and list items, a list has four-byte items, a bitmap two-byte
+	   entries after its word-aligned bitmap. The audio chunk follows. */
+	lea	(CTRL_SCR+4).l, a0
+	move.w	(a0)+, d5
+	move.w	d5, d7				/* format tag */
+	andi.w	#SHADOW_UPDATE_COUNT_MASK, d5
+	cmpi.w	#PC_CELLS, d5
+	bls.s	1f
+	move.w	#PC_CELLS, d5
+1:
+	move.w	d5, d0
+	move.w	d7, d1
+	andi.w	#FRAME_TYPE_MASK, d1
+	beq.s	1f
+	adda.w	#INLINE_CRAM_BYTES, a0		/* fade */
+	bra.s	2f
+1:
+	btst	#SHADOW_UPDATE_LIST_BIT, d7
+	bne.s	2f
+	adda.w	#((PC_BMBYTES+1)&0xFFFE), a0	/* bitmap */
+	add.w	d0, d0				/* two bytes per entry */
+	bra.s	3f
+2:
+	lsl.w	#2, d0				/* four bytes per list item */
+3:
+	adda.w	d0, a0				/* audio chunk */
+	movea.l	a0, a5
+	bsr	decode_adpcm_chunk
+	lea	PCM_DEC_BUF, a0
+	bsr	write_wave_chunk
+	lea	PC_AUDIO_CONTROL_BYTES(a5), a0	/* first byte after audio */
+	move.l	a0, d0
+	btst	#0, d0
+	beq.s	1f
+	addq.l	#1, a0
+1:
+	move.w	(a0)+, d7			/* n_runs */
+	cmpi.w	#PC_POOL, d7
+	bls.s	1f
+	move.w	#PC_POOL, d7
+1:
+	movea.l	f0_pat_addr, a4
+	bsr	f0_chunk_start
+	tst.w	d7
+	beq	f0_finish
+	subq.w	#1, d7
+f0_run:
+	move.w	(a0)+, d2
+	move.w	(a0)+, d3
+	andi.w	#0x07FF, d2			/* zero-based slot */
+	move.w	d3, d0
+	andi.w	#0xC000, d0
+	andi.w	#0x07FF, d3			/* count */
+	tst.w	d0
+	bne	f0_next				/* frame 0 consumes no preload */
+	move.w	#PC_POOL, d1
+	sub.w	d2, d1
+	bls	f0_next				/* corrupt slot outside the pool */
+	cmp.w	d1, d3
+	bls.s	f0_piece
+	move.w	d1, d3
+f0_piece:
+	tst.w	d3
+	beq	f0_next
+	/* Patterns that still fit this chunk after one 22-byte record. */
+	move.l	#WORD_BUF0-22, d1
+	sub.l	a1, d1
+	bmi.s	2f
+	lsr.l	#5, d1
+	bne.s	1f
+2:
+	bsr	f0_chunk_handoff
+	bra.s	f0_piece
+1:
+	cmp.w	d3, d1
+	bls.s	1f
+	move.w	d3, d1				/* d1 = patterns in this record */
+1:
+	bsr	f0_record
+	add.w	d1, d2
+	sub.w	d1, d3
+	bne.s	f0_piece			/* the rest continues in a new chunk */
+f0_next:
+	dbra	d7, f0_run
+f0_finish:
+	move.w	d4, (O_NLOAD).l
+	move.w	slip_count, (O_SLIP).l
+	move.w	desync_count, (O_DSY).l
+	rts
+
+/* Emit one O_LOADS v2 Prg record for d1 patterns at zero-based slot d2,
+   followed by its inline payload from a4. Advances a1/a4; d4 += d1. */
+f0_record:
+	movem.l	d0-d3/d5-d7/a0/a2-a3, -(sp)
+	move.w	d1, d6				/* pattern count */
+	move.w	d1, d0
+	lsl.w	#4, d0				/* DMA length in words */
+	move.w	d0, (a1)+
+	move.b	#0x93, (a1)+
+	move.b	d0, (a1)+
+	lsr.w	#8, d0
+	move.b	#0x94, (a1)+
+	move.b	d0, (a1)+
+	moveq	#0, d0
+	move.w	d2, d0
+	addq.w	#1, d0				/* VRAM tile = base(1) + slot */
+	lsl.l	#5, d0				/* destination byte address */
+	move.l	d0, d3
+	move.l	d0, d1
+	andi.l	#0x00003FFF, d1
+	swap	d1
+	ori.l	#0x40000000, d1
+	lsr.w	#7, d0
+	lsr.w	#7, d0
+	andi.w	#0x0003, d0
+	or.w	d0, d1
+	move.l	d1, (a1)+			/* VRAM-write command */
+	move.w	d3, (a1)+			/* raw destination */
+	lea	10(a1), a3			/* inline payload follows the record */
+	adda.l	#MAIN_WORD_DELTA, a3		/* Main's view of that payload */
+	move.l	a3, d0
+	addq.l	#2, d0				/* Word-RAM DMA src+2 */
+	lsr.l	#1, d0
+	move.b	#0x95, (a1)+
+	move.b	d0, (a1)+
+	lsr.l	#8, d0
+	move.b	#0x96, (a1)+
+	move.b	d0, (a1)+
+	lsr.l	#8, d0
+	move.b	#0x97, (a1)+
+	move.b	d0, (a1)+
+	move.l	a3, (a1)+			/* raw source */
+	addq.w	#1, (O_NRUN).l
+	add.w	d6, d4
+	subq.w	#1, d6
+1:
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	move.l	(a4)+, (a1)+
+	dbra	d6, 1b
+	movem.l	(sp)+, d0-d3/d5-d7/a0/a2-a3
+	rts
+
+/* Hand the full frame-0 bank to Main for one chunk, take it back, and start
+   the next chunk. The CD is stopped throughout. */
+f0_chunk_handoff:
+	move.w	d4, (O_NLOAD).l
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+	move.w	#STAT_F0_CHUNK, (COMSTAT0).l
+1:
+	tst.w	(COMCMD1).l
+	beq.s	1b
+	clr.w	(COMSTAT0).l
+1:
+	tst.w	(COMCMD1).l
+	bne.s	1b
+	bchg	#0, (MEMMODE+1).l
+	bsr	swap_settle
+f0_chunk_start:
+	lea	(O_LOADS).l, a1
+	clr.w	(O_NRUN).l
+	moveq	#0, d4
+	rts
+.endif
 swap_settle:
 1:
 	/* In 1M mode DMNA reads as 1 while the RET bank change is in progress and
@@ -2687,6 +3180,7 @@ swap_settle:
 	rts
 
 .ifndef MULTIPART
+.ifndef INGAME
 read_cd:
 	movem.l	d0-d7/a0-a6, -(sp)
 	lea	bios_packet, a5
@@ -2778,6 +3272,7 @@ get_info:
 	movem.l	(sp)+, a1-a2/a6
 	rts
 
+.endif
 .endif
 
 /* ---- RF5C164 PCM ---- */
@@ -3235,6 +3730,15 @@ word_pending_count:
 .endif
 pcm_running:
 	.word	0				/* 0=play headを読まずboot-time append, 1=live sync */
+.ifdef INGAME
+ingame_host_sp:
+	.long	0				/* host stack at entry */
+ingame_host_sr:
+	.word	0				/* host interrupt mask at entry */
+ingame_host_ien:
+	.byte	0				/* host gate-array interrupt enables */
+	.byte	0
+.endif
 desync_count:
 	.word	0				/* control同期マーカー不一致の累積(診断) */
 resync_count:
