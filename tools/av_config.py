@@ -25,8 +25,16 @@ and 25 KiB at 24 fps. The player's ``RING_SIZE`` is asserted equal to
 Makefile). Cold cap is supplied explicitly by the encode profile and passed
 unchanged through the encoder, packer, and analysis renderer. The packer
 refuses to re-cap an already encoded stream.
+
+The ring size, the resident VRAM pool, the DicBuf size and the usable Word-RAM
+bank size together form the encode's physical resource budget
+(:class:`ResourceBudget`). Its defaults are the standalone player's map. A
+profile may request smaller supplies through ``[resources]``; the values
+arrive here through ``CBRSIM_RESOURCE_*`` and replace the module values below
+before any dependent module derives its own capacities.
 """
 
+import dataclasses
 import math
 import os
 from fractions import Fraction
@@ -76,11 +84,12 @@ assert (
     <= BOOT_IMAGE_BYTES)
 assert SUB_BOOT_ISO_BUF_END <= 0x00077000
 
-# Physical PRG-RAM ring in the player. MUST equal boot/movieplay_sp.s
-# `.equ RING_SIZE` (0x69000 = 420 KB). Build-time assertion enforces it.
-# The 2 KiB reduction gives the signed ADPCM delta table a checked gap before
-# the ring without consuming either pending-sector scratch or APPLY space.
-RING_SIZE_KB = 420
+# Physical PRG-RAM ring in the standalone player. MUST equal
+# boot/movieplay_sp.s `.equ RING_SIZE` (0x69000 = 420 KB). Build-time
+# assertion enforces it. The 2 KiB reduction gives the signed ADPCM delta table
+# a checked gap before the ring without consuming either pending-sector scratch
+# or APPLY space. ``RING_SIZE_KB`` itself follows the resource budget below.
+DEFAULT_RING_SIZE_KB = 420
 
 # The route format can represent four Word sectors for compatibility, but the
 # live PRG-RAM map intentionally has three pending destinations.
@@ -115,9 +124,9 @@ PIXEL_ASPECT_NUM = 32
 PIXEL_ASPECT_DEN = 35
 VBLANK_DMA_WORDS = 3200
 
-# Derived fixed physical limits — do not set these independently anywhere else.
-BACKPRESSURE_KB = RING_SIZE_KB - RING_PHYSICAL_GUARD_KB
-DELIVERY_CAP_KB = BACKPRESSURE_KB - RING_DELIVERY_GUARD_KB
+# Derived physical limits (``BACKPRESSURE_KB``, ``DELIVERY_CAP_KB``) are set
+# with ``RING_SIZE_KB`` by apply_resource_budget(); do not set them
+# independently anywhere else.
 
 
 def _nominal_content_fps(fps):
@@ -174,14 +183,9 @@ def ring_jitter_headroom_kb(fps):
     return DELIVERY_CAP_KB - scheduled_delivery_cap_kb(fps)
 
 
-# Compatibility aliases are the 30 fps reference values. Runtime encode, pack,
-# player constants, analysis, and HUD gates must call the fps-aware functions.
-RING_JITTER_HEADROOM_KB = ring_jitter_headroom_kb(30)
-RING_CAP_KB = prg_buf_cap_kb(30)
-PRG_BUF_CAP_KB = RING_CAP_KB
-QUALITY_BUDGET_KB = quality_budget_kb(30)
-
-assert DELIVERY_CAP_KB - RING_CAP_KB == RING_JITTER_HEADROOM_KB
+# Compatibility aliases (``RING_CAP_KB`` and friends) are the 30 fps reference
+# values, set by apply_resource_budget(). Runtime encode, pack, player
+# constants, analysis, and HUD gates must call the fps-aware functions.
 
 # A CRAM epoch change rebuilds the visible picture under a newly selected
 # palette. Inspect this many frames starting at each switch and give only the
@@ -199,14 +203,156 @@ VRAM_PATTERN_BASE_TILE = 1
 VRAM_HUD_FONT_TILE = 0xDA00 // 32
 VRAM_MOVIE_NT_TILE = 0xE000 // 32
 VRAM_FIRST_MOVIE_NT_TILE = VRAM_MOVIE_NT_TILE
-VRAM_PATTERN_POOL_TILES = (
+DEFAULT_VRAM_PATTERN_POOL_TILES = (
     VRAM_HUD_FONT_TILE - VRAM_PATTERN_BASE_TILE)
 # A bounded tail is written only in the publication VBlank. Its old display
 # identities can be reclaimed once no next-frame cell or mandatory pin needs
 # them. The packer separately checks the actual runs and display bundle against
-# the 3,200-unit publication budget.
+# the 3,200-unit publication budget. ``VRAM_PATTERN_POOL_TILES`` and
+# ``FINAL_VBLANK_SLOT`` follow the resource budget below.
 FINAL_VBLANK_TILES = 12
-FINAL_VBLANK_SLOT = VRAM_PATTERN_POOL_TILES - FINAL_VBLANK_TILES
+
+# The standalone player's 512-pattern Main-RAM DicBuf. tools/pattern_supply.py
+# derives the same count from its fixed address range and asserts equality.
+DEFAULT_DIC_BUF_PATTERNS = 512
+# One physical 1M Word-RAM bank.
+WORD_RAM_BANK_KB = 128
+
+
+# --- Physical resource budget ---
+# A profile's optional [resources] table may lower these supplies below the
+# standalone player's map, for example to embed a movie in a game that keeps
+# part of every memory domain. tools/encode_config.py writes only the changed
+# values to CBRSIM_RESOURCE_*; this module reads them at import and the profile
+# entry point re-applies them after its environment handoff, before sim or the
+# analysis renderer import any module that derives capacities. The decision log
+# records a non-default budget so pack can refuse it: the assembled player
+# implements only the default map.
+@dataclasses.dataclass(frozen=True)
+class ResourceBudget:
+    """Physical supplies one encode may use; defaults are the standalone map.
+
+    ``prg_ring_kib`` is the physical PrgBuf ring. The existing guard and
+    fps-scaled jitter derivation is unchanged, so the scheduled ceiling is
+    ``prg_ring_kib - 4 - 2 - ceil(20 * 30 / fps)``. ``vram_pool_tiles`` is the
+    contiguous resident pattern pool starting at tile 1. ``dic_patterns`` is
+    the DicBuf dictionary size; zero disables DicBuf. ``word_ram_bank_kib`` is
+    the usable top of each 1M Word-RAM bank: routing, the fixed tail, the
+    O_LOADS reservation and WordBuf must all fit inside it.
+    """
+
+    prg_ring_kib: int = DEFAULT_RING_SIZE_KB
+    vram_pool_tiles: int = DEFAULT_VRAM_PATTERN_POOL_TILES
+    dic_patterns: int = DEFAULT_DIC_BUF_PATTERNS
+    word_ram_bank_kib: int = WORD_RAM_BANK_KB
+
+    def __post_init__(self):
+        for field in dataclasses.fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ValueError(
+                    f"resources.{field.name} must be an integer, "
+                    f"got {value!r}")
+        guards = RING_PHYSICAL_GUARD_KB + RING_DELIVERY_GUARD_KB
+        if (self.prg_ring_kib % 2
+                or not guards < self.prg_ring_kib <= DEFAULT_RING_SIZE_KB):
+            raise ValueError(
+                "resources.prg_ring_kib must be an even KiB count above the "
+                f"{guards} KiB guards and at most {DEFAULT_RING_SIZE_KB}, "
+                f"got {self.prg_ring_kib}")
+        if not (FINAL_VBLANK_TILES < self.vram_pool_tiles
+                <= DEFAULT_VRAM_PATTERN_POOL_TILES):
+            raise ValueError(
+                "resources.vram_pool_tiles must be above the "
+                f"{FINAL_VBLANK_TILES}-tile publication tail and at most "
+                f"{DEFAULT_VRAM_PATTERN_POOL_TILES}, "
+                f"got {self.vram_pool_tiles}")
+        if not 0 <= self.dic_patterns <= DEFAULT_DIC_BUF_PATTERNS:
+            raise ValueError(
+                "resources.dic_patterns must be within "
+                f"0..{DEFAULT_DIC_BUF_PATTERNS}, got {self.dic_patterns}")
+        if (self.word_ram_bank_kib % 2
+                or not 0 < self.word_ram_bank_kib <= WORD_RAM_BANK_KB):
+            raise ValueError(
+                "resources.word_ram_bank_kib must be an even KiB count "
+                f"within 2..{WORD_RAM_BANK_KB}, "
+                f"got {self.word_ram_bank_kib}")
+
+    @property
+    def is_default(self):
+        return self == ResourceBudget()
+
+    def changed(self):
+        """Return only the fields that differ from the standalone map."""
+        default = ResourceBudget()
+        return {
+            field.name: getattr(self, field.name)
+            for field in dataclasses.fields(self)
+            if getattr(self, field.name) != getattr(default, field.name)
+        }
+
+
+RESOURCE_ENV = {
+    "prg_ring_kib": "CBRSIM_RESOURCE_PRG_RING_KB",
+    "vram_pool_tiles": "CBRSIM_RESOURCE_VRAM_TILES",
+    "dic_patterns": "CBRSIM_RESOURCE_DIC_PATTERNS",
+    "word_ram_bank_kib": "CBRSIM_RESOURCE_WORD_RAM_BANK_KB",
+}
+
+
+def resource_budget_from_env(environ=None):
+    """Return the budget handed off through ``CBRSIM_RESOURCE_*``."""
+    env = os.environ if environ is None else environ
+    values = {}
+    for name, variable in RESOURCE_ENV.items():
+        raw = str(env.get(variable, "")).strip()
+        if not raw:
+            continue
+        try:
+            values[name] = int(raw)
+        except ValueError as exc:
+            raise ValueError(
+                f"{variable} must be an integer, got {raw!r}") from exc
+    return ResourceBudget(**values)
+
+
+def resource_budget_env(budget):
+    """Return the ``CBRSIM_RESOURCE_*`` values for the non-default fields.
+
+    Default fields stay absent, so a profile without ``[resources]`` keeps its
+    effective settings and therefore its completed-sim identity.
+    """
+    return {
+        RESOURCE_ENV[name]: str(value)
+        for name, value in budget.changed().items()
+    }
+
+
+def apply_resource_budget(budget):
+    """Install one budget as this process's physical capacities."""
+    global RESOURCE_BUDGET, RING_SIZE_KB, BACKPRESSURE_KB, DELIVERY_CAP_KB
+    global RING_JITTER_HEADROOM_KB, RING_CAP_KB, PRG_BUF_CAP_KB
+    global QUALITY_BUDGET_KB, VRAM_PATTERN_POOL_TILES, FINAL_VBLANK_SLOT
+    global DIC_BUF_PATTERNS, WORD_RAM_BANK_BUDGET_BYTES
+    if not isinstance(budget, ResourceBudget):
+        raise TypeError(f"expected ResourceBudget, got {type(budget).__name__}")
+    RESOURCE_BUDGET = budget
+    RING_SIZE_KB = budget.prg_ring_kib
+    BACKPRESSURE_KB = RING_SIZE_KB - RING_PHYSICAL_GUARD_KB
+    DELIVERY_CAP_KB = BACKPRESSURE_KB - RING_DELIVERY_GUARD_KB
+    VRAM_PATTERN_POOL_TILES = budget.vram_pool_tiles
+    FINAL_VBLANK_SLOT = VRAM_PATTERN_POOL_TILES - FINAL_VBLANK_TILES
+    DIC_BUF_PATTERNS = budget.dic_patterns
+    WORD_RAM_BANK_BUDGET_BYTES = budget.word_ram_bank_kib * 1024
+    # The 30 fps reference aliases need a positive 30 fps ceiling; a ring too
+    # small for that is still usable at a rate whose own check passes.
+    reference = DELIVERY_CAP_KB - cadence_jitter_reserve_kb(30)
+    RING_CAP_KB = PRG_BUF_CAP_KB = QUALITY_BUDGET_KB = reference
+    RING_JITTER_HEADROOM_KB = DELIVERY_CAP_KB - reference
+    return budget
+
+
+apply_resource_budget(resource_budget_from_env())
 
 # These are pipeline policy, not per-source choices.  Forward fill uses safe
 # physical-slot padding for future Prg payload, while startup audio is clamped

@@ -21,7 +21,9 @@ final-VBlank tail; all other slots retain preceding-display protection.
 """
 
 import numpy as np
-from av_config import FINAL_VBLANK_SLOT
+# The final-VBlank tail follows the resource budget's pool, so read it at
+# use rather than freezing the value at import.
+import av_config
 
 
 def trace_state(alloc, frame):
@@ -101,7 +103,7 @@ class FrameTransitionGuard:
             allocator.POOL - np.count_nonzero(allocator.slot_refs))
         if allocator.final_pattern_limit is not None:
             unused_tail = np.count_nonzero(
-                allocator.slot_refs[FINAL_VBLANK_SLOT:] == 0)
+                allocator.slot_refs[av_config.FINAL_VBLANK_SLOT:] == 0)
             self.capacity -= max(0, unused_tail - allocator.final_pattern_limit)
         self._cell_key = {}
         self._extra_refs = {}
@@ -417,7 +419,7 @@ class TileAllocator:
         self.final_pattern_loads = 0
 
     def _cold_slot_available(self, slot):
-        return (slot < FINAL_VBLANK_SLOT or self.final_pattern_limit is None
+        return (slot < av_config.FINAL_VBLANK_SLOT or self.final_pattern_limit is None
                 or self.final_pattern_loads < self.final_pattern_limit)
 
     def _pop_free_slot(self):
@@ -431,7 +433,7 @@ class TileAllocator:
     def _record_cold_slot(self, slot):
         if not self._cold_slot_available(slot):
             raise AssertionError("cold placement exceeds the final-VBlank reservation")
-        self.final_pattern_loads += int(slot >= FINAL_VBLANK_SLOT)
+        self.final_pattern_loads += int(slot >= av_config.FINAL_VBLANK_SLOT)
 
     def _evict(self, s):
         k = self.slot_key[s]
@@ -469,7 +471,7 @@ class TileAllocator:
             if not self._cold_slot_available(s):
                 continue
             if self.slot_refs[s] == 0 and (not self._prev_protect[s]
-                                         or s >= FINAL_VBLANK_SLOT) and \
+                                         or s >= av_config.FINAL_VBLANK_SLOT) and \
                (self._tfp is None or not self._tfp[s]) and not (
                    self.slot_pin_mandatory[s]
                    and self.slot_pin_until[s] >= frame_idx):

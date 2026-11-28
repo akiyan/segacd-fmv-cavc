@@ -194,6 +194,61 @@ class EncodeProfileArtifactTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, message):
                     load_profile(path)
 
+    def test_resources_hand_off_only_changed_values(self) -> None:
+        stale = {name: "1" for name in av_config.RESOURCE_ENV.values()}
+        with tempfile.TemporaryDirectory() as tmp:
+            plain = Path(tmp) / "plain.toml"
+            plain.write_text(PROFILE)
+            reduced = Path(tmp) / "reduced.toml"
+            reduced.write_text(PROFILE + (
+                "\n[resources]\nprg_ring_kib = 224\nvram_pool_tiles = 1279\n"
+                "dic_patterns = 0\nword_ram_bank_kib = 40\n"))
+            explicit_default = Path(tmp) / "explicit-default.toml"
+            explicit_default.write_text(
+                PROFILE + "\n[resources]\nprg_ring_kib = 420\n")
+            plain_env = apply_profile_env(load_profile(plain), dict(stale))
+            default_env = apply_profile_env(
+                load_profile(explicit_default), {})
+            reduced_env = apply_profile_env(load_profile(reduced), dict(stale))
+        # Without [resources] an inherited budget cannot reach the encode
+        # or its cache identity, and spelling out a default changes nothing.
+        self.assertFalse(set(stale) & set(plain_env))
+        plain_env.pop("CBRSIM_CONFIG")
+        default_env.pop("CBRSIM_CONFIG")
+        self.assertEqual(default_env, plain_env)
+        self.assertEqual(
+            av_config.resource_budget_from_env(reduced_env),
+            av_config.ResourceBudget(224, 1279, 0, 40))
+        self.assertEqual(reduced_env["CBRSIM_VRAM_TILES"], "1279")
+
+    def test_pack_refuses_a_reduced_resource_budget(self) -> None:
+        import pack_stream
+
+        reduced = av_config.ResourceBudget(dic_patterns=0)
+        log = {"config": {"hardware": {"resources": {
+            name: getattr(reduced, name)
+            for name in av_config.RESOURCE_ENV}}}}
+        with self.assertRaisesRegex(
+                SystemExit, r"reduced resource budget \(dic_patterns=0\)"):
+            pack_stream.configure_from_log(log)
+
+    def test_resources_bound_the_profile(self) -> None:
+        for resources, message in (
+                ("vram_pool_tiles = 1100", "cannot hold the 1120-cell grid"),
+                ("vram_pool_tiles = 1150",
+                 "cold_cap 1200 exceeds the 1150-tile resident pool"),
+                ("prg_ring_kib = 26", "leaves no scheduled PrgBuf at 30 fps"),
+                ("word_ram_bank_kib = 41", "word_ram_bank_kib must be an even"),
+                ("unknown = 1", r"unknown \[resources\] keys")):
+            with self.subTest(resources=resources), \
+                    tempfile.TemporaryDirectory() as tmp:
+                path = Path(tmp) / "resources.toml"
+                path.write_text(
+                    PROFILE.replace("cold_cap = 200", "cold_cap = 1200")
+                    + f"\n[resources]\n{resources}\n")
+                with self.assertRaisesRegex(ValueError, message):
+                    load_profile(path)
+
     def test_profile_interval_cold_cap_spec_matches_the_cadence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "multi-cold-cap.toml"

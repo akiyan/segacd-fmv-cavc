@@ -138,7 +138,7 @@ def configure_from_log(log):
     global TCOLS, TROWS, C_CELLS, TILE, PATTERN_BYTES
     global FPS, VSYNC_N, PLAYBACK_FPS, AUDIO_RATE
     global AUDIO_PCM, AUDIO_CONTROL
-    global RING_CAP_KB, RING_CAP_PAT
+    global RING_SIZE_KB, RING_CAP_KB, RING_CAP_PAT
     global RING_DELIVERY_CAP_KB, RING_DELIVERY_CAP_PAT
     global RING_JITTER_HEADROOM_KB
 
@@ -147,6 +147,25 @@ def configure_from_log(log):
     timing = cfg.get("timing") or {}
     audio = cfg.get("audio") or {}
     hardware = cfg.get("hardware") or {}
+
+    # The assembled player implements only the standalone resource map. A
+    # reduced [resources] budget is an encoder-side plan for an embedding
+    # player that does not exist yet; refuse it rather than write a disc
+    # whose player disagrees with the encoded buffers. Installing the log's
+    # (default) budget also discards any inherited CBRSIM_RESOURCE_* value.
+    try:
+        budget = av_config.ResourceBudget(**(hardware.get("resources") or {}))
+    except (TypeError, ValueError) as exc:
+        raise SystemExit(f"decision log has an invalid resource budget: {exc}")
+    if not budget.is_default:
+        changed = ", ".join(
+            f"{name}={value}" for name, value in budget.changed().items())
+        raise SystemExit(
+            f"pack: decision log was encoded for a reduced resource budget "
+            f"({changed}); the player supports only the standalone map, so "
+            "this encode can be simulated and analysed but not packed")
+    av_config.apply_resource_budget(budget)
+    RING_SIZE_KB = av_config.RING_SIZE_KB
     geom = log.get("geom")
     if geom is None:
         geom = (video.get("cols"), video.get("rows"), video.get("cells"), video.get("tile"))

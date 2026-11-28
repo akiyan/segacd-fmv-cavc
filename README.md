@@ -110,6 +110,10 @@ Each source has a strict TOML profile.
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM.
 - **Cold cap:** a required per-source profile value, changed and qualified
   through that profile.
+- **Resource budget:** optional smaller PrgBuf ring, resident VRAM pool,
+  DicBuf and Word-RAM bank for planning a movie embedded in a game. Such an
+  encode is for simulation and analysis; the player assembles only the
+  standalone map.
 - **Palette algorithm:** `stl4` or `mosaic-gm`.
 - **Analysis canvas:** optional and never changes the encoded stream.
 - **Disc region:** Japan or North America, and both are NTSC.
@@ -659,6 +663,9 @@ sourceごとにstrict TOML profileを使います。
   無効化し、routingはframe当たり1 byteを維持。
 - **Audio:** checkpointed 22.05 kHz mono IMA ADPCM。
 - **Cold cap:** source profileごとの必須値。変更とqualificationもprofile経由。
+- **Resource budget:** gameへ組み込むmovieを計画するための、より小さいPrgBuf ring、
+  resident VRAM pool、DicBuf、Word-RAM bank（optional）。そのencodeはsimulationと
+  解析用で、playerが組み立てるのはstandalone mapだけ。
 - **Palette algorithm:** `stl4` または `mosaic-gm`。
 - **Analysis canvas:** optionalで、encoded streamは変えない。
 - **Disc region:** 日本または北米。どちらもNTSC。

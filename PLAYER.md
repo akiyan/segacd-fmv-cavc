@@ -328,6 +328,13 @@ residual after that first reservation becomes WordBuf capacity, rounded down
 to complete 2 KiB preload sectors. The two banks can therefore have different
 starts and capacities; `WB-GAP` is the remaining sub-sector rounding space.
 
+This is the only map the player assembles. A profile's reduced `[resources]`
+Word-RAM budget (see [`CONFIG.md`](CONFIG.md#resource-budget)) is an encoder
+plan for a future embedding player: it keeps the same order inside the top
+`word_ram_bank_kib` of each bank, starts `W-HDR` and `LOADS` at that budget's
+base, and passes the untimed frame-0 output through several boot handoffs.
+Pack refuses such a decision log.
+
 During boot, `BOOT-STG` uses `+0x0000..+0x5FFF` for the optional boot-VRAM
 sidecar records; `DIC-STG` uses `+0x6000..+0x9FFF` for DicBuf staging. The
 palette table and switch table are not staged here: the Main-IP image embeds
@@ -1045,6 +1052,12 @@ Encoderは全frameから偶数・奇数それぞれの最大値を
 残余だけがWordBuf容量となり、完全な2 KiB preload sectorへ切り下げられます。
 したがって2 bankのstartとcapacityは異なり得ます。`WB-GAP`は残った
 sub-sector丸め領域です。
+
+playerが組み立てるのはこのmapだけです。profileの`[resources]`で減らしたWord-RAM
+budget（[`CONFIG.md`](CONFIG.md#resource-budget-1)を参照）は、将来の組み込み用
+playerに向けたencoder側の計画です。各bankの上端`word_ram_bank_kib`の中で同じ順序を
+保ち、`W-HDR`と`LOADS`をそのbudgetの底から始め、非計時のframe-0出力を複数の
+boot handoffで渡します。packはそのdecision logを拒否します。
 
 Boot中は`BOOT-STG`が`+0x0000..+0x5FFF`（optionalなboot-VRAM sidecar record専用）、
 `DIC-STG`が`+0x6000..+0x9FFF`をDicBuf stagingに使います。palette表と切替表は

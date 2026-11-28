@@ -73,7 +73,51 @@ BOOT_STAGE_END = DIC_STAGE_OFFSET + 0x4000
 
 DIC_BUF_BASE = 0x00FFBA40
 DIC_BUF_END = 0x00FFFA40
+# The player's physical dictionary. An encode's own DicBuf limit is the
+# resource budget's ``dic_patterns`` (av_config.DIC_BUF_PATTERNS).
 DIC_BUF_PATTERNS = (DIC_BUF_END - DIC_BUF_BASE) // PATTERN_BYTES
+
+assert DIC_BUF_PATTERNS == av_config.DEFAULT_DIC_BUF_PATTERNS
+assert WORD_RAM_BANK_BYTES == av_config.WORD_RAM_BANK_KB * 1024
+
+
+def word_ram_bank_base() -> int:
+    """Return the lowest bank offset the resource budget lets the movie use.
+
+    The budget is the top ``word_ram_bank_kib`` of each physical 1M bank:
+    routing keeps the bank end, and the O_LOADS reservation starts at this
+    base instead of offset zero. The standalone map's base is zero.
+    """
+    return WORD_RAM_BANK_BYTES - int(av_config.WORD_RAM_BANK_BUDGET_BYTES)
+
+
+def frame0_output_split() -> bool:
+    """Whether frame 0's O_LOADS passes through Word RAM in several handoffs.
+
+    The standalone map reserves the even bank's O_LOADS span for the complete
+    untimed frame-0 output, about 35 KiB for a full 320x224 grid. A reduced
+    Word-RAM budget cannot hold that beside the fixed tail, so the encoder
+    models frame 0 as consecutive boot handoffs through the timed even-parity
+    reservation instead, and that reservation covers timed frames only. The
+    assembled player implements only the standalone map.
+    """
+    return word_ram_bank_base() > 0
+
+
+def frame0_output_handoffs(frame0_load_bytes: int, reservation_bytes: int) -> int:
+    """Return the boot handoffs that pass frame 0 through one reservation.
+
+    Each handoff may end inside a run, so one 22-byte continuation record is
+    kept free in every handoff. The count is an upper estimate for planning;
+    no player consumes it yet.
+    """
+    frame0_load_bytes = int(frame0_load_bytes)
+    usable = int(reservation_bytes) - OUTPUT_RUN_RECORD_BYTES
+    if usable < PATTERN_BYTES:
+        raise ValueError(
+            "Word-RAM O_LOADS reservation cannot carry one frame-0 pattern: "
+            f"{reservation_bytes} bytes")
+    return max(1, -(-frame0_load_bytes // usable))
 
 
 def _align_up(value: int, alignment: int) -> int:
@@ -139,17 +183,24 @@ def output_load_bytes(prg_patterns: int, runs: int) -> int:
 def output_load_peaks(
     prg_patterns: Sequence[int],
     runs: Sequence[int],
+    *,
+    include_frame0: bool = True,
 ) -> tuple[OutputLoadPeak, OutputLoadPeak]:
-    """Return independently recomputed Wr0/even and Wr1/odd O_LOADS peaks."""
+    """Return independently recomputed Wr0/even and Wr1/odd O_LOADS peaks.
+
+    ``include_frame0=False`` leaves the untimed frame 0 out of the even peak;
+    see :func:`frame0_output_split`.
+    """
     if len(prg_patterns) != len(runs):
         raise ValueError("O_LOADS Prg/run traces have different frame counts")
     if len(prg_patterns) == 0:
         raise ValueError("O_LOADS peak trace is empty")
     peaks: list[OutputLoadPeak] = []
     for parity in (0, 1):
+        first = parity if parity or include_frame0 else 2
         candidates = [
             (output_load_bytes(prg_patterns[frame], runs[frame]), frame)
-            for frame in range(parity, len(prg_patterns), 2)
+            for frame in range(first, len(prg_patterns), 2)
         ]
         if not candidates:
             # A one-frame movie has no timed odd-parity output. Keep its Wr1
@@ -182,6 +233,10 @@ def word_ram_layout(
     the whole grid and every timed cold pattern as an independent Prg run.
     Once grouping is final, the encoder passes the independently recomputed
     even/odd peaks so sector-rounded residual space becomes WordBuf capacity.
+
+    Everything stays inside the resource budget's top of each bank. Under a
+    reduced budget frame 0 is split (:func:`frame0_output_split`), so the
+    conservative even envelope is the timed one, like the odd envelope.
     """
     frames = int(frames)
     cells = int(cells)
@@ -194,26 +249,35 @@ def word_ram_layout(
     if cold_cap < 0:
         raise ValueError(f"cold cap must be non-negative, got {cold_cap}")
 
+    bank_base = word_ram_bank_base()
     routing_bytes = _align_up(frames, SECTOR_BYTES)
     routing_offset = WORD_RAM_BANK_BYTES - routing_bytes
     pad_scr_offset = routing_offset - PAD_SCR_BYTES
     ctrl_scr_offset = pad_scr_offset - CTRL_SCR_BYTES
     status_offset = ctrl_scr_offset - STATUS_BYTES
+    if status_offset < bank_base:
+        raise ValueError(
+            "Word-RAM routing and fixed tail "
+            f"({WORD_RAM_BANK_BYTES - status_offset} bytes) exceed the "
+            f"{WORD_RAM_BANK_BYTES - bank_base}-byte bank budget")
 
+    timed_patterns = cold_cap if cold_cap else cells
+    timed_envelope = output_load_bytes(timed_patterns, timed_patterns)
     if wr0_load_bytes is None:
-        wr0_load_bytes = output_load_bytes(cells, 1)
+        wr0_load_bytes = (
+            timed_envelope if frame0_output_split()
+            else output_load_bytes(cells, 1))
     if wr1_load_bytes is None:
-        timed_patterns = cold_cap if cold_cap else cells
-        wr1_load_bytes = output_load_bytes(timed_patterns, timed_patterns)
+        wr1_load_bytes = timed_envelope
     wr0_load_bytes = int(wr0_load_bytes)
     wr1_load_bytes = int(wr1_load_bytes)
     if wr0_load_bytes < 0 or wr1_load_bytes < 0:
         raise ValueError(
             "Word-RAM O_LOADS peaks must be non-negative: "
             f"Wr0={wr0_load_bytes} Wr1={wr1_load_bytes}")
-    wr0_offset = _align_up(
+    wr0_offset = bank_base + _align_up(
         OUTPUT_HEADER_BYTES + wr0_load_bytes, PATTERN_BYTES)
-    wr1_offset = _align_up(
+    wr1_offset = bank_base + _align_up(
         OUTPUT_HEADER_BYTES + wr1_load_bytes, PATTERN_BYTES)
     if max(wr0_offset, wr1_offset) > status_offset:
         raise ValueError(

@@ -90,7 +90,8 @@ import auto_range  # noqa: E402
 import output_dither  # noqa: E402
 from cbr_paths import sim_work_dir  # noqa: E402
 from video_geometry import (  # noqa: E402
-    endpoint_snap_filter, probe_source, parse_ratio, source_filter, raw_filter,
+    endpoint_snap_filter, probe_has_audio, probe_source, parse_ratio,
+    source_filter, raw_filter,
 )
 
 # 対象動画・寸法・fps は env で差し替え可(既定はサンプル動画)。
@@ -160,7 +161,14 @@ STAT_COLUMN_INDEX = {
 }
 PATTERN_BYTES = 32              # 4bpp 8x8 パターン
 NAME_BYTES = 2                  # ネームテーブル1エントリ(tile index + palette + priority)
+# Physical capacities follow the profile's resource budget, which
+# consume_config_arg() installed in av_config before these lines ran.
+RESOURCE_BUDGET = av_config.RESOURCE_BUDGET
 VRAM_TILES = av_config.VRAM_PATTERN_POOL_TILES
+DIC_PATTERNS = av_config.DIC_BUF_PATTERNS
+# A reduced Word-RAM bank budget passes the untimed frame-0 O_LOADS through
+# several boot handoffs; see pattern_supply.frame0_output_split().
+FRAME0_SPLIT = pattern_supply.frame0_output_split()
 FLATTEN_STD = 0.12              # rgb333(0-7)タイル内std平均。ディザ除去済みなので低め
 DETAIL_ALPHA = float(os.environ.get("CBRSIM_DETAIL_ALPHA", "0.0"))
 BORDER_TILES = 2
@@ -1415,12 +1423,25 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 print(f"  audio filter: {AUDIO_AF}")
             for old in OUT.glob("audio_*.wav"):     # 別形式の残骸を除去(REUSE時の取り違え防止)
                 old.unlink()
-            run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
-                 *ffmpeg_threads,
-                 "-ss", "0", "-t", DURATION, "-i", SRC,
-                 "-vn", *(["-af", AUDIO_AF] if AUDIO_AF else []),
-                 "-ac", "1", "-ar", str(AUDIO_RATE), "-acodec", AUDIO_FFCODEC,
-                 str(OUT / AUDIO_FILE)])
+            if probe_has_audio(SRC):
+                run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                     *ffmpeg_threads,
+                     "-ss", "0", "-t", DURATION, "-i", SRC,
+                     "-vn", *(["-af", AUDIO_AF] if AUDIO_AF else []),
+                     "-ac", "1", "-ar", str(AUDIO_RATE),
+                     "-acodec", AUDIO_FFCODEC,
+                     str(OUT / AUDIO_FILE)])
+            else:
+                # The stream format always carries the ADPCM chunk, so a
+                # silent movie encodes digital silence of the same length.
+                print("  source has no audio stream; encoding silence")
+                run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+                     "-f", "lavfi",
+                     "-i", f"anullsrc=r={AUDIO_RATE}:cl=mono",
+                     "-t", DURATION,
+                     "-ac", "1", "-ar", str(AUDIO_RATE),
+                     "-acodec", AUDIO_FFCODEC,
+                     str(OUT / AUDIO_FILE)])
             if SOURCE_RANGE is not None:
                 source_range.trim_audio(OUT / AUDIO_FILE, SOURCE_RANGE, FPS_STR)
             if PREPROCESS_AUTO_RANGE:
@@ -2457,6 +2478,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             enabled=PATTERN_SUPPLY_ON,
             wr0_patterns=wordram_layout.wr0_patterns,
             wr1_patterns=wordram_layout.wr1_patterns,
+            dic_patterns=DIC_PATTERNS,
             prg_supply_patterns=predicted_prg_supply_patterns,
             prg_capacity_patterns=(
                 PRG_BUF_CAP_KB * 1024 // PATTERN_BYTES),
@@ -2755,7 +2777,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         f"PrgPressure=f{supply_budget.prg_pressure_start} "
         f"Wr0={supply_budget.wr0_patterns}/{wordram_layout.wr0_patterns} "
         f"Wr1={supply_budget.wr1_patterns}/{wordram_layout.wr1_patterns} "
-        f"Dic={supply_budget.dic_patterns}/{pattern_supply.DIC_BUF_PATTERNS} "
+        f"Dic={supply_budget.dic_patterns}/{DIC_PATTERNS} "
         f"hits={int(supply_budget.dic.sum())} "
         f"frames={int(np.count_nonzero(supply_budget.total))}",
         flush=True,
@@ -4891,11 +4913,12 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
 
     ring_plan = None
     ring_enabled = False
+    frame0_output = None
     if PATTERN_SUPPLY_ON and n > cavc_routing.WORDBUF_MAX_FRAMES:
         peak_prg = np.asarray(prg_loads, np.int64).copy()
         peak_prg[0] -= int(boot_sidecar_requests)
         wr0_peak, wr1_peak = pattern_supply.output_load_peaks(
-            peak_prg, transfer_runs_log)
+            peak_prg, transfer_runs_log, include_frame0=not FRAME0_SPLIT)
         wordram_layout = pattern_supply.word_ram_layout(
             n, C_CELLS, MAX_COLD,
             wr0_load_bytes=wr0_peak.bytes, wr1_load_bytes=wr1_peak.bytes)
@@ -4975,7 +4998,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 raise AssertionError(
                     "boot sidecar exceeds frame-0 Prg source count")
             wr0_peak, wr1_peak = pattern_supply.output_load_peaks(
-                peak_prg, peak_runs)
+                peak_prg, peak_runs, include_frame0=not FRAME0_SPLIT)
             exact_layout = pattern_supply.word_ram_layout(
                 n,
                 C_CELLS,
@@ -4990,6 +5013,29 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
             raise AssertionError(
                 "O_LOADS/WordBuf layout did not converge in eight passes")
         del ring_inputs
+        if FRAME0_SPLIT:
+            # Planning figure for a player with a reduced Word-RAM budget:
+            # frame 0 reuses the timed even reservation boot handoff by
+            # handoff. Nothing consumes it yet; pack refuses such a budget.
+            frame0_bytes = pattern_supply.output_load_bytes(
+                int(peak_prg[0]), int(peak_runs[0]))
+            reservation = (
+                wordram_layout.wr0_offset
+                - pattern_supply.word_ram_bank_base()
+                - pattern_supply.OUTPUT_HEADER_BYTES)
+            frame0_output = {
+                "bytes": int(frame0_bytes),
+                "reservation_bytes": int(reservation),
+                "handoffs": pattern_supply.frame0_output_handoffs(
+                    frame0_bytes, reservation),
+            }
+            print(
+                "Frame-0 O_LOADS: "
+                f"{frame0_output['bytes']}B through a "
+                f"{frame0_output['reservation_bytes']}B even reservation "
+                f"in up to {frame0_output['handoffs']} boot handoffs",
+                flush=True,
+            )
 
         if ring_plan.feasible:
             ring_enabled = True
@@ -5358,6 +5404,15 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
         f"{int(physical_schedule['ring_jitter_peak']) * PATTERN_BYTES / 1024:.1f}KiB",
         f"avg_codec_work_bytes_per_frame={fb.mean():.1f}",
         f"VRAM_tiles={VRAM_TILES}  L3(PRG-RAM)_tiles={L3_TILES}",
+        *([] if RESOURCE_BUDGET.is_default else [
+            "resources=reduced "
+            + " ".join(f"{name}={value}" for name, value in
+                       dataclasses.asdict(RESOURCE_BUDGET).items())
+            + f" Word-RAM base={pattern_supply.word_ram_bank_base():#x}"
+            + (f" frame0 O_LOADS={frame0_output['bytes']}B in up to "
+               f"{frame0_output['handoffs']} handoffs"
+               if frame0_output is not None else "")
+        ]),
         f"avg_PrgBuf_loads_per_frame={prg_loads.mean():.1f}",
         f"boot_vram_prefetch={int(BOOT_VRAM_PREFETCH_ON)} "
         f"boot_loads={int(prefetch_cold_log[0]) if prefetch_cold_log else 0} "
@@ -5493,7 +5548,7 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 PRG_JITTER_HEADROOM_KB * 1024 // PATTERN_BYTES),
             wr0_capacity=wordram_layout.wr0_patterns,
             wr1_capacity=wordram_layout.wr1_patterns,
-            dic_capacity=pattern_supply.DIC_BUF_PATTERNS,
+            dic_capacity=DIC_PATTERNS,
             prg_loads=prg_loads,
             wr0_loads=wr0_loads,
             wr1_loads=wr1_loads,
@@ -5620,6 +5675,10 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 "quality_budget_kb": int(QUALITY_BUDGET_KB),
                 "max_cold": int(MAX_COLD),
                 "cold_cap_spec": COLD_CAP_SPEC,
+                # Present only for a reduced budget; absence means the
+                # standalone player's map, which is all pack accepts.
+                **({"resources": dataclasses.asdict(RESOURCE_BUDGET)}
+                   if not RESOURCE_BUDGET.is_default else {}),
             },
             "encoder": {
                 "detail_alpha": float(DETAIL_ALPHA),
@@ -5749,9 +5808,11 @@ def main(demoted_fade_anchors=frozenset(), arrays=None):
                 "capacities": {
                     "wr0": wordram_layout.wr0_patterns,
                     "wr1": wordram_layout.wr1_patterns,
-                    "dic": pattern_supply.DIC_BUF_PATTERNS,
+                    "dic": DIC_PATTERNS,
                 },
                 "word_ram_layout": dataclasses.asdict(wordram_layout),
+                **({"frame0_output": frame0_output}
+                   if frame0_output is not None else {}),
                 "word_ring": {
                     "enabled": bool(ring_enabled),
                     "policy": "prg-first-complete-run-sector-refill",

@@ -91,6 +91,34 @@ class PatternSupplyEncodingTests(unittest.TestCase):
             layout.routing_offset,
         )
 
+    def test_reduced_bank_budget_keeps_every_span_in_the_bank_top(self):
+        default = av_config.RESOURCE_BUDGET
+        self.addCleanup(av_config.apply_resource_budget, default)
+        av_config.apply_resource_budget(
+            av_config.ResourceBudget(word_ram_bank_kib=40))
+        base = supply.WORD_RAM_BANK_BYTES - 40 * 1024
+        self.assertEqual(supply.word_ram_bank_base(), base)
+        self.assertTrue(supply.frame0_output_split())
+
+        layout = supply.word_ram_layout(frames=193, cells=1120, cold_cap=320)
+        # A full-grid frame 0 cannot share 40 KiB with the 12,544-byte tail,
+        # so both conservative envelopes are the timed one.
+        self.assertEqual(layout.wr0_load_bytes, 320 * (32 + 22))
+        self.assertEqual(layout.wr1_load_bytes, 320 * (32 + 22))
+        self.assertEqual(layout.wr0_offset, base + 17_312)
+        self.assertEqual(layout.wr0_patterns, 5 * 64)
+        self.assertLessEqual(layout.wr0_end, layout.status_offset)
+        self.assertEqual(
+            supply.output_load_peaks(
+                [1100, 10, 20, 30], [40, 1, 2, 3],
+                include_frame0=False)[0].frame, 2)
+        self.assertEqual(supply.frame0_output_handoffs(35_000, 17_308), 3)
+
+        av_config.apply_resource_budget(
+            av_config.ResourceBudget(word_ram_bank_kib=12))
+        with self.assertRaisesRegex(ValueError, "exceed the 12288-byte"):
+            supply.word_ram_layout(frames=193, cells=1120, cold_cap=320)
+
     def test_exact_output_peaks_reclaim_sector_rounded_wordbuf_space(self):
         layout = supply.word_ram_layout(
             frames=6576,

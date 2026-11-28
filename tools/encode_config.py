@@ -9,6 +9,7 @@ from another encode cannot silently change the result.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
@@ -36,7 +37,7 @@ VRAM_PATTERN_BASE_TILE = av_config.VRAM_PATTERN_BASE_TILE
 VRAM_FIRST_MOVIE_NT_TILE = av_config.VRAM_FIRST_MOVIE_NT_TILE
 HUD_FONT_TILES = 16
 VRAM_HUD_FONT_TILE = av_config.VRAM_HUD_FONT_TILE
-MAX_RESIDENT_VRAM_TILES = av_config.VRAM_PATTERN_POOL_TILES
+MAX_RESIDENT_VRAM_TILES = av_config.DEFAULT_VRAM_PATTERN_POOL_TILES
 
 # (section, key): legacy internal variable.  Keeping this table in one place is
 # deliberate: TOML is the user interface; CBRSIM_* is an implementation detail.
@@ -78,7 +79,9 @@ PROFILE_ENV_DEFAULTS = {
     "CBRSIM_MASTER_DENOISE": "1",
     "CBRSIM_OUTPUT_DITHER": "bayer",
     "CBRSIM_GPU": "1",
-    "CBRSIM_VRAM_TILES": str(av_config.VRAM_PATTERN_POOL_TILES),
+    # Identity mirror of the resident pool; apply_profile_env() replaces it
+    # with a [resources] pool. av_config reads CBRSIM_RESOURCE_VRAM_TILES.
+    "CBRSIM_VRAM_TILES": str(av_config.DEFAULT_VRAM_PATTERN_POOL_TILES),
     "CBRSIM_SEGPAL": "1",
     "CBRSIM_NEAR": "1",
     "CBRSIM_BOOT_VRAM_PREFETCH": "1",
@@ -109,6 +112,11 @@ ALLOWED = {
     "output": {key for section, key in ENV_MAP if section == "output"},
     "encoder": {key for section, key in ENV_MAP if section == "encoder"},
     "palette": {key for section, key in ENV_MAP if section == "palette"},
+    # Physical resource budget. Translated by apply_profile_env() into the
+    # CBRSIM_RESOURCE_* handoff read by av_config; absent keys keep the
+    # standalone player's map.
+    "resources": {
+        field.name for field in dataclasses.fields(av_config.ResourceBudget)},
     "analysis": {"source_canvas", "source_par", "source_spec",
                  "tail_seconds"},
     # Orchestration only: the multipart CLI resolves this default and writes
@@ -157,6 +165,11 @@ class EncodeProfile:
 
     def section(self, name: str) -> dict[str, Any]:
         return dict(self.data.get(name, {}))
+
+    @property
+    def resource_budget(self) -> av_config.ResourceBudget:
+        """Physical supplies for this encode; defaults without [resources]."""
+        return av_config.ResourceBudget(**self.section("resources"))
 
     @property
     def output_dir(self) -> Path:
@@ -403,10 +416,33 @@ def load_profile(path: str | os.PathLike[str]) -> EncodeProfile:
             2, str(data["source"]["fps"]), requested_cold_cap)
     except ValueError as exc:
         raise ValueError(f"{profile_path}: encoder.cold_cap: {exc}") from exc
-    if cold_ceiling > av_config.VRAM_PATTERN_POOL_TILES:
+    try:
+        resources = av_config.ResourceBudget(**data.get("resources", {}))
+    except ValueError as exc:
+        raise ValueError(f"{profile_path}: {exc}") from exc
+    fps_text = str(data["source"]["fps"])
+    profile_fps = (
+        float(fps_text.split("/")[0]) / float(fps_text.split("/")[1])
+        if "/" in fps_text else float(fps_text))
+    scheduled_prg_kb = (
+        resources.prg_ring_kib
+        - av_config.RING_PHYSICAL_GUARD_KB
+        - av_config.RING_DELIVERY_GUARD_KB
+        - av_config.cadence_jitter_reserve_kb(profile_fps))
+    if scheduled_prg_kb <= 0:
+        raise ValueError(
+            f"{profile_path}: resources.prg_ring_kib "
+            f"{resources.prg_ring_kib} leaves no scheduled PrgBuf at "
+            f"{fps_text} fps after the guards and jitter reserve")
+    if resources.vram_pool_tiles < total_tiles:
+        raise ValueError(
+            f"{profile_path}: resources.vram_pool_tiles "
+            f"{resources.vram_pool_tiles} cannot hold the {total_tiles}-cell "
+            "grid's frame 0")
+    if cold_ceiling > resources.vram_pool_tiles:
         raise ValueError(
             f"{profile_path}: encoder.cold_cap {cold_ceiling} exceeds "
-            f"the {av_config.VRAM_PATTERN_POOL_TILES}-tile resident pool")
+            f"the {resources.vram_pool_tiles}-tile resident pool")
     cram_priority_search_frames = data.get(
         "encoder", {}).get("cram_quality_priority_search_frames")
     if cram_priority_search_frames is not None:
@@ -544,6 +580,17 @@ def apply_profile_env(
     # A single-movie profile must not inherit another part's extraction range.
     env.pop("CBRSIM_START_FRAME", None)
     env.pop("CBRSIM_END_FRAME", None)
+    # Only the profile's own [resources] may change the physical budget. The
+    # default fields stay absent so existing profiles keep their identity.
+    for name in av_config.RESOURCE_ENV.values():
+        env.pop(name, None)
+    resources = profile.resource_budget
+    for name, value in av_config.resource_budget_env(resources).items():
+        env[name] = value
+        applied[name] = value
+    if resources.vram_pool_tiles != av_config.DEFAULT_VRAM_PATTERN_POOL_TILES:
+        applied["CBRSIM_VRAM_TILES"] = env["CBRSIM_VRAM_TILES"] = str(
+            resources.vram_pool_tiles)
     for (section, key), name in ENV_MAP.items():
         values = profile.data.get(section, {})
         if key not in values:
@@ -619,6 +666,10 @@ def consume_config_arg(
     except (OSError, ValueError, tomllib.TOMLDecodeError) as exc:
         raise SystemExit(f"invalid encode profile: {exc}") from exc
     apply_profile_env(profile)
+    # av_config was imported (with this module) before the handoff above.
+    # Install the profile's budget before the caller imports any module that
+    # derives capacities from it; spawned children read the same environment.
+    av_config.apply_resource_budget(av_config.resource_budget_from_env())
     return profile
 
 

@@ -13,7 +13,7 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 
 | Stage | Processing |
 |---|---|
-| **Extract** | Decode the source into encoder frames, comparison frames, and mono audio. |
+| **Extract** | Decode the source into encoder frames, comparison frames, and mono audio (digital silence for a source without audio). |
 | **Palette** | Divide the movie into palette segments, train each segment's CRAM palettes, and automatically detect spatially static shots with a black-bounded fade on one or both sides, without source-time inputs. |
 | **Quantize** | Convert every frame into palette assignments and indexed 8x8 patterns; automatically detect source-wide hardware-scroll segments without source-time inputs, select the adopted scroll windows and their per-frame plane states, and quantize each window's world-mosaic guard edges; selected fades freeze one exact reference image and derive their inline CRAM steps. |
 | **Forecast** | Calculate one-pass future demand, physical delivery limits, quality reserves, boot-preload use split between the frame-0 inline staging area and the boot-VRAM sidecar backside, and mandatory reference-prefetch room for one-sided fade-outs. |
@@ -206,7 +206,7 @@ Extract -> Palette -> Quantize -> Forecast -> Decide -> Finalize
 
 | 工程 | 処理 |
 |---|---|
-| **Extract** | ソースをエンコーダ用フレーム、比較用フレーム、モノラル音声へ展開します。 |
+| **Extract** | ソースをエンコーダ用フレーム、比較用フレーム、モノラル音声へ展開します（音声の無いソースはdigital silence）。 |
 | **Palette** | 映像をパレット区間に分け、区間ごとのCRAMパレットを学習し、sourceのtime指定なしで片側または両側が黒に接するfadeのうち、空間的に静止したshotを自動検出します。 |
 | **Quantize** | 全フレームをパレット割り当てとインデックス形式の8x8パターンへ変換し、sourceのtime指定なしでハードウェアscroll区間を自動検出して採用windowと各frameのplane状態を決め、windowごとのworld-mosaic guard辺を量子化します。選択したfadeは1枚の正確なreference imageを固定してinline CRAMの段階を決めます。 |
 | **Forecast** | 将来の需要、物理配信上限、画質用の予約量、起動時プリロード利用（frame 0のinline staging領域とboot-VRAM sidecarのbacksideへの振り分けを含む）、片側fade-outに必須のreference prefetch容量を1パスで計算します。 |

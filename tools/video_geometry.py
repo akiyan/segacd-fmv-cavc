@@ -59,6 +59,16 @@ def probe_source(src: str) -> tuple[int, int, int, int]:
     return int(stream["width"]), int(stream["height"]), sar_num, sar_den
 
 
+def probe_has_audio(src: str) -> bool:
+    """Return whether the source has at least one audio stream."""
+    out = subprocess.check_output(
+        ["ffprobe", "-v", "error", "-select_streams", "a",
+         "-show_entries", "stream=index", "-of", "json", src],
+        text=True,
+    )
+    return bool(json.loads(out).get("streams"))
+
+
 def probe_size(src: str) -> tuple[int, int]:
     """Return the first video stream's coded width and height."""
     width, height, _, _ = probe_source(src)

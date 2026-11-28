@@ -114,6 +114,35 @@ Wr0, Wr1, and Dic.
 `Buf` is an encoder category for an exact cold load funded by saved quality
 allowance or a boot-preload credit. It is not a physical buffer.
 
+### Resource budget
+
+The values above are the standalone player's map. A profile's optional
+`[resources]` table lowers the physical supplies one encode may use, for
+example to plan a movie that a game plays inside the memory it can lend.
+Omitted keys keep the standalone value, and a profile that only repeats
+defaults keeps the same effective settings and completed-sim identity.
+
+| Key | Default | Range | Effect |
+|---|---:|---|---|
+| `prg_ring_kib` | 420 | even, above the 6 KiB guards, at most 420 | Physical `PrgBuf` ring. The guards and fps-scaled jitter reserve are unchanged: back-pressure is 4 KiB below it, the observation boundary 2 KiB lower, and the scheduled/normal ceiling is `prg_ring_kib - 6 - ceil(20 * 30 / fps)` KiB, which must stay positive (178 KiB for 224 KiB at 15 fps). |
+| `vram_pool_tiles` | 1,743 | above the 12-tile final-VBlank tail, at least the grid's cell count, at most 1,743 | Contiguous resident pool from tile 1; the final-VBlank tail is its last 12 slots. The cold cap may not exceed it. |
+| `dic_patterns` | 512 | 0..512 | `DicBuf` dictionary size; 0 disables DicBuf. |
+| `word_ram_bank_kib` | 128 | even, 2..128 | Usable top of each 1M Word-RAM bank. Routing keeps the bank end, the fixed tail (`SECT-STG`, `CTRL-SCR`, `DBG-HDR`) follows, and the `O_LOADS` reservation and WordBuf start at the budget base instead of offset 0. The routing table and fixed tail must fit. |
+
+Below 128 KiB a full-grid frame-0 `O_LOADS` (about 35 KiB at 320x224) no longer
+fits beside the fixed tail. The encoder then treats frame 0, which is untimed
+boot work, as consecutive boot handoffs through the even bank's timed
+reservation: the even reservation covers timed frames only, and the sim
+reports the frame-0 bytes and the upper-estimate handoff count.
+
+`tools/encode_config.py` writes only changed values to `CBRSIM_RESOURCE_*`
+and `tools/av_config.py` installs them before any capacity is derived, so sim,
+the analysis renderer and every `CBRSIM_*`-identified artifact use the same
+budget. The decision log records a reduced budget under `config.hardware`.
+The assembled player implements only the standalone map, so
+`tools/pack_stream.py` refuses a reduced budget: such an encode is for
+simulation and analysis until a player supports it.
+
 ## Palette table
 
 All ordinary segment palettes and their switch schedule are player-embedded build
@@ -193,7 +222,7 @@ multi-interval display cadence (24 fps alternates 2- and 3-VBlank slots; frame
 1 uses cadence element zero, so it is a 2-VBlank frame). A spec must name
 exactly the intervals its cadence uses. Each frame receives the cap of its own
 display slot, while layout and reservation envelopes use the largest cap. No
-cap may exceed the 1,743-tile resident pool.
+cap may exceed the resident pool (1,743 tiles unless `[resources]` lowers it).
 
 The checked-in profile records the source's qualified playback ceiling.
 Temporary comparison profiles use the same key, so artifact identity, workspace
@@ -418,7 +447,7 @@ active scroll window; Prg/Wr0/Wr1/Dic describe the physical source.
 
 | Name | Default | Meaning |
 |---|---:|---|
-| resident VRAM pool | 1,743 tiles | Tiles 1–1,743, ending before the fixed HUD font at `0xDA00`; the single movie name table starts at `0xE000`. |
+| resident VRAM pool | 1,743 tiles | Tiles 1–1,743, ending before the fixed HUD font at `0xDA00`; the single movie name table starts at `0xE000`. `[resources].vram_pool_tiles` may lower it. |
 | HUD font | 16 tiles at tile 1,744 (`0xDA00`) | Shared by DEBUG and release startup. |
 | `CBRSIM_RESIDENT_K` / `RESIDENT_BW` | 24 / 24 | Candidate search depth and rendered mean-colour bucket width. |
 | `CBRSIM_NEAR_YM` / `_YP` / `_C` | 10 / 28 / 24 | Near mean/max luma and mean chroma bounds. |
@@ -540,13 +569,14 @@ tmp/<profile>/
 
 | TOML table | Keys | Meaning |
 |---|---|---|
-| `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | Input and native timing. `sar` repairs source metadata. `audio_filter` is an ffmpeg `-af` chain applied to the source audio before the mono 22.05 kHz conversion (e.g. `loudnorm=I=-8:TP=-1:LRA=7` to raise a quiet master's loudness); omission extracts the audio as-is. |
+| `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | Input and native timing. `sar` repairs source metadata. `audio_filter` is an ffmpeg `-af` chain applied to the source audio before the mono 22.05 kHz conversion (e.g. `loudnorm=I=-8:TP=-1:LRA=7` to raise a quiet master's loudness); omission extracts the audio as-is. A source without an audio stream encodes digital silence for `duration`; the stream still carries every frame's ADPCM chunk. |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | Optional RGB888 endpoint snapping before geometry conversion. |
 | `[source.preprocess]` | optional `auto_range` | Whole-movie automatic black/white dynamic-range expansion after extraction. |
 | `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega raster and aspect-aware preprocessing. |
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | Human-readable requested sim identity, decision-log output, and decoded-input reuse. Sim bytes use a deterministic direct workspace path. |
 | `[encoder]` | required `cold_cap`; optional `raw_prefetch`, `cram_quality_priority_search_frames` | Qualified cold cap, timed raw prefetch, and the non-negative CRAM-risk search length. |
 | `[palette]` | `algorithm` | Palette selector. |
+| `[resources]` | optional `prg_ring_kib`, `vram_pool_tiles`, `dic_patterns`, `word_ram_bank_kib` | Reduced physical resource budget; see [Resource budget](#resource-budget). Simulation and analysis only: pack refuses it. |
 | `[multipart]` | optional `parts` | Default part count (integer 1..64) for `tools/multipart.py`; CLI `--parts N` takes precedence. |
 | `[analysis]` | optional `source_canvas = [width, height]` | Analysis-only source-panel canvas. |
 
@@ -581,10 +611,12 @@ aperture, unknown output-dither names, non-tile-aligned dimensions,
 unsafe profile names, a
 missing/non-positive/malformed cold cap, a cold cap above the resident-pool
 size, an interval cold-cap spec that does not match the profile fps cadence,
-and a negative or non-integer CRAM-risk search length. GPU, the
-1,743-tile resident pool, segmented palettes, Near, boot prefetch, and the four
-physical supplies are fixed behavior; only the diagnostic-only environment
-overrides listed above can switch them off for isolation.
+a negative or non-integer CRAM-risk search length, and a `[resources]` value
+outside its range, a pool smaller than the grid, or a PrgBuf ring with no
+scheduled ceiling at the profile fps. GPU, segmented palettes, Near, boot
+prefetch, and the four physical supplies are fixed behavior; only the
+diagnostic-only environment overrides listed above can switch them off for
+isolation. Their sizes follow `[resources]`.
 
 ### Independent source ranges
 
@@ -766,6 +798,32 @@ playerには4つの物理pattern供給があります。encoderにはmovie全体
 `Buf` は保存済みquality allowanceまたはboot-preload creditで正確なcold loadを
 賄うencoder categoryです。物理bufferではありません。
 
+### Resource budget
+
+上の値はstandalone playerのmapです。profileの省略可能な`[resources]` tableは、
+1回のencodeが使える物理供給を減らします。たとえば、gameが貸せるmemoryの中で
+movieを再生する計画に使います。省略したkeyはstandaloneの値のままで、defaultを
+書き並べただけのprofileは実効設定もcompleted-sim identityも変わりません。
+
+| Key | Default | 範囲 | 効果 |
+|---|---:|---|---|
+| `prg_ring_kib` | 420 | 偶数、6 KiBのguardより大きく420以下 | 物理`PrgBuf` ring。guardとfps比例のjitter reserveは変えない。back-pressureはその4 KiB下、観測境界はさらに2 KiB下で、scheduled/normal ceilingは`prg_ring_kib - 6 - ceil(20 * 30 / fps)` KiB。正の値でなければならない（224 KiB、15 fpsなら178 KiB）。 |
+| `vram_pool_tiles` | 1,743 | 12-tileのfinal-VBlank tailより大きく、grid cell数以上、1,743以下 | tile 1から連続するresident pool。final-VBlank tailはその最後の12 slot。cold capはこれを超えられない。 |
+| `dic_patterns` | 512 | 0..512 | `DicBuf` dictionaryの大きさ。0でDicBufを使わない。 |
+| `word_ram_bank_kib` | 128 | 偶数、2..128 | 各1M Word-RAM bankで使える上端部分。routingはbank末尾のままで、固定tail（`SECT-STG`、`CTRL-SCR`、`DBG-HDR`）が続き、`O_LOADS`予約とWordBufはoffset 0ではなくbudgetの底から始まる。routing tableと固定tailが収まらなければならない。 |
+
+128 KiB未満では、full-gridのframe-0 `O_LOADS`（320x224で約35 KiB）が固定tailと
+並んで入りません。そのときencoderは、非計時のboot処理であるframe 0を、even bankの
+timed予約を通る連続したboot handoffとして扱います。even予約はtimed frameだけを
+覆い、simはframe-0のbyte数とhandoff回数の上限見積もりを報告します。
+
+`tools/encode_config.py`は変更された値だけを`CBRSIM_RESOURCE_*`へ書き、
+`tools/av_config.py`がcapacityの導出前にそれを組み込みます。sim、analysis renderer、
+`CBRSIM_*`で識別されるすべてのartifactが同じbudgetを使います。decision logは
+減らしたbudgetを`config.hardware`に記録します。組み立てたplayerはstandalone mapしか
+実装していないため、`tools/pack_stream.py`は減らしたbudgetを拒否します。そのencodeは、
+対応するplayerができるまでsimulationと解析用です。
+
 ## Palette table
 
 通常の全segment paletteとその切替scheduleはplayer内蔵のbuild入力です: packが
@@ -829,7 +887,7 @@ fps由来fallbackや診断overrideは使いません。値は全フレーム共�
 24 fpsは2/3 VBlank slotが交互で、frame 1がcadence要素0=2 VBlank frame）です。
 スペックはそのcadenceが使う間隔をちょうど全部指定します。各フレームは自分の
 display slotのcapを受け取り、layoutと予約envelopeは最大capを使います。どのcapも
-1,743-tile resident pool以下にします。
+resident pool（`[resources]`で減らさない限り1,743 tile）以下にします。
 
 checked-in profileは、そのsourceでqualificationした再生上限を記録します。一時的な比較
 profileも同じkeyを使うため、artifact identity、workspace handoff、sim、pack、analysisへ
@@ -1036,7 +1094,7 @@ Prg/Wr0/Wr1/Dicは物理sourceを示します。
 
 | Name | Default | 意味 |
 |---|---:|---|
-| resident VRAM pool | 1,743 tiles | tile 1〜1,743。固定HUD font `0xDA00`の直前までで、単一movie name tableは`0xE000`から。 |
+| resident VRAM pool | 1,743 tiles | tile 1〜1,743。固定HUD font `0xDA00`の直前までで、単一movie name tableは`0xE000`から。`[resources].vram_pool_tiles`で減らせる。 |
 | HUD font | tile 1,744（`0xDA00`）から16 tiles | DEBUGとrelease startupで共有。 |
 | `CBRSIM_RESIDENT_K` / `RESIDENT_BW` | 24 / 24 | candidate search深さとrendered mean-colour bucket幅。 |
 | `CBRSIM_NEAR_YM` / `_YP` / `_C` | 10 / 28 / 24 | Nearのmean/max luma、mean chroma境界。 |
@@ -1150,13 +1208,14 @@ tmp/<profile>/
 
 | TOML table | Keys | 意味 |
 |---|---|---|
-| `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | inputとnative timing。`sar` はsource metadataを補正する。`audio_filter` はmono 22.05kHz変換前のsource audioへ適用するffmpeg `-af` chain（例: 音圧の低いmasterを持ち上げる `loudnorm=I=-8:TP=-1:LRA=7`）。省略時は無加工で抽出する。 |
+| `[source]` | `path`, `fps`, `duration`, optional `sar`, `audio_filter` | inputとnative timing。`sar` はsource metadataを補正する。`audio_filter` はmono 22.05kHz変換前のsource audioへ適用するffmpeg `-af` chain（例: 音圧の低いmasterを持ち上げる `loudnorm=I=-8:TP=-1:LRA=7`）。省略時は無加工で抽出する。audio streamの無いsourceは`duration`分のdigital silenceをencodeし、streamは各frameのADPCM chunkを従来どおり運ぶ。 |
 | `[source.preprocess.endpoint_snap]` | `black_max`, `white_min` | geometry変換前のoptional RGB888 endpoint snapping。 |
 | `[source.preprocess]` | optional `auto_range` | 展開後に動画全編で判定する黒/白dynamic-range自動拡張。 |
 | `[video]` | `width`, `height`, `fit`, optional `active_tiles`, `resize_filter`, `master_denoise`, `output_dither`, `master_filter`, `raw_filter` | Sega rasterとaspect-aware preprocessing。 |
 | `[output]` | `directory`, `emit_decisions`, optional `reuse` | human-readableなsim要求identity、decision-log output、decoded-input reuse。sim byteはdeterministicなworkspace実体pathを直接使う。 |
 | `[encoder]` | 必須`cold_cap`、optional `raw_prefetch`、`cram_quality_priority_search_frames` | 認定済みcold cap、timed raw prefetch、非負のCRAM-risk search長。 |
 | `[palette]` | `algorithm` | palette selector。 |
+| `[resources]` | optional `prg_ring_kib`、`vram_pool_tiles`、`dic_patterns`、`word_ram_bank_kib` | 減らした物理resource budget。[Resource budget](#resource-budget-1)を参照。simulationと解析専用で、packは拒否する。 |
 | `[multipart]` | optional `parts` | `tools/multipart.py`の分割数の既定値（1..64の整数）。CLIの`--parts N`を優先する。 |
 | `[analysis]` | optional `source_canvas = [width, height]` | 解析専用Source panel canvas。 |
 
@@ -1187,9 +1246,11 @@ loaderは未知key、H40 320x224 apertureを超えるraster、未知のoutput-di
 tile境界に揃わないdimension、
 安全でないprofile名、未指定・非positive・不正形式のcold cap、resident-pool sizeを
 超えるcold cap、profileのfps cadenceと一致しない間隔別cold capスペック、
-負または非integerのCRAM-risk search長を拒否します。GPU、1,743-tile
-resident pool、segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
+負または非integerのCRAM-risk search長、範囲外の`[resources]`値、gridより小さいpool、
+profileのfpsでscheduled ceilingが残らないPrgBuf ringを拒否します。GPU、
+segmented palette、Near、boot prefetch、4つの物理供給は固定behaviorです。
 上に挙げた診断専用environment overrideだけが分離用にこれらを無効化できます。
+その大きさは`[resources]`に従います。
 
 ### 独立したsource範囲
 
